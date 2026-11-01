@@ -45,6 +45,22 @@ export interface FeedbackRow {
   track: Record<string, unknown> | null;
   listened: number | null;
   ts: number;
+  /** v2 (schema version 2) — optional; rows written by v1 lack them. */
+  schema?: number;
+  duration?: number | null;
+  medium?: string | null;
+  session?: string | null;
+  origin?: string | null;
+  confidence?: number | null;
+}
+
+/** Optional v2 telemetry accepted alongside a feedback event. */
+export interface FeedbackMeta {
+  duration?: number | null;
+  medium?: string | null;
+  session?: string | null;
+  origin?: string | null;
+  confidence?: number | null;
 }
 interface SeedRow {
   pos: number;
@@ -180,10 +196,10 @@ export class Store {
 
   // ---- feedback ----
   /** False when the event id was already recorded (deduplicated). */
-  async addFeedback(eventId: string, key: string, kind: string, artist: string, track: Record<string, unknown> | null, listened: number | null, ts?: number): Promise<boolean> {
+  async addFeedback(eventId: string, key: string, kind: string, artist: string, track: Record<string, unknown> | null, listened: number | null, ts?: number, meta?: FeedbackMeta): Promise<boolean> {
     await this.guard();
     if (this.fbIds.has(eventId)) return false;
-    const row = { id: this.nextFb++, event_id: eventId, key, kind, artist, track: track ? structuredClone(track) : null, listened, ts: ts || this.now() };
+    const row = { id: this.nextFb++, event_id: eventId, key, kind, artist, track: track ? structuredClone(track) : null, listened, ts: ts || this.now(), ...(meta ? { schema: 2, ...meta } : {}) };
     this.fb.push(row);
     this.fbIds.add(eventId);
     this.write(() => this.be.put('feedback', String(row.id), row));

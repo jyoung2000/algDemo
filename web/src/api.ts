@@ -397,7 +397,7 @@ export const api = {
   recommend: () => call<{ job: string }>('/api/recommend', { method: 'POST', body: '{}' }),
   job: (id: string, signal?: AbortSignal) => call<JobStatus>(`/api/jobs/${id}`, signal ? { signal } : {}),
   cancelJob: (id: string) => call<{ ok: boolean }>(`/api/jobs/${id}`, { method: 'DELETE' }),
-  feedback: (kind: FeedbackKind, track: Track, extra: { event_id?: string; listened?: number } = {}) =>
+  feedback: (kind: FeedbackKind, track: Track, extra: { event_id?: string; listened?: number; duration?: number; medium?: string; session?: string; origin?: string; confidence?: number } = {}) =>
     call<{ recorded?: boolean; duplicate?: boolean; removed?: number }>('/api/feedback', { method: 'POST', body: json({ kind, track, ...extra }) }),
   feedbackState: () => call<{ state: Record<string, Partial<Record<FeedbackKind, boolean>>>; events: number }>('/api/feedback/state'),
   impressions: (keys: string[]) => call<{ recorded: number }>('/api/impressions', { method: 'POST', body: json({ keys }) }),

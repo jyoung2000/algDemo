@@ -7,6 +7,8 @@ import * as G from './genres';
 import { AFFINITY_FACTORS, DEFAULT_ENGINE, FEEDBACK_WEIGHTS, type EngineConfig, type Weights, type Factor } from './config';
 import { splitArtists } from './identity';
 import { TASTE_WEIGHT, tasteFit, type TasteProfile } from './taste';
+import { tasteFit2, type TasteBlend } from './taste2';
+import { SEED_GUESS_SOURCE, SOUND_GUESS_SOURCE } from './infer';
 
 export const SEED_FACTORS = ['audio', 'genre', 'artist', 'provider', 'tempo'] as const;
 export const GLOBAL_FACTORS = ['feedback', 'freshness', 'novelty'] as const;
@@ -50,6 +52,8 @@ export interface Provenance {
   relation: string;
   rank?: number;
   via?: string;
+  /** Gathering source id (e.g. "deezer-artist-radio"); its first segment names the provider family. */
+  source?: string;
 }
 
 export interface Track {
@@ -159,6 +163,13 @@ export interface FeedbackEvent {
   kind: string;
   artist?: string;
   ts: number; // unix seconds
+  /** v2 schema (all optional; stored v1 rows simply lack them) */
+  listened?: number | null; // seconds actually heard (seek/pause-corrected by the player)
+  duration?: number | null; // known total length of what played, seconds; null = unknown
+  medium?: string | null; // 'preview' | 'full' | 'embed'
+  session?: string | null; // player session id
+  origin?: string | null; // 'queue' | 'manual' | 'import:<source>'
+  confidence?: number | null; // telemetry confidence 0..1 (imports < live playback)
 }
 
 export interface FeedbackView {
@@ -208,6 +219,83 @@ export function buildFeedback(events: FeedbackEvent[], nowTs: number, cfg: Engin
   for (const [k, [, kind]] of latest) if (kind === 'dislike') excluded.add(k);
   const liked = new Set(Object.keys(artist).filter((a) => artist[a]! > 1.0));
   return { track, artist, excluded, hidden, likedArtists: liked, events: seen.size };
+}
+
+/**
+ * v2 feedback: one listening session is one endorsement, not four.
+ *
+ *  - complete/replay events are grouped per (track, UTC day): the first counts fully, the second
+ *    half, later ones nothing — so looping a song all night is two endorsements, not forty.
+ *  - a preview completion is 60% of a full-track completion, and a known completion ratio below
+ *    90% scales the weight down linearly (never below half); unknown duration stays at full weight
+ *    rather than manufacturing a ratio.
+ *  - telemetry confidence (imports) scales the event.
+ *  - artist spillover grows with the square root of the number of distinct endorsed songs, not the
+ *    raw sum, so 40 plays of one song never outweigh 4 different liked songs.
+ *  - explicit judgements (like/save/dislike/hide) are unchanged — a person saying so stays the
+ *    strongest signal; the skip threshold rule is kept as in v1.
+ */
+export function buildFeedback2(events: FeedbackEvent[], nowTs: number, cfg: EngineConfig = DEFAULT_ENGINE): FeedbackView {
+  const seen = new Set<string>();
+  const track: Record<string, number> = {};
+  const artistPos = new Map<string, Map<string, number>>(); // artist -> key -> best positive weight
+  const artistNeg: Record<string, number> = {};
+  const skippedByArtist = new Map<string, Set<string>>();
+  const latest = new Map<string, [number, string]>();
+  const hidden = new Set<string>();
+  const perDay = new Map<string, number>(); // `${key}|${day}` -> behavioral events already counted
+  const sorted = [...events].sort((x, y) => x.ts - y.ts || (x.event_id < y.event_id ? -1 : x.event_id > y.event_id ? 1 : 0));
+  for (const e of sorted) {
+    if (seen.has(e.event_id) || !(e.kind in FEEDBACK_WEIGHTS) || e.kind === 'seed') continue;
+    seen.add(e.event_id);
+    let base = FEEDBACK_WEIGHTS[e.kind]!;
+    const conf = e.confidence === null || e.confidence === undefined ? 1 : Math.min(1, Math.max(0, e.confidence));
+    if (e.kind === 'complete' || e.kind === 'replay') {
+      const day = Math.floor(e.ts / 86400);
+      const slot = `${e.key}|${day}`;
+      const had = perDay.get(slot) ?? 0;
+      perDay.set(slot, had + 1);
+      if (had >= 2) continue; // third+ behavioral endorsement of the same song that day says nothing new
+      if (had === 1) base *= 0.5;
+      if (e.medium === 'preview') base *= 0.6; // 30 seconds heard, not the song
+      const dur = Number(e.duration), lis = Number(e.listened);
+      if (e.kind === 'complete' && Number.isFinite(dur) && dur > 0 && Number.isFinite(lis) && lis >= 0) {
+        const ratio = Math.min(1, lis / dur);
+        if (ratio < 0.9) base *= Math.max(0.5, ratio); // partial hear counts partially; unknown duration is left alone
+      }
+    }
+    const w = base * conf * decay(e.ts, nowTs, cfg.feedbackHalfLifeDays);
+    track[e.key] = (track[e.key] ?? 0) + w;
+    const a = e.artist ?? '';
+    if (e.kind === 'like' || e.kind === 'dislike' || e.kind === 'hide') latest.set(e.key, [e.ts, e.kind]);
+    if (e.kind === 'hide' && nowTs - e.ts < 30 * 86400) hidden.add(e.key);
+    if (!a) continue;
+    if (e.kind === 'skip') {
+      if (!skippedByArtist.has(a)) skippedByArtist.set(a, new Set());
+      skippedByArtist.get(a)!.add(e.key);
+    } else if (w > 0) {
+      const m = artistPos.get(a) ?? new Map<string, number>();
+      artistPos.set(a, m);
+      m.set(e.key, Math.max(m.get(e.key) ?? 0, w));
+    } else {
+      artistNeg[a] = (artistNeg[a] ?? 0) + w * 0.5;
+    }
+  }
+  const artist: Record<string, number> = { ...artistNeg };
+  for (const [a, m] of artistPos) {
+    // sqrt over distinct endorsed songs: breadth of liking an artist, with diminishing returns
+    let sum = 0;
+    for (const v of m.values()) sum += v;
+    const mean = sum / m.size;
+    artist[a] = (artist[a] ?? 0) + 0.5 * mean * Math.sqrt(m.size);
+  }
+  for (const [a, keys] of skippedByArtist) {
+    if (keys.size >= cfg.artistSkipThreshold) artist[a] = (artist[a] ?? 0) - 0.5 * keys.size;
+  }
+  const excluded2 = new Set<string>();
+  for (const [k, [, kind]] of latest) if (kind === 'dislike') excluded2.add(k);
+  const liked2 = new Set(Object.keys(artist).filter((a) => artist[a]! > 1.0));
+  return { track, artist, excluded: excluded2, hidden, likedArtists: liked2, events: seen.size };
 }
 
 export function feedbackFit(t: Track, fb: FeedbackView): number | null {
@@ -263,6 +351,13 @@ export interface Context {
   cfg?: EngineConfig;
   /** Listening taste from real playback. Absent (the golden parity path) means it is not scored. */
   taste?: TasteProfile | null;
+  /**
+   * Ranking v2 (the improved scorer). Absent or false keeps the exact v1/Python-parity behaviour;
+   * every v2 change below is gated on this so the golden fixtures stay byte-stable.
+   */
+  rankV2?: boolean;
+  /** Long/recent/session taste blend (v2 only); when present it replaces `taste` in scoring. */
+  taste2?: TasteBlend | null;
 }
 
 export function dot(a: Float64Array, b: Float64Array): number {
@@ -273,26 +368,55 @@ export function dot(a: Float64Array, b: Float64Array): number {
 }
 
 export function seedFactors(c: Track, s: Track, ctx: Context): Record<string, number | null> {
+  const v2 = Boolean(ctx.rankV2);
   const f: Record<string, number | null> = {};
   const va = ctx.vectors.get(c.key), vb = ctx.vectors.get(s.key);
   f.audio = va && vb ? calibrateAudio(dot(va, vb)) : null;
-  f.genre = G.similarity(s.tags ?? [], c.tags ?? []);
+  // v2: a tag the seed itself donated (inferFromSeed) is not independent evidence of fitting that
+  // seed, and a tag voted in by audio neighbours correlates with the audio factor when both exist.
+  const cTags = v2
+    ? (c.tags ?? []).filter((t) => !(t.inferred && (t.source === SEED_GUESS_SOURCE || (f.audio !== null && t.source === SOUND_GUESS_SOURCE))))
+    : (c.tags ?? []);
+  f.genre = G.similarity(s.tags ?? [], cTags);
   const shared = [...artistSet(c)].some((x) => artistSet(s).has(x));
   const rel = ctx.relatedArtists.get(s.key);
   if (shared) f.artist = 1.0;
   else if (rel !== undefined) f.artist = [...artistSet(c)].some((x) => rel.has(x)) ? 0.7 : 0.0;
   else f.artist = null;
   let best: number | null = null;
+  let bestRelation: string | null = null;
+  const families = new Set<string>();
+  let anyCounting = false;
   for (const p of c.provenance ?? []) {
     if (p.seed !== s.key) continue;
     const [strength, , counts] = RELATION[p.relation] ?? [0.0, '', false];
     if (!counts) continue;
+    anyCounting = true;
+    if (typeof p.source === 'string' && p.source) families.add(p.source.split('-')[0]!);
     const v = strength * (1.0 / (1.0 + 0.03 * Math.max(0, p.rank ?? 0)));
-    best = best === null ? v : Math.max(best, v);
+    if (best === null || v > best) {
+      best = v;
+      bestRelation = p.relation;
+    }
   }
-  // This seed's providers were asked; not being in their lists is weak negative evidence.
-  const asked = (c.provenance ?? []).some((p) => p.seed === s.key) || Boolean(ctx.relatedArtists.get(s.key)?.size);
-  f.provider = best !== null ? best : asked ? 0.0 : null;
+  if (v2) {
+    // Null stays null unless a relatedness list was actually consulted for this seed: a candidate
+    // whose only link is a non-counting relation (catalogue search, genre chart) was never "asked
+    // about", so its absence from nothing is not negative evidence.
+    const asked = anyCounting || Boolean(ctx.relatedArtists.get(s.key)?.size);
+    if (best !== null) {
+      // Bounded corroboration: each extra *distinct provider family* that independently lists the
+      // song adds a little. Duplicate rows from one family never stack (the set).
+      best = Math.min(1, best + 0.08 * Math.max(0, families.size - 1));
+      // The same fact counted twice: "another song by the seed's artist" already scores artist=1.0.
+      if (bestRelation === 'seed_artist_top' && shared) best *= 0.5;
+    }
+    f.provider = best !== null ? best : asked ? 0.0 : null;
+  } else {
+    // This seed's providers were asked; not being in their lists is weak negative evidence.
+    const asked = (c.provenance ?? []).some((p) => p.seed === s.key) || Boolean(ctx.relatedArtists.get(s.key)?.size);
+    f.provider = best !== null ? best : asked ? 0.0 : null;
+  }
   f.tempo = tempoFit(c.bpm, s.bpm);
   return f;
 }
@@ -373,13 +497,28 @@ export function scoreOne(c: Track, ctx: Context): Scored {
   }
   let affinity = den > 0 ? num / den : 0.0;
   // Listening taste blends in only when the caller passes it; without it the score is unchanged.
-  const tf = ctx.taste ? tasteFit(c, ctx.taste) : null;
-  if (tf) {
-    g.taste = tf.value;
-    affinity = affinity * (1 - TASTE_WEIGHT) + TASTE_WEIGHT * tf.value;
+  // v2 passes a long/recent/session blend whose weight grows with evidence (confidence-aware).
+  if (ctx.rankV2 && ctx.taste2) {
+    const tf2 = tasteFit2(c, ctx.taste2);
+    if (tf2) {
+      g.taste = tf2.value;
+      affinity = affinity * (1 - tf2.weight) + tf2.weight * tf2.value;
+    }
+  } else {
+    const tf = ctx.taste ? tasteFit(c, ctx.taste) : null;
+    if (tf) {
+      g.taste = tf.value;
+      affinity = affinity * (1 - TASTE_WEIGHT) + TASTE_WEIGHT * tf.value;
+    }
   }
   // coverage over affinity factors (seed factors of the best seed + feedback when present)
-  const allAff = AFFINITY_FACTORS.reduce((x, k) => x + w[k], 0);
+  // v2: when no seed in the run has a vector, nothing can have audio evidence, so audio is not
+  // "missing" — it is impossible, and it leaves the denominator instead of flattening everyone.
+  let allAff = AFFINITY_FACTORS.reduce((x, k) => x + w[k], 0);
+  if (ctx.rankV2) {
+    const anySeedVector = ctx.seeds.some((s) => ctx.vectors.has(s.key));
+    if (!anySeedVector) allAff -= w.audio;
+  }
   const have = seedW + (g.feedback !== null && g.feedback !== undefined ? w.feedback : 0.0);
   const coverage = allAff ? Math.min(1, have / allAff) : 0.0;
   const final = affinity * (cfg.coverageFloor + (1 - cfg.coverageFloor) * coverage);
@@ -565,7 +704,10 @@ export function explain(s: Scored, ctx: Context): [Reason[], string[]] {
   if (provs.length && (f.provider ?? 0) > 0) {
     const label = RELATION[provs[0]!.relation]![1];
     const extra = provs[0]!.via ? ` (${provs[0]!.via})` : '';
-    reasons.push({ factor: 'provider', text: `${label} ${seed}${extra}.`, weight: contrib.provider ?? 0 });
+    // v2: name the independent families that corroborated it — only when more than one really did.
+    const fams = ctx.rankV2 ? new Set(provs.filter((p) => RELATION[p.relation]?.[2] && p.source).map((p) => p.source!.split('-')[0]!)) : new Set<string>();
+    const corro = fams.size > 1 ? ` ${fams.size} services list it independently.` : '';
+    reasons.push({ factor: 'provider', text: `${label} ${seed}${extra}.${corro}`, weight: contrib.provider ?? 0 });
   }
   if (f.audio !== null && f.audio !== undefined && f.audio >= 0.55) {
     reasons.push({ factor: 'audio', text: `Sounds close to ${seed}: timbre and production compared on 30-second previews (audio model).`, weight: contrib.audio ?? 0 });

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { api, newEventId, type FeedbackKind, type JobStatus, type Playback, type RecItem, type RecResult, type SavedItem, type Settings, type TasteSummary, type Track } from './api';
 import { Art } from './Art';
-import { Player, type Playing } from './Player';
+import { Player, type ListenTelemetry, type Playing } from './Player';
 import { Results, rowId, type FeedbackFlags } from './Results';
 import { DownloadsView, useDownloads } from './Downloads';
 import { Search } from './Search';
@@ -65,6 +65,8 @@ export function App() {
   const shownRef = useRef<Set<string>>(new Set());
   const playedRef = useRef<Set<string>>(new Set());
   const rerankSeq = useRef(0);
+  // One id per app session: groups this sitting's events for the session taste horizon.
+  const sessionRef = useRef(`s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   const [taste, setTaste] = useState<TasteSummary | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
 
@@ -203,11 +205,20 @@ export function App() {
 
   // A skip or a full listen is recorded, then the songs still to come are ranked again with it.
   // Only the newest answer is applied, so two quick skips cannot show the older order.
-  const onListen = (kind: 'complete' | 'skip', t: Track, listened: number) => {
+  // The event id is derived from the playback instance, so a duplicated player callback or a UI
+  // retry re-sends the SAME id and the store's dedupe actually catches it.
+  const onListen = (kind: 'complete' | 'skip' | 'replay', t: Track, listened: number, meta: ListenTelemetry) => {
     const sample = Boolean(result?.sample);
     const seq = ++rerankSeq.current;
     void api
-      .feedback(kind, t, { event_id: newEventId(kind, t.key), listened: Math.round(listened * 10) / 10 })
+      .feedback(kind, t, {
+        event_id: `${kind}:${t.key.slice(0, 40)}:${meta.instance}`.slice(0, 80),
+        listened: Math.round(listened * 10) / 10,
+        duration: meta.duration ?? undefined,
+        medium: meta.medium,
+        session: sessionRef.current,
+        origin: 'queue',
+      })
       .then(() => (sample || !result ? null : api.rerank([...playedRef.current])))
       .then((r) => {
         if (!r || seq !== rerankSeq.current) return;

@@ -27,8 +27,10 @@ interface Props {
   canNext: boolean;
   onPrev: () => void;
   onNext: () => void;
-  /** Only real, observed listening: a preview played to its end, or skipped by the user after a short listen. */
-  onListen: (kind: 'complete' | 'skip', track: Track, listened: number) => void;
+  /** Only real, observed listening: a preview played to its end, or skipped by the user after a short listen.
+   *  `meta.instance` is one nonce per loaded playback, so a duplicated end-callback cannot double-record;
+   *  a second end of the same instance (loop) arrives as 'replay', later loops are not events at all. */
+  onListen: (kind: 'complete' | 'skip' | 'replay', track: Track, listened: number, meta: ListenTelemetry) => void;
   onWheel: (dir: 1 | -1) => void;
   onSelect: () => void;
   onMenu: () => void;
@@ -40,6 +42,15 @@ const COMPLETE_S = 20;
 /** A Next press after at least this much (but under SKIP_MAX_S) real listening counts as a skip. */
 const SKIP_MIN_S = 2;
 const SKIP_MAX_S = 12;
+
+/** What the player observed about the playback a listen event came from. */
+export interface ListenTelemetry {
+  /** One nonce per loaded playback; the same instance never records the same kind twice. */
+  instance: string;
+  medium: 'full' | 'preview';
+  /** Length of what actually played (player-reported, else catalogue), seconds; null = unknown. */
+  duration: number | null;
+}
 
 const VOLUME_KEY = 'airwave.volume';
 
@@ -81,6 +92,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, onPrev, onNe
   const yt = useRef<YTPlayer | null>(null);
   const [ytReady, setYtReady] = useState(false);
   const ended = useRef(false);
+  const instance = useRef('');
+  const endsThisInstance = useRef(0);
   const volRef = useRef(vol);
   volRef.current = vol;
   const onEndRef = useRef<() => void>(() => undefined);
@@ -195,6 +208,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, onPrev, onNe
   useEffect(() => {
     meter.current = new ListenMeter();
     ended.current = false;
+    instance.current = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    endsThisInstance.current = 0;
     setCur(0);
     setDur(0);
     setErr(null);
@@ -238,16 +253,31 @@ export function Player({ playing, upNext, docked, canPrev, canNext, onPrev, onNe
     setCur(s);
   };
 
-  // A song that plays to its end counts as listened; then the next one starts.
+  // A song that plays to its end counts as listened; then the next one starts. A second end of the
+  // same playback instance is one replay; beyond that, loops teach nothing new and record nothing.
   onEndRef.current = () => {
     const l = meter.current.listened;
-    if (playing && l >= COMPLETE_S) onListen('complete', playing.track, l);
+    if (playing && l >= COMPLETE_S) {
+      const meta: ListenTelemetry = {
+        instance: instance.current,
+        medium: mode === 'full' ? 'full' : 'preview',
+        duration: dur > 0 ? Math.round(dur) : playing.track.duration ?? null,
+      };
+      const n = ++endsThisInstance.current;
+      if (n === 1) onListen('complete', playing.track, l, meta);
+      else if (n === 2) onListen('replay', playing.track, l, meta);
+    }
     if (canNext) onNext();
   };
 
   const next = () => {
     const l = meter.current.listened;
-    if (playing && hasSound && !ended.current && l >= SKIP_MIN_S && l < SKIP_MAX_S) onListen('skip', playing.track, l);
+    if (playing && hasSound && !ended.current && l >= SKIP_MIN_S && l < SKIP_MAX_S)
+      onListen('skip', playing.track, l, {
+        instance: instance.current,
+        medium: mode === 'full' ? 'full' : 'preview',
+        duration: dur > 0 ? Math.round(dur) : playing.track.duration ?? null,
+      });
     onNext();
   };
 

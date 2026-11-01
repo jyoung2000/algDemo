@@ -13,6 +13,11 @@ import { type Tag, makeTag, tagStrength } from './genres';
 import type { Store } from './store';
 import type { Dict } from './shape';
 
+/** Source labels on inferred tags; the engine's v2 scorer treats these as non-independent evidence. */
+export const ARTIST_GUESS_SOURCE = "The artist's other songs";
+export const SOUND_GUESS_SOURCE = 'Songs that sound the same';
+export const SEED_GUESS_SOURCE = 'Guessed from the starting song';
+
 const AKEY = 'artist_genres';
 const MAX_ARTISTS = 800;
 
@@ -47,7 +52,7 @@ export function inferFromArtist(track: Dict, map: ArtistMap): Tag | null {
   if (!row) return null;
   const best = Object.entries(row).sort((x, y) => y[1] - x[1])[0];
   if (!best || best[1] < 0.5) return null;
-  const tag = makeTag(best[0], "The artist's other songs", 'artist', 0.45);
+  const tag = makeTag(best[0], ARTIST_GUESS_SOURCE, 'artist', 0.45);
   return tag ? { ...tag, inferred: true } : null;
 }
 
@@ -90,12 +95,12 @@ export function inferFromSound(track: Dict, vectors: Map<string, Float64Array>, 
   const [name, w] = [...votes.entries()].sort((a, b) => b[1] - a[1])[0]!;
   if (w / total <= 0.5) return null;
   const top = near[0]!.sim;
-  const tag = makeTag(name, 'Songs that sound the same', 'track', Math.max(0.3, Math.min(0.55, 0.3 + (top - floor))));
+  const tag = makeTag(name, SOUND_GUESS_SOURCE, 'track', Math.max(0.3, Math.min(0.55, 0.3 + (top - floor))));
   return tag ? { ...tag, inferred: true } : null;
 }
 
 /** Last resort: the seed that recommended the song lends its leading genre, plainly marked a guess. */
-export function inferFromSeed(seed: Dict | undefined, source = 'Guessed from the starting song'): Tag | null {
+export function inferFromSeed(seed: Dict | undefined, source = SEED_GUESS_SOURCE): Tag | null {
   const tags = seed ? realTags(seed) : [];
   if (!tags.length) return null;
   const lead = [...tags].sort((a, b) => tagStrength(b) - tagStrength(a))[0]!;

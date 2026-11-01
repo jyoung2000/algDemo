@@ -8,6 +8,7 @@ import { DEFAULT_ENGINE, TRANSFER, engineWithWeights } from './config';
 import { Deezer, NeedsChoice, ProviderError, type Ctx } from './deezer';
 import * as E from './engine';
 import { buildTaste, tasteSummary, tasteFit, type TasteProfile } from './taste';
+import { buildTasteBlend, type TasteBlend } from './taste2';
 import { fold, matchRecordings } from './identity';
 import { buildProfile } from './profile';
 import { classify } from './classify';
@@ -74,7 +75,7 @@ export function characteristicsOf(c: Dict, taste: TasteProfile | null): Dict {
   };
 }
 
-const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize };
+const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, rank_v2: true };
 /** How many songs one discovery run adds to the list: the user's choice in Settings. */
 export const QUEUE_SIZE_MIN = 5;
 export const QUEUE_SIZE_MAX = 60;
@@ -463,7 +464,7 @@ export class LocalApi {
         };
         return;
       }
-      const fb = E.buildFeedback(this.store.feedback() as never, unixNow(), cfg);
+      const fb = settings['rank_v2'] !== false ? E.buildFeedback2(this.store.feedback() as never, unixNow(), cfg) : E.buildFeedback(this.store.feedback() as never, unixNow(), cfg);
       const imps = this.store.impressions(unixNow() - cfg.exposureWindowDays * 86400);
       const vectors = new Map<string, Float64Array>();
       const dzIdOf = (sv: Dict): string | null => sv['dz_preview_id'] || sv['dz_id'] || (sv['provider'] === 'deezer' ? sv['platform_id'] : null) || null;
@@ -473,8 +474,9 @@ export class LocalApi {
         if (v) vectors.set(sv['key'], Float64Array.from(v));
       }
       const relMap = new Map([...related].filter(([, v]) => v.size));
+      const v2 = settings['rank_v2'] !== false;
       const taste = this.taste();
-      const ctx: E.Context = { seeds: seedViews as never, vectors, relatedArtists: relMap, feedback: fb, impressions: imps, settings: es, now: new Date(), cfg, taste };
+      const ctx: E.Context = { seeds: seedViews as never, vectors, relatedArtists: relMap, feedback: fb, impressions: imps, settings: es, now: new Date(), cfg, taste, rankV2: v2, taste2: v2 ? this.taste2() : null };
       let scored = E.scoreAll(cands as never, ctx);
       let chosen = E.select(scored, ctx);
       job.timings['metadata_ms'] = since();
@@ -501,8 +503,24 @@ export class LocalApi {
           }
           if (seedViews.some((sv) => vectors.has(sv['key']))) {
             const rescored = E.scoreAll(cands as never, ctx);
-            const todo = rescored.map((x) => x.track as Dict).filter((t) => !vectors.has(t['key']) && t['dz_id'] && t['preview']);
+            const pool0 = rescored.map((x) => x.track as Dict).filter((t) => !vectors.has(t['key']) && t['dz_id'] && t['preview']);
             const budgetN = cfg.audioCandidatesPerRequest;
+            // v2: sample across provisional ranking bands instead of only the current top, so audio
+            // evidence is not handed exclusively to the songs metadata already favoured.
+            // Top 8 as-is, then every 4th of the next 32, then every 8th of the next 80.
+            let todo = pool0;
+            if (settings['rank_v2'] !== false && pool0.length > budgetN) {
+              const picks: Dict[] = [];
+              const take = (xs: Dict[], stride: number) => xs.filter((_, i) => i % stride === 0);
+              picks.push(...pool0.slice(0, 8));
+              picks.push(...take(pool0.slice(8, 40), 4));
+              picks.push(...take(pool0.slice(40, 120), 8));
+              for (const t of pool0) {
+                if (picks.length >= budgetN) break;
+                if (!picks.includes(t)) picks.push(t);
+              }
+              todo = picks.slice(0, budgetN);
+            }
             for (const c of todo.slice(0, budgetN)) {
               job.token.check();
               job.progress = `Comparing how the songs sound (${(job.audio['embedded'] ?? 0) + 1} of ${Math.min(budgetN, todo.length)})`;
@@ -587,12 +605,15 @@ export class LocalApi {
     const cfg = pool.ctx.cfg ?? DEFAULT_ENGINE;
     const settings = this.settings();
     const exclude = new Set(((body['exclude'] as unknown[]) ?? []).map((k) => String(k)).slice(0, 500));
+    const v2 = settings['rank_v2'] !== false;
     const ctx: E.Context = {
       ...pool.ctx,
       cfg: { ...cfg, queueSize: Number(settings['queue_size'] ?? cfg.queueSize) },
-      feedback: E.buildFeedback(this.store.feedback() as never, unixNow(), cfg),
+      feedback: v2 ? E.buildFeedback2(this.store.feedback() as never, unixNow(), cfg) : E.buildFeedback(this.store.feedback() as never, unixNow(), cfg),
       impressions: this.store.impressions(unixNow() - cfg.exposureWindowDays * 86400),
       taste: this.taste(),
+      rankV2: v2,
+      taste2: v2 ? this.taste2() : null,
       now: new Date(),
     };
     const cands = pool.cands.filter((c) => !exclude.has(String(c['key'])));
@@ -664,7 +685,18 @@ export class LocalApi {
     if (kind === 'like') this.store.removeFeedback(key, ['dislike']);
     if (kind === 'dislike') this.store.removeFeedback(key, ['like']);
     const artist = (t['artists'] as string[] | undefined)?.[0]?.toLowerCase() ?? '';
-    const added = await this.store.addFeedback(eventId, key, kind, artist, cleanTrack(t), listened === null ? null : Number(listened));
+    // v2 telemetry: optional, validated, stored alongside the event (old callers simply omit it).
+    const num = (x: unknown, lo: number, hi: number): number | null => (typeof x === 'number' && Number.isFinite(x) && x >= lo && x <= hi ? x : null);
+    const str = (x: unknown, allowed?: string[]): string | null => (typeof x === 'string' && x.length > 0 && x.length <= 64 && (!allowed || allowed.includes(x)) ? x : null);
+    const meta = {
+      duration: num(body['duration'], 1, 36000),
+      medium: str(body['medium'], ['preview', 'full', 'embed']),
+      session: str(body['session']),
+      origin: str(body['origin']),
+      confidence: num(body['confidence'], 0, 1),
+    };
+    const hasMeta = Object.values(meta).some((v) => v !== null);
+    const added = await this.store.addFeedback(eventId, key, kind, artist, cleanTrack(t), listened === null ? null : Number(listened), undefined, hasMeta ? meta : undefined);
     return ok({ recorded: added, duplicate: !added });
   }
 
@@ -678,6 +710,18 @@ export class LocalApi {
   /** The listening taste as of now, from every stored playback and feedback event. */
   taste(): TasteProfile {
     return buildTaste(this.store.feedback().map((r) => ({ key: r.key, kind: r.kind, ts: r.ts, track: r.track })), unixNow());
+  }
+
+  /** One id per LocalApi lifetime: "current session" for the session taste horizon. */
+  private readonly sessionId = `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+  /** v2 three-horizon taste (long / recent / this session), confidence-aware. */
+  taste2(): TasteBlend {
+    const rows = this.store.feedback().map((r) => ({
+      key: r.key, kind: r.kind, ts: r.ts, track: r.track,
+      event_id: r.event_id, medium: r.medium ?? null, confidence: r.confidence ?? null, session: r.session ?? null,
+    }));
+    return buildTasteBlend(rows, unixNow(), this.sessionId);
   }
 
   /** Everything the recommender tracks and how it uses it, for the "Your profile" screen. */
