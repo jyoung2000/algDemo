@@ -1,0 +1,61 @@
+{
+  "generated": "2026-11-01T03:30:54.971Z",
+  "corroboration": {
+    "note": "8 candidates got a second independent family listing",
+    "moved": [
+      {
+        "key": "c0",
+        "v1": null,
+        "v2": null
+      },
+      {
+        "key": "c9",
+        "v1": null,
+        "v2": null
+      },
+      {
+        "key": "c18",
+        "v1": 2,
+        "v2": 2
+      },
+      {
+        "key": "c27",
+        "v1": null,
+        "v2": null
+      },
+      {
+        "key": "c36",
+        "v1": 1,
+        "v2": 1
+      },
+      {
+        "key": "c45",
+        "v1": null,
+        "v2": null
+      },
+      {
+        "key": "c54",
+        "v1": 24,
+        "v2": 24
+      }
+    ]
+  },
+  "loop_vs_spread": {
+    "note": "loop: 6 preview-completes in one day; spread: 4 full completes across 4 days",
+    "loop": {
+      "key": "c3",
+      "v1_fb": 17.889,
+      "v2_fb": 2.683
+    },
+    "spread": {
+      "key": "c5",
+      "v1_fb": 11.638,
+      "v2_fb": 11.638
+    }
+  },
+  "no_seed_vector_coverage": {
+    "note": "same pool with every vector removed: v2 drops audio from the coverage denominator",
+    "v1_mean_coverage": 0.4444,
+    "v2_mean_coverage": 0.743
+  }
+}

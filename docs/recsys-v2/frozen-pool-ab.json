@@ -1,0 +1,122 @@
+{
+  "generated": "2026-11-01T03:30:54.920Z",
+  "pool": {
+    "seeds": 2,
+    "candidates": 60,
+    "vectors": 14,
+    "events_total": 4,
+    "events_used": 2
+  },
+  "note": "Same frozen pool, same history, same clock. v1 = parity engine; v2 = rank_v2.",
+  "neutral": {
+    "v1": {
+      "size": 26,
+      "distinct_artists": 14,
+      "max_per_artist": 2,
+      "distinct_genres": 8,
+      "mean_coverage": 0.485,
+      "mean_final": 0.2886,
+      "tiers": {
+        "strong": 6,
+        "related": 6,
+        "emerging": 10,
+        "experimental": 4
+      },
+      "provider_null": 0,
+      "provider_zero": 10
+    },
+    "v2": {
+      "size": 26,
+      "distinct_artists": 14,
+      "max_per_artist": 2,
+      "distinct_genres": 8,
+      "mean_coverage": 0.485,
+      "mean_final": 0.2886,
+      "tiers": {
+        "strong": 6,
+        "related": 6,
+        "emerging": 10,
+        "experimental": 4
+      },
+      "provider_null": 0,
+      "provider_zero": 10
+    },
+    "queue_overlap": "26/26",
+    "entered_in_v2": [],
+    "left_in_v2": []
+  },
+  "familiar": {
+    "v1": {
+      "size": 26,
+      "distinct_artists": 14,
+      "max_per_artist": 2,
+      "distinct_genres": 8,
+      "mean_coverage": 0.4718,
+      "mean_final": 0.2703,
+      "tiers": {
+        "strong": 7,
+        "related": 6,
+        "emerging": 9,
+        "experimental": 4
+      },
+      "provider_null": 0,
+      "provider_zero": 9
+    },
+    "v2": {
+      "size": 26,
+      "distinct_artists": 14,
+      "max_per_artist": 2,
+      "distinct_genres": 8,
+      "mean_coverage": 0.4718,
+      "mean_final": 0.2703,
+      "tiers": {
+        "strong": 7,
+        "related": 6,
+        "emerging": 9,
+        "experimental": 4
+      },
+      "provider_null": 0,
+      "provider_zero": 9
+    },
+    "queue_overlap": "26/26",
+    "entered_in_v2": [],
+    "left_in_v2": []
+  },
+  "adventurous": {
+    "v1": {
+      "size": 26,
+      "distinct_artists": 14,
+      "max_per_artist": 2,
+      "distinct_genres": 8,
+      "mean_coverage": 0.4771,
+      "mean_final": 0.3134,
+      "tiers": {
+        "emerging": 8,
+        "experimental": 6,
+        "related": 10,
+        "strong": 2
+      },
+      "provider_null": 0,
+      "provider_zero": 11
+    },
+    "v2": {
+      "size": 26,
+      "distinct_artists": 14,
+      "max_per_artist": 2,
+      "distinct_genres": 8,
+      "mean_coverage": 0.4771,
+      "mean_final": 0.3134,
+      "tiers": {
+        "emerging": 8,
+        "experimental": 6,
+        "related": 10,
+        "strong": 2
+      },
+      "provider_null": 0,
+      "provider_zero": 11
+    },
+    "queue_overlap": "26/26",
+    "entered_in_v2": [],
+    "left_in_v2": []
+  }
+}
