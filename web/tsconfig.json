@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node", "vite/client"],
+    "paths": {
+      "@now-playing/aqua-ui/airwave-art": ["../../packages/aqua-ui/src/airwave/aqua-art.ts"],
+      "@now-playing/aqua-ui/icons": ["../../packages/aqua-ui/src/icons/index.ts"]
+    },
+    "exactOptionalPropertyTypes": false
+  },
+  "include": ["src", "vite.config.ts", "../../packages/aqua-ui/src/declarations.d.ts"]
+}

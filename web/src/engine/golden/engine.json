@@ -1,0 +1,2717 @@
+{
+ "generator": "server/tools/golden_engine.py",
+ "now": "2026-10-26",
+ "now_ts": 1793000000.0,
+ "seeds": [
+  {
+   "key": "seedA",
+   "title": "Seed A",
+   "artists": [
+    "Artist 0"
+   ],
+   "tags": [
+    {
+     "name": "indie",
+     "label": "indie rock",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.9,
+     "inferred": false
+    }
+   ],
+   "bpm": 120.0,
+   "emphasis": 1.0
+  },
+  {
+   "key": "seedB",
+   "title": "Seed B",
+   "artists": [
+    "Artist 3"
+   ],
+   "tags": [
+    {
+     "name": "jazz",
+     "label": "jazz",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.9,
+     "inferred": false
+    }
+   ],
+   "bpm": 96.0,
+   "emphasis": 1.5
+  }
+ ],
+ "candidates": [
+  {
+   "key": "c0",
+   "title": "c song 0",
+   "artists": [
+    "Artist 0"
+   ],
+   "tags": [
+    {
+     "name": "electronic",
+     "label": "electronic",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.78,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "recent",
+     "rank": 4
+    }
+   ],
+   "release": null,
+   "bpm": null
+  },
+  {
+   "key": "c1",
+   "title": "c song 1",
+   "artists": [
+    "Artist 7"
+   ],
+   "tags": [
+    {
+     "name": "jazz",
+     "label": "jazz",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.86,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "genre_chart",
+     "rank": 6
+    }
+   ],
+   "release": {
+    "date": "2026-10-08",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": null
+  },
+  {
+   "key": "c2",
+   "title": "c song 2",
+   "artists": [
+    "Artist 4"
+   ],
+   "tags": [
+    {
+     "name": "rock",
+     "label": "rock",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.8,
+     "inferred": false
+    }
+   ],
+   "provenance": [],
+   "release": null,
+   "bpm": 111.04178175692196
+  },
+  {
+   "key": "c3",
+   "title": "c song 3",
+   "artists": [
+    "Artist 0"
+   ],
+   "tags": [
+    {
+     "name": "rock",
+     "label": "rock",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.68,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "related_song",
+     "rank": 6
+    }
+   ],
+   "release": {
+    "date": "2026-10-02",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 138.73224653778956
+  },
+  {
+   "key": "c4",
+   "title": "c song 4",
+   "artists": [
+    "Artist 1"
+   ],
+   "tags": [
+    {
+     "name": "lo-fi",
+     "label": "lo-fi",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.67,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "genre_chart",
+     "rank": 5
+    }
+   ],
+   "release": {
+    "date": "2026-10-07",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 140.4948489390768
+  },
+  {
+   "key": "c5",
+   "title": "c song 5",
+   "artists": [
+    "Artist 0"
+   ],
+   "tags": [
+    {
+     "name": "lo-fi",
+     "label": "lo-fi",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.55,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "radio",
+     "rank": 8
+    },
+    {
+     "seed": "seedB",
+     "relation": "sc_recommended",
+     "rank": 1
+    }
+   ],
+   "release": null,
+   "bpm": 116.37440616460533
+  },
+  {
+   "key": "c6",
+   "title": "c song 6",
+   "artists": [
+    "Artist 1"
+   ],
+   "tags": [
+    {
+     "name": "jazz",
+     "label": "jazz",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.98,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "artist_radio",
+     "rank": 4
+    }
+   ],
+   "release": null,
+   "bpm": 104.9757415854649
+  },
+  {
+   "key": "c7",
+   "title": "c song 7",
+   "artists": [
+    "Artist 7"
+   ],
+   "tags": [
+    {
+     "name": "jazz",
+     "label": "jazz",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.61,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "related_artist_top",
+     "rank": 3
+    }
+   ],
+   "release": {
+    "date": "2026-10-12",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 140.95255884303344
+  },
+  {
+   "key": "c8",
+   "title": "c song 8",
+   "artists": [
+    "Artist 11"
+   ],
+   "tags": [
+    {
+     "name": "hip-hop",
+     "label": "hip hop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.85,
+     "inferred": false
+    }
+   ],
+   "provenance": [],
+   "release": null,
+   "bpm": null
+  },
+  {
+   "key": "c9",
+   "title": "c song 9",
+   "artists": [
+    "Artist 1"
+   ],
+   "tags": [
+    {
+     "name": "electronic",
+     "label": "electronic",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.61,
+     "inferred": false
+    }
+   ],
+   "provenance": [],
+   "release": {
+    "date": "2026-10-02",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 83.35316247007539
+  },
+  {
+   "key": "c10",
+   "title": "c song 10",
+   "artists": [
+    "Artist 4"
+   ],
+   "tags": [
+    {
+     "name": "hip-hop",
+     "label": "hip hop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.86,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "related_artist_top",
+     "rank": 3
+    },
+    {
+     "seed": "seedB",
+     "relation": "artist_radio",
+     "rank": 0
+    }
+   ],
+   "release": {
+    "date": "2026-10-22",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 90.44784248678798
+  },
+  {
+   "key": "c11",
+   "title": "c song 11",
+   "artists": [
+    "Artist 6"
+   ],
+   "tags": [
+    {
+     "name": "pop",
+     "label": "pop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.97,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "radio",
+     "rank": 0
+    },
+    {
+     "seed": "seedB",
+     "relation": "sc_recommended",
+     "rank": 5
+    }
+   ],
+   "release": {
+    "date": "2026-10-20",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 91.21821056017681
+  },
+  {
+   "key": "c12",
+   "title": "c song 12",
+   "artists": [
+    "Artist 2"
+   ],
+   "tags": [
+    {
+     "name": "indie",
+     "label": "indie rock",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.73,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "artist_radio",
+     "rank": 10
+    },
+    {
+     "seed": "seedB",
+     "relation": "recent",
+     "rank": 7
+    }
+   ],
+   "release": null,
+   "bpm": 120.52263466505472
+  },
+  {
+   "key": "c13",
+   "title": "c song 13",
+   "artists": [
+    "Artist 3"
+   ],
+   "tags": [
+    {
+     "name": "rock",
+     "label": "rock",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.89,
+     "inferred": false
+    }
+   ],
+   "provenance": [],
+   "release": {
+    "date": "2026-10-04",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": null
+  },
+  {
+   "key": "c14",
+   "title": "c song 14",
+   "artists": [
+    "Artist 7"
+   ],
+   "tags": [
+    {
+     "name": "soul",
+     "label": "soul",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.89,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "related_artist_top",
+     "rank": 8
+    },
+    {
+     "seed": "seedB",
+     "relation": "related_song",
+     "rank": 7
+    }
+   ],
+   "release": null,
+   "bpm": 134.4951445278199
+  },
+  {
+   "key": "c15",
+   "title": "c song 15",
+   "artists": [
+    "Artist 3"
+   ],
+   "tags": [
+    {
+     "name": "pop",
+     "label": "pop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.47,
+     "inferred": false
+    }
+   ],
+   "provenance": [],
+   "release": null,
+   "bpm": 96.56833230856125
+  },
+  {
+   "key": "c16",
+   "title": "c song 16",
+   "artists": [
+    "Artist 13"
+   ],
+   "tags": [
+    {
+     "name": "indie",
+     "label": "indie rock",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.69,
+     "inferred": false
+    }
+   ],
+   "provenance": [],
+   "release": null,
+   "bpm": 93.91877845999119
+  },
+  {
+   "key": "c17",
+   "title": "c song 17",
+   "artists": [
+    "Artist 12"
+   ],
+   "tags": [
+    {
+     "name": "jazz",
+     "label": "jazz",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.77,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "related_song",
+     "rank": 0
+    }
+   ],
+   "release": null,
+   "bpm": 101.73441681390817
+  },
+  {
+   "key": "c18",
+   "title": "c song 18",
+   "artists": [
+    "Artist 5"
+   ],
+   "tags": [
+    {
+     "name": "indie",
+     "label": "indie rock",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.44,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "artist_radio",
+     "rank": 7
+    }
+   ],
+   "release": null,
+   "bpm": null
+  },
+  {
+   "key": "c19",
+   "title": "c song 19",
+   "artists": [
+    "Artist 4"
+   ],
+   "tags": [
+    {
+     "name": "jazz",
+     "label": "jazz",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.87,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "recent",
+     "rank": 2
+    }
+   ],
+   "release": {
+    "date": "2026-10-19",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": null
+  },
+  {
+   "key": "c20",
+   "title": "c song 20",
+   "artists": [
+    "Artist 2"
+   ],
+   "tags": [
+    {
+     "name": "indie",
+     "label": "indie rock",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.4,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "recent",
+     "rank": 1
+    }
+   ],
+   "release": {
+    "date": "2026-10-24",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 128.43561117250954
+  },
+  {
+   "key": "c21",
+   "title": "c song 21",
+   "artists": [
+    "Artist 6"
+   ],
+   "tags": [
+    {
+     "name": "electronic",
+     "label": "electronic",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.97,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "related_artist_top",
+     "rank": 3
+    }
+   ],
+   "release": {
+    "date": "2026-10-21",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 96.75488480804557
+  },
+  {
+   "key": "c22",
+   "title": "c song 22",
+   "artists": [
+    "Artist 0"
+   ],
+   "tags": [
+    {
+     "name": "soul",
+     "label": "soul",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.83,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "related_song",
+     "rank": 6
+    }
+   ],
+   "release": {
+    "date": "2026-10-13",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 133.05775458728627
+  },
+  {
+   "key": "c23",
+   "title": "c song 23",
+   "artists": [
+    "Artist 0"
+   ],
+   "tags": [
+    {
+     "name": "pop",
+     "label": "pop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.77,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "radio",
+     "rank": 11
+    },
+    {
+     "seed": "seedB",
+     "relation": "radio",
+     "rank": 3
+    }
+   ],
+   "release": null,
+   "bpm": 132.02585694338632
+  },
+  {
+   "key": "c24",
+   "title": "c song 24",
+   "artists": [
+    "Artist 1"
+   ],
+   "tags": [
+    {
+     "name": "lo-fi",
+     "label": "lo-fi",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.74,
+     "inferred": false
+    }
+   ],
+   "provenance": [],
+   "release": null,
+   "bpm": 101.90067862796292
+  },
+  {
+   "key": "c25",
+   "title": "c song 25",
+   "artists": [
+    "Artist 5"
+   ],
+   "tags": [
+    {
+     "name": "hip-hop",
+     "label": "hip hop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.4,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "artist_radio",
+     "rank": 6
+    }
+   ],
+   "release": null,
+   "bpm": null
+  },
+  {
+   "key": "c26",
+   "title": "c song 26",
+   "artists": [
+    "Artist 8"
+   ],
+   "tags": [
+    {
+     "name": "lo-fi",
+     "label": "lo-fi",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.71,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "artist_radio",
+     "rank": 3
+    }
+   ],
+   "release": null,
+   "bpm": null
+  },
+  {
+   "key": "c27",
+   "title": "c song 27",
+   "artists": [
+    "Artist 2"
+   ],
+   "tags": [
+    {
+     "name": "hip-hop",
+     "label": "hip hop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.43,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "radio",
+     "rank": 2
+    },
+    {
+     "seed": "seedB",
+     "relation": "genre_chart",
+     "rank": 10
+    }
+   ],
+   "release": null,
+   "bpm": 146.98499544041064
+  },
+  {
+   "key": "c28",
+   "title": "c song 28",
+   "artists": [
+    "Artist 5"
+   ],
+   "tags": [
+    {
+     "name": "pop",
+     "label": "pop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.5,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "radio",
+     "rank": 8
+    }
+   ],
+   "release": null,
+   "bpm": 118.3790500885218
+  },
+  {
+   "key": "c29",
+   "title": "c song 29",
+   "artists": [
+    "Artist 7"
+   ],
+   "tags": [
+    {
+     "name": "jazz",
+     "label": "jazz",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.48,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "genre_chart",
+     "rank": 8
+    }
+   ],
+   "release": {
+    "date": "2026-10-01",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 155.6404248550553
+  },
+  {
+   "key": "c30",
+   "title": "c song 30",
+   "artists": [
+    "Artist 9"
+   ],
+   "tags": [
+    {
+     "name": "pop",
+     "label": "pop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.53,
+     "inferred": false
+    }
+   ],
+   "provenance": [],
+   "release": null,
+   "bpm": 112.56197399264103
+  },
+  {
+   "key": "c31",
+   "title": "c song 31",
+   "artists": [
+    "Artist 1"
+   ],
+   "tags": [
+    {
+     "name": "jazz",
+     "label": "jazz",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.59,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "sc_recommended",
+     "rank": 0
+    }
+   ],
+   "release": {
+    "date": "2026-10-01",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 136.64317511085486
+  },
+  {
+   "key": "c32",
+   "title": "c song 32",
+   "artists": [
+    "Artist 5"
+   ],
+   "tags": [
+    {
+     "name": "hip-hop",
+     "label": "hip hop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.87,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "sc_recommended",
+     "rank": 3
+    },
+    {
+     "seed": "seedB",
+     "relation": "radio",
+     "rank": 5
+    }
+   ],
+   "release": {
+    "date": "2026-10-14",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": null
+  },
+  {
+   "key": "c33",
+   "title": "c song 33",
+   "artists": [
+    "Artist 8"
+   ],
+   "tags": [
+    {
+     "name": "pop",
+     "label": "pop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.67,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "recent",
+     "rank": 3
+    }
+   ],
+   "release": null,
+   "bpm": 128.35305647222162
+  },
+  {
+   "key": "c34",
+   "title": "c song 34",
+   "artists": [
+    "Artist 7"
+   ],
+   "tags": [
+    {
+     "name": "pop",
+     "label": "pop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.69,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "recent",
+     "rank": 11
+    }
+   ],
+   "release": null,
+   "bpm": 159.3306499082845
+  },
+  {
+   "key": "c35",
+   "title": "c song 35",
+   "artists": [
+    "Artist 4"
+   ],
+   "tags": [
+    {
+     "name": "lo-fi",
+     "label": "lo-fi",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.47,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "genre_chart",
+     "rank": 11
+    },
+    {
+     "seed": "seedB",
+     "relation": "sc_recommended",
+     "rank": 5
+    }
+   ],
+   "release": null,
+   "bpm": 99.05607772933806
+  },
+  {
+   "key": "c36",
+   "title": "c song 36",
+   "artists": [
+    "Artist 5"
+   ],
+   "tags": [
+    {
+     "name": "hip-hop",
+     "label": "hip hop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.42,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "artist_radio",
+     "rank": 3
+    },
+    {
+     "seed": "seedB",
+     "relation": "related_artist_top",
+     "rank": 1
+    }
+   ],
+   "release": {
+    "date": "2026-10-08",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 117.76732134932672
+  },
+  {
+   "key": "c37",
+   "title": "c song 37",
+   "artists": [
+    "Artist 4"
+   ],
+   "tags": [
+    {
+     "name": "soul",
+     "label": "soul",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.87,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "radio",
+     "rank": 2
+    }
+   ],
+   "release": {
+    "date": "2026-10-23",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": null
+  },
+  {
+   "key": "c38",
+   "title": "c song 38",
+   "artists": [
+    "Artist 4"
+   ],
+   "tags": [
+    {
+     "name": "pop",
+     "label": "pop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.94,
+     "inferred": false
+    }
+   ],
+   "provenance": [],
+   "release": null,
+   "bpm": null
+  },
+  {
+   "key": "c39",
+   "title": "c song 39",
+   "artists": [
+    "Artist 2"
+   ],
+   "tags": [
+    {
+     "name": "lo-fi",
+     "label": "lo-fi",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.55,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "related_artist_top",
+     "rank": 8
+    }
+   ],
+   "release": null,
+   "bpm": null
+  },
+  {
+   "key": "c40",
+   "title": "c song 40",
+   "artists": [
+    "Artist 8"
+   ],
+   "tags": [
+    {
+     "name": "indie",
+     "label": "indie rock",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.42,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "related_song",
+     "rank": 1
+    }
+   ],
+   "release": null,
+   "bpm": 90.12481202110432
+  },
+  {
+   "key": "c41",
+   "title": "c song 41",
+   "artists": [
+    "Artist 4"
+   ],
+   "tags": [
+    {
+     "name": "hip-hop",
+     "label": "hip hop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.62,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "recent",
+     "rank": 6
+    },
+    {
+     "seed": "seedB",
+     "relation": "radio",
+     "rank": 8
+    }
+   ],
+   "release": {
+    "date": "2026-10-17",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 105.25140694680907
+  },
+  {
+   "key": "c42",
+   "title": "c song 42",
+   "artists": [
+    "Artist 11"
+   ],
+   "tags": [
+    {
+     "name": "indie",
+     "label": "indie rock",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.8,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "genre_chart",
+     "rank": 5
+    },
+    {
+     "seed": "seedB",
+     "relation": "genre_chart",
+     "rank": 5
+    }
+   ],
+   "release": null,
+   "bpm": 150.9053261175464
+  },
+  {
+   "key": "c43",
+   "title": "c song 43",
+   "artists": [
+    "Artist 10"
+   ],
+   "tags": [
+    {
+     "name": "rock",
+     "label": "rock",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.57,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "recent",
+     "rank": 2
+    }
+   ],
+   "release": null,
+   "bpm": 82.56680157896318
+  },
+  {
+   "key": "c44",
+   "title": "c song 44",
+   "artists": [
+    "Artist 8"
+   ],
+   "tags": [
+    {
+     "name": "pop",
+     "label": "pop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.99,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "sc_recommended",
+     "rank": 11
+    }
+   ],
+   "release": null,
+   "bpm": 98.10840878052696
+  },
+  {
+   "key": "c45",
+   "title": "c song 45",
+   "artists": [
+    "Artist 6"
+   ],
+   "tags": [
+    {
+     "name": "lo-fi",
+     "label": "lo-fi",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.95,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "radio",
+     "rank": 8
+    }
+   ],
+   "release": {
+    "date": "2026-10-19",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 91.7646981892789
+  },
+  {
+   "key": "c46",
+   "title": "c song 46",
+   "artists": [
+    "Artist 0"
+   ],
+   "tags": [
+    {
+     "name": "lo-fi",
+     "label": "lo-fi",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.43,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "artist_radio",
+     "rank": 1
+    }
+   ],
+   "release": null,
+   "bpm": null
+  },
+  {
+   "key": "c47",
+   "title": "c song 47",
+   "artists": [
+    "Artist 8"
+   ],
+   "tags": [
+    {
+     "name": "lo-fi",
+     "label": "lo-fi",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.75,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "genre_chart",
+     "rank": 1
+    }
+   ],
+   "release": null,
+   "bpm": 138.58812564572372
+  },
+  {
+   "key": "c48",
+   "title": "c song 48",
+   "artists": [
+    "Artist 13"
+   ],
+   "tags": [
+    {
+     "name": "jazz",
+     "label": "jazz",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.5,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "related_artist_top",
+     "rank": 8
+    }
+   ],
+   "release": null,
+   "bpm": null
+  },
+  {
+   "key": "c49",
+   "title": "c song 49",
+   "artists": [
+    "Artist 0"
+   ],
+   "tags": [
+    {
+     "name": "soul",
+     "label": "soul",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.79,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "artist_radio",
+     "rank": 6
+    },
+    {
+     "seed": "seedB",
+     "relation": "recent",
+     "rank": 6
+    }
+   ],
+   "release": null,
+   "bpm": 128.96054435571753
+  },
+  {
+   "key": "c50",
+   "title": "c song 50",
+   "artists": [
+    "Artist 12"
+   ],
+   "tags": [
+    {
+     "name": "electronic",
+     "label": "electronic",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.98,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "sc_recommended",
+     "rank": 1
+    }
+   ],
+   "release": {
+    "date": "2026-10-19",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 84.72289208938341
+  },
+  {
+   "key": "c51",
+   "title": "c song 51",
+   "artists": [
+    "Artist 2"
+   ],
+   "tags": [
+    {
+     "name": "rock",
+     "label": "rock",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.54,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "genre_chart",
+     "rank": 4
+    }
+   ],
+   "release": null,
+   "bpm": 118.01016344630443
+  },
+  {
+   "key": "c52",
+   "title": "c song 52",
+   "artists": [
+    "Artist 5"
+   ],
+   "tags": [
+    {
+     "name": "electronic",
+     "label": "electronic",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.87,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "sc_recommended",
+     "rank": 5
+    }
+   ],
+   "release": null,
+   "bpm": null
+  },
+  {
+   "key": "c53",
+   "title": "c song 53",
+   "artists": [
+    "Artist 1"
+   ],
+   "tags": [
+    {
+     "name": "electronic",
+     "label": "electronic",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.84,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "radio",
+     "rank": 5
+    }
+   ],
+   "release": null,
+   "bpm": 89.28531459976557
+  },
+  {
+   "key": "c54",
+   "title": "c song 54",
+   "artists": [
+    "Artist 11"
+   ],
+   "tags": [
+    {
+     "name": "indie",
+     "label": "indie rock",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.87,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedB",
+     "relation": "recent",
+     "rank": 8
+    }
+   ],
+   "release": null,
+   "bpm": 143.66434099093004
+  },
+  {
+   "key": "c55",
+   "title": "c song 55",
+   "artists": [
+    "Artist 2"
+   ],
+   "tags": [
+    {
+     "name": "jazz",
+     "label": "jazz",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.84,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "genre_chart",
+     "rank": 8
+    },
+    {
+     "seed": "seedB",
+     "relation": "related_song",
+     "rank": 7
+    }
+   ],
+   "release": null,
+   "bpm": 124.84418032212588
+  },
+  {
+   "key": "c56",
+   "title": "c song 56",
+   "artists": [
+    "Artist 6"
+   ],
+   "tags": [
+    {
+     "name": "hip-hop",
+     "label": "hip hop",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.86,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "related_song",
+     "rank": 9
+    }
+   ],
+   "release": null,
+   "bpm": 100.02500849374596
+  },
+  {
+   "key": "c57",
+   "title": "c song 57",
+   "artists": [
+    "Artist 13"
+   ],
+   "tags": [
+    {
+     "name": "jazz",
+     "label": "jazz",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.73,
+     "inferred": false
+    }
+   ],
+   "provenance": [],
+   "release": {
+    "date": "2026-10-25",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 153.9045559227369
+  },
+  {
+   "key": "c58",
+   "title": "c song 58",
+   "artists": [
+    "Artist 4"
+   ],
+   "tags": [
+    {
+     "name": "indie",
+     "label": "indie rock",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.96,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "sc_recommended",
+     "rank": 10
+    },
+    {
+     "seed": "seedB",
+     "relation": "related_song",
+     "rank": 3
+    }
+   ],
+   "release": {
+    "date": "2026-10-01",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": null
+  },
+  {
+   "key": "c59",
+   "title": "c song 59",
+   "artists": [
+    "Artist 3"
+   ],
+   "tags": [
+    {
+     "name": "lo-fi",
+     "label": "lo-fi",
+     "source": "Deezer",
+     "scope": "album",
+     "confidence": 0.94,
+     "inferred": false
+    }
+   ],
+   "provenance": [
+    {
+     "seed": "seedA",
+     "relation": "genre_chart",
+     "rank": 0
+    },
+    {
+     "seed": "seedB",
+     "relation": "recent",
+     "rank": 2
+    }
+   ],
+   "release": {
+    "date": "2026-10-22",
+    "precision": "day",
+    "kind": "release",
+    "source": "Deezer"
+   },
+   "bpm": 114.71136996265857
+  }
+ ],
+ "vectors": {
+  "seedA": [
+   0.316069697292504,
+   0.190480439094366,
+   0.59315270951997,
+   0.094714490668312,
+   0.294286012641908,
+   -0.405157187178795,
+   -0.089491906768765,
+   0.49421733304892
+  ],
+  "seedB": [
+   0.362598795148092,
+   -0.170013411636685,
+   0.420413810381541,
+   0.288614254522883,
+   -0.563861632334238,
+   -0.067533955667232,
+   -0.018000346009902,
+   -0.506701890369782
+  ],
+  "c0": [
+   0.39102003501357,
+   -0.159337748829702,
+   -0.759559569087009,
+   0.092682689256847,
+   -0.173532816232149,
+   -0.343479408506633,
+   -0.02912674454817,
+   -0.295387685103567
+  ],
+  "c1": [
+   -0.000506736537789,
+   0.156213055759695,
+   -0.139443636564746,
+   0.028883629821769,
+   -0.875740818235064,
+   0.23591317352127,
+   0.35874141409064,
+   -0.063608366042288
+  ],
+  "c2": [
+   0.172139124619398,
+   -0.091162772706815,
+   0.502220642646187,
+   0.132098583920836,
+   0.197985492585534,
+   0.086421465646842,
+   0.721685788936585,
+   -0.353390093129291
+  ],
+  "c3": [
+   -0.208162710261906,
+   -0.115621388313849,
+   0.600806609979324,
+   -0.661409177807103,
+   0.125426560151984,
+   0.064482554150926,
+   -0.1514064817238,
+   -0.319461348286635
+  ],
+  "c4": [
+   0.351293293795886,
+   0.055786127264852,
+   -0.240456751082887,
+   -0.337261363865715,
+   -0.544080476388089,
+   0.273916976628367,
+   0.426549356040928,
+   0.385898723799499
+  ],
+  "c5": [
+   0.298811777195487,
+   -0.298464505521832,
+   0.59771468268877,
+   0.360337800797363,
+   0.179570083075132,
+   0.000646972521353,
+   -0.549702040727293,
+   -0.010301518279487
+  ],
+  "c6": [
+   0.371919695744998,
+   -0.557664086022623,
+   -0.308269367460205,
+   -0.322286350922916,
+   -0.024399026977855,
+   -0.587677137160436,
+   -0.076343059280084,
+   -0.000139331192303
+  ],
+  "c7": [
+   -0.322224052410426,
+   0.014076700238636,
+   -0.349756197445145,
+   -0.044403163682553,
+   0.215328308715857,
+   -0.454701599586352,
+   -0.452594449107623,
+   -0.56009901570922
+  ],
+  "c8": [
+   -0.368443571350733,
+   0.420670078711361,
+   -0.312006573017733,
+   0.05516343648457,
+   -0.017522704555714,
+   -0.031302315372135,
+   0.050572337884384,
+   -0.7635774170276
+  ],
+  "c9": [
+   0.285595356371126,
+   -0.851924829784611,
+   0.340968824446745,
+   -0.031887568502008,
+   -0.064298276837156,
+   0.220242499604549,
+   0.057875506572511,
+   0.139255948701782
+  ],
+  "c10": [
+   0.793483347582404,
+   -0.363690960278674,
+   -0.103327274445978,
+   -0.132136250651991,
+   0.117923372713061,
+   -0.41517049365019,
+   -0.133747103248561,
+   -0.076261391824762
+  ],
+  "c11": [
+   0.204670333188361,
+   0.407016546847167,
+   -0.562362453106957,
+   0.343307182466514,
+   -0.211197650179878,
+   0.032189996443644,
+   -0.485916207968814,
+   -0.276732778377023
+  ]
+ },
+ "events": [
+  {
+   "event_id": "e1",
+   "key": "c3",
+   "kind": "like",
+   "artist": "artist 0",
+   "ts": 1792913600.0
+  },
+  {
+   "event_id": "e2",
+   "key": "c7",
+   "kind": "dislike",
+   "artist": "artist 7",
+   "ts": 1792996400.0
+  },
+  {
+   "event_id": "e3",
+   "key": "c9",
+   "kind": "hide",
+   "artist": "artist 1",
+   "ts": 1792992800.0
+  },
+  {
+   "event_id": "e4",
+   "key": "c11",
+   "kind": "skip",
+   "artist": "artist 1",
+   "ts": 1792999900.0
+  }
+ ],
+ "related_artists": {
+  "seedA": [
+   "artist 1",
+   "artist 2",
+   "artist 5"
+  ],
+  "seedB": [
+   "artist 6",
+   "artist 8"
+  ]
+ },
+ "impressions": {
+  "c1": 2,
+  "c5": 9
+ },
+ "expected": {
+  "neutral": [
+   {
+    "key": "c22",
+    "final": 0.445025543773,
+    "affinity": 0.565111801617,
+    "coverage": 0.527777777778,
+    "tier": "strong",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c32",
+    "final": 0.39682975239,
+    "affinity": 0.556954038443,
+    "coverage": 0.361111111111,
+    "tier": "related",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c19",
+    "final": 0.305680247883,
+    "affinity": 0.429024909309,
+    "coverage": 0.361111111111,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c21",
+    "final": 0.393017510029,
+    "affinity": 0.532905098345,
+    "coverage": 0.416666666667,
+    "tier": "strong",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c51",
+    "final": 0.279039339434,
+    "affinity": 0.36005076056,
+    "coverage": 0.5,
+    "tier": "experimental",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c15",
+    "final": 0.270476901428,
+    "affinity": 0.349002453456,
+    "coverage": 0.5,
+    "tier": "related",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c44",
+    "final": 0.368098121533,
+    "affinity": 0.499116096994,
+    "coverage": 0.416666666667,
+    "tier": "strong",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c58",
+    "final": 0.358658230803,
+    "affinity": 0.503379973057,
+    "coverage": 0.361111111111,
+    "tier": "emerging",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c45",
+    "final": 0.294296129033,
+    "affinity": 0.379736940688,
+    "coverage": 0.5,
+    "tier": "related",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c49",
+    "final": 0.405205807613,
+    "affinity": 0.514547057287,
+    "coverage": 0.527777777778,
+    "tier": "strong",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c59",
+    "final": 0.345476091686,
+    "affinity": 0.468442158219,
+    "coverage": 0.416666666667,
+    "tier": "strong",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c31",
+    "final": 0.315033850228,
+    "affinity": 0.400042984417,
+    "coverage": 0.527777777778,
+    "tier": "related",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c50",
+    "final": 0.262088125894,
+    "affinity": 0.355373730026,
+    "coverage": 0.416666666667,
+    "tier": "emerging",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c36",
+    "final": 0.399744943584,
+    "affinity": 0.542027042148,
+    "coverage": 0.416666666667,
+    "tier": "strong",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c29",
+    "final": 0.227644101187,
+    "affinity": 0.275932243863,
+    "coverage": 0.611111111111,
+    "tier": "experimental",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c55",
+    "final": 0.271464881653,
+    "affinity": 0.368087975123,
+    "coverage": 0.416666666667,
+    "tier": "related",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c14",
+    "final": 0.243290995485,
+    "affinity": 0.308940946647,
+    "coverage": 0.527777777778,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c40",
+    "final": 0.252992605041,
+    "affinity": 0.343040820394,
+    "coverage": 0.416666666667,
+    "tier": "related",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c4",
+    "final": 0.202935029513,
+    "affinity": 0.202935029513,
+    "coverage": 1.0,
+    "tier": "experimental",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c17",
+    "final": 0.271745392087,
+    "affinity": 0.350639215596,
+    "coverage": 0.5,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c57",
+    "final": 0.249340064757,
+    "affinity": 0.321729115816,
+    "coverage": 0.5,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c42",
+    "final": 0.199516,
+    "affinity": 0.25744,
+    "coverage": 0.5,
+    "tier": "experimental",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c48",
+    "final": 0.219321290323,
+    "affinity": 0.307819354839,
+    "coverage": 0.361111111111,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c43",
+    "final": 0.168648576852,
+    "affinity": 0.228676036409,
+    "coverage": 0.416666666667,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c54",
+    "final": 0.2223424,
+    "affinity": 0.286893419355,
+    "coverage": 0.5,
+    "tier": "emerging",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c30",
+    "final": 0.118721141806,
+    "affinity": 0.153188570072,
+    "coverage": 0.5,
+    "tier": "emerging",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   }
+  ],
+  "familiar": [
+   {
+    "key": "c22",
+    "final": 0.482622703218,
+    "affinity": 0.621053869445,
+    "coverage": 0.504672897196,
+    "tier": "strong",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c32",
+    "final": 0.408772290482,
+    "affinity": 0.57249522358,
+    "coverage": 0.364485981308,
+    "tier": "related",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c21",
+    "final": 0.396242085085,
+    "affinity": 0.539070605265,
+    "coverage": 0.411214953271,
+    "tier": "strong",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c44",
+    "final": 0.377365658803,
+    "affinity": 0.513390025326,
+    "coverage": 0.411214953271,
+    "tier": "strong",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c13",
+    "final": 0.318306472082,
+    "affinity": 0.426935662962,
+    "coverage": 0.434579439252,
+    "tier": "related",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c23",
+    "final": 0.456042989678,
+    "affinity": 0.586850269339,
+    "coverage": 0.504672897196,
+    "tier": "strong",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c19",
+    "final": 0.242934713795,
+    "affinity": 0.340235790263,
+    "coverage": 0.364485981308,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c59",
+    "final": 0.392522388442,
+    "affinity": 0.534010115236,
+    "coverage": 0.411214953271,
+    "tier": "strong",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c18",
+    "final": 0.349082186578,
+    "affinity": 0.488897826752,
+    "coverage": 0.364485981308,
+    "tier": "related",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c12",
+    "final": 0.414106653262,
+    "affinity": 0.563374595029,
+    "coverage": 0.411214953271,
+    "tier": "strong",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c20",
+    "final": 0.323140566912,
+    "affinity": 0.421530517032,
+    "coverage": 0.481308411215,
+    "tier": "strong",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c11",
+    "final": 0.312372737772,
+    "affinity": 0.322546518134,
+    "coverage": 0.929906542056,
+    "tier": "related",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c47",
+    "final": 0.186054769234,
+    "affinity": 0.242704788881,
+    "coverage": 0.481308411215,
+    "tier": "experimental",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c31",
+    "final": 0.296725972126,
+    "affinity": 0.381836187823,
+    "coverage": 0.504672897196,
+    "tier": "related",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c41",
+    "final": 0.238335661318,
+    "affinity": 0.324245591368,
+    "coverage": 0.411214953271,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c53",
+    "final": 0.232262819105,
+    "affinity": 0.298883002336,
+    "coverage": 0.504672897196,
+    "tier": "related",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c17",
+    "final": 0.217534404769,
+    "affinity": 0.295946361224,
+    "coverage": 0.411214953271,
+    "tier": "emerging",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c29",
+    "final": 0.171665740931,
+    "affinity": 0.21228817428,
+    "coverage": 0.57476635514,
+    "tier": "experimental",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c14",
+    "final": 0.199952006589,
+    "affinity": 0.257304446242,
+    "coverage": 0.504672897196,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c42",
+    "final": 0.135556039499,
+    "affinity": 0.176830188679,
+    "coverage": 0.481308411215,
+    "tier": "experimental",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c50",
+    "final": 0.214530735509,
+    "affinity": 0.291859996179,
+    "coverage": 0.411214953271,
+    "tier": "emerging",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c57",
+    "final": 0.187617336427,
+    "affinity": 0.244743127067,
+    "coverage": 0.481308411215,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c48",
+    "final": 0.15556564946,
+    "affinity": 0.217873357228,
+    "coverage": 0.364485981308,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c54",
+    "final": 0.158789253181,
+    "affinity": 0.207137459193,
+    "coverage": 0.481308411215,
+    "tier": "emerging",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c43",
+    "final": 0.112700611137,
+    "affinity": 0.153324416931,
+    "coverage": 0.411214953271,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c30",
+    "final": 0.060161721567,
+    "affinity": 0.078479783087,
+    "coverage": 0.481308411215,
+    "tier": "emerging",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   }
+  ],
+  "adventurous": [
+   {
+    "key": "c58",
+    "final": 0.505978435031,
+    "affinity": 0.725553982308,
+    "coverage": 0.327485380117,
+    "tier": "emerging",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c47",
+    "final": 0.184588510681,
+    "affinity": 0.241874600202,
+    "coverage": 0.473684210526,
+    "tier": "experimental",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c21",
+    "final": 0.472365822373,
+    "affinity": 0.652723681825,
+    "coverage": 0.385964912281,
+    "tier": "related",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c22",
+    "final": 0.463779730259,
+    "affinity": 0.597411177961,
+    "coverage": 0.502923976608,
+    "tier": "strong",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c19",
+    "final": 0.482834439754,
+    "affinity": 0.69236636644,
+    "coverage": 0.327485380117,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c51",
+    "final": 0.276026118576,
+    "affinity": 0.361689396755,
+    "coverage": 0.473684210526,
+    "tier": "experimental",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c36",
+    "final": 0.471441596168,
+    "affinity": 0.651446569251,
+    "coverage": 0.385964912281,
+    "tier": "related",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c11",
+    "final": 0.435041863643,
+    "affinity": 0.452920296395,
+    "coverage": 0.912280701754,
+    "tier": "strong",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c29",
+    "final": 0.40850410226,
+    "affinity": 0.500746964061,
+    "coverage": 0.590643274854,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c42",
+    "final": 0.29334061569,
+    "affinity": 0.384377358491,
+    "coverage": 0.473684210526,
+    "tier": "experimental",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c59",
+    "final": 0.390723812091,
+    "affinity": 0.539909267617,
+    "coverage": 0.385964912281,
+    "tier": "related",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c50",
+    "final": 0.451579385722,
+    "affinity": 0.624000605725,
+    "coverage": 0.385964912281,
+    "tier": "emerging",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c57",
+    "final": 0.441656173627,
+    "affinity": 0.578721882684,
+    "coverage": 0.473684210526,
+    "tier": "strong",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c32",
+    "final": 0.470377793597,
+    "affinity": 0.674504005912,
+    "coverage": 0.327485380117,
+    "tier": "related",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c1",
+    "final": 0.45918298087,
+    "affinity": 0.471593331704,
+    "coverage": 0.941520467836,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.08,
+    "new_release": true
+   },
+   {
+    "key": "c31",
+    "final": 0.434432990189,
+    "affinity": 0.559608597532,
+    "coverage": 0.502923976608,
+    "tier": "strong",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c13",
+    "final": 0.338161174902,
+    "affinity": 0.458933023081,
+    "coverage": 0.415204678363,
+    "tier": "related",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c4",
+    "final": 0.328613065536,
+    "affinity": 0.328613065536,
+    "coverage": 1.0,
+    "tier": "emerging",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c20",
+    "final": 0.435721793731,
+    "affinity": 0.570945798682,
+    "coverage": 0.473684210526,
+    "tier": "strong",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c17",
+    "final": 0.360922691964,
+    "affinity": 0.472933182574,
+    "coverage": 0.473684210526,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c3",
+    "final": 0.385032274666,
+    "affinity": 0.385032274666,
+    "coverage": 1.0,
+    "tier": "related",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": true
+   },
+   {
+    "key": "c48",
+    "final": 0.327904797837,
+    "affinity": 0.470203106332,
+    "coverage": 0.327485380117,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c44",
+    "final": 0.352942127451,
+    "affinity": 0.487701848841,
+    "coverage": 0.385964912281,
+    "tier": "related",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c43",
+    "final": 0.273721409805,
+    "affinity": 0.378233220822,
+    "coverage": 0.385964912281,
+    "tier": "emerging",
+    "best_seed": "seedB",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c54",
+    "final": 0.314802433115,
+    "affinity": 0.412499739944,
+    "coverage": 0.473684210526,
+    "tier": "emerging",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   },
+   {
+    "key": "c30",
+    "final": 0.218283727212,
+    "affinity": 0.286026952898,
+    "coverage": 0.473684210526,
+    "tier": "emerging",
+    "best_seed": "seedA",
+    "exposure_penalty": 0.0,
+    "new_release": false
+   }
+  ]
+ }
+}

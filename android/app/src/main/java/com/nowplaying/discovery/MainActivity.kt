@@ -1,0 +1,217 @@
+package com.nowplaying.discovery
+
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Intent
+import android.graphics.Color
+import android.os.Bundle
+import android.util.Base64
+import android.util.Log
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.ConsoleMessage
+import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import org.json.JSONObject
+import java.io.ByteArrayInputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.Executors
+
+/**
+ * Airwave Discovery on Android, standalone: the web app, the recommendation engine and the audio model all
+ * live inside the APK and run in this WebView. There is no server to install or connect to.
+ *
+ * Two things need the native side:
+ *  - the app's own files are served from the APK's assets over https://appassets.androidplatform.net/ (so
+ *    the page has a real https origin and wasm / ES modules get the right MIME types);
+ *  - network calls to the music services go through [Bridge.request], because the page cannot call
+ *    Deezer or YouTube directly (CORS). Only an allow-list of hosts is reachable.
+ */
+class MainActivity : Activity() {
+  private lateinit var root: FrameLayout
+  private var web: WebView? = null
+  private val pool = Executors.newFixedThreadPool(6)
+
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    root = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#f7f6f3")) }
+    setContentView(root)
+    Downloads.warmUp(this) // unpacks yt-dlp, Python and ffmpeg in the background
+    open()
+  }
+
+  @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
+  private fun open() {
+    val view = WebView(this).apply {
+      settings.javaScriptEnabled = true
+      settings.domStorageEnabled = true
+      settings.mediaPlaybackRequiresUserGesture = false
+      settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+      settings.allowFileAccess = false
+      settings.allowContentAccess = false
+      settings.setSupportZoom(false)
+      setBackgroundColor(Color.parseColor("#f7f6f3"))
+      overScrollMode = View.OVER_SCROLL_NEVER
+      addJavascriptInterface(Bridge(this), "AirwaveNative")
+      webChromeClient = object : WebChromeClient() {
+        override fun onConsoleMessage(m: ConsoleMessage): Boolean {
+          Log.d("AirwaveWeb", "${m.messageLevel()} ${m.message()} (${m.sourceId()}:${m.lineNumber()})")
+          return true
+        }
+      }
+      webViewClient = object : WebViewClient() {
+        override fun shouldInterceptRequest(v: WebView, request: WebResourceRequest): WebResourceResponse? {
+          val u = request.url
+          if (u.scheme == "https" && u.host == APP_HOST) return asset(u.path ?: "/")
+          return null
+        }
+
+        override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean {
+          val target = request.url
+          if (target.host == APP_HOST) return false
+          // YouTube's player loads in an iframe, which is not a top-level navigation. A tapped link to
+          // another site is, and it goes to the browser.
+          if (request.isForMainFrame) {
+            runCatching { startActivity(Intent(Intent.ACTION_VIEW, target)) }
+            return true
+          }
+          return false
+        }
+      }
+      loadUrl("https://$APP_HOST/index.html")
+    }
+    web = view
+    root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+  }
+
+  /** Serve /path from the APK's assets with the right MIME type (wasm and ES modules need them). */
+  private fun asset(rawPath: String): WebResourceResponse {
+    var path = rawPath.trimStart('/')
+    if (path.isEmpty()) path = "index.html"
+    val mime = mimeOf(path)
+    return try {
+      val stream = assets.open("web/$path")
+      val enc = if (mime.startsWith("text/") || mime == "application/json") "utf-8" else null
+      WebResourceResponse(mime, enc, 200, "OK", mapOf("Cache-Control" to "no-cache"), stream)
+    } catch (e: java.io.IOException) {
+      if (!path.substringAfterLast('/').contains('.')) asset("/index.html")
+      else WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+    }
+  }
+
+  private fun mimeOf(path: String): String = when (path.substringAfterLast('.', "").lowercase()) {
+    "html" -> "text/html"
+    "js", "mjs" -> "text/javascript"
+    "css" -> "text/css"
+    "json" -> "application/json"
+    "wasm" -> "application/wasm"
+    "svg" -> "image/svg+xml"
+    "png" -> "image/png"
+    "ico" -> "image/x-icon"
+    "woff2" -> "font/woff2"
+    "md" -> "text/plain"
+    else -> "application/octet-stream"
+  }
+
+  /** What the page can ask the phone to do: HTTP to the music services, nothing else. */
+  inner class Bridge(private val view: WebView) {
+    @JavascriptInterface
+    fun version(): String = BuildConfig.VERSION_NAME
+
+    /** The downloaders (yt-dlp). The answer comes back through window.__awDl(id, json); see Downloads.kt. */
+    @JavascriptInterface
+    fun downloads(id: Int, json: String) {
+      pool.execute {
+        val out = try {
+          Downloads.handle(applicationContext, JSONObject(json))
+        } catch (e: Exception) {
+          JSONObject().put("error", e.message ?: e.javaClass.simpleName)
+        }
+        view.post { view.evaluateJavascript("window.__awDl($id, ${JSONObject.quote(out.toString())})", null) }
+      }
+    }
+
+    /** Fire-and-forget; the answer comes back through window.__awHttp(id, json). */
+    @JavascriptInterface
+    fun request(id: Int, json: String) {
+      pool.execute {
+        val out = JSONObject()
+        try {
+          val req = JSONObject(json)
+          val url = URL(req.getString("url"))
+          if (url.protocol != "https" || !allowed(url.host)) throw SecurityException("host not allowed: ${url.host}")
+          val c = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = req.optString("method", "GET")
+            connectTimeout = 15000
+            readTimeout = req.optInt("timeoutMs", 30000)
+            instanceFollowRedirects = false // the page re-checks each hop against the allow-list
+            req.optJSONObject("headers")?.let { h -> h.keys().forEach { k -> setRequestProperty(k, h.getString(k)) } }
+            if (req.has("body") && !req.isNull("body")) {
+              doOutput = true
+              outputStream.use { it.write(req.getString("body").toByteArray(Charsets.UTF_8)) }
+            }
+          }
+          val status = c.responseCode
+          val stream = if (status >= 400) c.errorStream else c.inputStream
+          val cap = req.optInt("maxBytes", 8_000_000)
+          val bytes = stream?.use { s ->
+            val buf = java.io.ByteArrayOutputStream()
+            val chunk = ByteArray(16384)
+            while (true) {
+              val n = s.read(chunk)
+              if (n < 0) break
+              buf.write(chunk, 0, n)
+              if (buf.size() > cap) throw java.io.IOException("response larger than $cap bytes")
+            }
+            buf.toByteArray()
+          } ?: ByteArray(0)
+          val headers = JSONObject()
+          c.headerFields.forEach { (k, v) -> if (k != null && v.isNotEmpty()) headers.put(k.lowercase(), v.last()) }
+          out.put("status", status).put("headers", headers).put("body", Base64.encodeToString(bytes, Base64.NO_WRAP))
+        } catch (e: Exception) {
+          out.put("error", "${e.javaClass.simpleName}: ${e.message}")
+        }
+        view.post { view.evaluateJavascript("window.__awHttp($id, ${JSONObject.quote(out.toString())})", null) }
+      }
+    }
+  }
+
+  private fun allowed(host: String): Boolean = host in HOSTS || SUFFIXES.any { host.endsWith(it) }
+
+  @Deprecated("Deprecated in Java")
+  override fun onBackPressed() {
+    val w = web
+    if (w != null && w.canGoBack()) w.goBack() else @Suppress("DEPRECATION") super.onBackPressed()
+  }
+
+  override fun onPause() { web?.onPause(); super.onPause() }
+  override fun onResume() { super.onResume(); web?.onResume() }
+  override fun onDestroy() { web?.destroy(); web = null; pool.shutdownNow(); super.onDestroy() }
+
+  private companion object {
+    const val APP_HOST = "appassets.androidplatform.net"
+    // Mirrors server/airwave_discovery/net.py ALLOWED_HOSTS / ALLOWED_SUFFIXES.
+    val HOSTS = setOf(
+      "api.deezer.com", "www.deezer.com", "deezer.com", "deezer.page.link", "link.deezer.com",
+      "open.spotify.com", "spotify.link", "spotify.app.link",
+      "soundcloud.com", "www.soundcloud.com", "m.soundcloud.com", "on.soundcloud.com", "api-v2.soundcloud.com",
+      "www.youtube.com", "youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be",
+      "itunes.apple.com", "music.apple.com",
+      "api-partner.spotify.com", "clienttoken.spotify.com", "open.spotifycdn.com",
+      "open.qobuz.com",
+      "music.amazon.com", "na.web.skill.music.a2z.com",
+      "tidal.com", "resources.tidal.com",
+      "api.song.link",
+      "lrclib.net", "musicbrainz.org",
+      "i.ytimg.com",
+    )
+    val SUFFIXES = listOf(".dzcdn.net", ".sndcdn.com")
+  }
+}

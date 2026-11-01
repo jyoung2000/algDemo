@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Platform theme only: no AppCompat, so the app has no library dependencies. -->
+  <style name="Theme.Discovery" parent="android:Theme.Material.Light.NoActionBar">
+    <item name="android:windowBackground">@color/window</item>
+    <item name="android:statusBarColor">@color/window</item>
+    <item name="android:navigationBarColor">@color/window</item>
+    <item name="android:windowLightStatusBar">true</item>
+    <item name="android:windowLightNavigationBar">true</item>
+  </style>
+</resources>

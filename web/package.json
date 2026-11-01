@@ -1,0 +1,13 @@
+{
+  "name": "@now-playing/discovery-demo-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Airwave Discovery demo: the browser half. Not a pnpm workspace member: it builds with the toolchain hoisted at the repo root (react 19.2.8, vite 8.2.2, typescript 6.0.3, vitest 5.0.0, locked by the root pnpm-lock.yaml) and reads packages/aqua-ui from source. The Python sidecar in ../server serves the built app.",
+  "scripts": {
+    "dev": "node ../../node_modules/vite/bin/vite.js",
+    "build": "node ../../node_modules/vite/bin/vite.js build",
+    "typecheck": "node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "test": "node ../../node_modules/vitest/vitest.mjs run --root . --dir src"
+  }
+}

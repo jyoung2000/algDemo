@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build output
+web/dist/
+android/dist/
+android/app/build/
+android/.gradle/
+android/local.properties
+windows/release/
+windows/release-new/
+server/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Runtime user data (databases, logs, downloaded tools and models)
+.data/
+
+# Logs
+*.log
+
+# Private agent notes (not part of the demo)
+docs/agent-memory.md
+
+# OS noise
+.DS_Store
+Thumbs.db

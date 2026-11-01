@@ -1,0 +1,1557 @@
+{
+ "phase": "done",
+ "count": 12,
+ "asked": 12,
+ "fresh": false,
+ "adventurous": 0.5,
+ "sources": {
+  "deezer-genre-ids": {
+   "state": "ok",
+   "count": 22,
+   "ms": 0
+  },
+  "ytmusic-related:weird fishes arpeggi": {
+   "state": "ok",
+   "count": 20,
+   "ms": 0
+  },
+  "ytmusic-radio:weird fishes arpeggi": {
+   "state": "ok",
+   "count": 21,
+   "ms": 0
+  },
+  "deezer-artist-radio:weird fishes arpeggi": {
+   "state": "ok",
+   "count": 20,
+   "ms": 0
+  },
+  "ytmusic-related:not like us": {
+   "state": "ok",
+   "count": 20,
+   "ms": 0
+  },
+  "deezer-artist-top:weird fishes arpeggi": {
+   "state": "ok",
+   "count": 5,
+   "ms": 1
+  },
+  "ytmusic-radio:not like us": {
+   "state": "ok",
+   "count": 21,
+   "ms": 0
+  },
+  "deezer-artist-top:not like us": {
+   "state": "ok",
+   "count": 5,
+   "ms": 0
+  },
+  "deezer-artist-radio:not like us": {
+   "state": "ok",
+   "count": 20,
+   "ms": 0
+  },
+  "deezer-related-artists:not like us": {
+   "state": "ok",
+   "count": 12,
+   "ms": 1
+  },
+  "deezer-genre-chart:weird fishes arpeggi": {
+   "state": "ok",
+   "count": 10,
+   "ms": 0
+  },
+  "deezer-genre-chart:not like us": {
+   "state": "ok",
+   "count": 10,
+   "ms": 0
+  },
+  "ytmusic-similar-artists:weird fishes arpeggi": {
+   "state": "ok",
+   "count": 10,
+   "ms": 0
+  },
+  "deezer-recent:weird fishes arpeggi": {
+   "state": "ok",
+   "count": 0,
+   "ms": 3
+  },
+  "ytmusic-similar-artists:not like us": {
+   "state": "ok",
+   "count": 10,
+   "ms": 0
+  },
+  "deezer-related-artists:weird fishes arpeggi": {
+   "state": "ok",
+   "count": 12,
+   "ms": 4
+  },
+  "deezer-recent:not like us": {
+   "state": "ok",
+   "count": 0,
+   "ms": 2
+  },
+  "detail:No Role Modelz": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "detail:Lovin On Me": {
+   "state": "ok",
+   "count": 23,
+   "ms": 1
+  },
+  "detail:tv off (feat. Lefty Gunp": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "detail:Praise The Lord (Da Shin": {
+   "state": "ok",
+   "count": 23,
+   "ms": 1
+  },
+  "detail:luther": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "detail:Jigsaw Falling Into Plac": {
+   "state": "ok",
+   "count": 23,
+   "ms": 1
+  },
+  "detail:1979": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "detail:HUMBLE.": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "detail:Work Out": {
+   "state": "ok",
+   "count": 23,
+   "ms": 258
+  },
+  "detail:Let Down": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "detail:Roman Holiday": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "detail:Want For Nothing": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "detail:BIRDS OF A FEATHER": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "detail:Suspirium": {
+   "state": "ok",
+   "count": 23,
+   "ms": 492
+  },
+  "detail:Girls & Boys": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "match:Glock In My Lap": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "match:Trap Queen": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "detail:Where Is My Mind?": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "match:BAND4BAND": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "match:Big Dawgs": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "match:Pop It Off": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "match:679 (feat. Monty)": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "match:Breathe (In the Air)": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "detail:Breathe (In the Air)": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "match:MILLION DOLLAR BABY": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "detail:MILLION DOLLAR BABY": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "detail:Bela Lugosi's Dead (Offi": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "match:Change Me": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "match:Bloom (Live from Electri": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "match:Affirmation": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "detail:Affirmation": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "match:The Box": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "detail:The Box": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "match:Duvet": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "detail:Duvet": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "match:WHATCHU KNO ABOUT ME": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "detail:WHATCHU KNO ABOUT ME": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "match:Tweaker": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "match:I Don't Care": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "match:Let It Happen": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "detail:Let It Happen": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "match:Again": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "match:The Smoke": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "match:Chamber Of Reflection": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "detail:Chamber Of Reflection": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "match:Taste (feat. Offset)": {
+   "state": "ok",
+   "count": 2,
+   "ms": 0
+  },
+  "detail:Taste (feat. Offset)": {
+   "state": "ok",
+   "count": 23,
+   "ms": 0
+  },
+  "detail:Last Flowers": {
+   "state": "ok",
+   "count": 23,
+   "ms": 610
+  },
+  "detail:Grace": {
+   "state": "ok",
+   "count": 23,
+   "ms": 438
+  }
+ },
+ "audio": {
+  "cached": 9,
+  "ms": 18,
+  "compared": 33
+ },
+ "timings": {
+  "profile_ms": 1,
+  "gather_ms": 8,
+  "candidates": 156,
+  "metadata_ms": 52,
+  "total_ms": 805
+ },
+ "candidates": 156,
+ "items": [
+  {
+   "rank": 1,
+   "track": {
+    "id": "ytmusic:LF2LGaCsMbc",
+    "provider": "ytmusic",
+    "platform_id": "LF2LGaCsMbc",
+    "key": "tommy richman|million dollar baby|",
+    "title": "MILLION DOLLAR BABY",
+    "artists": [
+     "Tommy Richman"
+    ],
+    "artist": "Tommy Richman",
+    "album": "MILLION DOLLAR BABY",
+    "versions": [],
+    "duration": 156,
+    "artwork": "https://yt3.googleusercontent.com/yaye-gvSo30LmuLiF8uaqBn6Yhjx1R6H92IN93MmeDbrWk-o9WQvHYC2uc0KnvtwtCS3qv2unWnln3iO=w240-h240-l90-rj",
+    "url": "https://music.youtube.com/watch?v=LF2LGaCsMbc",
+    "isrc": "QM24S2402528",
+    "release": {
+     "date": "2024-06-04",
+     "precision": "day",
+     "kind": "release",
+     "source": "Deezer"
+    },
+    "tags": [
+     {
+      "name": "hip-hop",
+      "label": "Rap/Hip Hop",
+      "source": "Deezer album genre",
+      "scope": "album",
+      "confidence": 0.8,
+      "inferred": false
+     }
+    ],
+    "kind": "song",
+    "artist_ids": {
+     "ytmusic": "UCl7AZ27JmaoO_Yx_IoVpbJw"
+    }
+   },
+   "score": 0.6069,
+   "coverage": 0.74,
+   "tier": "strong",
+   "evidence": "strong",
+   "best_seed": {
+    "key": "kendrick lamar|not like us|",
+    "title": "Not Like Us",
+    "artist": "Kendrick Lamar"
+   },
+   "reasons": [
+    {
+     "factor": "audio",
+     "text": "Sounds close to “Not Like Us”: timbre and production compared on 30-second previews (audio model).",
+     "weight": 0.35
+    },
+    {
+     "factor": "genre",
+     "text": "Shares Rap/Hip Hop with “Not Like Us” (deezer album genre, album level).",
+     "weight": 0.09600000000000002
+    },
+    {
+     "factor": "provider",
+     "text": "It plays on YouTube Music's radio for “Not Like Us”.",
+     "weight": 0.0825242718446602
+    },
+    {
+     "factor": "novelty",
+     "text": "An artist that is new to your starting songs.",
+     "weight": 0.125
+    }
+   ],
+   "uncertainty": [],
+   "new_release": false,
+   "factors": {
+    "audio": 1.0,
+    "genre": 0.64,
+    "artist": 0.0,
+    "provider": 0.825,
+    "tempo": null,
+    "feedback": null,
+    "freshness": 0.0,
+    "novelty": 1.0
+   },
+   "weights": {
+    "audio": 0.35,
+    "genre": 0.15,
+    "artist": 0.105,
+    "provider": 0.1,
+    "freshness": 0.05,
+    "novelty": 0.125
+   },
+   "sources": [
+    "YouTube Music · radio"
+   ],
+   "playback": {
+    "open": [
+     {
+      "provider": "ytmusic",
+      "label": "Open in YouTube Music",
+      "url": "https://music.youtube.com/watch?v=LF2LGaCsMbc"
+     },
+     {
+      "provider": "deezer",
+      "label": "Open in Deezer",
+      "url": "https://www.deezer.com/track/2827724612"
+     }
+    ],
+    "preview": null,
+    "embed": null
+   }
+  },
+  {
+   "rank": 2,
+   "track": {
+    "id": "ytmusic:0RMsENDIAN0",
+    "provider": "ytmusic",
+    "platform_id": "0RMsENDIAN0",
+    "key": "thom yorke|bloom|live",
+    "title": "Bloom (Live from Electric Lady Studios)",
+    "artists": [
+     "Thom Yorke"
+    ],
+    "artist": "Thom Yorke",
+    "album": "Live from Electric Lady Studios",
+    "version": "Live from Electric Lady Studios",
+    "versions": [
+     "live"
+    ],
+    "artwork": "https://yt3.googleusercontent.com/Kc0JbNUu3WAkxyCBObHooVH17DyBv4XrgQ6hA7J2yzcR3fMpi6ySRt2ect4P-CtCcH-ymbMEgF0YdmR4=w240-h240-l90-rj",
+    "url": "https://music.youtube.com/watch?v=0RMsENDIAN0",
+    "tags": [],
+    "explicit": false,
+    "kind": "song",
+    "artist_ids": {
+     "ytmusic": "UCgXVrNtoMd3CusXrRMX3Tqg"
+    }
+   },
+   "score": 0.3858,
+   "coverage": 0.24,
+   "tier": "related",
+   "evidence": "thin",
+   "best_seed": {
+    "key": "radiohead|weird fishes arpeggi|",
+    "title": "Weird Fishes / Arpeggi",
+    "artist": "Radiohead"
+   },
+   "reasons": [
+    {
+     "factor": "provider",
+     "text": "YouTube Music lists it under “You might also like” for “Weird Fishes / Arpeggi”.",
+     "weight": 0.08064516129032259
+    },
+    {
+     "factor": "artist",
+     "text": "By an artist the providers list as related to “Weird Fishes / Arpeggi”.",
+     "weight": 0.0735
+    }
+   ],
+   "uncertainty": [
+    "Little evidence about this one; it is a looser suggestion.",
+    "No audio comparison: no legitimately available preview for it, or it was not analysed in this request."
+   ],
+   "new_release": false,
+   "factors": {
+    "audio": null,
+    "genre": null,
+    "artist": 0.7,
+    "provider": 0.806,
+    "tempo": null,
+    "feedback": null,
+    "freshness": null,
+    "novelty": 0.5
+   },
+   "weights": {
+    "artist": 0.105,
+    "provider": 0.1,
+    "novelty": 0.125
+   },
+   "sources": [
+    "YouTube Music · You might also like"
+   ],
+   "playback": {
+    "open": [
+     {
+      "provider": "ytmusic",
+      "label": "Open in YouTube Music",
+      "url": "https://music.youtube.com/watch?v=0RMsENDIAN0"
+     }
+    ],
+    "preview": null,
+    "embed": null
+   }
+  },
+  {
+   "rank": 3,
+   "track": {
+    "id": "ytmusic:xshCuPFDQXg",
+    "provider": "ytmusic",
+    "platform_id": "xshCuPFDQXg",
+    "key": "fetty wap|679|",
+    "title": "679 (feat. Monty)",
+    "artists": [
+     "Fetty Wap"
+    ],
+    "artist": "Fetty Wap",
+    "album": "Fetty Wap",
+    "versions": [],
+    "artwork": "https://yt3.googleusercontent.com/pWi1-PbTumWh8JXoSqHFD8uCkrnnH58CEsBYBezTmAKU9ws8BwEvWpSG7XK2qoSPZclrsUEwmCPQQU8OVQ=w240-h240-l90-rj",
+    "url": "https://music.youtube.com/watch?v=xshCuPFDQXg",
+    "tags": [],
+    "explicit": true,
+    "kind": "song",
+    "artist_ids": {
+     "ytmusic": "UC5V9Y6N3IKP_KpCpqUHBdtg"
+    }
+   },
+   "score": 0.3893,
+   "coverage": 0.24,
+   "tier": "emerging",
+   "evidence": "thin",
+   "best_seed": {
+    "key": "kendrick lamar|not like us|",
+    "title": "Not Like Us",
+    "artist": "Kendrick Lamar"
+   },
+   "reasons": [
+    {
+     "factor": "provider",
+     "text": "YouTube Music lists it under “You might also like” for “Not Like Us”.",
+     "weight": 0.08264462809917356
+    },
+    {
+     "factor": "novelty",
+     "text": "An artist that is new to your starting songs.",
+     "weight": 0.125
+    }
+   ],
+   "uncertainty": [
+    "Little evidence about this one; it is a looser suggestion.",
+    "No audio comparison: no legitimately available preview for it, or it was not analysed in this request."
+   ],
+   "new_release": false,
+   "factors": {
+    "audio": null,
+    "genre": null,
+    "artist": 0.0,
+    "provider": 0.826,
+    "tempo": null,
+    "feedback": null,
+    "freshness": null,
+    "novelty": 1.0
+   },
+   "weights": {
+    "artist": 0.105,
+    "provider": 0.1,
+    "novelty": 0.125
+   },
+   "sources": [
+    "YouTube Music · You might also like"
+   ],
+   "playback": {
+    "open": [
+     {
+      "provider": "ytmusic",
+      "label": "Open in YouTube Music",
+      "url": "https://music.youtube.com/watch?v=xshCuPFDQXg"
+     }
+    ],
+    "preview": null,
+    "embed": null
+   }
+  },
+  {
+   "rank": 4,
+   "track": {
+    "id": "ytmusic:CvjRlYpXS5U",
+    "provider": "ytmusic",
+    "platform_id": "CvjRlYpXS5U",
+    "key": "radiohead|jigsaw falling into place|",
+    "title": "Jigsaw Falling Into Place",
+    "artists": [
+     "Radiohead"
+    ],
+    "artist": "Radiohead",
+    "album": "In Rainbows",
+    "versions": [],
+    "duration": 249,
+    "artwork": "https://yt3.googleusercontent.com/BAl1FqoDaFrpWSSrr95Yjii4fJSeitdRcVt7f-uOVrhxQfmo5ActMNysFErQfI-CiOZR4GH2fePoVQtd=w240-h240-l90-rj",
+    "url": "https://music.youtube.com/watch?v=CvjRlYpXS5U",
+    "isrc": "GBSTK0700009",
+    "release": {
+     "date": "2007-12-28",
+     "precision": "day",
+     "kind": "release",
+     "source": "Deezer"
+    },
+    "tags": [
+     {
+      "name": "alternative",
+      "label": "Alternative",
+      "source": "Deezer album genre",
+      "scope": "album",
+      "confidence": 0.8,
+      "inferred": false
+     }
+    ],
+    "bpm": 164.72,
+    "kind": "song",
+    "artist_ids": {
+     "ytmusic": "UCr_iyUANcn9OX_yy9piYoLw"
+    }
+   },
+   "score": 0.5702,
+   "coverage": 0.8,
+   "tier": "strong",
+   "evidence": "strong",
+   "best_seed": {
+    "key": "radiohead|weird fishes arpeggi|",
+    "title": "Weird Fishes / Arpeggi",
+    "artist": "Radiohead"
+   },
+   "reasons": [
+    {
+     "factor": "audio",
+     "text": "Sounds close to “Weird Fishes / Arpeggi”: timbre and production compared on 30-second previews (audio model).",
+     "weight": 0.35
+    },
+    {
+     "factor": "artist",
+     "text": "Same artist as “Weird Fishes / Arpeggi”.",
+     "weight": 0.105
+    },
+    {
+     "factor": "genre",
+     "text": "Shares Alternative with “Weird Fishes / Arpeggi” (deezer album genre, album level).",
+     "weight": 0.09600000000000002
+    },
+    {
+     "factor": "provider",
+     "text": "It plays on YouTube Music's radio for “Weird Fishes / Arpeggi”.",
+     "weight": 0.085
+    }
+   ],
+   "uncertainty": [],
+   "new_release": false,
+   "factors": {
+    "audio": 1.0,
+    "genre": 0.64,
+    "artist": 1.0,
+    "provider": 0.85,
+    "tempo": 0.579,
+    "feedback": null,
+    "freshness": 0.0,
+    "novelty": 0.0
+   },
+   "weights": {
+    "audio": 0.35,
+    "genre": 0.15,
+    "artist": 0.105,
+    "provider": 0.1,
+    "tempo": 0.05,
+    "freshness": 0.05,
+    "novelty": 0.125
+   },
+   "sources": [
+    "Deezer · artist top tracks",
+    "YouTube Music · radio"
+   ],
+   "playback": {
+    "open": [
+     {
+      "provider": "ytmusic",
+      "label": "Open in YouTube Music",
+      "url": "https://music.youtube.com/watch?v=CvjRlYpXS5U"
+     },
+     {
+      "provider": "deezer",
+      "label": "Open in Deezer",
+      "url": "https://www.deezer.com/track/138546819"
+     }
+    ],
+    "preview": null,
+    "embed": null
+   }
+  },
+  {
+   "rank": 5,
+   "track": {
+    "id": "deezer:4202541942",
+    "provider": "deezer",
+    "platform_id": "4202541942",
+    "key": "cameron whitcomb|want for nothing|",
+    "title": "Want For Nothing",
+    "artists": [
+     "Cameron Whitcomb"
+    ],
+    "artist": "Cameron Whitcomb",
+    "album": "The Hard Way (Complete Edition)",
+    "versions": [],
+    "duration": 167,
+    "artwork": "https://cdn-images.dzcdn.net/images/cover/d6390f0a800e20ee4f3ba89af5f3ead5/250x250-000000-80-0-0.jpg",
+    "url": "https://www.deezer.com/track/4202541942",
+    "isrc": "USAT22605321",
+    "release": {
+     "date": "2026-07-31",
+     "precision": "day",
+     "kind": "release",
+     "source": "Deezer"
+    },
+    "tags": [
+     {
+      "name": "country",
+      "label": "Country",
+      "source": "Deezer album genre",
+      "scope": "album",
+      "confidence": 0.8,
+      "inferred": false
+     },
+     {
+      "name": "alternative",
+      "label": "Alternative",
+      "source": "Deezer album genre",
+      "scope": "album",
+      "confidence": 0.8,
+      "inferred": false
+     }
+    ],
+    "explicit": false,
+    "kind": "song",
+    "artist_ids": {
+     "deezer": "115331762"
+    },
+    "album_id": "1046224412"
+   },
+   "score": 0.5242,
+   "coverage": 0.82,
+   "tier": "experimental",
+   "evidence": "strong",
+   "best_seed": {
+    "key": "radiohead|weird fishes arpeggi|",
+    "title": "Weird Fishes / Arpeggi",
+    "artist": "Radiohead"
+   },
+   "reasons": [
+    {
+     "factor": "audio",
+     "text": "Sounds close to “Weird Fishes / Arpeggi”: timbre and production compared on 30-second previews (audio model).",
+     "weight": 0.27152328274466775
+    },
+    {
+     "factor": "genre",
+     "text": "Shares Alternative with “Weird Fishes / Arpeggi” (deezer album genre, album level).",
+     "weight": 0.09600000000000002
+    },
+    {
+     "factor": "novelty",
+     "text": "An artist that is new to your starting songs.",
+     "weight": 0.125
+    }
+   ],
+   "uncertainty": [],
+   "new_release": false,
+   "factors": {
+    "audio": 0.776,
+    "genre": 0.64,
+    "artist": 0.0,
+    "provider": 0.0,
+    "tempo": null,
+    "feedback": null,
+    "freshness": 0.762,
+    "novelty": 1.0
+   },
+   "weights": {
+    "audio": 0.35,
+    "genre": 0.15,
+    "artist": 0.105,
+    "provider": 0.1,
+    "freshness": 0.05,
+    "novelty": 0.125
+   },
+   "sources": [
+    "Deezer · genre chart (exploration)"
+   ],
+   "playback": {
+    "open": [
+     {
+      "provider": "deezer",
+      "label": "Open in Deezer",
+      "url": "https://www.deezer.com/track/4202541942"
+     }
+    ],
+    "preview": null,
+    "embed": null
+   }
+  },
+  {
+   "rank": 6,
+   "track": {
+    "id": "deezer:1591188092",
+    "provider": "deezer",
+    "platform_id": "1591188092",
+    "key": "j cole|wet dreamz|",
+    "title": "Wet Dreamz",
+    "artists": [
+     "J. Cole"
+    ],
+    "artist": "J. Cole",
+    "album": "2014 Forest Hills Drive",
+    "versions": [],
+    "duration": 239,
+    "artwork": "https://cdn-images.dzcdn.net/images/cover/f45c8916970597d390313833a9db0c61/250x250-000000-80-0-0.jpg",
+    "url": "https://www.deezer.com/track/1591188092",
+    "tags": [],
+    "explicit": true,
+    "kind": "song",
+    "artist_ids": {
+     "deezer": "339209"
+    },
+    "album_id": "280445562"
+   },
+   "score": 0.3426,
+   "coverage": 0.24,
+   "tier": "related",
+   "evidence": "thin",
+   "best_seed": {
+    "key": "kendrick lamar|not like us|",
+    "title": "Not Like Us",
+    "artist": "Kendrick Lamar"
+   },
+   "reasons": [
+    {
+     "factor": "artist",
+     "text": "By an artist the providers list as related to “Not Like Us”.",
+     "weight": 0.0735
+    },
+    {
+     "factor": "provider",
+     "text": "It is on Deezer's artist radio for “Not Like Us”.",
+     "weight": 0.055118110236220465
+    }
+   ],
+   "uncertainty": [
+    "Little evidence about this one; it is a looser suggestion.",
+    "No audio comparison: no legitimately available preview for it, or it was not analysed in this request."
+   ],
+   "new_release": false,
+   "factors": {
+    "audio": null,
+    "genre": null,
+    "artist": 0.7,
+    "provider": 0.551,
+    "tempo": null,
+    "feedback": null,
+    "freshness": null,
+    "novelty": 0.5
+   },
+   "weights": {
+    "artist": 0.105,
+    "provider": 0.1,
+    "novelty": 0.125
+   },
+   "sources": [
+    "Deezer · artist radio"
+   ],
+   "playback": {
+    "open": [
+     {
+      "provider": "deezer",
+      "label": "Open in Deezer",
+      "url": "https://www.deezer.com/track/1591188092"
+     }
+    ],
+    "preview": null,
+    "embed": null
+   }
+  },
+  {
+   "rank": 7,
+   "track": {
+    "id": "ytmusic:8HBcV0MtAQg",
+    "provider": "ytmusic",
+    "platform_id": "8HBcV0MtAQg",
+    "key": "j cole|no role modelz|",
+    "title": "No Role Modelz",
+    "artists": [
+     "J. Cole"
+    ],
+    "artist": "J. Cole",
+    "album": "2014 Forest Hills Drive",
+    "versions": [],
+    "duration": 292,
+    "artwork": "https://yt3.googleusercontent.com/kMrbZiHDjddAGv58UvL1T-I5ddCzUAAclrmIMaY3ty4-jAxHueE4pqJ-SX8o_ggXimkPMcsKxh9Ev45P9Q=w240-h240-l90-rj",
+    "url": "https://music.youtube.com/watch?v=8HBcV0MtAQg",
+    "isrc": "USQX91402598",
+    "release": {
+     "date": "2014-12-09",
+     "precision": "day",
+     "kind": "release",
+     "source": "Deezer"
+    },
+    "tags": [
+     {
+      "name": "hip-hop",
+      "label": "Rap/Hip Hop",
+      "source": "Deezer album genre",
+      "scope": "album",
+      "confidence": 0.8,
+      "inferred": false
+     }
+    ],
+    "explicit": true,
+    "kind": "song",
+    "artist_ids": {
+     "ytmusic": "UC0ajkOzj8xE3Gs3LHCE243A"
+    }
+   },
+   "score": 0.5872,
+   "coverage": 0.74,
+   "tier": "strong",
+   "evidence": "strong",
+   "best_seed": {
+    "key": "kendrick lamar|not like us|",
+    "title": "Not Like Us",
+    "artist": "Kendrick Lamar"
+   },
+   "reasons": [
+    {
+     "factor": "audio",
+     "text": "Sounds close to “Not Like Us”: timbre and production compared on 30-second previews (audio model).",
+     "weight": 0.35
+    },
+    {
+     "factor": "genre",
+     "text": "Shares Rap/Hip Hop with “Not Like Us” (deezer album genre, album level).",
+     "weight": 0.09600000000000002
+    },
+    {
+     "factor": "provider",
+     "text": "YouTube Music lists it under “You might also like” for “Not Like Us”.",
+     "weight": 0.07874015748031496
+    },
+    {
+     "factor": "artist",
+     "text": "By an artist the providers list as related to “Not Like Us”.",
+     "weight": 0.0735
+    }
+   ],
+   "uncertainty": [],
+   "new_release": false,
+   "factors": {
+    "audio": 1.0,
+    "genre": 0.64,
+    "artist": 0.7,
+    "provider": 0.787,
+    "tempo": null,
+    "feedback": null,
+    "freshness": 0.0,
+    "novelty": 0.5
+   },
+   "weights": {
+    "audio": 0.35,
+    "genre": 0.15,
+    "artist": 0.105,
+    "provider": 0.1,
+    "freshness": 0.05,
+    "novelty": 0.125
+   },
+   "sources": [
+    "Deezer · related artists",
+    "YouTube Music · You might also like"
+   ],
+   "playback": {
+    "open": [
+     {
+      "provider": "ytmusic",
+      "label": "Open in YouTube Music",
+      "url": "https://music.youtube.com/watch?v=8HBcV0MtAQg"
+     },
+     {
+      "provider": "deezer",
+      "label": "Open in Deezer",
+      "url": "https://www.deezer.com/track/1591188152"
+     }
+    ],
+    "preview": null,
+    "embed": null
+   }
+  },
+  {
+   "rank": 8,
+   "track": {
+    "id": "deezer:1912817457",
+    "provider": "deezer",
+    "platform_id": "1912817457",
+    "key": "interpol|rest my chemistry|",
+    "title": "Rest My Chemistry",
+    "artists": [
+     "Interpol"
+    ],
+    "artist": "Interpol",
+    "album": "Our Love To Admire",
+    "versions": [],
+    "duration": 301,
+    "artwork": "https://cdn-images.dzcdn.net/images/cover/05ac0a918bf19fdff9671e0379db677a/250x250-000000-80-0-0.jpg",
+    "url": "https://www.deezer.com/track/1912817457",
+    "tags": [],
+    "explicit": false,
+    "kind": "song",
+    "artist_ids": {
+     "deezer": "1652"
+    },
+    "album_id": "356420237"
+   },
+   "score": 0.3524,
+   "coverage": 0.24,
+   "tier": "emerging",
+   "evidence": "thin",
+   "best_seed": {
+    "key": "radiohead|weird fishes arpeggi|",
+    "title": "Weird Fishes / Arpeggi",
+    "artist": "Radiohead"
+   },
+   "reasons": [
+    {
+     "factor": "provider",
+     "text": "It is on Deezer's artist radio for “Weird Fishes / Arpeggi”.",
+     "weight": 0.060869565217391314
+    },
+    {
+     "factor": "novelty",
+     "text": "An artist that is new to your starting songs.",
+     "weight": 0.125
+    }
+   ],
+   "uncertainty": [
+    "Little evidence about this one; it is a looser suggestion.",
+    "No audio comparison: no legitimately available preview for it, or it was not analysed in this request."
+   ],
+   "new_release": false,
+   "factors": {
+    "audio": null,
+    "genre": null,
+    "artist": 0.0,
+    "provider": 0.609,
+    "tempo": null,
+    "feedback": null,
+    "freshness": null,
+    "novelty": 1.0
+   },
+   "weights": {
+    "artist": 0.105,
+    "provider": 0.1,
+    "novelty": 0.125
+   },
+   "sources": [
+    "Deezer · artist radio"
+   ],
+   "playback": {
+    "open": [
+     {
+      "provider": "deezer",
+      "label": "Open in Deezer",
+      "url": "https://www.deezer.com/track/1912817457"
+     }
+    ],
+    "preview": null,
+    "embed": null
+   }
+  },
+  {
+   "rank": 9,
+   "track": {
+    "id": "ytmusic:jIjTFt6XmFM",
+    "provider": "ytmusic",
+    "platform_id": "jIjTFt6XmFM",
+    "key": "radiohead||",
+    "title": "(Nice Dream)",
+    "artists": [
+     "Radiohead"
+    ],
+    "artist": "Radiohead",
+    "album": "The Bends",
+    "version": "Nice Dream",
+    "versions": [],
+    "artwork": "https://yt3.googleusercontent.com/TWWT47cHLv3yAugk4h9eOzQ46FHmXc_g-KmBVy2d4sbg_F-Gv6xrPglztRVzp8D_l-yzOnvh-QToM8s=w240-h240-l90-rj",
+    "url": "https://music.youtube.com/watch?v=jIjTFt6XmFM",
+    "tags": [],
+    "explicit": false,
+    "kind": "song",
+    "artist_ids": {
+     "ytmusic": "UCr_iyUANcn9OX_yy9piYoLw"
+    }
+   },
+   "score": 0.3425,
+   "coverage": 0.24,
+   "tier": "related",
+   "evidence": "thin",
+   "best_seed": {
+    "key": "radiohead|weird fishes arpeggi|",
+    "title": "Weird Fishes / Arpeggi",
+    "artist": "Radiohead"
+   },
+   "reasons": [
+    {
+     "factor": "artist",
+     "text": "Same artist as “Weird Fishes / Arpeggi”.",
+     "weight": 0.105
+    },
+    {
+     "factor": "provider",
+     "text": "YouTube Music lists it under “You might also like” for “Weird Fishes / Arpeggi”.",
+     "weight": 0.09708737864077671
+    }
+   ],
+   "uncertainty": [
+    "Little evidence about this one; it is a looser suggestion.",
+    "No audio comparison: no legitimately available preview for it, or it was not analysed in this request."
+   ],
+   "new_release": false,
+   "factors": {
+    "audio": null,
+    "genre": null,
+    "artist": 1.0,
+    "provider": 0.971,
+    "tempo": null,
+    "feedback": null,
+    "freshness": null,
+    "novelty": 0.0
+   },
+   "weights": {
+    "artist": 0.105,
+    "provider": 0.1,
+    "novelty": 0.125
+   },
+   "sources": [
+    "YouTube Music · You might also like"
+   ],
+   "playback": {
+    "open": [
+     {
+      "provider": "ytmusic",
+      "label": "Open in YouTube Music",
+      "url": "https://music.youtube.com/watch?v=jIjTFt6XmFM"
+     }
+    ],
+    "preview": null,
+    "embed": null
+   }
+  },
+  {
+   "rank": 10,
+   "track": {
+    "id": "ytmusic:wyzSmQPuCJ0",
+    "provider": "ytmusic",
+    "platform_id": "wyzSmQPuCJ0",
+    "key": "glorilla|whatchu kno about me|",
+    "title": "WHATCHU KNO ABOUT ME",
+    "artists": [
+     "GloRilla",
+     "Sexyy Red"
+    ],
+    "artist": "GloRilla, Sexyy Red",
+    "album": "GLORIOUS",
+    "versions": [],
+    "duration": 150,
+    "artwork": "https://yt3.googleusercontent.com/5-9xNKX3SENa3SIh-ErUPvbpcdwLicKpyIn4z_9AFTrJ2N5IssNKcOFxKpVjQDRwtMif3QgGBU8wvJs=w240-h240-l90-rj",
+    "url": "https://music.youtube.com/watch?v=wyzSmQPuCJ0",
+    "isrc": "USUM72411015",
+    "release": {
+     "date": "2024-10-11",
+     "precision": "day",
+     "kind": "release",
+     "source": "Deezer"
+    },
+    "tags": [
+     {
+      "name": "hip-hop",
+      "label": "Rap/Hip Hop",
+      "source": "Deezer album genre",
+      "scope": "album",
+      "confidence": 0.8,
+      "inferred": false
+     }
+    ],
+    "kind": "song",
+    "artist_ids": {
+     "ytmusic": "UCiXhCjTprNP0nuQJ9UsLWeg"
+    }
+   },
+   "score": 0.58,
+   "coverage": 0.74,
+   "tier": "strong",
+   "evidence": "strong",
+   "best_seed": {
+    "key": "kendrick lamar|not like us|",
+    "title": "Not Like Us",
+    "artist": "Kendrick Lamar"
+   },
+   "reasons": [
+    {
+     "factor": "audio",
+     "text": "Sounds close to “Not Like Us”: timbre and production compared on 30-second previews (audio model).",
+     "weight": 0.35
+    },
+    {
+     "factor": "genre",
+     "text": "Shares Rap/Hip Hop with “Not Like Us” (deezer album genre, album level).",
+     "weight": 0.09600000000000002
+    },
+    {
+     "factor": "provider",
+     "text": "It plays on YouTube Music's radio for “Not Like Us”.",
+     "weight": 0.07798165137614678
+    },
+    {
+     "factor": "novelty",
+     "text": "An artist that is new to your starting songs.",
+     "weight": 0.125
+    }
+   ],
+   "uncertainty": [],
+   "new_release": false,
+   "factors": {
+    "audio": 1.0,
+    "genre": 0.64,
+    "artist": 0.0,
+    "provider": 0.78,
+    "tempo": null,
+    "feedback": null,
+    "freshness": 0.0,
+    "novelty": 1.0
+   },
+   "weights": {
+    "audio": 0.35,
+    "genre": 0.15,
+    "artist": 0.105,
+    "provider": 0.1,
+    "freshness": 0.05,
+    "novelty": 0.125
+   },
+   "sources": [
+    "YouTube Music · radio"
+   ],
+   "playback": {
+    "open": [
+     {
+      "provider": "ytmusic",
+      "label": "Open in YouTube Music",
+      "url": "https://music.youtube.com/watch?v=wyzSmQPuCJ0"
+     },
+     {
+      "provider": "deezer",
+      "label": "Open in Deezer",
+      "url": "https://www.deezer.com/track/3036423051"
+     }
+    ],
+    "preview": null,
+    "embed": null
+   }
+  },
+  {
+   "rank": 11,
+   "track": {
+    "id": "ytmusic:fvuTYadfBQA",
+    "provider": "ytmusic",
+    "platform_id": "fvuTYadfBQA",
+    "key": "jack harlow|lovin on me|",
+    "title": "Lovin On Me",
+    "artists": [
+     "Jack Harlow"
+    ],
+    "artist": "Jack Harlow",
+    "album": "Lovin On Me",
+    "versions": [],
+    "duration": 139,
+    "artwork": "https://yt3.googleusercontent.com/daZp320DKYD_PI1kT69uqlaQuhF2rfV8r_tE15GBE_mwMxZpOz6ejYXwaZB37_dM3Fk3JP51jNXP4qxt=w240-h240-l90-rj",
+    "url": "https://music.youtube.com/watch?v=fvuTYadfBQA",
+    "isrc": "USAT22311372",
+    "release": {
+     "date": "2023-11-09",
+     "precision": "day",
+     "kind": "release",
+     "source": "Deezer"
+    },
+    "tags": [
+     {
+      "name": "hip-hop",
+      "label": "Rap/Hip Hop",
+      "source": "Deezer album genre",
+      "scope": "album",
+      "confidence": 0.8,
+      "inferred": false
+     }
+    ],
+    "kind": "song",
+    "artist_ids": {
+     "ytmusic": "UCKIOM0Wi1qNV8HFLArK-uYQ"
+    }
+   },
+   "score": 0.5882,
+   "coverage": 0.74,
+   "tier": "strong",
+   "evidence": "strong",
+   "best_seed": {
+    "key": "kendrick lamar|not like us|",
+    "title": "Not Like Us",
+    "artist": "Kendrick Lamar"
+   },
+   "reasons": [
+    {
+     "factor": "audio",
+     "text": "Sounds close to “Not Like Us”: timbre and production compared on 30-second previews (audio model).",
+     "weight": 0.35
+    },
+    {
+     "factor": "genre",
+     "text": "Shares Rap/Hip Hop with “Not Like Us” (deezer album genre, album level).",
+     "weight": 0.09600000000000002
+    },
+    {
+     "factor": "provider",
+     "text": "It plays on YouTube Music's radio for “Not Like Us”.",
+     "weight": 0.07024793388429752
+    },
+    {
+     "factor": "novelty",
+     "text": "An artist that is new to your starting songs.",
+     "weight": 0.125
+    }
+   ],
+   "uncertainty": [],
+   "new_release": false,
+   "factors": {
+    "audio": 1.0,
+    "genre": 0.64,
+    "artist": 0.0,
+    "provider": 0.702,
+    "tempo": null,
+    "feedback": null,
+    "freshness": 0.0,
+    "novelty": 1.0
+   },
+   "weights": {
+    "audio": 0.35,
+    "genre": 0.15,
+    "artist": 0.105,
+    "provider": 0.1,
+    "freshness": 0.05,
+    "novelty": 0.125
+   },
+   "sources": [
+    "Deezer · genre chart (exploration)",
+    "YouTube Music · radio"
+   ],
+   "playback": {
+    "open": [
+     {
+      "provider": "ytmusic",
+      "label": "Open in YouTube Music",
+      "url": "https://music.youtube.com/watch?v=fvuTYadfBQA"
+     },
+     {
+      "provider": "deezer",
+      "label": "Open in Deezer",
+      "url": "https://www.deezer.com/track/2536499851"
+     }
+    ],
+    "preview": null,
+    "embed": null
+   }
+  },
+  {
+   "rank": 12,
+   "track": {
+    "id": "deezer:108733466",
+    "provider": "deezer",
+    "platform_id": "108733466",
+    "key": "jeff buckley|lover you should ve come over|",
+    "title": "Lover, You Should've Come Over",
+    "artists": [
+     "Jeff Buckley"
+    ],
+    "artist": "Jeff Buckley",
+    "album": "Grace",
+    "versions": [],
+    "duration": 402,
+    "artwork": "https://cdn-images.dzcdn.net/images/cover/57dd4754a69acaaf3a8a82f7fd1b8ad3/250x250-000000-80-0-0.jpg",
+    "url": "https://www.deezer.com/track/108733466",
+    "tags": [],
+    "explicit": false,
+    "kind": "song",
+    "artist_ids": {
+     "deezer": "664"
+    },
+    "album_id": "11336428"
+   },
+   "score": 0.3424,
+   "coverage": 0.24,
+   "tier": "related",
+   "evidence": "thin",
+   "best_seed": {
+    "key": "radiohead|weird fishes arpeggi|",
+    "title": "Weird Fishes / Arpeggi",
+    "artist": "Radiohead"
+   },
+   "reasons": [
+    {
+     "factor": "artist",
+     "text": "By an artist the providers list as related to “Weird Fishes / Arpeggi”.",
+     "weight": 0.0735
+    },
+    {
+     "factor": "provider",
+     "text": "A top song by an artist Deezer relates to “Weird Fishes / Arpeggi” (Jeff Buckley).",
+     "weight": 0.05500000000000001
+    }
+   ],
+   "uncertainty": [
+    "Little evidence about this one; it is a looser suggestion.",
+    "No audio comparison: no legitimately available preview for it, or it was not analysed in this request."
+   ],
+   "new_release": false,
+   "factors": {
+    "audio": null,
+    "genre": null,
+    "artist": 0.7,
+    "provider": 0.55,
+    "tempo": null,
+    "feedback": null,
+    "freshness": null,
+    "novelty": 0.5
+   },
+   "weights": {
+    "artist": 0.105,
+    "provider": 0.1,
+    "novelty": 0.125
+   },
+   "sources": [
+    "Deezer · related artists"
+   ],
+   "playback": {
+    "open": [
+     {
+      "provider": "deezer",
+      "label": "Open in Deezer",
+      "url": "https://www.deezer.com/track/108733466"
+     }
+    ],
+    "preview": null,
+    "embed": null
+   }
+  }
+ ],
+ "transfer": {},
+ "sample": {
+  "label": "Sample data, not live recommendations: a saved snapshot of one earlier run (seeds “Weird Fishes / Arpeggi” and “Not Like Us”).",
+  "recorded": "26 Oct 2026"
+ },
+ "seeds": [
+  {
+   "id": "ytmusic:LUjGtyYEi90",
+   "provider": "ytmusic",
+   "platform_id": "LUjGtyYEi90",
+   "key": "radiohead|weird fishes arpeggi|",
+   "title": "Weird Fishes / Arpeggi",
+   "artists": [
+    "Radiohead"
+   ],
+   "artist": "Radiohead",
+   "album": "In Rainbows",
+   "versions": [],
+   "duration": 319,
+   "artwork": "https://yt3.googleusercontent.com/BAl1FqoDaFrpWSSrr95Yjii4fJSeitdRcVt7f-uOVrhxQfmo5ActMNysFErQfI-CiOZR4GH2fePoVQtd=w240-h240-l90-rj",
+   "url": "https://music.youtube.com/watch?v=LUjGtyYEi90",
+   "tags": [],
+   "explicit": false,
+   "kind": "song",
+   "artist_ids": {
+    "ytmusic": "UCr_iyUANcn9OX_yy9piYoLw"
+   }
+  },
+  {
+   "id": "ytmusic:phLb_SoPBlA",
+   "provider": "ytmusic",
+   "platform_id": "phLb_SoPBlA",
+   "key": "kendrick lamar|not like us|",
+   "title": "Not Like Us",
+   "artists": [
+    "Kendrick Lamar"
+   ],
+   "artist": "Kendrick Lamar",
+   "album": "Not Like Us",
+   "versions": [],
+   "duration": 275,
+   "artwork": "https://yt3.googleusercontent.com/8qk3C_zpd2FXHVN8BpMBFL6h9J5BlKlbcKOlvDMvIgBWBsAblDoTjU98RGbFH9DxtnN1X5zRzc9sSvWr=w240-h240-l90-rj",
+   "url": "https://music.youtube.com/watch?v=phLb_SoPBlA",
+   "tags": [],
+   "explicit": true,
+   "kind": "song",
+   "artist_ids": {
+    "ytmusic": "UCprAFmT0C6O4X0ToEXpeFTQ"
+   }
+  }
+ ],
+ "label": "Sample data, not live recommendations: a saved snapshot of one earlier run (seeds “Weird Fishes / Arpeggi” and “Not Like Us”)."
+}

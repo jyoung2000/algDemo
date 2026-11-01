@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- The mid stop of the launcher icon's gradient (shared with the player app's icon). -->
+  <color name="brand">#3b74c8</color>
+  <color name="window">#f7f6f3</color>
+</resources>

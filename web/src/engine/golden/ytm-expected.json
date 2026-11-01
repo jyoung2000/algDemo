@@ -1,0 +1,408 @@
+{
+ "search": [
+  {
+   "title": "One More Time (Radio Edit)",
+   "album": {
+    "name": "One More Time",
+    "id": "MPREb_uWQeJO6Z53u"
+   },
+   "videoId": "wU26xVT_vBU",
+   "videoType": "MUSIC_VIDEO_TYPE_ATV",
+   "duration": "5:21",
+   "year": null,
+   "artists": [
+    {
+     "name": "Daft Punk",
+     "id": "UCRr1xG_2WIDs18a6cIiCxeA"
+    }
+   ],
+   "duration_seconds": 321,
+   "isExplicit": false
+  },
+  {
+   "title": "One More Time",
+   "album": {
+    "name": "Discovery",
+    "id": "MPREb_7ltM34kr0mH"
+   },
+   "videoId": "fa5IWHDbftI",
+   "videoType": "MUSIC_VIDEO_TYPE_ATV",
+   "duration": "5:21",
+   "year": null,
+   "artists": [
+    {
+     "name": "Daft Punk",
+     "id": "UCRr1xG_2WIDs18a6cIiCxeA"
+    }
+   ],
+   "duration_seconds": 321,
+   "isExplicit": false
+  },
+  {
+   "title": "One More Time (feat. ilysmoke)",
+   "album": {
+    "name": "One More Time",
+    "id": "MPREb_DaybGf7W6qv"
+   },
+   "videoId": "cfH0T46sjRk",
+   "videoType": "MUSIC_VIDEO_TYPE_ATV",
+   "duration": "3:02",
+   "year": null,
+   "artists": [
+    {
+     "name": "Mqx",
+     "id": "UCMyoBsDjoWI2W5B_WzxpHLg"
+    }
+   ],
+   "duration_seconds": 182,
+   "isExplicit": false
+  },
+  {
+   "title": "One More Time",
+   "album": {
+    "name": "One More Time",
+    "id": "MPREb_ovGRoTa41fU"
+   },
+   "videoId": "puph62NgDVM",
+   "videoType": "MUSIC_VIDEO_TYPE_ATV",
+   "duration": "3:45",
+   "year": null,
+   "artists": [
+    {
+     "name": "遲木",
+     "id": null
+    }
+   ],
+   "duration_seconds": 225,
+   "isExplicit": false
+  },
+  {
+   "title": "One More Time (12 Mix)",
+   "album": {
+    "name": "One More Time",
+    "id": "MPREb_uWQeJO6Z53u"
+   },
+   "videoId": "bmjsUsS8QuM",
+   "videoType": "MUSIC_VIDEO_TYPE_ATV",
+   "duration": "8:01",
+   "year": null,
+   "artists": [
+    {
+     "name": "Daft Punk",
+     "id": "UCRr1xG_2WIDs18a6cIiCxeA"
+    }
+   ],
+   "duration_seconds": 481,
+   "isExplicit": false
+  },
+  {
+   "title": "One More Time (feat. Alida)",
+   "album": {
+    "name": "IIII",
+    "id": "MPREb_xrdpf8GvYQL"
+   },
+   "videoId": "AIKwmk4mnNw",
+   "videoType": "MUSIC_VIDEO_TYPE_ATV",
+   "duration": "3:20",
+   "year": null,
+   "artists": [
+    {
+     "name": "Robin Schulz",
+     "id": "UCIpo9tfpIGXMzNQcZVWoXVw"
+    },
+    {
+     "name": "Felix Jaehn",
+     "id": "UCJtptMELYxOILA1I8onM-gw"
+    }
+   ],
+   "duration_seconds": 200,
+   "isExplicit": false
+  }
+ ],
+ "watch": [
+  {
+   "videoId": "FGBhQbmPwH8",
+   "title": "One More Time",
+   "length": "5:22",
+   "videoType": "MUSIC_VIDEO_TYPE_OMV",
+   "artists": [
+    {
+     "name": "Daft Punk",
+     "id": "UCRr1xG_2WIDs18a6cIiCxeA"
+    }
+   ],
+   "views": "3.6M"
+  },
+  {
+   "videoId": "K0HSD_i2DvA",
+   "title": "Around the World",
+   "length": "4:02",
+   "videoType": "MUSIC_VIDEO_TYPE_OMV",
+   "artists": [
+    {
+     "name": "Daft Punk",
+     "id": "UCRr1xG_2WIDs18a6cIiCxeA"
+    }
+   ],
+   "views": "1.1M"
+  },
+  {
+   "videoId": "FQlAEiCb8m0",
+   "title": "Music Sounds Better With You (Radio Edit)",
+   "length": "4:23",
+   "videoType": "MUSIC_VIDEO_TYPE_OMV",
+   "artists": [
+    {
+     "name": "Stardust",
+     "id": "UCjuD2g8i12Kwl-7NUOthFgw"
+    }
+   ],
+   "views": "1.6M"
+  },
+  {
+   "videoId": "HyHNuVaZJ-k",
+   "title": "Feel Good Inc.",
+   "length": "4:15",
+   "videoType": "MUSIC_VIDEO_TYPE_OMV",
+   "artists": [
+    {
+     "name": "Gorillaz",
+     "id": "UCNIV5B_aJnLrKDSnW_MOmcQ"
+    }
+   ],
+   "views": "9.4M"
+  },
+  {
+   "videoId": "mMfxI3r_LyA",
+   "title": "Lady",
+   "length": "3:42",
+   "videoType": "MUSIC_VIDEO_TYPE_OMV",
+   "artists": [
+    {
+     "name": "ModjoOfficial",
+     "id": "UC74sX8oY-MVC7_3KzlnFgzQ"
+    }
+   ],
+   "views": "3.2M"
+  },
+  {
+   "videoId": "5NV6Rdv1a3I",
+   "title": "Get Lucky (Official Audio) (feat. Pharrell Williams & Nile Rodgers)",
+   "length": "4:09",
+   "videoType": "MUSIC_VIDEO_TYPE_OMV",
+   "artists": [
+    {
+     "name": "Daft Punk",
+     "id": "UCRr1xG_2WIDs18a6cIiCxeA"
+    }
+   ],
+   "views": "5.4M"
+  }
+ ],
+ "related_browse": "MPTRt_FY0XZwCKdnl",
+ "related": [
+  {
+   "title": "You might also like",
+   "contents": [
+    {
+     "title": "Love Generation (feat. Gary Pine)",
+     "videoId": "h_7P0O-RSiE",
+     "artists": [
+      {
+       "name": "Bob Sinclar",
+       "id": "UCTX702H0Fi2v-ukpTSYdhRA"
+      }
+     ],
+     "album": {
+      "name": "Western Dream",
+      "id": "MPREb_fy5q1OHX12R"
+     }
+    },
+    {
+     "title": "Rock DJ",
+     "videoId": "GPa8mjPq03Q",
+     "artists": [
+      {
+       "name": "Robbie Williams",
+       "id": "UCmAgTXAlnckJJBFmqYlHnNA"
+      }
+     ],
+     "album": {
+      "name": "Sing When You're Winning",
+      "id": "MPREb_zQ68CR8QzBO"
+     }
+    },
+    {
+     "title": "Sometimes",
+     "videoId": "Gy6JoslpUME",
+     "artists": [
+      {
+       "name": "Miami Horror",
+       "id": "UCU8JQ8M5vIabM-rj1zKGPsA"
+      }
+     ],
+     "album": {
+      "name": "Illumination",
+      "id": "MPREb_lj1dfy0s7dJ"
+     }
+    },
+    {
+     "title": "À cause des garçons (Tepr Remix Edit)",
+     "videoId": "f_TJvjc4e-I",
+     "artists": [
+      {
+       "name": "Yelle",
+       "id": "UC42vAutAJ9suzvfi50yZqFw"
+      }
+     ],
+     "album": {
+      "name": "Pop-Up (Extended Version)",
+      "id": "MPREb_JWG0HAU05NF"
+     }
+    },
+    {
+     "title": "Chillin'",
+     "videoId": "hYeqlUgZuwQ",
+     "artists": [
+      {
+       "name": "Modjo",
+       "id": "UCAbayp4OwUPyogIg330TM-Q"
+      }
+     ],
+     "album": {
+      "name": "Modjo",
+      "id": "MPREb_9fDdKXDcKep"
+     }
+    },
+    {
+     "title": "We Are Your Friends (Justice Vs Simian)",
+     "videoId": "yYkpN9Uoaiw",
+     "artists": [
+      {
+       "name": "Justice",
+       "id": "UCcJLC91v0A0iD-CMUWdZkig"
+      },
+      {
+       "name": "Simian",
+       "id": "UCNkYyrpNlVG81WCorlg0Mrg"
+      }
+     ],
+     "album": {
+      "name": "We Are Your Friends",
+      "id": "MPREb_ZR3k7LhyNbu"
+     }
+    }
+   ]
+  },
+  {
+   "title": "Similar artists",
+   "contents": [
+    {
+     "title": "Justice",
+     "browseId": "UCcJLC91v0A0iD-CMUWdZkig"
+    },
+    {
+     "title": "Kavinsky",
+     "browseId": "UC3V5kzHK2r4rbbXlf4OpFmw"
+    },
+    {
+     "title": "Gorillaz",
+     "browseId": "UCNIV5B_aJnLrKDSnW_MOmcQ"
+    },
+    {
+     "title": "Modjo",
+     "browseId": "UCAbayp4OwUPyogIg330TM-Q"
+    },
+    {
+     "title": "The Chemical Brothers",
+     "browseId": "UCyPCkwR4gcQNybC2XzMNFTA"
+    },
+    {
+     "title": "Digitalism",
+     "browseId": "UCti-LwWBYB_5gNs_Bu0O9hQ"
+    }
+   ]
+  }
+ ],
+ "playlist": [
+  {
+   "videoId": "DL7-CKirWZE",
+   "title": "You Get What You Give (Official Music Video)",
+   "artists": [
+    {
+     "name": "New Radicals",
+     "id": "UCgNfaY6m4NQY8ol6G3Cr7WA"
+    }
+   ],
+   "album": null,
+   "duration": "4:38",
+   "duration_seconds": 278
+  },
+  {
+   "videoId": "kryV3E4QKGk",
+   "title": "Secret Smile",
+   "artists": [
+    {
+     "name": "Semisonic",
+     "id": "UC7wnwzlR6_ZL0KK9fk6PWRA"
+    }
+   ],
+   "album": null,
+   "duration": "4:34",
+   "duration_seconds": 274
+  },
+  {
+   "videoId": "x7mOxdEDNn8",
+   "title": "This Picture",
+   "artists": [
+    {
+     "name": "Placebo",
+     "id": "UCvRshWZ4-nOQ_pKrlLSCHxA"
+    }
+   ],
+   "album": null,
+   "duration": "3:34",
+   "duration_seconds": 214
+  },
+  {
+   "videoId": "HClZwFNNMKs",
+   "title": "Special Needs",
+   "artists": [
+    {
+     "name": "Placebo",
+     "id": "UCvRshWZ4-nOQ_pKrlLSCHxA"
+    }
+   ],
+   "album": null,
+   "duration": "3:29",
+   "duration_seconds": 209
+  },
+  {
+   "videoId": "-6FvsKo162U",
+   "title": "Special K",
+   "artists": [
+    {
+     "name": "Placebo",
+     "id": "UCvRshWZ4-nOQ_pKrlLSCHxA"
+    }
+   ],
+   "album": null,
+   "duration": "3:49",
+   "duration_seconds": 229
+  },
+  {
+   "videoId": "-JJAXwAaA2w",
+   "title": "The Bitter End",
+   "artists": [
+    {
+     "name": "Placebo",
+     "id": "UCvRshWZ4-nOQ_pKrlLSCHxA"
+    }
+   ],
+   "album": null,
+   "duration": "3:11",
+   "duration_seconds": 191
+  }
+ ],
+ "playlist_title": "90's"
+}
