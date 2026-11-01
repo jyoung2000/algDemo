@@ -367,7 +367,7 @@ export class LocalApi {
     const cur = this.settings();
     if ('fresh' in body) cur['fresh'] = Boolean(body['fresh']);
     if ('adventurous' in body) cur['adventurous'] = Math.min(1, Math.max(0, Number(body['adventurous'])));
-    for (const k of ['audio', 'sample_mode']) if (k in body) cur[k] = Boolean(body[k]);
+    for (const k of ['audio', 'sample_mode', 'rank_v2']) if (k in body) cur[k] = Boolean(body[k]);
     if ('daily_mb' in body) cur['daily_mb'] = Math.min(2000, Math.max(5, Number(body['daily_mb'])));
     if ('request_mb' in body) cur['request_mb'] = Math.min(200, Math.max(2, Number(body['request_mb'])));
     if ('queue_size' in body) {

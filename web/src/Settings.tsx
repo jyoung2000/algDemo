@@ -67,6 +67,11 @@ export function SettingsView({ settings, onSettings, onReset }: Props) {
       <section className="card" aria-labelledby="set-h">
         <h2 id="set-h">Settings</h2>
         <div className="pref">
+          <span className="k">Ranking engine</span>
+          <label className="chk">
+            <input type="checkbox" checked={settings?.rank_v2 ?? true} onChange={(e) => onSettings({ rank_v2: e.target.checked })} />
+            Improved ranking (v2): corroboration across services, three-horizon listening taste, fairer evidence handling. Turn off to use the original engine.
+          </label>
           <span className="k">Audio matching</span>
           <label className="chk">
             <input type="checkbox" checked={settings?.audio ?? true} onChange={(e) => onSettings({ audio: e.target.checked })} />

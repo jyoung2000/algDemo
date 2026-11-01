@@ -275,6 +275,8 @@ export interface Settings {
   sample_mode: boolean;
   /** How many new songs one discovery run adds to the list. */
   queue_size?: number;
+  /** The improved (v2) ranking engine; false falls back to the original scorer. */
+  rank_v2?: boolean;
 }
 
 export interface CapabilityState {
