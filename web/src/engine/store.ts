@@ -48,6 +48,7 @@ export interface FeedbackRow {
   /** v2 (schema version 2) — optional; rows written by v1 lack them. */
   schema?: number;
   duration?: number | null;
+  coverage?: number | null;
   medium?: string | null;
   session?: string | null;
   origin?: string | null;
@@ -57,6 +58,7 @@ export interface FeedbackRow {
 /** Optional v2 telemetry accepted alongside a feedback event. */
 export interface FeedbackMeta {
   duration?: number | null;
+  coverage?: number | null;
   medium?: string | null;
   session?: string | null;
   origin?: string | null;

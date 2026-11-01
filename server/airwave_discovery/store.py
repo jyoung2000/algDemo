@@ -151,7 +151,7 @@ class Store:
             if r[7]:
                 try:
                     m = json.loads(r[7])
-                    for k in ("duration", "medium", "session", "origin", "confidence"):
+                    for k in ("duration", "coverage", "medium", "session", "origin", "confidence"):
                         if k in m:
                             d[k] = m[k]
                 except (ValueError, TypeError):

@@ -20,6 +20,22 @@ the artwork and the icons from `packages/aqua-ui`. No other app in the repo depe
   allowlist (`web/src/engine/net.ts`) contains search and metadata hosts only.
 - Spotify has no keyless catalog search, so Spotify songs come in by link, not by typing.
 
+## Improved ranking (recsys-v2 branch)
+
+The **Settings → Improved ranking (v2)** toggle is on by default. It improves evidence handling and learns from actual playback without replacing candidate retrieval or the original ranking path. Turn the toggle off for the original scorer; existing history stays intact. In the shipped in-app TypeScript engine, recent (10-day), long-term (120-day) and current-session taste are blended only when enough evidence exists. The Python development server honors v2 evidence, provider and feedback rules, but not the three-horizon taste layer; use the native apps or `?local=1` for that layer. A 30-second Deezer preview is never treated as full-track completion. Opening a provider link does not count as listening.
+
+**Optional history import:** in Settings select a Spotify *extended streaming history* JSON file or extract a ListenBrainz export ZIP and choose a `listens/*.jsonl` month file (up to 25 MB per file, newest 2,000 usable events). Preview the parsed counts, then confirm. Imports stay on the device/local development server; re-imports deduplicate by event ID, original timestamps are retained, and unknown duration is not invented. ListenBrainz submissions are `qualified` plays rather than completions. Apple Music export import and ListenBrainz collaborative recommendations are not implemented. No account token or private Spotify access is required.
+
+Reproduce the checks from the monorepo root (Node 22+, `pnpm install` already completed; Python requires `uv` for the optional dev server):
+
+```sh
+cd discovery-demo/web && pnpm typecheck && pnpm test && pnpm build
+cd ../server && PYTHONPATH= uv run --frozen pytest -q -p no:warnings
+cd .. && node start.mjs --port 8787
+```
+
+`web` is not a pnpm workspace member; if `pnpm` cannot resolve its scripts, use the pinned hoisted tools from `web/`: `node ../../node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`, `node ../../node_modules/vitest/vitest.mjs run --root . --dir src --exclude '**/live.smoke.test.ts'`, `node ../../node_modules/vite/bin/vite.js build`. The development server runs at `http://127.0.0.1:8787/`; `?local=1` selects the browser-local TS engine for testing, but provider fetches can fail CORS outside the native bridge. The actual Windows and Android build commands are below. Compare baseline and v2 with `web/src/engine/benchmark.ab.test.ts`; reports and pinned upstream repository reviews are in `D:/MusicRecommendationLab/reports/` and `benchmarks/`.
+
 ## Two apps, one engine
 
 The recommender is TypeScript (`web/src/engine`) and runs inside the app. No server, Python, uv or

@@ -218,7 +218,7 @@ def build_feedback2(events: list[dict], now_ts: float, cfg: EngineConfig = DEFAU
         base = float(FEEDBACK_WEIGHTS[e["kind"]])
         conf = e.get("confidence")
         conf = 1.0 if conf is None else min(1.0, max(0.0, float(conf)))
-        if e["kind"] in ("complete", "replay"):
+        if e["kind"] in ("complete", "replay", "qualified"):
             slot = f"{e['key']}|{int(e['ts'] // 86400)}"
             had = per_day.get(slot, 0)
             per_day[slot] = had + 1
@@ -228,7 +228,9 @@ def build_feedback2(events: list[dict], now_ts: float, cfg: EngineConfig = DEFAU
                 base *= 0.5
             if e.get("medium") == "preview":
                 base *= 0.6  # 30 seconds heard, not the song
-            dur, lis = e.get("duration"), e.get("listened")
+            dur, lis = e.get("duration"), e.get("coverage")
+            if lis is None:
+                lis = e.get("listened")
             if e["kind"] == "complete" and dur and lis is not None and float(dur) > 0 and float(lis) >= 0:
                 ratio = min(1.0, float(lis) / float(dur))
                 if ratio < 0.9:

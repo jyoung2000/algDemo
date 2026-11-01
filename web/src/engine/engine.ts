@@ -166,6 +166,7 @@ export interface FeedbackEvent {
   /** v2 schema (all optional; stored v1 rows simply lack them) */
   listened?: number | null; // seconds actually heard (seek/pause-corrected by the player)
   duration?: number | null; // known total length of what played, seconds; null = unknown
+  coverage?: number | null; // unique content heard, seconds; rewinds excluded
   medium?: string | null; // 'preview' | 'full' | 'embed'
   session?: string | null; // player session id
   origin?: string | null; // 'queue' | 'manual' | 'import:<source>'
@@ -250,7 +251,7 @@ export function buildFeedback2(events: FeedbackEvent[], nowTs: number, cfg: Engi
     seen.add(e.event_id);
     let base = FEEDBACK_WEIGHTS[e.kind]!;
     const conf = e.confidence === null || e.confidence === undefined ? 1 : Math.min(1, Math.max(0, e.confidence));
-    if (e.kind === 'complete' || e.kind === 'replay') {
+    if (e.kind === 'complete' || e.kind === 'replay' || e.kind === 'qualified') {
       const day = Math.floor(e.ts / 86400);
       const slot = `${e.key}|${day}`;
       const had = perDay.get(slot) ?? 0;
@@ -258,8 +259,9 @@ export function buildFeedback2(events: FeedbackEvent[], nowTs: number, cfg: Engi
       if (had >= 2) continue; // third+ behavioral endorsement of the same song that day says nothing new
       if (had === 1) base *= 0.5;
       if (e.medium === 'preview') base *= 0.6; // 30 seconds heard, not the song
-      const dur = Number(e.duration), lis = Number(e.listened);
-      if (e.kind === 'complete' && Number.isFinite(dur) && dur > 0 && Number.isFinite(lis) && lis >= 0) {
+      const heard = e.coverage ?? e.listened;
+      const dur = Number(e.duration), lis = Number(heard);
+      if (e.kind === 'complete' && e.duration != null && heard != null && Number.isFinite(dur) && dur > 0 && Number.isFinite(lis) && lis >= 0) {
         const ratio = Math.min(1, lis / dur);
         if (ratio < 0.9) base *= Math.max(0.5, ratio); // partial hear counts partially; unknown duration is left alone
       }

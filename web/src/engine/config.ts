@@ -92,6 +92,7 @@ export const FEEDBACK_WEIGHTS: Record<string, number> = {
   save: 5.0,
   replay: 4.0,
   complete: 3.0,
+  qualified: 1.5, // imported play: submitted listen is not proof of completion
   dislike: -6.0,
   hide: -3.0,
   skip: -1.0,

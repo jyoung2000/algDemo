@@ -216,6 +216,7 @@ export function App() {
         listened: Math.round(listened * 10) / 10,
         duration: meta.duration ?? undefined,
         medium: meta.medium,
+        coverage: Math.round(meta.coverage * 10) / 10,
         session: sessionRef.current,
         origin: 'queue',
       })

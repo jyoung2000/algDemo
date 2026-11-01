@@ -50,7 +50,7 @@ export function collapseRows(rows: TasteRow2[]): TasteRow2[] {
   const out: TasteRow2[] = [];
   const sorted = [...rows].sort((x, y) => x.ts - y.ts || String(x.event_id ?? '').localeCompare(String(y.event_id ?? '')));
   for (const r of sorted) {
-    if (r.kind === 'complete' || r.kind === 'replay') {
+    if (r.kind === 'complete' || r.kind === 'replay' || r.kind === 'qualified') {
       const slot = `${r.key}|${Math.floor(r.ts / 86400)}`;
       const had = perDay.get(slot) ?? 0;
       perDay.set(slot, had + 1);

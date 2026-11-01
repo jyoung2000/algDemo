@@ -20,6 +20,7 @@ function tempoFit(a: number | null | undefined, b: number | null | undefined): n
 /** How much one event says about taste. Recent listening matters more than old (half-life below). */
 export const TASTE_EVENT_WEIGHTS: Record<string, number> = {
   complete: 1.0,
+  qualified: 0.5, // submitted play with unknown duration, not verified completion
   replay: 1.2,
   like: 1.5,
   save: 1.2,

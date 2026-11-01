@@ -735,6 +735,9 @@ def feedback(body: dict):
     dur = body.get("duration")
     if isinstance(dur, (int, float)) and 1 <= float(dur) <= 36000:
         meta["duration"] = float(dur)
+    cov = body.get("coverage")
+    if isinstance(cov, (int, float)) and 0 <= float(cov) <= 36000:
+        meta["coverage"] = float(cov)
     med = body.get("medium")
     if med in ("preview", "full", "embed"):
         meta["medium"] = med
@@ -747,6 +750,44 @@ def feedback(body: dict):
         meta["confidence"] = float(cv)
     added = s.store.add_feedback(event_id, key, kind, (t.get("artists") or [""])[0].lower() if t.get("artists") else "", clean_track(t), listened, meta=meta or None)
     return {"recorded": added, "duplicate": not added}
+
+
+@app.post("/api/import/history")
+def import_history(body: dict):
+    """Store already-parsed local history, preserving original timestamps. No upstream upload."""
+    events = body.get("events")
+    if not isinstance(events, list) or not events or len(events) > 2500:
+        raise HTTPException(400, "events must be a nonempty list of at most 2500")
+    s = st()
+    now = time.time()
+    recorded = duplicates = 0
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        event_id, key, kind = e.get("event_id"), e.get("key"), e.get("kind")
+        ts = e.get("ts")
+        if not (isinstance(event_id, str) and 0 < len(event_id) <= 80 and event_id.startswith("imp-")
+                and isinstance(key, str) and 0 < len(key) <= 512
+                and kind in ("complete", "skip", "qualified")
+                and isinstance(ts, (int, float)) and 0 < ts <= now + 86400):
+            continue
+        origin = e.get("origin")
+        if not (isinstance(origin, str) and origin in ("import:spotify", "import:listenbrainz")):
+            continue
+        title = str(e.get("title") or "")[:300]
+        artist = str(e.get("artist") or "")[:300]
+        listened = e.get("listened")
+        listened = max(0.0, min(36000.0, float(listened))) if isinstance(listened, (int, float)) else None
+        confidence = e.get("confidence")
+        confidence = min(1.0, max(0.0, float(confidence))) if isinstance(confidence, (int, float)) else 0.6
+        added = s.store.add_feedback(event_id, key, kind, artist.lower(),
+                                     {"key": key, "title": title, "artists": [artist]}, listened,
+                                     ts=float(ts), meta={"origin": origin, "confidence": confidence})
+        if added:
+            recorded += 1
+        else:
+            duplicates += 1
+    return {"recorded": recorded, "duplicates": duplicates, "skipped": len(events) - recorded - duplicates}
 
 
 @app.get("/api/feedback/state")

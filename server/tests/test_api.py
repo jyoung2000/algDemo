@@ -57,6 +57,40 @@ def test_old_mode_setting_maps_to_slider_and_switch(client):
     assert got["fresh"] is False and got["adventurous"] == 0.25
 
 
+def test_playback_coverage_persisted_separately_and_used_for_completion(client):
+    t = seed("preview")
+    body = {"kind": "complete", "event_id": "play-coverage-1", "track": t,
+            "listened": 28, "coverage": 24, "duration": 30, "medium": "preview", "session": "s-test", "origin": "queue"}
+    assert client.post("/api/feedback", json=body).json()["recorded"] is True
+    row = next(x for x in appmod.st().store.feedback() if x["event_id"] == "play-coverage-1")
+    assert row["listened"] == 28 and row["coverage"] == 24 and row["duration"] == 30
+    assert row["medium"] == "preview" and row["session"] == "s-test"
+    # unique content, not elapsed looping, determines the partial-completion qualification
+    expected = 3.0 * 0.6 * 0.8
+    assert appmod.E.build_feedback2([dict(row, ts=1750000000)], 1750000000).track["preview"] == pytest.approx(expected)
+
+
+def test_import_history_original_timestamp_dedupe_and_qualified_not_complete(client):
+    event = {"event_id": "imp-lb-demo-1", "key": "daft punk|get lucky|", "kind": "qualified",
+             "title": "Get Lucky", "artist": "daft punk", "ts": 1750000000,
+             "listened": None, "origin": "import:listenbrainz", "confidence": 0.6}
+    r = client.post("/api/import/history", json={"events": [event]})
+    assert r.status_code == 200 and r.json() == {"recorded": 1, "duplicates": 0, "skipped": 0}
+    assert client.post("/api/import/history", json={"events": [event]}).json()["duplicates"] == 1
+    row = next(x for x in appmod.st().store.feedback() if x["event_id"] == event["event_id"])
+    assert row["kind"] == "qualified" and row["ts"] == 1750000000
+    assert row["listened"] is None and row["confidence"] == 0.6
+    assert row["origin"] == "import:listenbrainz"
+    assert appmod.E.build_feedback2([row], 1750000000).track[event["key"]] == pytest.approx(0.9)
+    bad = dict(event, event_id="imp-lb-demo-2", kind="dislike")
+    assert client.post("/api/import/history", json={"events": [bad]}).json()["skipped"] == 1
+
+
+def test_import_history_rejects_oversize_batch(client):
+    assert client.post("/api/import/history", json={"events": []}).status_code == 400
+    assert client.post("/api/import/history", json={"events": [{}] * 2501}).status_code == 400
+
+
 def test_feedback_dedupe_and_like_dislike_exclusive(client):
     t = seed("k")
     body = {"kind": "like", "event_id": "e1", "track": t}

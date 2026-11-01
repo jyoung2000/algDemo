@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ProviderMark } from '@now-playing/aqua-ui/icons';
 import { api, type Health, type Settings as S, type Status } from './api';
+import { parseHistoryFile, type ImportSummary } from './engine/import';
 import { PROVIDER_LABEL, classNames, fmtBytes, markKey } from './util';
 
 const CAPS: [string, string][] = [
@@ -34,6 +35,39 @@ export function SettingsView({ settings, onSettings, onReset }: Props) {
   const [err, setErr] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [modelBusy, setModelBusy] = useState<'install' | 'test' | null>(null);
+  const [history, setHistory] = useState<ImportSummary | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [historyMessage, setHistoryMessage] = useState('');
+  const loadHistory = async (file: File | undefined) => {
+    if (!file) return;
+    setHistory(null);
+    setHistoryMessage('');
+    if (file.size > 25_000_000) {
+      setHistoryMessage('This file is over 25 MB. Split or extract it into smaller JSON/JSONL files.');
+      return;
+    }
+    try {
+      const parsed = parseHistoryFile(await file.text());
+      setHistory(parsed);
+      if (!parsed.usable) setHistoryMessage('No qualified listens in that file. Nothing was imported.');
+    } catch (e) {
+      setHistoryMessage((e as Error).message);
+    }
+  };
+  const saveHistory = async () => {
+    if (!history?.usable) return;
+    setHistoryBusy(true);
+    setHistoryMessage('');
+    try {
+      const { recorded, duplicates, skipped } = await api.importHistory(history.events);
+      setHistoryMessage(`Imported ${recorded}; ${duplicates} already present; ${skipped} rejected. Refresh to update your profile.`);
+      setHistory(null);
+    } catch (e) {
+      setHistoryMessage((e as Error).message);
+    } finally {
+      setHistoryBusy(false);
+    }
+  };
 
   const modelAction = (kind: 'install' | 'test') => {
     setModelBusy(kind);
@@ -70,7 +104,7 @@ export function SettingsView({ settings, onSettings, onReset }: Props) {
           <span className="k">Ranking engine</span>
           <label className="chk">
             <input type="checkbox" checked={settings?.rank_v2 ?? true} onChange={(e) => onSettings({ rank_v2: e.target.checked })} />
-            Improved ranking (v2): corroboration across services, three-horizon listening taste, fairer evidence handling. Turn off to use the original engine.
+            Improved ranking (v2): corroboration across services, bounded repeat feedback and fairer evidence. In-app ranking also blends long, recent and session taste. Turn off to use the original engine.
           </label>
           <span className="k">Audio matching</span>
           <label className="chk">
@@ -110,6 +144,14 @@ export function SettingsView({ settings, onSettings, onReset }: Props) {
           </label>
         </div>
         <p className="note">Songs you play in the embedded players stream straight to your browser. That is your own listening and is not counted in these allowances.</p>
+        <div className="pref" aria-label="Listening history import">
+          <span className="k">Import listening history (optional)</span>
+          <p className="note">Select Spotify extended streaming history JSON or an extracted ListenBrainz .jsonl month. This file is read on your device; no account connection or cloud upload. A submitted ListenBrainz play is not treated as a finished track.</p>
+          <input aria-label="Choose history file" type="file" accept=".json,.jsonl,application/json" onChange={(e) => { void loadHistory(e.target.files?.[0]); e.target.value = ''; }} />
+          {history && <p className="note" role="status">{history.source}: {history.usable} usable of {history.total} rows; {history.dropped.map((d) => `${d.count} ${d.reason}`).join(', ') || 'none dropped'}. Nothing is saved until you confirm.</p>}
+          {history && history.usable > 0 && <button className="push" type="button" disabled={historyBusy} onClick={() => void saveHistory()}>{historyBusy ? 'Importing…' : `Import ${history.usable} plays`}</button>}
+          {historyMessage && <p className="note" role="status">{historyMessage}</p>}
+        </div>
         <div className="panefoot">
           <a className="push" href="/api/export" download>
             Export my data

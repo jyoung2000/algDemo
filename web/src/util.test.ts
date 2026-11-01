@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RecItem, TasteSummary } from './api';
-import { describeCharacteristics, describeTaste, mergeRerank, toneLabel } from './util';
+import { ListenMeter, describeCharacteristics, describeTaste, mergeRerank, qualifiesCompletion, toneLabel } from './util';
 
 const item = (key: string, rank: number): RecItem => ({ rank, track: { key } }) as unknown as RecItem;
 
@@ -33,6 +33,35 @@ describe('describeTaste', () => {
   it('is empty with no listening', () => {
     expect(describeTaste(null)).toBe('');
     expect(describeTaste({ ...t, events: 0 })).toBe('');
+  });
+});
+
+describe('ListenMeter: actual time and unique content coverage', () => {
+  it('excludes seeks, pauses and buffering; a replay adds time but not coverage', () => {
+    const m = new ListenMeter();
+    m.tick(0, true);
+    m.tick(0.5, true);
+    m.tick(1, true);
+    m.tick(1, false);
+    m.tick(1, false); // paused interval
+    m.seeked(20); // seeking forward does not count as heard
+    m.tick(20.5, true);
+    m.tick(21, true);
+    m.seeked(0); // replay the first second
+    m.tick(0.5, true);
+    m.tick(1, true);
+    expect(m.listened).toBeCloseTo(3);
+    expect(m.coverage).toBeCloseTo(2);
+    m.tick(50, true); // discontinuity/buffering: not an actual playing interval
+    expect(m.listened).toBeCloseTo(3);
+    expect(m.coverage).toBeCloseTo(2);
+  });
+  it('an end reached by seeking ahead is not a full-track completion', () => {
+    expect(qualifiesCompletion('full', 20, 180)).toBe(false);
+    expect(qualifiesCompletion('full', 130, 180)).toBe(true);
+    expect(qualifiesCompletion('preview', 20, 30)).toBe(false);
+    expect(qualifiesCompletion('preview', 25, 30)).toBe(true);
+    expect(qualifiesCompletion('full', 20, null)).toBe(true); // duration unknown; no ratio claimed
   });
 });
 

@@ -5,7 +5,7 @@ import { Art } from './Art';
 import { Volume } from './Volume';
 import { Wheel } from './Wheel';
 import { loadYouTube, youtubeEmbedUrl, type YTPlayer } from './youtube';
-import { ListenMeter, PROVIDER_LABEL, artistOf, classNames, fmtDuration, markKey } from './util';
+import { ListenMeter, PROVIDER_LABEL, artistOf, classNames, fmtDuration, markKey, qualifiesCompletion } from './util';
 
 export interface Playing {
   track: Track;
@@ -50,6 +50,8 @@ export interface ListenTelemetry {
   medium: 'full' | 'preview';
   /** Length of what actually played (player-reported, else catalogue), seconds; null = unknown. */
   duration: number | null;
+  /** Unique content heard (rewinds do not inflate it), seconds. */
+  coverage: number;
 }
 
 const VOLUME_KEY = 'airwave.volume';
@@ -257,11 +259,15 @@ export function Player({ playing, upNext, docked, canPrev, canNext, onPrev, onNe
   // same playback instance is one replay; beyond that, loops teach nothing new and record nothing.
   onEndRef.current = () => {
     const l = meter.current.listened;
-    if (playing && l >= COMPLETE_S) {
+    const coverage = meter.current.coverage;
+    const duration = dur > 0 ? Math.round(dur) : playing?.track.duration ?? null;
+    const medium = mode === 'full' ? 'full' : 'preview';
+    if (playing && l >= COMPLETE_S && qualifiesCompletion(medium, coverage, duration)) {
       const meta: ListenTelemetry = {
         instance: instance.current,
-        medium: mode === 'full' ? 'full' : 'preview',
-        duration: dur > 0 ? Math.round(dur) : playing.track.duration ?? null,
+        medium,
+        duration,
+        coverage,
       };
       const n = ++endsThisInstance.current;
       if (n === 1) onListen('complete', playing.track, l, meta);
@@ -277,6 +283,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, onPrev, onNe
         instance: instance.current,
         medium: mode === 'full' ? 'full' : 'preview',
         duration: dur > 0 ? Math.round(dur) : playing.track.duration ?? null,
+        coverage: meter.current.coverage,
       });
     onNext();
   };

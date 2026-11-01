@@ -144,6 +144,12 @@ describe('buildFeedback2 (defects 7, 8, 9)', () => {
     expect(prev.track['a|x']!).toBeLessThan(full.track['a|x']!);
   });
 
+  it('uses unique content coverage rather than elapsed loops to qualify a completion', () => {
+    const fb = E.buildFeedback2([ev('complete', 'a|x', { event_id: 'cov', listened: 30, coverage: 24, duration: 30, medium: 'preview' })], NOW_TS, cfg);
+    const full = E.buildFeedback2([ev('complete', 'a|x', { event_id: 'whole', listened: 30, coverage: 30, duration: 30, medium: 'preview' })], NOW_TS, cfg);
+    expect(fb.track['a|x']!).toBeCloseTo(full.track['a|x']! * 0.8, 5);
+  });
+
   it('unknown duration does not manufacture a completion ratio', () => {
     const unk = E.buildFeedback2([ev('complete', 'a|x', { event_id: 'u', medium: 'full', listened: 200 })], NOW_TS, cfg);
     const known = E.buildFeedback2([ev('complete', 'a|x', { event_id: 'k', medium: 'full', listened: 200, duration: 205 })], NOW_TS, cfg);

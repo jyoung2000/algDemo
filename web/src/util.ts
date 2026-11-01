@@ -87,11 +87,29 @@ export function stepPlayable(items: RecItem[], fromKey: string | null, dir: 1 | 
 export class ListenMeter {
   listened = 0;
   private last: number | null = null;
+  private ranges: [number, number][] = [];
+
+  /** Unique seconds of content actually heard (rewinds never increase it twice). */
+  get coverage(): number {
+    return this.ranges.reduce((sum, [start, end]) => sum + end - start, 0);
+  }
 
   tick(currentTime: number, playing: boolean): void {
     if (playing && this.last != null) {
       const d = currentTime - this.last;
-      if (d > 0 && d < 1.5) this.listened += d;
+      if (d > 0 && d < 1.5) {
+        this.listened += d;
+        // Merge only measured playback intervals. Seeking and waiting cannot create coverage.
+        let start = this.last, end = currentTime;
+        const keep: [number, number][] = [];
+        for (const [a, b] of this.ranges) {
+          if (b < start || a > end) keep.push([a, b]);
+          else { start = Math.min(start, a); end = Math.max(end, b); }
+        }
+        keep.push([start, end]);
+        keep.sort((x, y) => x[0] - y[0]);
+        this.ranges = keep;
+      }
     }
     this.last = currentTime;
   }
@@ -99,6 +117,15 @@ export class ListenMeter {
   seeked(currentTime: number): void {
     this.last = currentTime;
   }
+}
+
+export function qualifiesCompletion(medium: 'full' | 'preview', coverage: number, duration: number | null): boolean {
+  if (duration !== null && Number.isFinite(duration) && duration > 0) {
+    const share = medium === 'preview' ? 0.8 : 0.7;
+    return coverage >= Math.min(duration, Math.max(20, duration * share));
+  }
+  // Unknown duration: at least 20 seconds were genuinely heard; do not infer a completion ratio.
+  return coverage >= 20;
 }
 
 export function classNames(...xs: (string | false | null | undefined)[]): string {

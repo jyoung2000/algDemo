@@ -158,6 +158,7 @@ export class LocalApi {
       const job = /^\/api\/jobs\/([A-Za-z0-9]+)$/.exec(path);
       if (job) return m === 'DELETE' ? this.cancelJob(job[1]!) : this.jobStatus(job[1]!);
       if (m === 'POST' && path === '/api/feedback') return await this.feedback(body ?? {});
+      if (m === 'POST' && path === '/api/import/history') return await this.importHistory(body ?? {});
       if (m === 'GET' && path === '/api/feedback/state') return ok(this.feedbackState());
       if (m === 'POST' && path === '/api/impressions') return await this.impressions(body ?? {});
       if (m === 'POST' && path === '/api/full-song') return await this.fullSong(body ?? {});
@@ -690,6 +691,7 @@ export class LocalApi {
     const str = (x: unknown, allowed?: string[]): string | null => (typeof x === 'string' && x.length > 0 && x.length <= 64 && (!allowed || allowed.includes(x)) ? x : null);
     const meta = {
       duration: num(body['duration'], 1, 36000),
+      coverage: num(body['coverage'], 0, 36000),
       medium: str(body['medium'], ['preview', 'full', 'embed']),
       session: str(body['session']),
       origin: str(body['origin']),
@@ -698,6 +700,35 @@ export class LocalApi {
     const hasMeta = Object.values(meta).some((v) => v !== null);
     const added = await this.store.addFeedback(eventId, key, kind, artist, cleanTrack(t), listened === null ? null : Number(listened), undefined, hasMeta ? meta : undefined);
     return ok({ recorded: added, duplicate: !added });
+  }
+
+  /** Import a parsed history file: pre-validated events from engine/import.ts, original timestamps kept. */
+  private async importHistory(body: Dict): Promise<LocalResponse> {
+    const events = body['events'];
+    if (!Array.isArray(events) || events.length === 0) return fail(400, 'events[] required (parse the file with engine/import first)');
+    if (events.length > 2500) return fail(400, 'too many events in one call (cap 2500)');
+    let recorded = 0;
+    let duplicates = 0;
+    const now = unixNow();
+    for (const raw of events) {
+      const e = raw as Dict;
+      const eventId = String(e['event_id'] ?? '').slice(0, 80);
+      const key = String(e['key'] ?? '');
+      const kind = String(e['kind'] ?? '');
+      const ts = Number(e['ts']);
+      // imports may only carry playback kinds; explicit judgements stay a live-user action
+      if (!eventId.startsWith('imp-') || !key || key.length > 512 || !['complete', 'skip', 'qualified'].includes(kind)) continue;
+      if (!Number.isFinite(ts) || ts <= 0 || ts > now + 86400) continue;
+      const origin = e['origin'];
+      if (origin !== 'import:spotify' && origin !== 'import:listenbrainz') continue;
+      const listened = typeof e['listened'] === 'number' && Number.isFinite(e['listened']) ? Math.max(0, Math.min(36000, e['listened'])) : null;
+      const confidence = typeof e['confidence'] === 'number' ? Math.max(0, Math.min(1, e['confidence'])) : 0.6;
+      const track = { key, title: String(e['title'] ?? '').slice(0, 300), artists: [String(e['artist'] ?? '').slice(0, 300)] };
+      const added = await this.store.addFeedback(eventId, key, kind, track.artists[0]!.toLowerCase(), track, listened, ts, { duration: null, medium: null, session: null, origin, confidence });
+      if (added) recorded += 1;
+      else duplicates += 1;
+    }
+    return ok({ recorded, duplicates, skipped: events.length - recorded - duplicates });
   }
 
   private feedbackState(): Dict {
