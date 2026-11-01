@@ -1,4 +1,4 @@
-import type { Characteristics, ProviderId, RecItem, Release, TasteSummary, Track } from './api';
+import type { Characteristics, Playback, ProviderId, RecItem, Release, TasteSummary, Track } from './api';
 
 export const PROVIDER_LABEL: Record<string, string> = {
   ytmusic: 'YouTube Music',
@@ -7,6 +7,17 @@ export const PROVIDER_LABEL: Record<string, string> = {
   spotify: 'Spotify',
   apple: 'Apple Music',
 };
+
+/** How a song that is not a recommendation (a search hit or a starting song) plays: preview first, else the provider's own player. */
+export function playbackOfTrack(t: Track): Playback {
+  const open = t.url ? [{ provider: t.provider, label: `Open in ${PROVIDER_LABEL[t.provider] ?? t.provider}`, url: t.url }] : [];
+  for (const a of t.also_on ?? []) open.push({ provider: a.provider, label: `Open in ${PROVIDER_LABEL[a.provider] ?? a.provider}`, url: a.url });
+  if (t.preview) return { open, preview: t.preview, embed: null };
+  if (t.provider === 'ytmusic') return { open, preview: null, embed: { provider: 'ytmusic', url: `https://www.youtube-nocookie.com/embed/${encodeURIComponent(t.platform_id)}?autoplay=1&rel=0` } };
+  if (t.provider === 'soundcloud' && t.url)
+    return { open, preview: null, embed: { provider: 'soundcloud', url: `https://w.soundcloud.com/player/?url=${encodeURIComponent(t.url)}&auto_play=true&visual=false` } };
+  return { open, preview: null, embed: null };
+}
 
 /** The aqua-ui provider marks key YouTube Music under the YouTube mark. */
 export function markKey(p: ProviderId | string): string {

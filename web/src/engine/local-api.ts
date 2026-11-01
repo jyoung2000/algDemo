@@ -457,7 +457,33 @@ export class LocalApi {
       job.timings['profile_ms'] = since();
       job.phase = 'gathering';
       job.progress = 'Asking the music services for related songs';
-      const { cands, related } = await p.gather(job, seedViews, profiles, cfg, es.fresh);
+      // Feedback and impressions are ready before gathering so the first wave can be scored honestly.
+      const fb = settings['rank_v2'] !== false ? E.buildFeedback2(this.store.feedback() as never, unixNow(), cfg) : E.buildFeedback(this.store.feedback() as never, unixNow(), cfg);
+      const imps = this.store.impressions(unixNow() - cfg.exposureWindowDays * 86400);
+      const v2 = settings['rank_v2'] !== false;
+      const taste = this.taste();
+      const taste2 = v2 ? this.taste2() : null;
+      const es2 = es;
+      // First wave: as soon as a few sources answer, a provisional queue is scored and shown while
+      // the remaining sources, genres and audio comparisons keep loading. Same scorer, same honesty
+      // rules — only the evidence is thinner, and the phase says so.
+      const onPartial = (quick: Dict[], relPartial: Map<string, Set<string>>) => {
+        try {
+          const relMapQ = new Map([...relPartial].filter(([, v]) => v.size));
+          const ctxQ: E.Context = {
+            seeds: seedViews as never, vectors: new Map(), relatedArtists: relMapQ, feedback: fb, impressions: imps,
+            settings: es2, now: new Date(), cfg, taste, rankV2: v2, taste2,
+          };
+          const quickChosen = E.select(E.scoreAll(quick as never, ctxQ), ctxQ);
+          if (quickChosen.length) {
+            job.result = this.serialise(quickChosen, ctxQ, 'gathering', job);
+            job.progress = `First ${quickChosen.length} songs found; still asking the other services`;
+          }
+        } catch {
+          /* a failed provisional wave never fails the request */
+        }
+      };
+      const { cands, related } = await p.gather(job, seedViews, profiles, cfg, es.fresh, onPartial);
       job.timings['gather_ms'] = since() - job.timings['profile_ms'];
       job.timings['candidates'] = cands.length;
       if (!cands.length) {
@@ -467,8 +493,6 @@ export class LocalApi {
         };
         return;
       }
-      const fb = settings['rank_v2'] !== false ? E.buildFeedback2(this.store.feedback() as never, unixNow(), cfg) : E.buildFeedback(this.store.feedback() as never, unixNow(), cfg);
-      const imps = this.store.impressions(unixNow() - cfg.exposureWindowDays * 86400);
       const vectors = new Map<string, Float64Array>();
       const dzIdOf = (sv: Dict): string | null => sv['dz_preview_id'] || sv['dz_id'] || (sv['provider'] === 'deezer' ? sv['platform_id'] : null) || null;
       for (const sv of [...seedViews, ...cands]) {
@@ -477,9 +501,7 @@ export class LocalApi {
         if (v) vectors.set(sv['key'], Float64Array.from(v));
       }
       const relMap = new Map([...related].filter(([, v]) => v.size));
-      const v2 = settings['rank_v2'] !== false;
-      const taste = this.taste();
-      const ctx: E.Context = { seeds: seedViews as never, vectors, relatedArtists: relMap, feedback: fb, impressions: imps, settings: es, now: new Date(), cfg, taste, rankV2: v2, taste2: v2 ? this.taste2() : null };
+      const ctx: E.Context = { seeds: seedViews as never, vectors, relatedArtists: relMap, feedback: fb, impressions: imps, settings: es, now: new Date(), cfg, taste, rankV2: v2, taste2 };
       let scored = E.scoreAll(cands as never, ctx);
       let chosen = E.select(scored, ctx);
       job.timings['metadata_ms'] = since();

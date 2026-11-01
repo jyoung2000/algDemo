@@ -8,7 +8,7 @@ import { DownloadsView, useDownloads } from './Downloads';
 import { Search } from './Search';
 import { ProfileView } from './Profile';
 import { SettingsView } from './Settings';
-import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, classNames, describeTaste, fmtBytes, keepFocus, mergeRerank, stepPlayable } from './util';
+import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, classNames, describeTaste, fmtBytes, keepFocus, mergeRerank, playbackOfTrack, stepPlayable } from './util';
 
 type Tab = 'discover' | 'saved' | 'profile' | 'downloads' | 'settings';
 
@@ -22,17 +22,6 @@ function adventureLabel(a: number): string {
 }
 
 const POLL_MS = 700;
-
-/** How a song from search (not yet a recommendation) plays: preview first, else the provider's own player. */
-export function playbackOfTrack(t: Track): Playback {
-  const open = t.url ? [{ provider: t.provider, label: `Open in ${PROVIDER_LABEL[t.provider] ?? t.provider}`, url: t.url }] : [];
-  for (const a of t.also_on ?? []) open.push({ provider: a.provider, label: `Open in ${PROVIDER_LABEL[a.provider] ?? a.provider}`, url: a.url });
-  if (t.preview) return { open, preview: t.preview, embed: null };
-  if (t.provider === 'ytmusic') return { open, preview: null, embed: { provider: 'ytmusic', url: `https://www.youtube-nocookie.com/embed/${encodeURIComponent(t.platform_id)}?autoplay=1&rel=0` } };
-  if (t.provider === 'soundcloud' && t.url)
-    return { open, preview: null, embed: { provider: 'soundcloud', url: `https://w.soundcloud.com/player/?url=${encodeURIComponent(t.url)}&auto_play=true&visual=false` } };
-  return { open, preview: null, embed: null };
-}
 
 function useMedia(q: string): boolean {
   const [m, setM] = useState(() => window.matchMedia(q).matches);
@@ -452,7 +441,11 @@ export function App() {
                       </button>
                     )}
                     <span className="queue__meta">
-                      {running && result.phase === 'metadata' ? (
+                      {running && result.phase === 'gathering' ? (
+                        <>
+                          <span className="sdot sdot--busy" aria-hidden="true" /> First songs found; still asking the other services…
+                        </>
+                      ) : running && result.phase === 'metadata' ? (
                         <>
                           <span className="sdot sdot--busy" aria-hidden="true" /> Listening to previews to refine the order…
                         </>
@@ -493,6 +486,7 @@ export function App() {
                       flags={flags}
                       onFocus={setFocusKey}
                       onPlay={play}
+                      onPlayTrack={previewTrack}
                       onFeedback={onFeedback}
                       onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
                     />
@@ -530,6 +524,7 @@ export function App() {
                     flags={flags}
                     onFocus={setFocusKey}
                     onPlay={play}
+                    onPlayTrack={previewTrack}
                     onFeedback={onFeedback}
                     onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
                   />

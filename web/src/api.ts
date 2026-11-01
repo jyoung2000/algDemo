@@ -150,7 +150,8 @@ export interface AudioStats {
 }
 
 export interface RecResult {
-  phase: 'metadata' | 'final';
+  /** 'gathering' is the provisional first wave, shown while the remaining sources load. */
+  phase: 'gathering' | 'metadata' | 'final';
   items: RecItem[];
   count: number;
   asked: number;

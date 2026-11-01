@@ -149,7 +149,15 @@ export class Pipeline {
   }
 
   // ---------------------------------------------------------------------------------------
-  async gather(job: Job, seeds: Dict[], profiles: Record<string, Dict>, cfg: EngineConfig, fresh: boolean): Promise<{ cands: Dict[]; related: Map<string, Set<string>> }> {
+  async gather(
+    job: Job,
+    seeds: Dict[],
+    profiles: Record<string, Dict>,
+    cfg: EngineConfig,
+    fresh: boolean,
+    /** Called at most once, as soon as enough candidates exist for a provisional first wave. */
+    onPartial?: (cands: Dict[], related: Map<string, Set<string>>) => void,
+  ): Promise<{ cands: Dict[]; related: Map<string, Set<string>> }> {
     const n = Math.max(1, seeds.length);
     const perSeed = Math.max(6, Math.ceil(cfg.perSourceCap / n));
     const c = this.ctx(job);
@@ -210,34 +218,56 @@ export class Pipeline {
     }
 
     const results = new Map<string, Map<string, Rel[]>>();
-    const done = await pmap(tasks, 4, async (t) => ({ ...t, out: await this.call(job, `${t.source}:${(t.seedKey.split('|')[1] ?? '').slice(0, 30)}`, t.fn, [] as Rel[]) }));
-    for (const t of done) {
-      const bySeed = results.get(t.source) ?? new Map<string, Rel[]>();
-      results.set(t.source, bySeed);
-      bySeed.set(t.seedKey, [...(bySeed.get(t.seedKey) ?? []), ...t.out]);
-    }
+    const addTo = (map: Map<string, Map<string, Rel[]>>, r: { source: string; seedKey: string; out: Rel[] }) => {
+      const bySeed = map.get(r.source) ?? new Map<string, Rel[]>();
+      map.set(r.source, bySeed);
+      bySeed.set(r.seedKey, [...(bySeed.get(r.seedKey) ?? []), ...r.out]);
+    };
+    /** Round-robin merge of a result map; builds fresh copies, so it is safe to run on partial state. */
+    const mergeFrom = (res: Map<string, Map<string, Rel[]>>): Dict[] => {
+      const merged = new Map<string, Dict>();
+      const order: string[] = [];
+      for (const [source, bySeed] of res) {
+        const lists = seeds.map((s) => bySeed.get(String(s['key'])) ?? []);
+        let taken = 0;
+        for (let i = 0; taken < cfg.perSourceCap && lists.some((l) => i < l.length); i++) {
+          lists.forEach((lst, si) => {
+            if (i < lst.length && taken < cfg.perSourceCap) {
+              const [t, relation, via] = lst[i] as Rel;
+              if (relation === 'related_artist_top') relatedNames.get(String((seeds[si] as Dict)['key']))?.add(fold(String((t['artists'] as string[])[0] ?? '')));
+              this.merge(merged, order, t, { seed: (seeds[si] as Dict)['key'], relation, rank: i, source, via });
+              taken += 1;
+            }
+          });
+        }
+      }
+      // user uploads / mixes are not songs
+      return order.map((k) => merged.get(k) as Dict).filter((x) => x['kind'] !== 'video');
+    };
+
+    // The live map fills in completion order and only feeds the provisional first wave; the final
+    // merge below uses task order, so the finished queue stays deterministic however the network raced.
+    const live = new Map<string, Map<string, Rel[]>>();
+    let partialFired = false;
+    let tasksDone = 0;
+    const done = await pmap(tasks, 4, async (t) => {
+      const r = { ...t, out: await this.call(job, `${t.source}:${(t.seedKey.split('|')[1] ?? '').slice(0, 30)}`, t.fn, [] as Rel[]) };
+      addTo(live, r);
+      tasksDone += 1;
+      if (!partialFired && onPartial && tasksDone >= Math.min(4, tasks.length)) {
+        const quick = mergeFrom(live);
+        if (quick.length >= 8) {
+          partialFired = true;
+          onPartial(quick.slice(0, cfg.mergedCap), relatedNames);
+        }
+      }
+      return r;
+    });
+    for (const t of done) addTo(results, t);
     const sims = await pmap(similar, 4, async (t) => ({ ...t, out: await this.call(job, `ytmusic-similar-artists:${(t.seedKey.split('|')[1] ?? '').slice(0, 30)}`, t.fn, [] as string[]) }));
     for (const t of sims) for (const name of t.out) relatedNames.get(t.seedKey)?.add(fold(name));
 
-    // per-source cap, filled round-robin across seeds so the first seed cannot dominate
-    const merged = new Map<string, Dict>();
-    const order: string[] = [];
-    for (const [source, bySeed] of results) {
-      const lists = seeds.map((s) => bySeed.get(String(s['key'])) ?? []);
-      let taken = 0;
-      for (let i = 0; taken < cfg.perSourceCap && lists.some((l) => i < l.length); i++) {
-        lists.forEach((lst, si) => {
-          if (i < lst.length && taken < cfg.perSourceCap) {
-            const [t, relation, via] = lst[i] as Rel;
-            if (relation === 'related_artist_top') relatedNames.get(String((seeds[si] as Dict)['key']))?.add(fold(String((t['artists'] as string[])[0] ?? '')));
-            this.merge(merged, order, t, { seed: (seeds[si] as Dict)['key'], relation, rank: i, source, via });
-            taken += 1;
-          }
-        });
-      }
-    }
-    // user uploads / mixes are not songs
-    const cands = order.map((k) => merged.get(k) as Dict).filter((x) => x['kind'] !== 'video');
+    const cands = mergeFrom(results);
     return { cands: cands.slice(0, cfg.mergedCap), related: relatedNames };
   }
 

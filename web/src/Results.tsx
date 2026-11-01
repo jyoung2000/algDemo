@@ -2,7 +2,7 @@ import { useState, type CSSProperties } from 'react';
 import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
 import type { FeedbackKind, RecItem, Track } from './api';
 import { Art } from './Art';
-import { PROVIDER_LABEL, TIER_LABEL, artistOf, classNames, describeCharacteristics, fmtDuration, fmtRelease, markKey, toneLabel } from './util';
+import { PROVIDER_LABEL, TIER_LABEL, artistOf, classNames, describeCharacteristics, fmtDuration, fmtRelease, markKey, playbackOfTrack, toneLabel } from './util';
 
 export interface FeedbackFlags {
   like?: boolean;
@@ -22,6 +22,8 @@ interface Props {
   flags: Record<string, FeedbackFlags>;
   onFocus: (key: string) => void;
   onPlay: (item: RecItem) => void;
+  /** Play a starting song (preview or provider player), used by the seed rows. */
+  onPlayTrack: (track: Track) => void;
   onFeedback: (item: RecItem, kind: FeedbackKind) => void;
   onDownload?: (track: Track) => void;
 }
@@ -31,7 +33,7 @@ interface Props {
  * diversified order; nothing here re-sorts it.
  * Arrow keys / j k move between rows; Enter plays; the row keeps focus when results refresh.
  */
-export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, playingKey, flags, onFocus, onPlay, onFeedback, onDownload }: Props) {
+export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload }: Props) {
   const [open, setOpen] = useState<string | null>(null);
 
   const move = (from: number, dir: 1 | -1) => {
@@ -45,14 +47,28 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
     <ol className="recs" aria-label="Your songs and discovery queue">
       {seeds.map((s) => {
         const strong = (s.emphasis ?? 1) > 1;
+        const pb = playbackOfTrack(s);
+        const seedPlayable = Boolean(pb.preview || pb.embed);
         return (
-          <li key={`seed:${s.key}`} className={classNames('rec', 'rec--seed', strong && 'is-strong')}>
+          <li key={`seed:${s.key}`} className={classNames('rec', 'rec--seed', strong && 'is-strong', playingKey === s.key && 'is-playing')}>
             <span className="rec__rank" aria-hidden="true">
-              <Glyph name="star" size={12} />
+              {playingKey === s.key ? <Glyph name="speaker" size={12} /> : <Glyph name="star" size={12} />}
             </span>
-            <span className="rec__art">
+            <button
+              className="rec__art"
+              type="button"
+              onClick={() => (seedPlayable ? onPlayTrack(s) : undefined)}
+              disabled={!seedPlayable}
+              aria-label={seedPlayable ? `Play ${s.title}` : `${s.title} has no player here`}
+              tabIndex={-1}
+            >
               <Art src={s.artwork} size={52} />
-            </span>
+              {seedPlayable && (
+                <span className="rec__playover" aria-hidden="true">
+                  <Glyph name="play" size={16} />
+                </span>
+              )}
+            </button>
             <div className="rec__text">
               <span className="rec__title" title={s.title}>
                 {s.title}
@@ -63,6 +79,11 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
             <span className="rec__tier" />
             <span className="rec__dur" />
             <div className="rec__actions">
+              {seedPlayable && (
+                <button className="iconbtn" type="button" onClick={() => onPlayTrack(s)} aria-label={`Play ${s.title}`} title="Play">
+                  <Glyph name="play" size={14} />
+                </button>
+              )}
               <button
                 className={classNames('iconbtn', strong && 'is-on')}
                 type="button"
@@ -171,11 +192,6 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               >
                 <Glyph name="heart" size={14} />
               </button>
-              {onDownload && (
-                <button className="iconbtn" type="button" onClick={() => onDownload(t)} aria-label={`Download ${t.title}`} title="Download">
-                  <Glyph name="download" size={14} />
-                </button>
-              )}
               <button
                 className={classNames('iconbtn', f.dislike && 'is-bad')}
                 type="button"
@@ -184,8 +200,13 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                 aria-label={f.dislike ? `Undo dislike of ${t.title}` : `Dislike ${t.title}`}
                 title={f.dislike ? 'Disliked' : 'Not for me'}
               >
-                <Glyph name="remove" size={14} />
+                <Glyph name="thumb-down" size={14} />
               </button>
+              {onDownload && (
+                <button className="iconbtn" type="button" onClick={() => onDownload(t)} aria-label={`Download ${t.title}`} title="Download">
+                  <Glyph name="download" size={14} />
+                </button>
+              )}
               <button className="iconbtn" type="button" onClick={() => onFeedback(it, 'hide')} aria-label={`Hide ${t.title}`} title="Hide">
                 <Glyph name="close" size={14} />
               </button>
