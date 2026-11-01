@@ -193,6 +193,75 @@ def build_feedback(events: list[dict], now_ts: float, cfg: EngineConfig = DEFAUL
     return FeedbackView(track, artist, excluded, hidden, liked, len(seen))
 
 
+def build_feedback2(events: list[dict], now_ts: float, cfg: EngineConfig = DEFAULT_ENGINE) -> FeedbackView:
+    """The v2 reading of the same event rows (mirrors web/src/engine engine.ts buildFeedback2).
+
+    One listening session is one endorsement, not four: complete/replay collapse per (track, UTC
+    day) — first full weight, second half, later nothing. A preview completion is 60% of a
+    full-track one; a known completion ratio under 90% scales linearly (never below half); an
+    unknown duration is left alone rather than manufactured. Import confidence scales the event.
+    Artist spillover grows with the square root of distinct endorsed songs. Explicit judgements
+    (like/save/dislike/hide) and the skip threshold rule are unchanged from v1.
+    """
+    seen: set[str] = set()
+    track: dict[str, float] = {}
+    artist_pos: dict[str, dict[str, float]] = {}
+    artist_neg: dict[str, float] = {}
+    skipped_by_artist: dict[str, set[str]] = {}
+    latest: dict[str, tuple[float, str]] = {}
+    hidden: set[str] = set()
+    per_day: dict[str, int] = {}
+    for e in sorted(events, key=lambda x: (x["ts"], x["event_id"])):
+        if e["event_id"] in seen or e["kind"] not in FEEDBACK_WEIGHTS or e["kind"] == "seed":
+            continue
+        seen.add(e["event_id"])
+        base = float(FEEDBACK_WEIGHTS[e["kind"]])
+        conf = e.get("confidence")
+        conf = 1.0 if conf is None else min(1.0, max(0.0, float(conf)))
+        if e["kind"] in ("complete", "replay"):
+            slot = f"{e['key']}|{int(e['ts'] // 86400)}"
+            had = per_day.get(slot, 0)
+            per_day[slot] = had + 1
+            if had >= 2:
+                continue  # third+ behavioural endorsement of the same song that day says nothing new
+            if had == 1:
+                base *= 0.5
+            if e.get("medium") == "preview":
+                base *= 0.6  # 30 seconds heard, not the song
+            dur, lis = e.get("duration"), e.get("listened")
+            if e["kind"] == "complete" and dur and lis is not None and float(dur) > 0 and float(lis) >= 0:
+                ratio = min(1.0, float(lis) / float(dur))
+                if ratio < 0.9:
+                    base *= max(0.5, ratio)  # partial hear counts partially; unknown duration is left alone
+        w = base * conf * decay(e["ts"], now_ts, cfg.feedback_half_life_days)
+        track[e["key"]] = track.get(e["key"], 0.0) + w
+        a = e.get("artist") or ""
+        if e["kind"] in ("like", "dislike", "hide"):
+            latest[e["key"]] = (e["ts"], e["kind"])
+        if e["kind"] == "hide" and now_ts - e["ts"] < 30 * 86400:
+            hidden.add(e["key"])
+        if not a:
+            continue
+        if e["kind"] == "skip":
+            skipped_by_artist.setdefault(a, set()).add(e["key"])
+        elif w > 0:
+            m = artist_pos.setdefault(a, {})
+            m[e["key"]] = max(m.get(e["key"], 0.0), w)
+        else:
+            artist_neg[a] = artist_neg.get(a, 0.0) + w * 0.5
+    artist: dict[str, float] = dict(artist_neg)
+    for a, m in artist_pos.items():
+        # sqrt over distinct endorsed songs: breadth of liking an artist, with diminishing returns
+        mean = sum(m.values()) / len(m)
+        artist[a] = artist.get(a, 0.0) + 0.5 * mean * math.sqrt(len(m))
+    for a, keys in skipped_by_artist.items():
+        if len(keys) >= cfg.artist_skip_threshold:
+            artist[a] = artist.get(a, 0.0) - 0.5 * len(keys)
+    excluded = {k for k, (_, kind) in latest.items() if kind == "dislike"}
+    liked = {a for a, v in artist.items() if v > 1.0}
+    return FeedbackView(track, artist, excluded, hidden, liked, len(seen))
+
+
 def feedback_fit(t: dict, fb: FeedbackView) -> float | None:
     s = 0.0
     found = False
@@ -240,13 +309,22 @@ class Context:
     settings: Settings
     now: date
     cfg: EngineConfig = DEFAULT_ENGINE
+    rank_v2: bool = False  # the improved ranking; False keeps v1 byte-identical (golden parity)
 
 
 def seed_factors(c: dict, s: dict, ctx: Context) -> dict[str, float | None]:
+    v2 = bool(ctx.rank_v2)
     f: dict[str, float | None] = {}
     va, vb = ctx.vectors.get(c["key"]), ctx.vectors.get(s["key"])
     f["audio"] = calibrate_audio(float(np.dot(va, vb))) if va is not None and vb is not None else None
-    f["genre"] = G.similarity(s.get("tags") or [], c.get("tags") or [])
+    # v2: a tag the seed itself donated is not independent evidence of fitting that seed, and a
+    # tag voted in by audio neighbours correlates with the audio factor when both exist.
+    c_tags = c.get("tags") or []
+    if v2:
+        c_tags = [t for t in c_tags
+                  if not (t.get("inferred") and (t.get("source") == "Guessed from the starting song"
+                                                 or (f["audio"] is not None and t.get("source") == "Songs that sound the same")))]
+    f["genre"] = G.similarity(s.get("tags") or [], c_tags)
     shared = artist_set(c) & artist_set(s)
     rel = ctx.related_artists.get(s["key"])
     if shared:
@@ -256,17 +334,40 @@ def seed_factors(c: dict, s: dict, ctx: Context) -> dict[str, float | None]:
     else:
         f["artist"] = None
     best = None
+    best_relation = None
+    families: set[str] = set()
+    any_counting = False
     for p in c.get("provenance") or []:
         if p["seed"] != s["key"]:
             continue
         strength, _, counts = RELATION.get(p["relation"], (0.0, "", False))
         if not counts:
             continue
+        any_counting = True
+        src = p.get("source")
+        if isinstance(src, str) and src:
+            families.add(src.split("-")[0])
         v = strength * (1.0 / (1.0 + 0.03 * max(0, p.get("rank", 0))))
-        best = v if best is None else max(best, v)
-    # This seed's providers were asked; not being in their lists is weak negative evidence.
-    asked = any(p["seed"] == s["key"] for p in c.get("provenance") or []) or bool(ctx.related_artists.get(s["key"]))
-    f["provider"] = best if best is not None else (0.0 if asked else None)
+        if best is None or v > best:
+            best = v
+            best_relation = p["relation"]
+    if v2:
+        # Null stays null unless a relatedness list was actually consulted for this seed: a
+        # candidate whose only link is a non-counting relation (catalogue search, genre chart)
+        # was never "asked about", so its absence from nothing is not negative evidence.
+        asked = any_counting or bool(ctx.related_artists.get(s["key"]))
+        if best is not None:
+            # Bounded corroboration: each extra distinct provider family that independently lists
+            # the song adds a little. Duplicate rows from one family never stack (the set).
+            best = min(1.0, best + 0.08 * max(0, len(families) - 1))
+            # The same fact counted twice: "another song by the seed's artist" already scores artist=1.0.
+            if best_relation == "seed_artist_top" and shared:
+                best *= 0.5
+        f["provider"] = best if best is not None else (0.0 if asked else None)
+    else:
+        # This seed's providers were asked; not being in their lists is weak negative evidence.
+        asked = any(p["seed"] == s["key"] for p in c.get("provenance") or []) or bool(ctx.related_artists.get(s["key"]))
+        f["provider"] = best if best is not None else (0.0 if asked else None)
     f["tempo"] = tempo_fit(c.get("bpm"), s.get("bpm"))
     return f
 
@@ -323,7 +424,11 @@ def score_one(c: dict, ctx: Context) -> Scored:
             used[k] = w[k]
     affinity = num / den if den > 0 else 0.0
     # coverage over affinity factors (seed factors of the best seed + feedback when present)
+    # v2: when no seed in the run has a vector, nothing can have audio evidence, so audio is not
+    # "missing" — it is impossible, and it leaves the denominator instead of flattening everyone.
     all_aff = sum(w[k] for k in AFFINITY_FACTORS)
+    if ctx.rank_v2 and not any(s["key"] in ctx.vectors for s in ctx.seeds):
+        all_aff -= w["audio"]
     have = seed_w + (w["feedback"] if g["feedback"] is not None else 0.0)
     coverage = min(1.0, have / all_aff) if all_aff else 0.0
     final = affinity * (cfg.coverage_floor + (1 - cfg.coverage_floor) * coverage)
@@ -477,7 +582,14 @@ def explain(s: Scored, ctx: Context) -> tuple[list[dict], list[str]]:
     if provs and (f.get("provider") or 0) > 0:
         _, label, _ = RELATION[provs[0]["relation"]]
         extra = f" ({provs[0]['via']})" if provs[0].get("via") else ""
-        reasons.append({"factor": "provider", "text": f"{label} {seed}{extra}.", "weight": contrib.get("provider", 0)})
+        # v2: name the independent families that corroborated it — only when more than one really did.
+        corro = ""
+        if ctx.rank_v2:
+            fams = {p["source"].split("-")[0] for p in provs
+                    if RELATION.get(p["relation"], (0, "", False))[2] and isinstance(p.get("source"), str) and p.get("source")}
+            if len(fams) > 1:
+                corro = f" {len(fams)} services list it independently."
+        reasons.append({"factor": "provider", "text": f"{label} {seed}{extra}.{corro}", "weight": contrib.get("provider", 0)})
     if f.get("audio") is not None and f["audio"] >= 0.55:
         reasons.append({"factor": "audio", "text": f"Sounds close to {seed}: timbre and production compared on 30-second previews (audio model).", "weight": contrib.get("audio", 0)})
     elif f.get("audio") is not None and f["audio"] < 0.25:

@@ -73,6 +73,10 @@ class Store:
         self.db.execute("PRAGMA synchronous=NORMAL")
         self.db.execute("PRAGMA busy_timeout=5000")
         self.db.executescript(SCHEMA)
+        # v2 telemetry (migration: additive, nullable; old rows and old readers are unaffected)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(feedback)").fetchall()}
+        if "meta" not in cols:
+            self.db.execute("ALTER TABLE feedback ADD COLUMN meta TEXT")
         self.cache_hits = 0
         self.cache_misses = 0
 
@@ -129,21 +133,31 @@ class Store:
                 raise
 
     # ---- feedback --------------------------------------------------------------------------
-    def add_feedback(self, event_id: str, key: str, kind: str, artist: str, track: dict | None, listened: float | None, ts: float | None = None) -> bool:
+    def add_feedback(self, event_id: str, key: str, kind: str, artist: str, track: dict | None, listened: float | None, ts: float | None = None, meta: dict | None = None) -> bool:
         """Returns False when the event id was already recorded (deduplicated)."""
         self._guard_disk()
         cur = self._exec(
-            "INSERT OR IGNORE INTO feedback(event_id,key,kind,artist,track,listened,ts) VALUES(?,?,?,?,?,?,?)",
-            (event_id, key, kind, artist, json.dumps(track) if track else None, listened, ts or time.time()),
+            "INSERT OR IGNORE INTO feedback(event_id,key,kind,artist,track,listened,ts,meta) VALUES(?,?,?,?,?,?,?,?)",
+            (event_id, key, kind, artist, json.dumps(track) if track else None, listened, ts or time.time(),
+             json.dumps({"schema": 2, **meta}) if meta else None),
         )
         return cur.rowcount == 1
 
     def feedback(self) -> list[dict]:
-        rows = self._exec("SELECT event_id,key,kind,artist,track,listened,ts FROM feedback ORDER BY id").fetchall()
-        return [
-            {"event_id": r[0], "key": r[1], "kind": r[2], "artist": r[3], "track": json.loads(r[4]) if r[4] else None, "listened": r[5], "ts": r[6]}
-            for r in rows
-        ]
+        rows = self._exec("SELECT event_id,key,kind,artist,track,listened,ts,meta FROM feedback ORDER BY id").fetchall()
+        out = []
+        for r in rows:
+            d = {"event_id": r[0], "key": r[1], "kind": r[2], "artist": r[3], "track": json.loads(r[4]) if r[4] else None, "listened": r[5], "ts": r[6]}
+            if r[7]:
+                try:
+                    m = json.loads(r[7])
+                    for k in ("duration", "medium", "session", "origin", "confidence"):
+                        if k in m:
+                            d[k] = m[k]
+                except (ValueError, TypeError):
+                    pass  # a corrupt meta blob only loses telemetry, never the event
+            out.append(d)
+        return out
 
     def remove_feedback(self, key: str, kinds: tuple[str, ...]) -> int:
         q = ",".join("?" * len(kinds))

@@ -41,7 +41,7 @@ if not log.handlers:
     log.addHandler(h)
     log.setLevel(logging.INFO)
 
-DEFAULT_SETTINGS = {"fresh": False, "adventurous": 0.5, "audio": True, "daily_mb": TRANSFER.daily / 1e6, "request_mb": TRANSFER.per_request / 1e6, "sample_mode": False}
+DEFAULT_SETTINGS = {"fresh": False, "adventurous": 0.5, "audio": True, "daily_mb": TRANSFER.daily / 1e6, "request_mb": TRANSFER.per_request / 1e6, "sample_mode": False, "rank_v2": True}
 TRACK_FIELDS = ("id", "provider", "platform_id", "key", "title", "artists", "artist", "album", "version", "versions", "duration", "artwork", "url",
                 "isrc", "release", "tags", "preview", "explicit", "bpm", "kind", "warning", "incomplete", "embed_url", "artist_ids", "album_id")
 
@@ -339,7 +339,7 @@ def put_settings(body: dict):
         cur["fresh"] = bool(body["fresh"])
     if "adventurous" in body:
         cur["adventurous"] = min(1.0, max(0.0, float(body["adventurous"])))
-    for k in ("audio", "sample_mode"):
+    for k in ("audio", "sample_mode", "rank_v2"):
         if k in body:
             cur[k] = bool(body[k])
     if "daily_mb" in body:
@@ -419,7 +419,8 @@ def run_job(job: Job, seeds: list[dict], settings: dict) -> None:
             job.result = {"phase": "final", "items": [], "count": 0, "asked": cfg.queue_size, "sources": job.sources, "audio": job.audio,
                           "timings": job.timings, "transfer": dict(job.meter.counts), "empty_reason": "No service returned related songs for these starting songs."}
             return
-        fb = E.build_feedback(s.store.feedback(), time.time(), cfg)
+        v2 = settings.get("rank_v2", True)
+        fb = (E.build_feedback2 if v2 else E.build_feedback)(s.store.feedback(), time.time(), cfg)
         imps = s.store.impressions(time.time() - cfg.exposure_window_days * 86400)
         vectors: dict = {}
         for sv in seed_views + cands:
@@ -429,7 +430,7 @@ def run_job(job: Job, seeds: list[dict], settings: dict) -> None:
                 if v is not None:
                     vectors[sv["key"]] = v
         ctx = E.Context(seeds=seed_views, vectors=vectors, related_artists={k: v for k, v in related.items() if v}, feedback=fb,
-                        impressions=imps, settings=es, now=today(), cfg=cfg)
+                        impressions=imps, settings=es, now=today(), cfg=cfg, rank_v2=bool(v2))
         scored = E.score_all(cands, ctx)
         chosen = E.select(scored, ctx)
         job.timings["metadata_ms"] = round((time.perf_counter() - t0) * 1000)
@@ -667,8 +668,11 @@ def run_queue_discovery(job: Job, seeds: list[dict], settings: dict) -> None:
             return
         fb = E.build_feedback(s.store.feedback(), time.time(), cfg)
         imps = s.store.impressions(time.time() - cfg.exposure_window_days * 86400)
+        v2q = settings.get("rank_v2", True)
+        if v2q:
+            fb = E.build_feedback2(s.store.feedback(), time.time(), cfg)
         ctx = E.Context(seeds=seed_views, vectors={}, related_artists={k: v for k, v in related.items() if v},
-                        feedback=fb, impressions=imps, settings=es, now=today(), cfg=cfg)
+                        feedback=fb, impressions=imps, settings=es, now=today(), cfg=cfg, rank_v2=bool(v2q))
         scored = E.score_all(cands, ctx)
         chosen = E.select(scored, ctx)
         added = 0
@@ -726,7 +730,22 @@ def feedback(body: dict):
         s.store.remove_feedback(key, ("dislike",))
     if kind == "dislike":
         s.store.remove_feedback(key, ("like",))
-    added = s.store.add_feedback(event_id, key, kind, (t.get("artists") or [""])[0].lower() if t.get("artists") else "", clean_track(t), listened)
+    # Optional v2 telemetry, validated with the same bounds as the TS route; absent fields stay absent.
+    meta: dict = {}
+    dur = body.get("duration")
+    if isinstance(dur, (int, float)) and 1 <= float(dur) <= 36000:
+        meta["duration"] = float(dur)
+    med = body.get("medium")
+    if med in ("preview", "full", "embed"):
+        meta["medium"] = med
+    for sk in ("session", "origin"):
+        sv = body.get(sk)
+        if isinstance(sv, str) and 0 < len(sv) <= 64:
+            meta[sk] = sv
+    cv = body.get("confidence")
+    if isinstance(cv, (int, float)) and 0 <= float(cv) <= 1:
+        meta["confidence"] = float(cv)
+    added = s.store.add_feedback(event_id, key, kind, (t.get("artists") or [""])[0].lower() if t.get("artists") else "", clean_track(t), listened, meta=meta or None)
     return {"recorded": added, "duplicate": not added}
 
 
