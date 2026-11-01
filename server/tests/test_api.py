@@ -272,3 +272,16 @@ def test_reset_taste_forgets_feedback_but_keeps_seeds_and_settings(client):
     assert appmod.st().store.feedback() == []
     assert [s["key"] for s in client.get("/api/seeds").json()["seeds"]] == ["keepme"]
     assert client.get("/api/settings").json()["adventurous"] == 0.9
+
+
+def test_queue_clear_empties_list_but_keeps_taste_and_settings(client):
+    client.put("/api/seeds", json={"seeds": [seed("gone")]})
+    client.put("/api/settings", json={"adventurous": 0.8})
+    client.post("/api/feedback", json={"kind": "like", "event_id": "qc-1", "track": seed("gone")})
+    appmod.st().store.put("last_result", {"items": [{"rank": 1}]})
+    r = client.post("/api/queue/clear")
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert client.get("/api/seeds").json()["seeds"] == []
+    assert client.get("/api/last").status_code == 404
+    assert any(e["event_id"] == "qc-1" for e in appmod.st().store.feedback())
+    assert client.get("/api/settings").json()["adventurous"] == 0.8

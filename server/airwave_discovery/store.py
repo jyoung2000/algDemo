@@ -107,6 +107,9 @@ class Store:
         self._guard_disk()
         self._exec("INSERT INTO kv(k,v,updated) VALUES(?,?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, updated=excluded.updated", (k, json.dumps(v), time.time()))
 
+    def drop(self, k: str) -> None:
+        self._exec("DELETE FROM kv WHERE k=?", (k,))
+
     # ---- seeds -----------------------------------------------------------------------------
     def seeds(self) -> list[dict]:
         rows = self._exec("SELECT track, emphasis FROM seeds ORDER BY pos").fetchall()

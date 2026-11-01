@@ -322,6 +322,12 @@ body {
 .push--danger {
   color: var(--danger);
 }
+.push--small {
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 a.push {
   display: inline-block;
   text-decoration: none;

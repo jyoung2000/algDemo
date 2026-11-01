@@ -177,6 +177,10 @@ export class Store {
     this.kv.set(k, c);
     this.write(() => this.be.put('kv', k, c));
   }
+  drop(k: string): void {
+    this.kv.delete(k);
+    this.write(() => this.be.del('kv', k));
+  }
 
   // ---- seeds ----
   seeds(): Record<string, unknown>[] {

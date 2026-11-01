@@ -170,6 +170,23 @@ export function App() {
     if (jobRef.current) void api.cancelJob(jobRef.current).catch(() => undefined);
   };
 
+  /** Empty the song list (starting songs + queue). Taste, history and settings stay. */
+  const clearList = () => {
+    jobRef.current = null;
+    api.clearQueue().then(
+      () => {
+        setSeeds([]);
+        setResult(null);
+        setJob(null);
+        setRunErr(null);
+        setFocusKey(null);
+        setHidden(new Set());
+        flash('Song list cleared. Your listening history and settings are kept.');
+      },
+      (e: Error) => flash(`Could not clear the list: ${e.message}`),
+    );
+  };
+
   const loadSample = () => {
     jobRef.current = null;
     setJob(null);
@@ -429,6 +446,11 @@ export function App() {
                     <h2 id="queue-h">
                       Songs <span className="count">{seeds.length + items.length}</span>
                     </h2>
+                    {!sample && (
+                      <button className="push push--small" type="button" title="Empty the song list. Your listening history and settings are kept." onClick={clearList}>
+                        <Glyph name="clear" size={12} /> Clear list
+                      </button>
+                    )}
                     <span className="queue__meta">
                       {running && result.phase === 'metadata' ? (
                         <>
@@ -494,6 +516,9 @@ export function App() {
                     <h2 id="queue-h">
                       Songs <span className="count">{seeds.length}</span>
                     </h2>
+                    <button className="push push--small" type="button" title="Empty the song list. Your listening history and settings are kept." onClick={clearList}>
+                      <Glyph name="clear" size={12} /> Clear list
+                    </button>
                   </div>
                   <Results
                     seeds={seeds}

@@ -410,6 +410,7 @@ export const api = {
   status: () => call<Status>('/api/status'),
   reset: (clearCache: boolean) => call<{ ok: boolean }>('/api/reset', { method: 'POST', body: json({ clear_cache: clearCache }) }),
   resetTaste: () => call<{ ok: boolean }>('/api/reset/taste', { method: 'POST', body: json({}) }),
+  clearQueue: () => call<{ ok: boolean }>('/api/queue/clear', { method: 'POST', body: json({}) }),
   modelInstall: () => call<{ installed: boolean; downloaded: number }>('/api/model/install', { method: 'POST', body: '{}' }),
   modelSelftest: () => call<CapabilityState & { cosine?: number }>('/api/model/selftest', { method: 'POST', body: '{}' }),
   sample: () => call<RecResult>('/api/sample'),

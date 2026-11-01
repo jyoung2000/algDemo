@@ -941,6 +941,19 @@ def reset_taste():
     return {"ok": True}
 
 
+@app.post("/api/queue/clear")
+def clear_queue():
+    """Empty the song list: starting songs and the remembered queue. Taste, history and settings stay."""
+    s = st()
+    if s.queue_job and s.queue_job in s.jobs:
+        s.jobs[s.queue_job].token.cancel("the list was cleared")
+    s.queue = ListeningQueue()
+    s.queue_job = None
+    s.store.set_seeds([])
+    s.store.drop("last_result")
+    return {"ok": True}
+
+
 @app.post("/api/model/install")
 def install_model():
     """Download the DCLAP ONNX files (~22 MB) with SHA-256 verification inside the model budget."""

@@ -45,3 +45,29 @@ it('reset/taste forgets feedback and impressions but keeps starting songs and se
   expect(reopened.feedback()).toHaveLength(0);
   expect(reopened.seeds()).toHaveLength(1);
 });
+
+it('queue/clear empties starting songs and the remembered list but keeps taste and settings', async () => {
+  const be = new MemoryBackend();
+  const store = await Store.open(be);
+  const port = { request: async () => { throw new Error('no network in this test'); } };
+  const api = new LocalApi({ store, port, encoder: null, spotifySearch: () => async () => [] });
+  const seed = { key: 'daft punk|get lucky', provider: 'deezer', platform_id: '123', title: 'Get Lucky', artists: ['Daft Punk'] };
+  await api.handle('PUT', '/api/seeds', { seeds: [seed] });
+  await api.handle('PUT', '/api/settings', { adventurous: 0.8 });
+  await api.handle('POST', '/api/feedback', { kind: 'like', event_id: 'q1', track: seed });
+  await store.put('last_result', { items: [{ track: seed, rank: 1 }] });
+  const r = await api.handle('POST', '/api/queue/clear', {});
+  expect(r).toMatchObject({ status: 200, body: { ok: true } });
+  expect(store.seeds()).toHaveLength(0); // the list is empty
+  expect(store.get('last_result')).toBeUndefined(); // nothing to restore on reload
+  const last = await api.handle('GET', '/api/last', null);
+  expect(last.status).toBe(404);
+  expect(store.feedback()).toHaveLength(1); // taste kept
+  const settings = await api.handle('GET', '/api/settings', null);
+  expect((settings.body as { adventurous: number }).adventurous).toBe(0.8); // settings kept
+  await store.flush();
+  const reopened = await Store.open(be); // the empty list survives a restart
+  expect(reopened.seeds()).toHaveLength(0);
+  expect(reopened.get('last_result')).toBeUndefined();
+  expect(reopened.feedback()).toHaveLength(1);
+});

@@ -166,6 +166,7 @@ export class LocalApi {
       if (m === 'GET' && path === '/api/status') return ok(await this.status());
       if (m === 'POST' && path === '/api/reset') return this.reset(Boolean(body?.['clear_cache']));
       if (m === 'POST' && path === '/api/reset/taste') return this.resetTaste();
+      if (m === 'POST' && path === '/api/queue/clear') return await this.clearQueue();
       if (m === 'POST' && path === '/api/model/install') return ok({ installed: this.encoder !== null, downloaded: 0 });
       if (m === 'POST' && path === '/api/model/selftest') return await this.selftest();
       if (m === 'POST' && path === '/api/rerank') return await this.rerank(body ?? {});
@@ -859,6 +860,14 @@ export class LocalApi {
   /** Forget the learned taste only: plays, likes, dislikes, skips and impressions. Starting songs, settings and cache stay. */
   private resetTaste(): LocalResponse {
     this.store.resetTaste();
+    return ok({ ok: true });
+  }
+
+  /** Empty the song list: starting songs and the remembered queue. Taste, history and settings stay. */
+  private async clearQueue(): Promise<LocalResponse> {
+    for (const j of this.jobs.values()) j.token.cancel('the list was cleared');
+    await this.store.setSeeds([]);
+    this.store.drop('last_result');
     return ok({ ok: true });
   }
 
