@@ -25,15 +25,17 @@ interface Props {
   settings: S | null;
   onSettings: (patch: Partial<S>) => void;
   onReset: () => void;
+  onResetTaste: () => void;
 }
 
 /** Settings and a discreet status panel. Every badge here comes from a runtime check, never a constant. */
-export function SettingsView({ settings, onSettings, onReset }: Props) {
+export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Props) {
   const [health, setHealth] = useState<Health | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
   const [checking, setChecking] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const [confirmTaste, setConfirmTaste] = useState(false);
   const [modelBusy, setModelBusy] = useState<'install' | 'test' | null>(null);
   const [history, setHistory] = useState<ImportSummary | null>(null);
   const [historyBusy, setHistoryBusy] = useState(false);
@@ -156,6 +158,21 @@ export function SettingsView({ settings, onSettings, onReset }: Props) {
           <a className="push" href="/api/export" download>
             Export my data
           </a>
+          {confirmTaste ? (
+            <>
+              <span className="note">Forget learned taste (plays, likes, skips)? Starting songs and settings stay.</span>
+              <button className="push push--danger" type="button" onClick={() => (setConfirmTaste(false), onResetTaste())}>
+                Reset taste
+              </button>
+              <button className="push" type="button" onClick={() => setConfirmTaste(false)}>
+                Keep
+              </button>
+            </>
+          ) : (
+            <button className="push" type="button" onClick={() => (setConfirm(false), setConfirmTaste(true))}>
+              Reset what the ranking learned…
+            </button>
+          )}
           {confirm ? (
             <>
               <span className="note">Remove starting songs, likes, dislikes and settings?</span>
@@ -167,7 +184,7 @@ export function SettingsView({ settings, onSettings, onReset }: Props) {
               </button>
             </>
           ) : (
-            <button className="push" type="button" onClick={() => setConfirm(true)}>
+            <button className="push" type="button" onClick={() => (setConfirmTaste(false), setConfirm(true))}>
               Reset…
             </button>
           )}

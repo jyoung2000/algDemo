@@ -53,10 +53,10 @@ export const TIER_LABEL: Record<RecItem['tier'], string> = {
   experimental: 'Exploration',
 };
 
-/** Adds a seed unless the same recording is already there. There is no limit on how many. Never reorders. */
+/** Adds a seed unless the same recording is already there. There is no limit on how many. The newest goes first so it is visible at the top of the list. */
 export function addSeed(seeds: Track[], t: Track): { seeds: Track[]; added: boolean; reason?: string } {
   if (seeds.some((s) => s.key === t.key)) return { seeds, added: false, reason: 'Already one of your starting songs.' };
-  return { seeds: [...seeds, { ...t, emphasis: t.emphasis ?? 1 }], added: true };
+  return { seeds: [{ ...t, emphasis: t.emphasis ?? 1 }, ...seeds], added: true };
 }
 
 /**
@@ -151,7 +151,7 @@ export function describeCharacteristics(c?: Characteristics | null): string[] {
   if (!c) return [];
   const out: string[] = [];
   if (c.bpm && c.bpm > 0) out.push(`${c.bpm} BPM`);
-  if (c.genres?.length) out.push(c.genres.slice(0, 2).join(' / ') + (c.genre_inferred ? ' (guessed)' : ''));
+  if (c.genres?.length) out.push(c.genres.slice(0, 2).join(' / ')); // inference is explained in "Why this song", not stamped on the chip
   const tone = toneLabel(c);
   if (tone) out.push(tone);
   if (c.release_year) out.push(c.release_year);

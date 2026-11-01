@@ -370,4 +370,12 @@ export class Store {
     }
     for (const t of clear) this.write(() => this.be.clear(t));
   }
+  /** Forget what the ranking learned (plays, likes, dislikes, skips, impressions). Starting songs and settings stay. */
+  resetTaste(): void {
+    this.fb = [];
+    this.fbIds.clear();
+    this.imp = [];
+    this.write(() => this.be.clear('feedback'));
+    this.write(() => this.be.clear('impressions'));
+  }
 }

@@ -303,3 +303,12 @@ class Store:
                 self.db.execute("DELETE FROM vectors")
             self.db.execute("COMMIT")
         self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+    def reset_taste(self) -> None:
+        """Forget what the ranking learned (plays, likes, dislikes, skips, impressions). Seeds and settings stay."""
+        with self._lock:
+            self.db.execute("BEGIN")
+            self.db.execute("DELETE FROM feedback")
+            self.db.execute("DELETE FROM impressions")
+            self.db.execute("COMMIT")
+        self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")

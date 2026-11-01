@@ -933,6 +933,14 @@ def reset(body: dict | None = None):
     return {"ok": True, "cache_kept": keep}
 
 
+@app.post("/api/reset/taste")
+def reset_taste():
+    """Forget the learned taste only (plays, likes, dislikes, skips, impressions); seeds and settings stay."""
+    st().store.reset_taste()
+    FOOTPRINT.invalidate()
+    return {"ok": True}
+
+
 @app.post("/api/model/install")
 def install_model():
     """Download the DCLAP ONNX files (~22 MB) with SHA-256 verification inside the model budget."""

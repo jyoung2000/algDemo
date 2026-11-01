@@ -409,6 +409,7 @@ export const api = {
   health: (refresh = false) => call<Health>(`/api/health${refresh ? '?refresh=1' : ''}`),
   status: () => call<Status>('/api/status'),
   reset: (clearCache: boolean) => call<{ ok: boolean }>('/api/reset', { method: 'POST', body: json({ clear_cache: clearCache }) }),
+  resetTaste: () => call<{ ok: boolean }>('/api/reset/taste', { method: 'POST', body: json({}) }),
   modelInstall: () => call<{ installed: boolean; downloaded: number }>('/api/model/install', { method: 'POST', body: '{}' }),
   modelSelftest: () => call<CapabilityState & { cosine?: number }>('/api/model/selftest', { method: 'POST', body: '{}' }),
   sample: () => call<RecResult>('/api/sample'),

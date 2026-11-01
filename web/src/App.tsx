@@ -109,7 +109,13 @@ export function App() {
   const onAdd = (t: Track) => {
     const r = addSeed(seeds, t);
     if (!r.added) return flash(r.reason ?? 'Not added.');
-    saveSeeds(r.seeds);
+    setSeeds(r.seeds);
+    // Save first, then discover: the engine reads starting songs from the store, and a freshly
+    // added song should appear at the top of the list with new discoveries, not sit idle.
+    api
+      .putSeeds(r.seeds)
+      .then(() => run(true))
+      .catch((e: Error) => flash(`Could not save your starting songs: ${e.message}`));
   };
 
   const patchSettings = (p: Partial<Settings>) => {
@@ -131,8 +137,8 @@ export function App() {
     });
   }, []);
 
-  const run = async () => {
-    if (!seeds.length) return;
+  const run = async (force = false) => {
+    if (!force && !seeds.length) return;
     setRunErr(null);
     if (jobRef.current) void api.cancelJob(jobRef.current).catch(() => undefined);
     try {
@@ -562,6 +568,17 @@ export function App() {
           <SettingsView
             settings={settings}
             onSettings={patchSettings}
+            onResetTaste={() =>
+              api.resetTaste().then(
+                () => {
+                  setFlags({});
+                  setHidden(new Set());
+                  flash('The ranking forgot your plays, likes and skips. Starting songs and settings kept.');
+                  if (result && !result.sample) void run();
+                },
+                (e: Error) => flash(e.message),
+              )
+            }
             onReset={() =>
               api.reset(false).then(() => {
                 setSeeds([]);

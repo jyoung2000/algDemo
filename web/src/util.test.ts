@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RecItem, TasteSummary } from './api';
-import { ListenMeter, describeCharacteristics, describeTaste, mergeRerank, qualifiesCompletion, toneLabel } from './util';
+import { ListenMeter, addSeed, describeCharacteristics, describeTaste, mergeRerank, qualifiesCompletion, toneLabel } from './util';
 
 const item = (key: string, rank: number): RecItem => ({ rank, track: { key } }) as unknown as RecItem;
 
@@ -72,5 +72,18 @@ describe('mergeRerank', () => {
     const out = mergeRerank(prev, next, new Set(['a', 'b']));
     expect(out.map((x) => x.track.key)).toEqual(['a', 'b', 'd', 'c']);
     expect(out.map((x) => x.rank)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe('addSeed', () => {
+  const t = (key: string) => ({ key, title: key, artists: [key] }) as never;
+  it('puts the newest starting song at the top and rejects the same recording twice', () => {
+    const one = addSeed([], t('a|x'));
+    expect(one.added).toBe(true);
+    const two = addSeed(one.seeds, t('b|y'));
+    expect(two.seeds.map((s: { key: string }) => s.key)).toEqual(['b|y', 'a|x']);
+    const dup = addSeed(two.seeds, t('a|x'));
+    expect(dup.added).toBe(false);
+    expect(dup.seeds).toBe(two.seeds);
   });
 });

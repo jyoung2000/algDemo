@@ -71,7 +71,7 @@ describe('tagsFromMusicBrainz', () => {
   it('takes the most-voted community tags, marked inferred', () => {
     const body = { recordings: [{ tags: [{ name: 'grunge', count: 7 }, { name: 'rock', count: 3 }, { name: 'zero', count: 0 }] }] } as Dict;
     const tags = tagsFromMusicBrainz(body);
-    expect(tags.map((t) => t.name)).toEqual(['rock']); // 'grunge' and 'rock' share one canonical name
+    expect(tags.map((t) => t.name)).toEqual(['grunge', 'rock']); // most-voted first; zero-vote tags dropped
     expect(tags.every((t) => t.inferred)).toBe(true);
   });
   it('handles empty answers', () => {

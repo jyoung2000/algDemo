@@ -260,3 +260,15 @@ def test_queue_events_streams_the_current_state(client, no_discovery):
                 body = json.loads(line[len("data: "):])
                 break
     assert [e["track"]["key"] for e in body["entries"]] == ["a"]
+
+
+def test_reset_taste_forgets_feedback_but_keeps_seeds_and_settings(client):
+    client.put("/api/seeds", json={"seeds": [seed("keepme")]})
+    client.put("/api/settings", json={"adventurous": 0.9})
+    client.post("/api/feedback", json={"kind": "like", "event_id": "rt-1", "track": seed("keepme")})
+    assert any(e["event_id"] == "rt-1" for e in appmod.st().store.feedback())
+    r = client.post("/api/reset/taste")
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert appmod.st().store.feedback() == []
+    assert [s["key"] for s in client.get("/api/seeds").json()["seeds"]] == ["keepme"]
+    assert client.get("/api/settings").json()["adventurous"] == 0.9

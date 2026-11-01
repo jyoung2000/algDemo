@@ -165,6 +165,7 @@ export class LocalApi {
       if (m === 'GET' && path === '/api/saved') return ok(this.saved());
       if (m === 'GET' && path === '/api/status') return ok(await this.status());
       if (m === 'POST' && path === '/api/reset') return this.reset(Boolean(body?.['clear_cache']));
+      if (m === 'POST' && path === '/api/reset/taste') return this.resetTaste();
       if (m === 'POST' && path === '/api/model/install') return ok({ installed: this.encoder !== null, downloaded: 0 });
       if (m === 'POST' && path === '/api/model/selftest') return await this.selftest();
       if (m === 'POST' && path === '/api/rerank') return await this.rerank(body ?? {});
@@ -853,6 +854,12 @@ export class LocalApi {
     for (const j of this.jobs.values()) j.token.cancel('the app was reset');
     this.pool = null;
     return ok({ ok: true, cache_kept: !clearCache });
+  }
+
+  /** Forget the learned taste only: plays, likes, dislikes, skips and impressions. Starting songs, settings and cache stay. */
+  private resetTaste(): LocalResponse {
+    this.store.resetTaste();
+    return ok({ ok: true });
   }
 
   private async selftest(): Promise<LocalResponse> {
