@@ -181,6 +181,20 @@ describe('buildFeedback2 (defects 7, 8, 9)', () => {
     const imported = E.buildFeedback2([ev('complete', 'a|x', { event_id: 'i', confidence: 0.5 })], NOW_TS, cfg);
     expect(imported.track['a|x']!).toBeCloseTo(live.track['a|x']! * 0.5, 5);
   });
+
+  it('three consecutive skips rest the song; renewed interest or 30 days clears it', () => {
+    const skips = (n: number, from: number) =>
+      Array.from({ length: n }, (_, i) => ev('skip', 'a|x', { event_id: `sk${i}`, ts: from + i * 3600 }));
+    expect(E.buildFeedback2(skips(2, NOW_TS - 86400), NOW_TS, cfg).excluded.has('a|x')).toBe(false);
+    expect(E.buildFeedback2(skips(3, NOW_TS - 86400), NOW_TS, cfg).excluded.has('a|x')).toBe(true);
+    // a completion between skips breaks the streak
+    const broken = [...skips(2, NOW_TS - 86400), ev('complete', 'a|x', { event_id: 'c', ts: NOW_TS - 80000 }), ev('skip', 'a|x', { event_id: 'sk9', ts: NOW_TS - 70000 })];
+    expect(E.buildFeedback2(broken, NOW_TS, cfg).excluded.has('a|x')).toBe(false);
+    // the rest expires after 30 days
+    expect(E.buildFeedback2(skips(3, NOW_TS - 32 * 86400), NOW_TS, cfg).excluded.has('a|x')).toBe(false);
+    // v1 reading is unchanged
+    expect(E.buildFeedback(skips(3, NOW_TS - 86400), NOW_TS, cfg).excluded.has('a|x')).toBe(false);
+  });
 });
 
 describe('taste2 horizons', () => {

@@ -147,3 +147,21 @@ def test_v1_golden_path_unchanged_by_v2_additions():
     f = E.seed_factors(c, SEED, ctx([SEED], events=events, v2=False))
     assert f["provider"] is not None
     assert old.track["a|x"] == E.build_feedback(events, NOW_TS, DEFAULT_ENGINE).track["a|x"]
+
+
+def test_three_consecutive_skips_rest_the_song_until_renewed_interest_or_30_days():
+    def skips(n, start, prefix="sk"):
+        return [ev("skip", "a|x", f"{prefix}{i}", ts=start + i * 3600) for i in range(n)]
+
+    assert "a|x" not in E.build_feedback2(skips(2, NOW_TS - 86400), NOW_TS).excluded
+    assert "a|x" in E.build_feedback2(skips(3, NOW_TS - 86400), NOW_TS).excluded
+    # a completion between skips breaks the streak
+    broken = skips(2, NOW_TS - 86400) + [
+        ev("complete", "a|x", "c", ts=NOW_TS - 80000),
+        ev("skip", "a|x", "sk9", ts=NOW_TS - 70000),
+    ]
+    assert "a|x" not in E.build_feedback2(broken, NOW_TS).excluded
+    # the rest expires after 30 days
+    assert "a|x" not in E.build_feedback2(skips(3, NOW_TS - 32 * 86400), NOW_TS).excluded
+    # v1 reading is unchanged
+    assert "a|x" not in E.build_feedback(skips(3, NOW_TS - 86400), NOW_TS).excluded

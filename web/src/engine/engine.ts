@@ -245,10 +245,17 @@ export function buildFeedback2(events: FeedbackEvent[], nowTs: number, cfg: Engi
   const latest = new Map<string, [number, string]>();
   const hidden = new Set<string>();
   const perDay = new Map<string, number>(); // `${key}|${day}` -> behavioral events already counted
+  const skipStreak = new Map<string, { n: number; ts: number }>(); // consecutive skips with no positive in between
   const sorted = [...events].sort((x, y) => x.ts - y.ts || (x.event_id < y.event_id ? -1 : x.event_id > y.event_id ? 1 : 0));
   for (const e of sorted) {
     if (seen.has(e.event_id) || !(e.kind in FEEDBACK_WEIGHTS) || e.kind === 'seed') continue;
     seen.add(e.event_id);
+    if (e.kind === 'skip') {
+      const s = skipStreak.get(e.key);
+      skipStreak.set(e.key, { n: (s?.n ?? 0) + 1, ts: e.ts });
+    } else if (e.kind === 'complete' || e.kind === 'replay' || e.kind === 'qualified' || e.kind === 'like' || e.kind === 'save') {
+      skipStreak.delete(e.key); // any renewed interest ends the streak
+    }
     let base = FEEDBACK_WEIGHTS[e.kind]!;
     const conf = e.confidence === null || e.confidence === undefined ? 1 : Math.min(1, Math.max(0, e.confidence));
     if (e.kind === 'complete' || e.kind === 'replay' || e.kind === 'qualified') {
@@ -296,6 +303,8 @@ export function buildFeedback2(events: FeedbackEvent[], nowTs: number, cfg: Engi
   }
   const excluded2 = new Set<string>();
   for (const [k, [, kind]] of latest) if (kind === 'dislike') excluded2.add(k);
+  // Three consecutive skips with no renewed interest rest the song for 30 days.
+  for (const [k, s] of skipStreak) if (s.n >= 3 && nowTs - s.ts < 30 * 86400) excluded2.add(k);
   const liked2 = new Set(Object.keys(artist).filter((a) => artist[a]! > 1.0));
   return { track, artist, excluded: excluded2, hidden, likedArtists: liked2, events: seen.size };
 }

@@ -211,10 +211,16 @@ def build_feedback2(events: list[dict], now_ts: float, cfg: EngineConfig = DEFAU
     latest: dict[str, tuple[float, str]] = {}
     hidden: set[str] = set()
     per_day: dict[str, int] = {}
+    skip_streak: dict[str, tuple[int, float]] = {}  # consecutive skips with no positive in between
     for e in sorted(events, key=lambda x: (x["ts"], x["event_id"])):
         if e["event_id"] in seen or e["kind"] not in FEEDBACK_WEIGHTS or e["kind"] == "seed":
             continue
         seen.add(e["event_id"])
+        if e["kind"] == "skip":
+            s = skip_streak.get(e["key"])
+            skip_streak[e["key"]] = ((s[0] if s else 0) + 1, e["ts"])
+        elif e["kind"] in ("complete", "replay", "qualified", "like", "save"):
+            skip_streak.pop(e["key"], None)  # any renewed interest ends the streak
         base = float(FEEDBACK_WEIGHTS[e["kind"]])
         conf = e.get("confidence")
         conf = 1.0 if conf is None else min(1.0, max(0.0, float(conf)))
@@ -260,6 +266,10 @@ def build_feedback2(events: list[dict], now_ts: float, cfg: EngineConfig = DEFAU
         if len(keys) >= cfg.artist_skip_threshold:
             artist[a] = artist.get(a, 0.0) - 0.5 * len(keys)
     excluded = {k for k, (_, kind) in latest.items() if kind == "dislike"}
+    # Three consecutive skips with no renewed interest rest the song for 30 days.
+    for k, (n, ts) in skip_streak.items():
+        if n >= 3 and now_ts - ts < 30 * 86400:
+            excluded.add(k)
     liked = {a for a, v in artist.items() if v > 1.0}
     return FeedbackView(track, artist, excluded, hidden, liked, len(seen))
 
