@@ -130,11 +130,29 @@ export function trackFromSearchItem(t: Record<string, unknown>): Track | null {
   const items = ((t['artists'] as { items?: Array<{ profile?: { name?: string } }> } | undefined)?.items) ?? [];
   const artists = items.map((a) => a.profile?.name ?? '').filter(Boolean);
   const ms = (t['duration'] as { totalMilliseconds?: number } | undefined)?.totalMilliseconds;
+  // searchDesktop carries the album and its cover under albumOfTrack. Without these the row has no
+  // artwork at all, and this is the search path both the Android app and the Windows shell prefer.
+  const album = t['albumOfTrack'] as { name?: unknown; coverArt?: { sources?: unknown } } | undefined;
+  const sources = Array.isArray(album?.coverArt?.sources) ? (album.coverArt.sources as Array<Record<string, unknown>>) : [];
+  let artwork: string | null = null;
+  let widest = -1;
+  for (const s of sources) {
+    const url = typeof s['url'] === 'string' ? s['url'] : '';
+    if (!url) continue;
+    const w = typeof s['width'] === 'number' ? s['width'] : 0;
+    // Widest wins, but a source with no width still beats no artwork at all.
+    if (w > widest || artwork === null) {
+      artwork = url;
+      widest = w;
+    }
+  }
   return makeTrack({
     provider: 'spotify',
     platformId: m[1] as string,
     title,
     artists,
+    album: typeof album?.name === 'string' && album.name.trim() ? album.name.trim() : null,
+    artwork,
     duration: typeof ms === 'number' && ms > 0 ? ms / 1000 : null,
     url: `https://open.spotify.com/track/${m[1]}`,
     extra: { found_by: 'anonymous-search' },
