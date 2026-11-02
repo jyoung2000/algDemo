@@ -198,14 +198,23 @@ export function TastePicker({ placed, trail }: { placed?: { hue: number; bpm: nu
         <span>{Math.round(pointAt(view, 0, 0).bpm)} BPM</span>
       </div>
       <div className="tpick__fams" aria-hidden="true">
-        {MAP_FAMILIES.map((f, i) => (
-          <span key={f.name} aria-current={i === fam} style={{
-            left: `${Math.max(0, (i / 8 - view.x) / view.size) * 100}%`,
-            width: `${Math.max(0, Math.min(1, ((i + 1) / 8 - view.x) / view.size) - Math.max(0, (i / 8 - view.x) / view.size)) * 100}%`,
-          }}>
-            {SHORT[f.name] ?? f.name}
-          </span>
-        ))}
+        {MAP_FAMILIES.map((f, i) => {
+          const left = Math.max(0, (i / 8 - view.x) / view.size);
+          const right = Math.min(1, (i + 1) / 8 - view.x >= 0 ? ((i + 1) / 8 - view.x) / view.size : 0);
+          const shown = Math.max(0, right - left);
+          // A family at the edge of the view keeps only a sliver of its band, too narrow for its name:
+          // showing "In…" reads as a bug, so a band narrower than half its full width says nothing.
+          const whole = 1 / 8 / view.size;
+          return (
+            <span
+              key={f.name}
+              aria-current={i === fam}
+              style={{ left: `${left * 100}%`, width: `${shown * 100}%`, visibility: shown < whole * 0.55 ? 'hidden' : undefined }}
+            >
+              {SHORT[f.name] ?? f.name}
+            </span>
+          );
+        })}
       </div>
 
       <section className="tpick__card" aria-live="polite">
