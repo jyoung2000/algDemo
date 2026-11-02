@@ -482,9 +482,11 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
           </div>
           {docked ? (
             <div className="np__dockctl">
-              {transport}
               {progress}
-              {volume}
+              <div className="np__controls">
+                {transport}
+                {volume}
+              </div>
             </div>
           ) : (
             <>

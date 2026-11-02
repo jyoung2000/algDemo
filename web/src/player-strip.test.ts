@@ -18,15 +18,21 @@ describe('the player strip (NP-STRIP-001)', () => {
     expect(css).toMatch(/\.np--docked \.np__text \{[^}]*flex: 1 1 0;/);
   });
 
-  it('draws the sliders in the Aqua blue and the glossy thumb', () => {
-    expect(css).toMatch(/\.np \.prog__bar \{[^}]*var\(--aqua-top\)/);
-    expect(css).toMatch(/\.np \.prog__bar::-webkit-slider-thumb \{/);
-    expect(css).toMatch(/\.tbtn--main \{[^}]*var\(--aqua-top\)/);
+  it('draws the player flat: no gradient gloss on the progress track or the play disc (flat redesign)', () => {
+    expect(css).toMatch(/\.np \.prog__bar \{[^}]*height: 4px;[^}]*box-shadow: none;/);
+    expect(css).toMatch(/\.np \.prog__bar \{[^}]*linear-gradient\(to right, #0071e3 var\(--pct, 0%\)/);
+    expect(css).toMatch(/\.tbtn--main \{[^}]*background: #0071e3;/);
+    expect(css).not.toMatch(/\.tbtn--main \{[^}]*var\(--aqua-top\)/);
   });
 
-  it('draws shuffle and repeat as small Aqua toggles, pressed in when on (NP-STRIP-002)', () => {
+  it('shows the progress bar on the phone dock, above the controls', () => {
+    expect(css).not.toMatch(/\.np--docked \.prog \{\s*display: none;/);
+    expect(css).toMatch(/\.np--docked \.prog \{\s*width: 100%;/);
+  });
+
+  it('draws shuffle and repeat as small flat toggles, accent when on (NP-STRIP-002)', () => {
     expect(css).toMatch(/\.tbtn--mode \{[^}]*width: 32px;/);
-    expect(css).toMatch(/\.tbtn--mode\.is-on \{[^}]*var\(--aqua-top\)/);
+    expect(css).toMatch(/\.tbtn--mode\.is-on \{[^}]*color: #0071e3;/);
   });
 
   it('gives the volume slider a finger- and mouse-sized hit area around its thin channel', () => {

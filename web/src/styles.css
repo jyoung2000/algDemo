@@ -1286,11 +1286,11 @@ a.push {
 
 /* ------------------------------------------------------------------ player (panel) */
 .np {
-  background: linear-gradient(#fdfdfc, #eeede9);
-  border: 1px solid #cfccc4;
-  border-radius: 22px;
-  box-shadow: inset 0 1px 0 #fff, var(--shadow);
-  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid rgb(0 0 0 / 10%);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 6%), 0 4px 16px rgb(0 0 0 / 5%);
+  padding: 12px 16px;
   display: grid;
   gap: 12px;
 }
@@ -1353,39 +1353,49 @@ a.push {
   grid-area: prog;
   min-width: 0;
 }
-/* Aqua slider (aqua.css §13): recessed silver channel, Aqua-blue fill, glossy round thumb. */
+/* Flat progress: a hairline track with an accent fill and a small thumb that shows on hover or drag. */
 .np .prog__bar {
-  height: 7px;
+  height: 4px;
   min-width: 0;
-  border: 1px solid #8c8c8c;
-  border-radius: 4px;
-  background:
-    linear-gradient(to bottom, rgb(255 255 255 / 55%) 0 1px, transparent 1px) 0 0 / var(--pct, 0%) 100% no-repeat,
-    linear-gradient(to bottom, var(--aqua-top), var(--aqua-mid) 50%, var(--aqua-lower)) 0 0 / var(--pct, 0%) 100% no-repeat,
-    linear-gradient(#b7b7b7, #e9e9e9 60%, #f4f4f4);
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 25%), 0 1px rgb(255 255 255 / 60%);
+  border: 0;
+  border-radius: 2px;
+  background: linear-gradient(to right, #0071e3 var(--pct, 0%), rgb(0 0 0 / 14%) var(--pct, 0%));
+  box-shadow: none;
 }
 .np .prog__bar::-webkit-slider-thumb {
-  width: 15px;
-  height: 15px;
-  background: linear-gradient(to bottom, #fff 0%, #f2f3f4 52%, #dfe1e4 100%);
-  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 90%), 0 1px 2px rgb(0 0 0 / 38%);
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border: 0;
+  box-shadow: 0 0 0 0.5px rgb(0 0 0 / 20%), 0 1px 2px rgb(0 0 0 / 25%);
+  opacity: 0;
+  transition: opacity 150ms ease;
 }
 .np .prog__bar::-moz-range-thumb {
-  width: 15px;
-  height: 15px;
-  background: linear-gradient(to bottom, #fff 0%, #f2f3f4 52%, #dfe1e4 100%);
-  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 90%), 0 1px 2px rgb(0 0 0 / 38%);
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border: 0;
+  box-shadow: 0 0 0 0.5px rgb(0 0 0 / 20%), 0 1px 2px rgb(0 0 0 / 25%);
+  opacity: 0;
+  transition: opacity 150ms ease;
 }
+.np .prog:hover .prog__bar::-webkit-slider-thumb,
+.np .prog__bar:focus-visible::-webkit-slider-thumb,
 .np .prog__bar:active::-webkit-slider-thumb {
-  background: linear-gradient(to bottom, #e9eaec 0%, #d7d9dc 52%, #c8cbcf 100%);
+  opacity: 1;
+}
+.np .prog:hover .prog__bar::-moz-range-thumb,
+.np .prog__bar:focus-visible::-moz-range-thumb,
+.np .prog__bar:active::-moz-range-thumb {
+  opacity: 1;
 }
 .np .prog__bar:focus-visible {
   outline: none;
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 25%), 0 0 0 1px var(--aq-ring), 0 0 2px 3px var(--aq-halo);
+  box-shadow: 0 0 0 3px rgb(0 113 227 / 40%);
 }
 .np .prog__bar:disabled {
-  filter: grayscale(0.9) brightness(1.05);
+  opacity: 0.45;
 }
 .np--panel .transport {
   grid-area: tx;
@@ -1511,51 +1521,46 @@ a.push {
 }
 .tbtn {
   appearance: none;
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  border: 1px solid #7a7a7a;
-  background:
-    linear-gradient(to bottom, rgb(255 255 255 / 90%) 0%, rgb(255 255 255 / 40%) 45%, rgb(0 0 0 / 3%) 50%, rgb(0 0 0 / 10%) 100%),
-    linear-gradient(to bottom, #fbfbfb, #dedede 50%, #c9c9c9);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 90%), inset 0 -1px rgb(0 0 0 / 15%), 0 1px 2px rgba(0, 0, 0, 0.25);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
   display: grid;
   place-items: center;
-  color: var(--ink);
   cursor: pointer;
+  transition: background-color 150ms ease, opacity 150ms ease;
 }
+.tbtn:hover:not(:disabled) {
+  background: rgb(0 0 0 / 6%);
+}
+/* The one filled control: the play/pause disc, flat accent, no gloss. */
 .tbtn--main {
-  width: 48px;
-  height: 48px;
+  width: 44px;
+  height: 44px;
   color: #fff;
-  border-color: var(--aqua-rim);
-  background:
-    linear-gradient(to bottom, rgb(255 255 255 / 70%) 0%, rgb(255 255 255 / 15%) 48%, transparent 50%),
-    linear-gradient(to bottom, var(--aqua-top), var(--aqua-mid) 48%, var(--aqua-lower) 52%, var(--aqua-bot));
-  box-shadow: inset 0 1px 0 var(--aqua-spec), inset 0 -1px rgb(0 40 95 / 35%), 0 1px 3px rgba(0, 40, 95, 0.4);
+  background: #0071e3;
 }
-/* Shuffle and repeat: smaller, quiet when off, Aqua blue and pressed-in when on (NP-STRIP-002). */
+.tbtn--main:hover:not(:disabled) {
+  background: #0077ed;
+}
+/* Shuffle and repeat: quiet when off; when on, the accent colour on a faint tint. */
 .tbtn--mode {
   width: 32px;
   height: 32px;
-  align-self: center;
   color: var(--ink-3);
 }
 .tbtn--mode.is-on {
-  color: #fff;
-  border-color: var(--aqua-rim);
-  background:
-    linear-gradient(to bottom, rgb(255 255 255 / 45%) 0%, rgb(255 255 255 / 10%) 48%, transparent 50%),
-    linear-gradient(to bottom, var(--aqua-top), var(--aqua-mid) 48%, var(--aqua-lower) 52%, var(--aqua-bot));
-  box-shadow: inset 0 1px 3px rgb(0 40 95 / 45%), 0 1px 2px rgba(0, 40, 95, 0.3);
+  color: #0071e3;
+  background: rgb(0 113 227 / 12%);
 }
 .tbtn:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 1px var(--aq-ring), 0 0 2px 3px var(--aq-halo);
+  box-shadow: 0 0 0 3px rgb(0 113 227 / 45%);
 }
 .tbtn:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
+  transform: scale(0.96);
 }
 .tbtn:disabled {
   opacity: 0.4;
@@ -2182,11 +2187,24 @@ a.push {
     border: 0;
     box-shadow: none;
     background:
-      linear-gradient(to bottom, var(--aqua-top), var(--aqua-mid) 50%, var(--aqua-lower)) 0 50% / var(--pct, 0%) 6px no-repeat,
-      linear-gradient(#b7b7b7, #e9e9e9 60%, #f4f4f4) 0 50% / 100% 6px no-repeat;
+      linear-gradient(#0071e3, #0071e3) 0 50% / var(--pct, 0%) 4px no-repeat,
+      linear-gradient(rgb(0 0 0 / 14%), rgb(0 0 0 / 14%)) 0 50% / 100% 4px no-repeat;
   }
   .np--docked .prog {
-    display: none;
+    width: 100%;
+  }
+  .np--docked .prog__t {
+    min-width: 34px;
+  }
+  .np__controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .np__controls .transport {
+    flex: 1 1 auto;
+    justify-content: center;
   }
   .card,
   .search,
