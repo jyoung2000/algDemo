@@ -2,7 +2,7 @@ import { useState, type CSSProperties } from 'react';
 import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
 import type { FeedbackKind, RecItem, Track } from './api';
 import { Art } from './Art';
-import { PROVIDER_LABEL, TIER_LABEL, artistOf, classNames, describeCharacteristics, fmtDuration, fmtRelease, markKey, playbackOfTrack, toneLabel } from './util';
+import { PROVIDER_LABEL, TIER_LABEL, artistOf, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreTags, markKey, pickerColorFor, playbackOfTrack, toneLabel } from './util';
 
 export interface FeedbackFlags {
   like?: boolean;
@@ -112,8 +112,9 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         const playable = Boolean(it.playback.preview || it.playback.embed);
         const isOpen = open === t.key;
         const facts = describeCharacteristics(it.characteristics);
-        // The Taste Picker colour sits on the family/subgenre pill, or on the genre pill when that already says the family.
-        const toneFact = toneLabel(it.characteristics) ?? (it.characteristics?.genres?.length ? it.characteristics.genres.slice(0, 2).join(' / ') : null);
+        // One coloured bubble per genre or subgenre, no separators. The Taste Picker colour sits on the family/subgenre bubble.
+        const genreBubbles = genreTags(it.characteristics);
+        const toneFact = toneLabel(it.characteristics);
         const toneColor = it.characteristics?.color ?? null;
         return (
           <li
@@ -162,10 +163,18 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               </span>
               <span className="rec__artist">{artistOf(t)}</span>
               <span className="rec__why1">{it.reasons[0]?.text ?? 'Found from your starting songs.'}</span>
-              {facts.length > 0 && (
+              {(genreBubbles.length > 0 || facts.length > 0) && (
                 <span className="rec__facts" aria-label="Song details">
+                  {genreBubbles.map((g) => {
+                    const tone = pickerColorFor(g) ?? toneColor;
+                    return (
+                      <span key={g} className="genre" style={tone ? ({ '--tone': tone } as CSSProperties) : undefined}>
+                        {g}
+                      </span>
+                    );
+                  })}
                   {facts.map((f) => (
-                    <span key={f} className={classNames('fact', toneColor && f === toneFact && 'fact--tone')} style={toneColor && f === toneFact ? ({ '--tone': toneColor } as CSSProperties) : undefined}>
+                    <span key={f} className="fact">
                       {f}
                     </span>
                   ))}
@@ -190,7 +199,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                 aria-label={f.like ? `Remove like from ${t.title}` : `Like ${t.title}`}
                 title={f.like ? 'Liked' : 'Like'}
               >
-                <Glyph name="heart" size={14} />
+                <Glyph name="thumb-up" size={14} />
               </button>
               <button
                 className={classNames('iconbtn', f.dislike && 'is-bad')}

@@ -12,6 +12,8 @@ const container = document.getElementById('root');
 if (!container) throw new Error('Airwave Discovery needs a #root element');
 
 installAquaArt({ btn: [22, 30], pop: [22], cb: [14] });
+// The Windows window is a desktop window: its labels stay visible at any width, not only on phones.
+if (navigator.userAgent.includes('AirwaveDiscovery/')) document.documentElement.classList.add('is-desktop-shell');
 
 createRoot(container).render(
   <StrictMode>

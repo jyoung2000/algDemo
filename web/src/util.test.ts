@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { RecItem, TasteSummary } from './api';
-import { ListenMeter, addSeed, describeCharacteristics, describeTaste, mergeRerank, playbackOfTrack, qualifiesCompletion, toneLabel } from './util';
+import { ListenMeter, addSeed, historyBack, isSilent, nextRepeat, stepQueue, toggleMuteState, describeCharacteristics, describeTaste, genreTags, mergeRerank, pickerColorFor, playbackOfTrack, qualifiesCompletion, toneLabel } from './util';
 
 const item = (key: string, rank: number): RecItem => ({ rank, track: { key } }) as unknown as RecItem;
 
 describe('describeCharacteristics', () => {
   it('lists tempo, genres, year and fit; says nothing for unknowns', () => {
     expect(describeCharacteristics({ bpm: 92, genres: ['Hip Hop', 'Rap', 'Soul'], explicit: true, duration: 200, release_year: '2024', popularity: null, taste_fit: 0.824 })).toEqual([
-      '92 BPM', 'Hip Hop / Rap', '2024', 'Explicit', '82% fit to your listening',
+      '92 BPM', '2024', 'Explicit', '82% fit to your listening',
     ]);
     expect(describeCharacteristics({ bpm: null, genres: [], explicit: null, duration: null, release_year: null, popularity: null, taste_fit: null })).toEqual([]);
     expect(describeCharacteristics(undefined)).toEqual([]);
@@ -15,10 +15,10 @@ describe('describeCharacteristics', () => {
 
   it('names the family and subgenre, or the family alone, and exposes it as the tone label', () => {
     const base = { bpm: null, genres: [], explicit: null, duration: null, release_year: null, popularity: null, taste_fit: null };
-    expect(describeCharacteristics({ ...base, family: 'Hip-hop', subgenre: 'Trap' })).toEqual(['Hip-hop · Trap']);
-    expect(describeCharacteristics({ ...base, family: 'Rock', subgenre: null })).toEqual(['Rock']);
+    expect(toneLabel({ ...base, family: 'Hip-hop', subgenre: 'Trap' })).toBe('Trap');
+    expect(toneLabel({ ...base, family: 'Rock', subgenre: null })).toBe('Rock');
     // the family is not repeated when a genre label already says it
-    expect(describeCharacteristics({ ...base, genres: ['Rock'], family: 'Rock', subgenre: null })).toEqual(['Rock']);
+    expect(toneLabel({ ...base, genres: ['Rock'], family: 'Rock', subgenre: null })).toBeNull();
     expect(toneLabel({ ...base, genres: ['Pop / Rock'], family: 'Rock', subgenre: null })).toBeNull();
     expect(toneLabel({ ...base, family: 'Rock', subgenre: null })).toBe('Rock');
     expect(toneLabel({ ...base })).toBeNull();
@@ -109,5 +109,111 @@ describe('addSeed', () => {
     const dup = addSeed(two.seeds, t('a|x'));
     expect(dup.added).toBe(false);
     expect(dup.seeds).toBe(two.seeds);
+  });
+});
+
+describe('genreTags', () => {
+  const base = { bpm: null, genres: [] as string[], explicit: null, duration: null, release_year: null, popularity: null, taste_fit: null };
+  it('lists the main genre first, then the subgenre, with no separators in any bubble', () => {
+    const tags = genreTags({ ...base, genres: ['Rap / Hip Hop', 'Hip-hop / Alternative'], family: 'Hip-hop', subgenre: 'Rage' });
+    expect(tags).toEqual(['Rap', 'Rage']);
+    for (const t of tags) expect(t).not.toMatch(/[\/·,]/);
+  });
+  it('splits a slashed subgenre and keeps it, dropping the duplicate main-genre copy', () => {
+    const tags = genreTags({ ...base, genres: ['Rap', 'Hip Hop', 'underground hip hop'], family: 'Hip-hop', subgenre: 'Alternative / underground hip-hop' });
+    expect(tags).toEqual(['Alternative', 'underground hip-hop']);
+    for (const t of tags) expect(t).not.toMatch(/[\/·,]/);
+  });
+  it('drops the duplicate rap / hip-hop names a song repeats', () => {
+    expect(genreTags({ ...base, genres: ['Rap / Hip Hop', 'hip-hop', 'Hip Hop'] })).toEqual(['Rap']);
+  });
+  it('uses the family as the main genre when the provider names none', () => {
+    expect(genreTags({ ...base, genres: [], family: 'Hip-hop', subgenre: 'Rage' })).toEqual(['Hip-hop', 'Rage']);
+  });
+  it('is empty when the song has no genre', () => {
+    expect(genreTags({ ...base })).toEqual([]);
+    expect(genreTags(undefined)).toEqual([]);
+  });
+});
+
+describe('pickerColorFor', () => {
+  it('gives a genre the Taste Picker colour, the same colour for the same genre', () => {
+    expect(pickerColorFor('Rap')).toMatch(/^hsl\(/);
+    expect(pickerColorFor('Rap')).toBe(pickerColorFor('Rap'));
+  });
+});
+
+const song = (key: string): RecItem => ({ rank: 1, track: { key }, playback: { preview: 'p', embed: null } }) as unknown as RecItem;
+const list = ['a', 'b', 'c', 'd'].map(song);
+const none = new Set<string>();
+
+describe('stepQueue (shuffle and repeat)', () => {
+  it('walks the list in order and stops at its end when repeat is off', () => {
+    const o = { shuffle: false, repeat: 'off' as const, heard: none };
+    expect(stepQueue(list, 'a', 1, none, o)?.item.track.key).toBe('b');
+    expect(stepQueue(list, 'd', 1, none, o)).toBeNull();
+    expect(stepQueue(list, 'a', -1, none, o)).toBeNull();
+  });
+
+  it('wraps round both ends with repeat all', () => {
+    const o = { shuffle: false, repeat: 'all' as const, heard: none };
+    expect(stepQueue(list, 'd', 1, none, o)).toMatchObject({ wrapped: true, item: { track: { key: 'a' } } });
+    expect(stepQueue(list, 'a', -1, none, o)).toMatchObject({ wrapped: true, item: { track: { key: 'd' } } });
+  });
+
+  it('shuffles through every song once before any repeats, then stops (repeat off)', () => {
+    const heard = new Set(['a']);
+    let cur = 'a';
+    const seen = ['a'];
+    for (let i = 0; i < 10; i++) {
+      const s = stepQueue(list, cur, 1, none, { shuffle: true, repeat: 'off', heard });
+      if (!s) break;
+      cur = s.item.track.key;
+      heard.add(cur);
+      seen.push(cur);
+    }
+    expect([...seen].sort()).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('starts a new shuffled round with repeat all, never repeating the song just played', () => {
+    const heard = new Set(['a', 'b', 'c', 'd']);
+    for (let r = 0; r < 30; r++) {
+      const s = stepQueue(list, 'c', 1, none, { shuffle: true, repeat: 'all', heard, rand: () => r / 30 });
+      expect(s?.wrapped).toBe(true);
+      expect(s?.item.track.key).not.toBe('c');
+    }
+  });
+
+  it('skips hidden and unplayable songs', () => {
+    const l = [song('a'), { ...song('b'), playback: { preview: null, embed: null } } as RecItem, song('c'), song('d')];
+    const o = { shuffle: false, repeat: 'off' as const, heard: none };
+    expect(stepQueue(l, 'a', 1, new Set(['c']), o)?.item.track.key).toBe('d');
+  });
+});
+
+describe('historyBack', () => {
+  it('goes back to the song heard before, skipping the current one and hidden ones', () => {
+    expect(historyBack(['a', 'c', 'b'], 'b', list, none)).toMatchObject({ item: { track: { key: 'c' } }, keep: 2 });
+    expect(historyBack(['a', 'c', 'b'], 'b', list, new Set(['c']))).toMatchObject({ item: { track: { key: 'a' } }, keep: 1 });
+    expect(historyBack(['a'], 'a', list, none)).toBeNull();
+  });
+});
+
+describe('repeat modes and volume helpers', () => {
+  it('cycles off, all, one, off', () => {
+    expect([nextRepeat('off'), nextRepeat('all'), nextRepeat('one')]).toEqual(['all', 'one', 'off']);
+  });
+
+  it('treats slider 0 as silent, since YouTube ignores a volume of 0', () => {
+    expect(isSilent({ value: 0, muted: false })).toBe(true);
+    expect(isSilent({ value: 0.4, muted: true })).toBe(true);
+    expect(isSilent({ value: 0.4, muted: false })).toBe(false);
+  });
+
+  it('mutes keeping the level, and unmutes back to it (or to the last level from slider 0)', () => {
+    expect(toggleMuteState({ value: 0.6, muted: false }, 0.6)).toEqual({ value: 0.6, muted: true });
+    expect(toggleMuteState({ value: 0.6, muted: true }, 0.6)).toEqual({ value: 0.6, muted: false });
+    expect(toggleMuteState({ value: 0, muted: false }, 0.7)).toEqual({ value: 0.7, muted: false });
+    expect(toggleMuteState({ value: 0, muted: false }, 0)).toEqual({ value: 0.5, muted: false });
   });
 });

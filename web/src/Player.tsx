@@ -5,7 +5,7 @@ import { Art } from './Art';
 import { Volume } from './Volume';
 import { Wheel } from './Wheel';
 import { loadYouTube, youtubeEmbedUrl, type YTPlayer } from './youtube';
-import { ListenMeter, PROVIDER_LABEL, artistOf, classNames, fmtDuration, markKey, qualifiesCompletion } from './util';
+import { ListenMeter, PROVIDER_LABEL, artistOf, classNames, fmtDuration, isSilent, markKey, qualifiesCompletion, toggleMuteState, type RepeatMode } from './util';
 
 export interface Playing {
   track: Track;
@@ -25,6 +25,10 @@ interface Props {
   docked: boolean;
   canPrev: boolean;
   canNext: boolean;
+  shuffle: boolean;
+  repeat: RepeatMode;
+  onShuffle: () => void;
+  onRepeat: () => void;
   onPrev: () => void;
   onNext: () => void;
   /** Only real, observed listening: a preview played to its end, or skipped by the user after a short listen.
@@ -82,7 +86,7 @@ type Mode = 'full' | 'preview' | 'embed' | 'none';
  * A song with no YouTube Music version falls back to its 30-second Deezer preview in an <audio>
  * element. SoundCloud songs play in SoundCloud's widget, whose progress and volume Airwave cannot reach.
  */
-export function Player({ playing, upNext, docked, canPrev, canNext, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext }: Props) {
+export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, repeat, onShuffle, onRepeat, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext }: Props) {
   const audio = useRef<HTMLAudioElement>(null);
   const meter = useRef(new ListenMeter());
   const [paused, setPaused] = useState(true);
@@ -98,6 +102,9 @@ export function Player({ playing, upNext, docked, canPrev, canNext, onPrev, onNe
   const endsThisInstance = useRef(0);
   const volRef = useRef(vol);
   volRef.current = vol;
+  const lastLevel = useRef(vol.value);
+  const repeatRef = useRef(repeat);
+  repeatRef.current = repeat;
   const onEndRef = useRef<() => void>(() => undefined);
   const key = playing?.track.key ?? null;
 
@@ -141,15 +148,18 @@ export function Player({ playing, upNext, docked, canPrev, canNext, onPrev, onNe
     } catch {
       /* private mode: the volume just is not remembered */
     }
+    if (vol.value > 0) lastLevel.current = vol.value;
+    const silent = isSilent(vol);
     const a = audio.current;
     if (a) {
       a.volume = vol.value;
-      a.muted = vol.muted;
+      a.muted = silent;
     }
     const p = yt.current;
     if (p && ytReady) {
-      p.setVolume(Math.round(vol.value * 100));
-      if (vol.muted) p.mute();
+      // YouTube's player ignores a volume of 0 (it stays at about 5%), so slider 0 is a mute.
+      p.setVolume(Math.max(1, Math.round(vol.value * 100)));
+      if (silent) p.mute();
       else p.unMute();
     }
   }, [vol, ytReady, src]);
@@ -273,6 +283,20 @@ export function Player({ playing, upNext, docked, canPrev, canNext, onPrev, onNe
       if (n === 1) onListen('complete', playing.track, l, meta);
       else if (n === 2) onListen('replay', playing.track, l, meta);
     }
+    if (repeatRef.current === 'one') {
+      // Play this song again. The next end of the same playback counts as a replay (see above), not a new listen.
+      meter.current.seeked(0);
+      ended.current = false;
+      setCur(0);
+      if (mode === 'full') {
+        yt.current?.seekTo(0, true);
+        yt.current?.playVideo();
+      } else if (audio.current) {
+        audio.current.currentTime = 0;
+        void audio.current.play().catch(() => setPaused(true));
+      }
+      return;
+    }
     if (canNext) onNext();
   };
 
@@ -291,6 +315,16 @@ export function Player({ playing, upNext, docked, canPrev, canNext, onPrev, onNe
   const t = playing?.track;
   const transport = (
     <div className="transport" role="group" aria-label="Playback">
+      <button
+        className={classNames('tbtn', 'tbtn--mode', shuffle && 'is-on')}
+        type="button"
+        onClick={onShuffle}
+        aria-pressed={shuffle}
+        aria-label="Shuffle"
+        title={shuffle ? 'Shuffle is on: songs play in a random order' : 'Shuffle is off'}
+      >
+        <Glyph name="shuffle" size={16} />
+      </button>
       <button className="tbtn" type="button" onClick={onPrev} disabled={!canPrev} aria-label="Previous song">
         <Glyph name="previous" size={16} />
       </button>
@@ -306,6 +340,15 @@ export function Player({ playing, upNext, docked, canPrev, canNext, onPrev, onNe
       </button>
       <button className="tbtn" type="button" onClick={next} disabled={!canNext} aria-label="Next song">
         <Glyph name="next" size={16} />
+      </button>
+      <button
+        className={classNames('tbtn', 'tbtn--mode', repeat !== 'off' && 'is-on')}
+        type="button"
+        onClick={onRepeat}
+        aria-label={repeat === 'one' ? 'Repeat: this song' : repeat === 'all' ? 'Repeat: the whole list' : 'Repeat: off'}
+        title={repeat === 'one' ? 'Repeating this song' : repeat === 'all' ? 'Repeating the whole list' : 'Repeat is off'}
+      >
+        <Glyph name={repeat === 'one' ? 'repeat-one' : 'repeat'} size={16} />
       </button>
     </div>
   );
@@ -334,11 +377,11 @@ export function Player({ playing, upNext, docked, canPrev, canNext, onPrev, onNe
   const volume = playing ? (
     <Volume
       value={vol.value}
-      muted={vol.muted}
+      muted={isSilent(vol)}
       disabled={mode === 'embed' || mode === 'none'}
       disabledReason="SoundCloud’s player has its own volume control."
       onChange={(v) => setVol({ value: v, muted: false })}
-      onToggleMute={() => setVol((x) => ({ ...x, muted: !x.muted }))}
+      onToggleMute={() => setVol((x) => toggleMuteState(x, lastLevel.current))}
     />
   ) : null;
 
@@ -458,7 +501,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, onPrev, onNe
           <Wheel onStep={onWheel} onSelect={onSelect} onMenu={onMenu} onPrev={onPrev} onNext={next} onPlayPause={toggle} canPlay={hasSound} />
           {upNext.length > 0 && (
             <div className="upnext">
-              <h3>Up next</h3>
+              <h3>{shuffle ? 'Still to play (shuffled)' : 'Up next'}</h3>
               <ol>
                 {upNext.map((u) => (
                   <li key={u.key}>

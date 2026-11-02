@@ -152,6 +152,16 @@ body {
 }
 
 
+/* The Windows window keeps its names beside the side-nav icons and the brand, at any width. The phone
+   breakpoints that hide them are for the WebView; the desktop shell is always wide enough to show them. */
+.is-desktop-shell .side__item span,
+.is-desktop-shell .brand__name {
+  display: inline;
+}
+.is-desktop-shell .side__item {
+  justify-content: flex-start;
+}
+
 /* ------------------------------------------------------------------ shared surfaces */
 .card,
 .search,
@@ -958,9 +968,11 @@ a.push {
 .rec__facts {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 3px;
+  align-items: center;
+  gap: 5px 6px;
+  margin-top: 5px;
 }
+
 .fact {
   padding: 0 6px;
   border-radius: 7px;
@@ -972,14 +984,36 @@ a.push {
   white-space: nowrap;
 }
 /* The song's Taste Picker colour: a dot and a tinted edge, so the family reads at a glance. */
-.fact--tone {
+.genre {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  border: 1px solid color-mix(in srgb, var(--tone, var(--accent)) 60%, var(--hair));
+  background: color-mix(in srgb, var(--tone, var(--accent)) 20%, var(--pearl-2));
+}
+.genre::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tone, var(--accent));
+  flex: none;
+}
+.genre--tone {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   border-color: color-mix(in srgb, var(--tone, var(--hair)) 55%, var(--hair));
   background: color-mix(in srgb, var(--tone, var(--pearl-2)) 14%, var(--pearl-2));
 }
-.fact--tone::before {
+.genre--tone::before {
   content: '';
   width: 7px;
   height: 7px;
@@ -1361,17 +1395,16 @@ a.push {
   grid-area: vol;
 }
 .np--panel .np__open {
-  /* Open-in links: one scrolling row under the transport, so a long provider list never adds height. */
+  /* Open-in links wrap onto a second line inside the panel, so no platform is cut off at the edge or hidden behind a scroll. */
   grid-area: links;
   justify-self: stretch;
   align-self: center;
-  flex-wrap: nowrap;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  overflow: hidden;
   justify-content: flex-start;
   gap: 6px;
   margin: 0;
   min-width: 0;
-  scrollbar-width: none;
 }
 .np--panel .np__open .openlink {
   padding: 2px 9px;
@@ -1500,6 +1533,21 @@ a.push {
     linear-gradient(to bottom, rgb(255 255 255 / 70%) 0%, rgb(255 255 255 / 15%) 48%, transparent 50%),
     linear-gradient(to bottom, var(--aqua-top), var(--aqua-mid) 48%, var(--aqua-lower) 52%, var(--aqua-bot));
   box-shadow: inset 0 1px 0 var(--aqua-spec), inset 0 -1px rgb(0 40 95 / 35%), 0 1px 3px rgba(0, 40, 95, 0.4);
+}
+/* Shuffle and repeat: smaller, quiet when off, Aqua blue and pressed-in when on (NP-STRIP-002). */
+.tbtn--mode {
+  width: 32px;
+  height: 32px;
+  align-self: center;
+  color: var(--ink-3);
+}
+.tbtn--mode.is-on {
+  color: #fff;
+  border-color: var(--aqua-rim);
+  background:
+    linear-gradient(to bottom, rgb(255 255 255 / 45%) 0%, rgb(255 255 255 / 10%) 48%, transparent 50%),
+    linear-gradient(to bottom, var(--aqua-top), var(--aqua-mid) 48%, var(--aqua-lower) 52%, var(--aqua-bot));
+  box-shadow: inset 0 1px 3px rgb(0 40 95 / 45%), 0 1px 2px rgba(0, 40, 95, 0.3);
 }
 .tbtn:focus-visible {
   outline: none;
@@ -2109,6 +2157,7 @@ a.push {
     gap: 2px;
     width: 152px;
   }
+  /* Five buttons need the whole row: stack the controls under the title on every phone width. */
   .np--docked .vol__n {
     display: none;
   }
@@ -2119,6 +2168,10 @@ a.push {
   .np--docked .tbtn {
     width: 44px;
     height: 44px;
+  }
+  .np--docked .tbtn--mode {
+    width: 40px;
+    height: 40px;
   }
   .np--docked .vol__btn {
     width: 44px;
@@ -2300,6 +2353,10 @@ a.push {
 }
 .vol__bar {
   min-width: 60px;
+  /* A 7px channel is hard to hit: the clickable area is 23px tall, the drawn channel stays 7px (NP-STRIP-003). */
+  box-sizing: content-box;
+  padding: 8px 0;
+  background-clip: content-box;
 }
 .vol__n {
   flex: none;
@@ -3057,8 +3114,8 @@ a.push {
   }
 }
 
-@media (max-width: 420px) {
-  /* Narrow phone: art and title take the whole top row; transport and volume share the row under it. */
+@media (max-width: 899px) {
+  /* Docked player (phone and narrow window): art and title take the whole top row; transport and volume share the row under it. */
   :root {
     --dock-h: 132px;
   }
@@ -3071,5 +3128,54 @@ a.push {
     grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
     column-gap: 6px;
+  }
+}
+
+/* ------------------------------------------------------------------ desktop: the player is a bar fixed to the bottom
+   The panel used to follow the last song down the page. On a wide window it now stays in view while the list scrolls:
+   a frosted bar edge to edge (the same surface and hairline as the top bar), the strip itself kept to the page width. */
+@media (min-width: 900px) {
+  .rail {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    padding: 10px 24px calc(10px + env(safe-area-inset-bottom));
+    background: rgba(250, 249, 247, 0.92);
+    backdrop-filter: blur(10px);
+    border-top: 1px solid var(--hair);
+    box-shadow: 0 -6px 20px rgba(30, 30, 30, 0.06);
+  }
+  .rail .np--panel {
+    max-width: 872px;
+    margin: 0 auto;
+  }
+  /* Room under the last song so the bar never covers it. */
+  .app.has-strip {
+    padding-bottom: calc(var(--strip-h, 120px) + 24px);
+  }
+  .app.has-strip .toast {
+    bottom: calc(var(--strip-h, 120px) + 16px);
+  }
+  /* Nothing playing: the bar is one slim line, not a tall empty card. */
+  .np--panel.is-empty {
+    padding: 8px 14px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'idle';
+  }
+  .np--panel.is-empty .np__idle {
+    grid-area: idle;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+  }
+  .np--panel.is-empty .np__idleart {
+    width: 28px;
+    height: 28px;
+    flex: none;
   }
 }

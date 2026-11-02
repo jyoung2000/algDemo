@@ -153,6 +153,15 @@ export class LocalApi {
     return { ...DEFAULT_SETTINGS, ...stored };
   }
 
+  /**
+   * The allowance for the lookups that start a song (which YouTube video to play, a fresh preview address).
+   * They read a few kilobytes and the song itself streams from YouTube's player, so a spent daily discovery
+   * allowance must not stop a song from playing. What they read still counts toward the day's total.
+   */
+  private playbackMeter(): Meter {
+    return new Meter(3_000_000, 3_000_000, (c, n) => this.store.addTransfer(c, n));
+  }
+
   private searchMeter(): Meter {
     const daily = Math.trunc(Number(this.settings()['daily_mb']) * 1e6);
     const used = Object.values(this.store.transferToday()).reduce((a, b) => a + b, 0);
@@ -945,7 +954,7 @@ export class LocalApi {
   private async previewUrl(tid: string): Promise<LocalResponse> {
     try {
       const hit = this.store.cacheGet(`dz:track:${tid}`);
-      const url = await this.dz.freshPreview(tid, ((hit?.value as Dict | undefined)?.['preview'] as string | undefined) ?? null, { meter: this.searchMeter() });
+      const url = await this.dz.freshPreview(tid, ((hit?.value as Dict | undefined)?.['preview'] as string | undefined) ?? null, { meter: this.playbackMeter() });
       return url ? ok({ url }) : fail(404, 'Deezer offers no preview for this track');
     } catch (e) {
       return fail(502, `Deezer did not answer: ${(e as Error).message}`);
@@ -962,7 +971,7 @@ export class LocalApi {
     if (hit) return ok(hit.value);
     let found: Dict | null;
     try {
-      found = (await this.ytm.findMatch(t as never, { meter: this.searchMeter() })).match as Dict | null;
+      found = (await this.ytm.findMatch(t as never, { meter: this.playbackMeter() })).match as Dict | null;
     } catch (e) {
       if (e instanceof FetchError || e instanceof ProviderError) return fail(502, `YouTube Music did not answer: ${e.message}`);
       throw e;

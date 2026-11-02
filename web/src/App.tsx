@@ -9,7 +9,7 @@ import { Search } from './Search';
 import { SoundCard } from './SoundCard';
 import { ProfileView } from './Profile';
 import { SettingsView } from './Settings';
-import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, classNames, describeTaste, fmtBytes, keepFocus, mergeRerank, playbackOfTrack, stepPlayable } from './util';
+import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, classNames, describeTaste, fmtBytes, keepFocus, historyBack, mergeRerank, nextRepeat, playbackOfTrack, stepQueue, type RepeatMode } from './util';
 
 type Tab = 'discover' | 'saved' | 'profile' | 'downloads' | 'settings';
 
@@ -35,6 +35,23 @@ function useMedia(q: string): boolean {
   return m;
 }
 
+const SHUFFLE_KEY = 'airwave.shuffle';
+const REPEAT_KEY = 'airwave.repeat';
+function readFlag(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function writeFlag(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* private mode: the choice just is not remembered */
+  }
+}
+
 export function App() {
   const [tab, setTab] = useState<Tab>('discover');
   const [seeds, setSeeds] = useState<Track[]>([]);
@@ -48,6 +65,14 @@ export function App() {
   const [playing, setPlaying] = useState<Playing | null>(null);
   const [flags, setFlags] = useState<Record<string, FeedbackFlags>>({});
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [shuffle, setShuffle] = useState(() => readFlag(SHUFFLE_KEY) === 'on');
+  const [repeat, setRepeat] = useState<RepeatMode>(() => {
+    const v = readFlag(REPEAT_KEY);
+    return v === 'all' || v === 'one' ? v : 'off';
+  });
+  /** Songs played this round (the shuffle never repeats one before every other has played) and the order they came in. */
+  const heardRef = useRef<Set<string>>(new Set());
+  const historyRef = useRef<string[]>([]);
   const [saved, setSaved] = useState<SavedItem[] | null>(null);
   const [offline, setOffline] = useState(false);
   const docked = useMedia('(max-width: 899px)');
@@ -198,24 +223,53 @@ export function App() {
   }, [items, result]);
 
   // ---------------------------------------------------------------- playback
-  const play = (it: RecItem) => {
+  const play = (it: RecItem, o?: { newRound?: boolean; back?: boolean }) => {
     playedRef.current.add(it.track.key);
+    if (o?.newRound) heardRef.current = new Set();
+    heardRef.current.add(it.track.key);
+    if (!o?.back) historyRef.current = [...historyRef.current.slice(-199), it.track.key];
     setPlaying({ track: it.track, playback: it.playback });
     setFocusKey(it.track.key);
   };
   const previewTrack = (t: Track) => setPlaying({ track: t, playback: playbackOfTrack(t) });
   const playingKey = playing?.track.key ?? null;
   const inQueue = playingKey != null && items.some((x) => x.track.key === playingKey);
-  const nextItem = stepPlayable(items, inQueue ? playingKey : null, 1, hidden);
-  const prevItem = inQueue ? stepPlayable(items, playingKey, -1, hidden) : null;
+  const queueOpts = { shuffle, repeat, heard: heardRef.current };
+  const nextStep = stepQueue(items, inQueue ? playingKey : null, 1, hidden, queueOpts);
+  const back = shuffle ? historyBack(historyRef.current, playingKey, items, hidden) : null;
+  const prevStep = shuffle ? (back ? { item: back.item, wrapped: false } : null) : inQueue ? stepQueue(items, playingKey, -1, hidden, queueOpts) : null;
+  const goNext = () => {
+    if (nextStep) play(nextStep.item, { newRound: nextStep.wrapped });
+  };
+  const goPrev = () => {
+    if (!prevStep) return;
+    if (back) historyRef.current = historyRef.current.slice(0, back.keep);
+    play(prevStep.item, { back: Boolean(back) });
+  };
+  const toggleShuffle = () =>
+    setShuffle((s) => {
+      const on = !s;
+      writeFlag(SHUFFLE_KEY, on ? 'on' : 'off');
+      // A new shuffle round starts from the song now playing.
+      heardRef.current = new Set(playingKey ? [playingKey] : []);
+      return on;
+    });
+  const cycleRepeat = () =>
+    setRepeat((r) => {
+      const n = nextRepeat(r);
+      writeFlag(REPEAT_KEY, n);
+      return n;
+    });
   const upNext = useMemo(() => {
     const i = inQueue ? items.findIndex((x) => x.track.key === playingKey) : -1;
-    return items
-      .slice(i + 1)
-      .filter((x) => x.playback.preview || x.playback.embed)
+    const playable = (x: RecItem) => x.playback.preview || x.playback.embed;
+    // Shuffled, the songs still to come are the ones not heard this round; their order is decided when the next is picked.
+    const rest = shuffle ? items.filter((x) => x.track.key !== playingKey && !heardRef.current.has(x.track.key) && !hidden.has(x.track.key)) : items.slice(i + 1);
+    return rest
+      .filter(playable)
       .slice(0, 4)
       .map((x) => ({ key: x.track.key, title: x.track.title, artist: artistOf(x.track), artwork: x.track.artwork }));
-  }, [items, inQueue, playingKey]);
+  }, [items, inQueue, playingKey, shuffle, hidden]);
 
   // A skip or a full listen is recorded, then the songs still to come are ranked again with it.
   // Only the newest answer is applied, so two quick skips cannot show the older order.
@@ -292,6 +346,13 @@ export function App() {
     if (tab === 'saved') api.saved().then((r) => setSaved(r.items), () => setSaved([]));
   }, [tab, flags]);
 
+  /** Take a song off Saved: the like is removed on the engine and the row goes at once. */
+  const removeSaved = (track: Track) => {
+    setSaved((list) => (list ? list.filter((x) => x.track.key !== track.key) : list));
+    setFlags((f) => ({ ...f, [track.key]: { ...(f[track.key] ?? {}), like: false } }));
+    api.feedback('unlike', track).then(() => void refreshTaste(), (e: Error) => flash(`Could not remove that: ${e.message}`));
+  };
+
   // ---------------------------------------------------------------- render
   const running = Boolean(job && !job.done);
   const sample = Boolean(result?.sample);
@@ -304,8 +365,19 @@ export function App() {
   const srcEntries = Object.entries(job?.sources ?? result?.sources ?? {});
   const failed = srcEntries.filter(([, s]) => s.state !== 'ok' && s.state !== 'skipped');
 
+  // The desktop player bar is fixed to the bottom; its measured height keeps the last song clear of it.
+  useEffect(() => {
+    const rail = document.querySelector<HTMLElement>('.rail');
+    if (!rail || docked) return;
+    const set = () => document.documentElement.style.setProperty('--strip-h', `${rail.offsetHeight}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(rail);
+    return () => ro.disconnect();
+  }, [docked, Boolean(playing)]);
+
   return (
-    <div className={classNames('app', docked && 'app--docked', playing && docked && 'has-dock')}>
+    <div className={classNames('app', docked && 'app--docked', playing && docked && 'has-dock', !docked && 'has-strip')}>
       <a className="skip" href="#main">
         Skip to content
       </a>
@@ -314,7 +386,7 @@ export function App() {
           <span className="brand__mark" aria-hidden="true">
             <Glyph name="discover" size={18} />
           </span>
-          <span className="brand__name">Airwave</span>
+          <span className="brand__name">Airwave Discovery</span>
         </div>
         <ul className="side__nav">
           {(
@@ -582,6 +654,15 @@ export function App() {
                       <button className="push addbtn" type="button" disabled={seeds.some((x) => x.key === s.track.key)} onClick={() => onAdd(s.track)}>
                         Add
                       </button>
+                      <button
+                        className="iconbtn"
+                        type="button"
+                        aria-label={`Remove ${s.track.title} from Saved`}
+                        title="Remove from Saved"
+                        onClick={() => removeSaved(s.track)}
+                      >
+                        <Glyph name="close" size={14} />
+                      </button>
                     </span>
                   </li>
                 ))}
@@ -628,10 +709,14 @@ export function App() {
           playing={playing}
           upNext={upNext}
           docked={docked}
-          canPrev={Boolean(prevItem)}
-          canNext={Boolean(nextItem)}
-          onPrev={() => prevItem && play(prevItem)}
-          onNext={() => nextItem && play(nextItem)}
+          canPrev={Boolean(prevStep)}
+          canNext={Boolean(nextStep)}
+          shuffle={shuffle}
+          repeat={repeat}
+          onShuffle={toggleShuffle}
+          onRepeat={cycleRepeat}
+          onPrev={goPrev}
+          onNext={goNext}
           onListen={onListen}
           onWheel={wheelStep}
           onSelect={wheelSelect}

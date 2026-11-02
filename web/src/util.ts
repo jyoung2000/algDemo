@@ -1,3 +1,6 @@
+import { classify } from './engine/classify';
+import { FAMILY_TAGS } from './engine/genre-table';
+import type { Tag } from './engine/genres';
 import type { Characteristics, Playback, ProviderId, RecItem, Release, TasteSummary, Track } from './api';
 
 export const PROVIDER_LABEL: Record<string, string> = {
@@ -99,6 +102,76 @@ export function stepPlayable(items: RecItem[], fromKey: string | null, dir: 1 | 
   return ok[i + dir] ?? null;
 }
 
+export interface VolumeState {
+  /** 0 to 1. */
+  value: number;
+  muted: boolean;
+}
+/** Sound is off when muted or the slider sits at 0. YouTube's player ignores setVolume(0), so 0 must mute. */
+export const isSilent = (v: VolumeState): boolean => v.muted || v.value <= 0;
+/**
+ * The speaker button. Silent -> sound back on (from slider 0 it returns to the last level, or half);
+ * playing -> muted, the level kept so unmuting returns to it.
+ */
+export function toggleMuteState(v: VolumeState, lastLevel: number): VolumeState {
+  if (!isSilent(v)) return { value: v.value, muted: true };
+  return { value: v.value > 0 ? v.value : lastLevel > 0 ? lastLevel : 0.5, muted: false };
+}
+
+/** What happens when a song ends: stop at the end of the list, loop the list, or loop the song. */
+export type RepeatMode = 'off' | 'all' | 'one';
+export const REPEAT_ORDER: readonly RepeatMode[] = ['off', 'all', 'one'];
+export const nextRepeat = (m: RepeatMode): RepeatMode => REPEAT_ORDER[(REPEAT_ORDER.indexOf(m) + 1) % REPEAT_ORDER.length]!;
+
+export interface QueueStep {
+  item: RecItem;
+  /** The list ran out and started over (repeat all), so a shuffle begins a new round. */
+  wrapped: boolean;
+}
+
+/**
+ * The song after (dir 1) or before (dir -1) the current one. In order it walks the list and, with repeat
+ * all, wraps round its ends. Shuffled it picks at random from the songs not yet heard this round, so no
+ * song comes twice before every other has played; repeat all then starts a new round, otherwise the
+ * round's end is the end of playback. Going back while shuffled uses the play history instead (historyBack).
+ */
+export function stepQueue(
+  items: RecItem[],
+  fromKey: string | null,
+  dir: 1 | -1,
+  hidden: Set<string>,
+  o: { shuffle: boolean; repeat: RepeatMode; heard: ReadonlySet<string>; rand?: () => number },
+): QueueStep | null {
+  const ok = items.filter((x) => !hidden.has(x.track.key) && (x.playback.preview || x.playback.embed));
+  if (!ok.length) return null;
+  const rand = o.rand ?? Math.random;
+  const pick = (from: RecItem[]) => from[Math.min(from.length - 1, Math.floor(rand() * from.length))]!;
+  if (o.shuffle && dir === 1) {
+    const fresh = ok.filter((x) => x.track.key !== fromKey && !o.heard.has(x.track.key));
+    if (fresh.length) return { item: pick(fresh), wrapped: false };
+    if (o.repeat !== 'all') return null;
+    const others = ok.filter((x) => x.track.key !== fromKey);
+    return { item: pick(others.length ? others : ok), wrapped: true };
+  }
+  const i = fromKey ? ok.findIndex((x) => x.track.key === fromKey) : -1;
+  if (i === -1) return { item: dir === 1 ? ok[0]! : ok[ok.length - 1]!, wrapped: false };
+  const n = ok[i + dir];
+  if (n) return { item: n, wrapped: false };
+  if (o.repeat === 'all') return { item: dir === 1 ? ok[0]! : ok[ok.length - 1]!, wrapped: true };
+  return null;
+}
+
+/** The song played before the current one, from the play history; `keep` is how much of the history stays. */
+export function historyBack(history: readonly string[], currentKey: string | null, items: RecItem[], hidden: Set<string>): { item: RecItem; keep: number } | null {
+  let end = history.length;
+  if (end && history[end - 1] === currentKey) end -= 1;
+  for (let i = end - 1; i >= 0; i--) {
+    const item = items.find((x) => x.track.key === history[i] && !hidden.has(x.track.key) && (x.playback.preview || x.playback.embed));
+    if (item && item.track.key !== currentKey) return { item, keep: i + 1 };
+  }
+  return null;
+}
+
 /**
  * Listening accumulator for a preview. Counts time actually played (timeupdate deltas while not
  * seeking and under ~1.5 s per tick), never the seek position, so scrubbing to the end is not a listen.
@@ -159,21 +232,83 @@ export const QUEUE_SIZE_MAX = 60;
  *  A family alone is dropped when a genre label already says it ("Rock" next to "Rock"). */
 export function toneLabel(c?: Characteristics | null): string | null {
   if (!c || !(c.subgenre || c.family)) return null;
-  if (c.subgenre) return c.family ? `${c.family} · ${c.subgenre}` : c.subgenre;
+  if (c.subgenre) return c.subgenre;
   const fam = (c.family as string).toLowerCase();
-  if ((c.genres ?? []).some((g) => g.toLowerCase().split(/\s*\/\s*/).includes(fam))) return null;
+  if (genreNames(c).some((g) => g.toLowerCase() === fam)) return null;
   return c.family as string;
 }
+
+/** Each genre name on its own, split on the separators providers use ("Rap / Hip Hop"), blanks dropped. */
+export function genreNames(c?: Characteristics | null): string[] {
+  return (c?.genres ?? []).flatMap((g) => g.split(/\s*[\/·,]\s*/)).map((g) => g.trim()).filter(Boolean);
+}
+
+/** Tag ids that name the same thing ("Hip-hop", "hip hop", "Hip Hop") collapse to one. */
+const tagKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+/**
+ * The genre bubbles for a row, in reading order: main genres first (the family, or a bare genre such as
+ * "Rap"), then subgenres. Each bubble is one name with no separators. A name already named by a longer
+ * bubble is dropped ("Hip Hop" beside "underground hip hop"), and "Rap" and "Hip Hop" count as one.
+ */
+export function genreTags(c?: Characteristics | null): string[] {
+  const family = c?.family ? splitTag(c.family) : [];
+  const sub = c?.subgenre ? splitTag(c.subgenre) : [];
+  const provider = genreNames(c).slice(0, 3);
+  const isSub = (n: string) => sub.some((x) => tagKey(x) === tagKey(n));
+  // The provider's own main genre ("Rap") is the main bubble; the family ("Hip-hop") only fills in when there is none.
+  const main = [...provider, ...family].filter((n) => !isSub(n));
+  // A subgenre wins over a main-genre copy of the same name ("underground hip hop" vs "underground hip-hop").
+  const ordered = [...sub, ...main];
+
+  const keys: string[] = [];
+  const unique: string[] = [];
+  for (const name of ordered) {
+    const k = tagKey(name);
+    if (!k || keys.includes(k)) continue;
+    keys.push(k);
+    unique.push(name);
+  }
+  // Drop a bubble whose words are all inside a longer bubble's words (e.g. "Hip Hop" inside "underground hip hop").
+  const covered = unique.filter((name) => {
+    const words = tagKey(name);
+    return !unique.some((other) => other !== name && tagKey(other).length > words.length && tagKey(other).includes(words));
+  });
+  // "Rap" and "Hip Hop" name the same thing: a song keeps only the first of them.
+  let rapSeen = false;
+  const dedup = covered.filter((name) => {
+    if (!/hiphop|^rap$/.test(tagKey(name))) return true;
+    if (rapSeen) return false;
+    rapSeen = true;
+    return true;
+  });
+  return [...dedup.filter((n) => !isSub(n)), ...dedup.filter((n) => isSub(n))];
+}
+
+/**
+ * The Taste Picker colour for one genre name: the same colour the picker gives a song with that genre
+ * (classify: family hue band, shaded by the subgenre's energy and brightness). Null when the name is
+ * not a picker family or subgenre.
+ */
+export function pickerColorFor(name: string): string | null {
+  const tag = [{ name, label: name, confidence: 1 }] as Tag[];
+  const sub = classify(tag, null);
+  if (sub?.color && sub.subgenre) return sub.color;
+  // A main genre with no subgenre of its own ("Rap") takes its family's band colour.
+  const fam = FAMILY_TAGS[name.toLowerCase()];
+  if (!fam) return null;
+  return classify([{ name: fam, label: fam, confidence: 1 }] as Tag[], null)?.color ?? null;
+}
+
+/** Split a provider string on the separators it uses ("A / B", "A · B") so each part is its own bubble. */
+const splitTag = (s: string): string[] => s.split(/\s*[\/·,]\s*/).map((x) => x.trim()).filter(Boolean);
 
 /** The facts shown on a row so the listener can see why a song was picked: tempo, genres, year, fit. */
 export function describeCharacteristics(c?: Characteristics | null): string[] {
   if (!c) return [];
   const out: string[] = [];
   if (c.bpm && c.bpm > 0) out.push(`${c.bpm} BPM`);
-  if (c.genres?.length) out.push(c.genres.slice(0, 2).join(' / ')); // inference is explained in "Why this song", not stamped on the chip
-  const tone = toneLabel(c);
-  if (tone) out.push(tone);
-  if (c.release_year) out.push(c.release_year);
+  if (c.release_year) out.push(String(c.release_year));
   if (c.explicit) out.push('Explicit');
   if (c.taste_fit != null) out.push(`${Math.round(c.taste_fit * 100)}% fit to your listening`);
   return out;
