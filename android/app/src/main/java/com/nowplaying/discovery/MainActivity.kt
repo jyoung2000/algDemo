@@ -1,8 +1,11 @@
 package com.nowplaying.discovery
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.graphics.Color
 import android.os.Bundle
 import android.util.Base64
@@ -11,6 +14,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -33,11 +38,15 @@ import java.util.concurrent.Executors
  *    the page has a real https origin and wasm / ES modules get the right MIME types);
  *  - network calls to the music services go through [Bridge.request], because the page cannot call
  *    Deezer or YouTube directly (CORS). Only an allow-list of hosts is reachable.
+ *  - song identification: the search bar's Mic asks for RECORD_AUDIO when tapped (never at start-up) and
+ *    its File button opens the system picker for one audio file. Only the app's own page can get either.
  */
 class MainActivity : Activity() {
   private lateinit var root: FrameLayout
   private var web: WebView? = null
-  private val pool = Executors.newFixedThreadPool(6)
+  private val pool = Executors.newFixedThreadPool(16)
+  private var pendingMic: PermissionRequest? = null
+  private var pendingFile: ValueCallback<Array<Uri>>? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -64,6 +73,43 @@ class MainActivity : Activity() {
         override fun onConsoleMessage(m: ConsoleMessage): Boolean {
           Log.d("AirwaveWeb", "${m.messageLevel()} ${m.message()} (${m.sourceId()}:${m.lineNumber()})")
           return true
+        }
+
+        // getUserMedia({ audio }) from the search bar's Mic. Granted to our own page only, for audio only, and only
+        // once Android's RECORD_AUDIO is granted; a refusal reaches the page as NotAllowedError ("denied").
+        override fun onPermissionRequest(request: PermissionRequest) {
+          val wantsMic = request.resources.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+          if (request.origin.host != APP_HOST || !wantsMic) return request.deny()
+          if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            request.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE))
+          } else {
+            pendingMic?.deny()
+            pendingMic = request
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
+          }
+        }
+
+        override fun onPermissionRequestCanceled(request: PermissionRequest) {
+          if (pendingMic === request) pendingMic = null
+        }
+
+        // <input type="file" accept="audio/*"> from the search bar's File: one audio file from the system picker.
+        override fun onShowFileChooser(v: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+          pendingFile?.onReceiveValue(null)
+          pendingFile = callback
+          val pick = Intent(Intent.ACTION_GET_CONTENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "audio/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("audio/*", "video/webm", "application/ogg"))
+          }
+          return try {
+            startActivityForResult(Intent.createChooser(pick, "Choose an audio file"), REQ_FILE)
+            true
+          } catch (e: Exception) {
+            pendingFile = null
+            callback.onReceiveValue(null)
+            false
+          }
         }
       }
       webViewClient = object : WebViewClient() {
@@ -183,6 +229,24 @@ class MainActivity : Activity() {
     }
   }
 
+  override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    if (requestCode != REQ_MIC) return
+    val req = pendingMic ?: return
+    pendingMic = null
+    if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) req.grant(arrayOf(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) else req.deny()
+  }
+
+  @Deprecated("Deprecated in Java")
+  override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    @Suppress("DEPRECATION") super.onActivityResult(requestCode, resultCode, data)
+    if (requestCode != REQ_FILE) return
+    val cb = pendingFile ?: return
+    pendingFile = null
+    val uri = if (resultCode == RESULT_OK) data?.data else null
+    cb.onReceiveValue(uri?.let { arrayOf(it) }) // null = cancelled; the page simply stays where it was
+  }
+
   private fun allowed(host: String): Boolean = host in HOSTS || SUFFIXES.any { host.endsWith(it) }
 
   @Deprecated("Deprecated in Java")
@@ -197,6 +261,8 @@ class MainActivity : Activity() {
 
   private companion object {
     const val APP_HOST = "appassets.androidplatform.net"
+    const val REQ_MIC = 41
+    const val REQ_FILE = 42
     // Mirrors server/airwave_discovery/net.py ALLOWED_HOSTS / ALLOWED_SUFFIXES.
     val HOSTS = setOf(
       "api.deezer.com", "www.deezer.com", "deezer.com", "deezer.page.link", "link.deezer.com",
@@ -210,6 +276,7 @@ class MainActivity : Activity() {
       "tidal.com", "resources.tidal.com",
       "api.song.link",
       "lrclib.net", "musicbrainz.org",
+      "genius.com", "amp.shazam.com",
       "i.ytimg.com",
     )
     val SUFFIXES = listOf(".dzcdn.net", ".sndcdn.com")

@@ -1,0 +1,31 @@
+{
+ "matches": [
+  {
+   "id": "210433284",
+   "offset": 57.157769531,
+   "timeskew": 4.7683716e-06,
+   "frequencyskew": 0.0
+  },
+  {
+   "id": "20026600",
+   "offset": 55.2993125,
+   "timeskew": -0.029302955,
+   "frequencyskew": -0.00090169907
+  }
+ ],
+ "timestamp": 1793523675643,
+ "timezone": "Europe/Paris",
+ "tagid": "83CE647B-00DB-4B0B-89B2-171B9904A5ED",
+ "track": {
+  "title": "One More Time",
+  "subtitle": "Daft Punk",
+  "url": "https://www.shazam.com/track/11239978/one-more-time",
+  "isrc": "GBDUW0000053",
+  "images": {
+   "background": "https://is1-ssl.mzstatic.com/image/thumb/AMCArtistImages221/v4/29/9e/38/299e3866-673a-4d36-376f-9274a0e45793/ami-identity-7b9f369855a542ba1bc836cd2766ca01-2025-09-01T10-34-14.349Z_cropped.png/800x800cc.jpg",
+   "coverart": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/fd/4a/77/fd4a77db-0ebc-d043-41a2-f32fa1bb0fb4/dj.qrikkdwj.jpg/400x400cc.jpg",
+   "coverarthq": "https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/fd/4a/77/fd4a77db-0ebc-d043-41a2-f32fa1bb0fb4/dj.qrikkdwj.jpg/400x400cc.jpg",
+   "joecolor": "b:000002p:d7d7dds:b9c6cct:acacb1q:949ea3"
+  }
+ }
+}

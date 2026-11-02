@@ -6,6 +6,7 @@ import { Player, type ListenTelemetry, type Playing } from './Player';
 import { Results, rowId, type FeedbackFlags } from './Results';
 import { DownloadsView, useDownloads } from './Downloads';
 import { Search } from './Search';
+import { SoundCard } from './SoundCard';
 import { ProfileView } from './Profile';
 import { SettingsView } from './Settings';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, classNames, describeTaste, fmtBytes, keepFocus, mergeRerank, playbackOfTrack, stepPlayable } from './util';
@@ -68,6 +69,7 @@ export function App() {
         const f: Record<string, FeedbackFlags> = {};
         for (const [k, v] of Object.entries(fb.state)) f[k] = { like: v.like, dislike: v.dislike, hide: v.hide, save: v.save };
         setFlags(f);
+        if (fb.taste) setTaste(fb.taste);
         setLoaded(true);
         // Bring back the last finished queue; it was counted as shown when it was first drawn.
         api.last().then(
@@ -219,6 +221,8 @@ export function App() {
   // Only the newest answer is applied, so two quick skips cannot show the older order.
   // The event id is derived from the playback instance, so a duplicated player callback or a UI
   // retry re-sends the SAME id and the store's dedupe actually catches it.
+  const refreshTaste = () => api.feedbackState().then((r) => setTaste(r.taste ?? null), () => undefined);
+
   const onListen = (kind: 'complete' | 'skip' | 'replay', t: Track, listened: number, meta: ListenTelemetry) => {
     const sample = Boolean(result?.sample);
     const seq = ++rerankSeq.current;
@@ -232,7 +236,11 @@ export function App() {
         session: sessionRef.current,
         origin: 'queue',
       })
-      .then(() => (sample || !result ? null : api.rerank([...playedRef.current])))
+      .then(() => {
+        // Learning shows even with no queue to re-rank: the Your sound card reads the same taste.
+        if (sample || !result) void refreshTaste();
+        return sample || !result ? null : api.rerank([...playedRef.current]);
+      })
       .then((r) => {
         if (!r || seq !== rerankSeq.current) return;
         setTaste(r.taste);
@@ -277,7 +285,7 @@ export function App() {
       flash(`Hidden “${it.track.title}”. It will be less likely to come back for a while.`);
     }
     if (result?.sample) return; // sample rows are not real songs to learn from
-    api.feedback(kind, it.track, { event_id: newEventId(kind, k) }).catch((e: Error) => flash(`Could not save that: ${e.message}`));
+    api.feedback(kind, it.track, { event_id: newEventId(kind, k) }).then(() => void refreshTaste(), (e: Error) => flash(`Could not save that: ${e.message}`));
   };
 
   useEffect(() => {
@@ -319,7 +327,7 @@ export function App() {
             ] as const
           ).map(([id, label, g]) => (
             <li key={id}>
-              <button className={classNames('side__item', tab === id && 'is-on')} type="button" aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>
+              <button className={classNames('side__item', tab === id && 'is-on')} type="button" aria-label={label} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>
                 <Glyph name={g} size={15} />
                 <span>{label}</span>
                 {id === 'downloads' && dls.activeCount > 0 && <span className="count">{dls.activeCount}</span>}
@@ -412,6 +420,8 @@ export function App() {
                 )}
               </div>
             </section>
+
+            <SoundCard taste={taste} listening={Boolean(playing)} />
 
             <section className="queue" aria-labelledby="queue-h" aria-busy={running}>
               {sample && (

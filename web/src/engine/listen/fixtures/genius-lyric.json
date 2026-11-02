@@ -1,0 +1,258 @@
+{
+ "meta": {
+  "status": 200
+ },
+ "response": {
+  "sections": [
+   {
+    "type": "lyric",
+    "hits": [
+     {
+      "highlights": [
+       {
+        "property": "lyrics",
+        "value": "dancing\nOne more time\nWe're gonna celebrate\nOh yeah\nOne more time\nOne more time\nWe're gonna celebrate",
+        "snippet": true,
+        "ranges": [
+         {
+          "start": 8,
+          "end": 11
+         },
+         {
+          "start": 12,
+          "end": 16
+         },
+         {
+          "start": 17,
+          "end": 21
+         },
+         {
+          "start": 22,
+          "end": 27
+         },
+         {
+          "start": 28,
+          "end": 33
+         },
+         {
+          "start": 34,
+          "end": 43
+         },
+         {
+          "start": 52,
+          "end": 55
+         },
+         {
+          "start": 56,
+          "end": 60
+         },
+         {
+          "start": 61,
+          "end": 65
+         },
+         {
+          "start": 66,
+          "end": 69
+         },
+         {
+          "start": 70,
+          "end": 74
+         },
+         {
+          "start": 75,
+          "end": 79
+         },
+         {
+          "start": 80,
+          "end": 85
+         },
+         {
+          "start": 86,
+          "end": 91
+         },
+         {
+          "start": 92,
+          "end": 101
+         }
+        ]
+       }
+      ],
+      "index": "lyric",
+      "matched_words": 6,
+      "nb_exact_words": 6,
+      "nb_typos": 0,
+      "type": "song",
+      "result": {
+       "title": "One More Time",
+       "primary_artist": {
+        "name": "Daft Punk"
+       },
+       "url": "https://genius.com/Daft-punk-one-more-time-lyrics",
+       "song_art_image_thumbnail_url": "https://images.genius.com/4990083e3eacb207d17fc04ece010e1f.300x300x1.png",
+       "artist_names": "Daft Punk (Ft. Romanthony)"
+      }
+     },
+     {
+      "highlights": [
+       {
+        "property": "lyrics",
+        "value": "too late\nOne more time\nI can't stop, oh One more time\nWe're gonna celebrate Off\nThis is",
+        "snippet": true,
+        "ranges": [
+         {
+          "start": 9,
+          "end": 12
+         },
+         {
+          "start": 13,
+          "end": 17
+         },
+         {
+          "start": 18,
+          "end": 22
+         },
+         {
+          "start": 40,
+          "end": 43
+         },
+         {
+          "start": 44,
+          "end": 48
+         },
+         {
+          "start": 49,
+          "end": 53
+         },
+         {
+          "start": 54,
+          "end": 59
+         },
+         {
+          "start": 60,
+          "end": 65
+         },
+         {
+          "start": 66,
+          "end": 75
+         }
+        ]
+       }
+      ],
+      "index": "lyric",
+      "matched_words": 6,
+      "nb_exact_words": 6,
+      "nb_typos": 0,
+      "type": "song",
+      "result": {
+       "title": "YouKnowIWantYou",
+       "primary_artist": {
+        "name": "BONES"
+       },
+       "url": "https://genius.com/Bones-youknowiwantyou-lyrics",
+       "song_art_image_thumbnail_url": "https://images.genius.com/b79bba22d7da74c1d281d7353772ffbe.300x300x1.jpg",
+       "artist_names": "BONES (Ft. Ricky A Go Go)"
+      }
+     },
+     {
+      "highlights": [
+       {
+        "property": "lyrics",
+        "value": "One more time\nOne more time, one more time\nOne more time\nOne more time, we're gonna celebrate\nOh",
+        "snippet": true,
+        "ranges": [
+         {
+          "start": 0,
+          "end": 3
+         },
+         {
+          "start": 4,
+          "end": 8
+         },
+         {
+          "start": 9,
+          "end": 13
+         },
+         {
+          "start": 14,
+          "end": 17
+         },
+         {
+          "start": 18,
+          "end": 22
+         },
+         {
+          "start": 23,
+          "end": 27
+         },
+         {
+          "start": 29,
+          "end": 32
+         },
+         {
+          "start": 33,
+          "end": 37
+         },
+         {
+          "start": 38,
+          "end": 42
+         },
+         {
+          "start": 43,
+          "end": 46
+         },
+         {
+          "start": 47,
+          "end": 51
+         },
+         {
+          "start": 52,
+          "end": 56
+         },
+         {
+          "start": 57,
+          "end": 60
+         },
+         {
+          "start": 61,
+          "end": 65
+         },
+         {
+          "start": 66,
+          "end": 70
+         },
+         {
+          "start": 72,
+          "end": 77
+         },
+         {
+          "start": 78,
+          "end": 83
+         },
+         {
+          "start": 84,
+          "end": 93
+         }
+        ]
+       }
+      ],
+      "index": "lyric",
+      "matched_words": 6,
+      "nb_exact_words": 6,
+      "nb_typos": 0,
+      "type": "song",
+      "result": {
+       "title": "One More Time",
+       "primary_artist": {
+        "name": "Anthony Ramos"
+       },
+       "url": "https://genius.com/Anthony-ramos-one-more-time-lyrics",
+       "song_art_image_thumbnail_url": "https://images.genius.com/24dad6a59c290f85cabe282a36bc078a.300x300x1.jpg",
+       "artist_names": "Anthony Ramos"
+      }
+     }
+    ]
+   }
+  ],
+  "next_page": 2
+ }
+}

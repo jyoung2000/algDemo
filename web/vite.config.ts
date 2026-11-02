@@ -25,6 +25,8 @@ export default defineConfig({
       '@now-playing/aqua-ui/icons': aqua('icons/index.ts'),
     },
   },
+  // The audio worker imports onnxruntime lazily, which needs ES-module workers.
+  worker: { format: 'es' },
   build: {
     outDir: fileURLToPath(new URL('./dist', import.meta.url)),
     emptyOutDir: true,

@@ -2,7 +2,8 @@
  * Starts the in-app engine inside the Android WebView: IndexedDB store, the bundled ONNX audio model,
  * the guarded HTTP bridge. Everything the UI used to ask the Python server for is answered by LocalApi.
  */
-import { Encoder, type OrtLike } from './encoder';
+import { Encoder, type Analyser, type OrtLike } from './encoder';
+import { WorkerEncoder } from './worker-encoder';
 import { openIdbBackend } from './idb';
 import { LocalApi } from './local-api';
 import { defaultHttpPort, isNative } from './native-http';
@@ -21,18 +22,28 @@ async function bytes(url: string): Promise<Uint8Array> {
 }
 
 /** The audio model ships next to the app (Android assets: web/models). Null when it is not there. */
-async function makeEncoder(): Promise<Encoder | null> {
+async function makeEncoder(): Promise<Analyser | null> {
   try {
     const head = await fetch('/models/model_epoch_36.onnx', { method: 'HEAD' });
     if (!head.ok) return null;
   } catch {
     return null;
   }
-  const ort = (await import('onnxruntime-web/wasm')) as unknown as OrtLike & { env: { wasm: Record<string, unknown> } };
   const [{ default: wasm }, { default: mjs }] = await Promise.all([
     import('onnxruntime-web/ort-wasm-simd-threaded.wasm?url'),
     import('onnxruntime-web/ort-wasm-simd-threaded.mjs?url'),
   ]);
+  // The model and the maths run in a worker so the page stays responsive during a search. If a worker
+  // cannot start, the same code runs on the page's own thread instead.
+  if (typeof Worker !== 'undefined') {
+    try {
+      const w = new Worker(new URL('./audio-worker.ts', import.meta.url), { type: 'module' });
+      return new WorkerEncoder(w, { wasm, mjs });
+    } catch {
+      /* fall through to the in-thread encoder */
+    }
+  }
+  const ort = (await import('onnxruntime-web/wasm')) as unknown as OrtLike & { env: { wasm: Record<string, unknown> } };
   ort.env.wasm['wasmPaths'] = { wasm, mjs };
   ort.env.wasm['numThreads'] = 1; // no cross-origin isolation in the WebView, so no SharedArrayBuffer
   ort.env.wasm['proxy'] = false;

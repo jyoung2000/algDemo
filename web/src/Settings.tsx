@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ProviderMark } from '@now-playing/aqua-ui/icons';
 import { api, type Health, type Settings as S, type Status } from './api';
 import { parseHistoryFile, type ImportSummary } from './engine/import';
+import { MicSettings } from './MicSettings';
 import { PROVIDER_LABEL, classNames, fmtBytes, markKey } from './util';
 
 const CAPS: [string, string][] = [
@@ -154,6 +155,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
           {history && history.usable > 0 && <button className="push" type="button" disabled={historyBusy} onClick={() => void saveHistory()}>{historyBusy ? 'Importing…' : `Import ${history.usable} plays`}</button>}
           {historyMessage && <p className="note" role="status">{historyMessage}</p>}
         </div>
+        <MicSettings />
         <div className="panefoot">
           <a className="push" href="/api/export" download>
             Export my data
@@ -222,7 +224,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
                   const s = caps[c];
                   const st = s?.state ?? 'unsupported';
                   return (
-                    <span role="cell" key={c} className={classNames('cap', `cap--${st}`)} title={s?.detail ?? ''}>
+                    <span role="cell" key={c} data-label={CAPS.find(([k]) => k === c)?.[1]} className={classNames('cap', `cap--${st}`)} title={s?.detail ?? ''}>
                       {STATE_LABEL[st] ?? st}
                     </span>
                   );

@@ -14,6 +14,7 @@ const HOSTS = [
   'tidal.com', 'resources.tidal.com',
   'api.song.link',
   'lrclib.net', 'musicbrainz.org',
+  'genius.com', 'amp.shazam.com',
   'i.ytimg.com',
 ];
 const SUFFIXES = ['.dzcdn.net', '.sndcdn.com'];

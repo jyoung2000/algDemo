@@ -121,3 +121,24 @@ describe('Http guard', () => {
     await expect(http.get('https://api.deezer.com/b', { maxBytes: 1000, meter, category: 'search' })).rejects.toThrow(BudgetExceeded);
   });
 });
+
+describe('Meter.reserve', () => {
+  it('gives a spent request a small allowance that still counts against the day', () => {
+    const seen: number[] = [];
+    const m = new Meter(1000, 5000, (_c, n) => seen.push(n));
+    m.add('metadata', 1200); // the request cap is already used up
+    expect(m.remaining()).toBe(0);
+    const r = m.reserve(300);
+    expect(r.remaining()).toBe(300);
+    r.add('metadata', 100);
+    expect(r.remaining()).toBe(200);
+    expect(seen).toEqual([1200, 100]);
+  });
+  it('never exceeds what is left of the day', () => {
+    const m = new Meter(1000, 1100);
+    m.add('metadata', 1000);
+    expect(m.reserve(300).remaining()).toBe(100);
+    m.add('metadata', 200);
+    expect(m.reserve(300).remaining()).toBe(0);
+  });
+});

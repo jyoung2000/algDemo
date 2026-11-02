@@ -47,6 +47,21 @@ export interface Track {
   embed_url?: string;
   also_on?: { provider: ProviderId; url: string; id: string }[];
   emphasis?: number;
+  /** Why an identified song (lyrics or audio search) is in the results. */
+  evidence?: Evidence;
+}
+
+export type Evidence =
+  | { kind: 'lyrics'; snippet: string; ranges: [number, number][] }
+  | { kind: 'audio'; offset?: number | null };
+
+export interface IdentifyResponse extends SearchResponse {
+  mode: 'lyrics' | 'audio';
+  query: string;
+  /** Songs the lyrics/audio service named; `unplayable` of them had no match on a service Airwave plays from. */
+  named: number;
+  unplayable: number;
+  heard?: { title: string; artist: string };
 }
 
 export interface SourceState {
@@ -117,6 +132,8 @@ export interface TasteSummary {
   skip_bpm: number | null;
   likes: TasteGenre[];
   avoids: TasteGenre[];
+  /** Every genre with a meaningful score, strongest first (absent from older servers). */
+  genres?: TasteGenre[];
 }
 
 export interface RecItem {
@@ -382,6 +399,9 @@ const json = (v: unknown) => JSON.stringify(v);
 export const api = {
   search: (q: string, signal?: AbortSignal) =>
     call<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}&sources=ytmusic,deezer,soundcloud,apple,spotify`, signal ? { signal } : {}),
+  searchLyrics: (q: string, signal?: AbortSignal) => call<IdentifyResponse>(`/api/search/lyrics?q=${encodeURIComponent(q)}`, signal ? { signal } : {}),
+  identifyAudio: (signature: string, ms: number, signal?: AbortSignal) =>
+    call<IdentifyResponse>('/api/identify/audio', { method: 'POST', body: json({ signature, ms }), ...(signal ? { signal } : {}) }),
   resolve: async (url: string, signal?: AbortSignal): Promise<ResolveResponse> => {
     try {
       return await call<ResolveResponse>('/api/resolve', { method: 'POST', body: json({ url }), ...(signal ? { signal } : {}) });
@@ -402,7 +422,7 @@ export const api = {
   cancelJob: (id: string) => call<{ ok: boolean }>(`/api/jobs/${id}`, { method: 'DELETE' }),
   feedback: (kind: FeedbackKind, track: Track, extra: { event_id?: string; listened?: number; duration?: number; coverage?: number; medium?: string; session?: string; origin?: string; confidence?: number } = {}) =>
     call<{ recorded?: boolean; duplicate?: boolean; removed?: number }>('/api/feedback', { method: 'POST', body: json({ kind, track, ...extra }) }),
-  feedbackState: () => call<{ state: Record<string, Partial<Record<FeedbackKind, boolean>>>; events: number }>('/api/feedback/state'),
+  feedbackState: () => call<{ state: Record<string, Partial<Record<FeedbackKind, boolean>>>; events: number; taste?: TasteSummary | null }>('/api/feedback/state'),
   importHistory: (events: import('./engine/import').ImportedEvent[]) => call<{ recorded: number; duplicates: number; skipped: number }>('/api/import/history', { method: 'POST', body: json({ events }) }),
   impressions: (keys: string[]) => call<{ recorded: number }>('/api/impressions', { method: 'POST', body: json({ keys }) }),
   fullSong: (track: Track) => call<{ id: string | null; source: string }>('/api/full-song', { method: 'POST', body: json({ track }) }),

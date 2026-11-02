@@ -10,8 +10,16 @@ export const PROVIDER_LABEL: Record<string, string> = {
 
 /** How a song that is not a recommendation (a search hit or a starting song) plays: preview first, else the provider's own player. */
 export function playbackOfTrack(t: Track): Playback {
-  const open = t.url ? [{ provider: t.provider, label: `Open in ${PROVIDER_LABEL[t.provider] ?? t.provider}`, url: t.url }] : [];
-  for (const a of t.also_on ?? []) open.push({ provider: a.provider, label: `Open in ${PROVIDER_LABEL[a.provider] ?? a.provider}`, url: a.url });
+  const open: Playback['open'] = [];
+  const seen = new Set<string>();
+  const add = (provider: string, url: string) => {
+    // one link per service: the same service can appear more than once in also_on
+    if (!url || seen.has(provider)) return;
+    seen.add(provider);
+    open.push({ provider: provider as ProviderId, label: `Open in ${PROVIDER_LABEL[provider] ?? provider}`, url });
+  };
+  if (t.url) add(t.provider, t.url);
+  for (const a of t.also_on ?? []) add(a.provider, a.url);
   if (t.preview) return { open, preview: t.preview, embed: null };
   if (t.provider === 'ytmusic') return { open, preview: null, embed: { provider: 'ytmusic', url: `https://www.youtube-nocookie.com/embed/${encodeURIComponent(t.platform_id)}?autoplay=1&rel=0` } };
   if (t.provider === 'soundcloud' && t.url)

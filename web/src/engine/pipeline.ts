@@ -10,7 +10,8 @@ import { type EngineConfig, TRANSFER } from './config';
 import { decodeToMono48k } from './decode';
 import { type Ctx, type Deezer, ProviderError, cached } from './deezer';
 import { fold, matchRecordings } from './identity';
-import { tagsFromMusicBrainz } from './infer';
+import { hipHopSubsFromArtist, needsHipHopSub, tagsFromMusicBrainz } from './infer';
+import { ARTIST_SUBS_KEY, MUSICBRAINZ_UA, artistName, artistsToAsk, lookupArtistSubs, type ArtistSubsMap } from './artist-subs';
 import { BudgetExceeded, CancelToken, Cancelled, type Http, Meter } from './net';
 import type { SoundCloud } from './soundcloud';
 import type { AppleMusic } from './apple';
@@ -18,9 +19,11 @@ import type { Track } from './track';
 import type { Store } from './store';
 import type { YouTubeMusic } from './ytmusic';
 import type { Dict } from './shape';
+import type { Tag } from './genres';
 
 export interface Embedder {
-  embedAudio(y: Float32Array): Promise<{ vector: Float32Array; inferMs: number }>;
+  /** Trim, tempo and optionally the embedding for one decoded clip; may run on another thread. */
+  analyse(y: Float32Array, embed: boolean): Promise<{ tooShort: boolean; bpm: number | null; vector: Float32Array | null; inferMs: number }>;
 }
 
 export class Job {
@@ -42,11 +45,17 @@ export class Job {
 export async function pmap<T, R>(items: readonly T[], limit: number, fn: (x: T, i: number) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
+  let failed = false;
   const worker = async (): Promise<void> => {
     for (;;) {
       const i = next++;
-      if (i >= items.length) return;
-      out[i] = await fn(items[i] as T, i);
+      if (i >= items.length || failed) return;
+      try {
+        out[i] = await fn(items[i] as T, i);
+      } catch (e) {
+        failed = true; // a stop (cancel, budget) must not leave the other lanes downloading
+        throw e;
+      }
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
@@ -355,6 +364,49 @@ export class Pipeline {
       cand['dz_id'] = did;
     });
     await this.genresFromMusicBrainz(job, cands.slice(0, limit));
+    await this.subgenresFromMusicBrainz(job, cands.slice(0, limit));
+  }
+
+  /**
+   * Deezer names a rap song's album 'Rap/Hip Hop' and nothing finer. The artist's MusicBrainz tags say
+   * which kind of hip-hop it is, so a song with only the family asks once per artist (capped per run,
+   * cached for a month). The subgenre is added beside the family tag, never in place of it.
+   */
+  async subgenresFromMusicBrainz(job: Job, cands: Dict[], cap = 4): Promise<void> {
+    const MONTH = 30 * 24 * 3600;
+    const done = new Map<string, Tag[]>();
+    // By now the heavy sources have usually spent this request's cap, and these answers are a few KB:
+    // they get their own small allowance (still inside the day's) so the subgenre is not starved.
+    const meter = job.meter ? job.meter.reserve(300_000) : null;
+    const remembered = this.store.get<ArtistSubsMap>(ARTIST_SUBS_KEY);
+    const ask = (artist: string, k: string): Promise<Tag[]> =>
+      this.call<Tag[]>(job, `mba:${k}`, () =>
+        lookupArtistSubs(this.store, this.http, artist, { ...(meter ? { meter } : {}), token: job.token },
+          (key, fn) => cached(this.store, key, 'metadata', MONTH, fn) as Promise<never>, Math.floor(Date.now() / 1000)), []);
+    let asked = 0;
+    for (const cand of cands) {
+      const tags = (cand['tags'] as Tag[] | undefined) ?? [];
+      if (!needsHipHopSub(tags)) continue;
+      const artist = artistName(cand);
+      if (!artist || artist.length > 80) continue;
+      const k = fold(artist);
+      let subs = done.get(k) ?? (remembered?.[k]?.tags.length ? remembered[k]!.tags : undefined);
+      if (!subs) {
+        if (asked >= cap) continue;
+        asked += 1;
+        subs = await ask(artist, k);
+        done.set(k, subs);
+      }
+      if (subs.length) {
+        cand['tags'] = [...tags, ...subs];
+        job.sources['musicbrainz_artist'] = { labeled: Number((job.sources['musicbrainz_artist'] as Dict | undefined)?.['labeled'] ?? 0) + 1 };
+      }
+    }
+    // The same answer, for the listening history: the taste card reads each saved play through this map.
+    for (const name of artistsToAsk(this.store.feedback(), this.store.get<ArtistSubsMap>(ARTIST_SUBS_KEY), Math.floor(Date.now() / 1000)).slice(0, 6)) {
+      if (done.has(fold(name))) continue;
+      await ask(name, fold(name));
+    }
   }
 
   /**
@@ -371,7 +423,7 @@ export class Pipeline {
       asked += 1;
       const url = `https://musicbrainz.org/ws/2/recording?query=isrc:${isrc}&fmt=json&limit=1`;
       const body = await this.call<Dict | null>(job, `mb:${isrc}`, () =>
-        cached(this.store, `mb:isrc:${isrc}`, 'metadata', MONTH, () => this.http.getJson<Dict>(url, { maxBytes: 200_000, ...(job.meter ? { meter: job.meter } : {}), category: 'metadata', token: job.token })), null);
+        cached(this.store, `mb:isrc:${isrc}`, 'metadata', MONTH, () => this.http.getJson<Dict>(url, { maxBytes: 200_000, ...(job.meter ? { meter: job.meter } : {}), category: 'metadata', headers: { 'user-agent': MUSICBRAINZ_UA, accept: 'application/json' }, token: job.token })), null);
       const tags = body ? tagsFromMusicBrainz(body) : [];
       if (tags.length) {
         cand['tags'] = tags;
@@ -406,9 +458,16 @@ export class Pipeline {
       const url = await this.dz.freshPreview(dzId, preview, c);
       if (!url) return null;
       const { response } = await this.http.get(url, { maxBytes: TRANSFER.perAudioFile, ...(job.meter ? { meter: job.meter } : {}), category: 'audio', token: job.token, retries: 0 });
-      const y = A.trimSilence(await decodeToMono48k(response.body));
-      if (y.length < A.SR * 5) return null;
-      const bpm = A.estimateBpm(y);
+      const decoded = await decodeToMono48k(response.body);
+      const r = this.encoder
+        ? await this.encoder.analyse(decoded, false)
+        : (() => {
+            const y = A.trimSilence(decoded);
+            const tooShort = y.length < A.SR * 5;
+            return { tooShort, bpm: tooShort ? null : A.estimateBpm(y) };
+          })();
+      if (r.tooShort) return null;
+      const bpm = r.bpm;
       if (bpm) {
         await this.store.put(`bpm:${dzId}`, bpm);
         job.audio['tempo'] = (job.audio['tempo'] ?? 0) + 1;
@@ -447,19 +506,19 @@ export class Pipeline {
     }
     const dlMs = performance.now() - t0;
     try {
-      const y = A.trimSilence(await decodeToMono48k(data));
-      if (y.length < A.SR * 5) {
+      const decoded = await decodeToMono48k(data);
+      job.token.check();
+      const r = await this.encoder.analyse(decoded, true);
+      if (r.tooShort) {
         job.audio['too_short'] = (job.audio['too_short'] ?? 0) + 1;
         return null;
       }
-      // Deezer reports 0 BPM for many songs; the decoded preview is already here, so measure it.
-      const bpm = A.estimateBpm(y);
-      if (bpm) {
-        await this.store.put(`bpm:${dzId}`, bpm);
+      // Deezer reports 0 BPM for many songs; the decoded preview is already here, so it was measured.
+      if (r.bpm) {
+        await this.store.put(`bpm:${dzId}`, r.bpm);
         job.audio['tempo'] = (job.audio['tempo'] ?? 0) + 1;
       }
-      job.token.check();
-      const r = await this.encoder.embedAudio(y);
+      if (!r.vector) throw new Error('the audio worker returned no embedding');
       await this.store.vectorPut(vkey, A.MODEL_ID, A.PREPROCESS_ID, r.vector, 'deezer-preview-30s');
       job.audio['embedded'] = (job.audio['embedded'] ?? 0) + 1;
       (job.audio['infer_ms'] ??= []).push(Math.round(r.inferMs));

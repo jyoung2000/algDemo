@@ -4,11 +4,12 @@
  * would have answered, status code included. Jobs run as async tasks; the browser polls them as before.
  */
 import * as A from './audio';
-import { DEFAULT_ENGINE, TRANSFER, engineWithWeights } from './config';
+import { DEFAULT_ENGINE, TRANSFER, engineWithWeights, type EngineConfig } from './config';
 import { Deezer, NeedsChoice, ProviderError, type Ctx } from './deezer';
 import * as E from './engine';
 import { buildTaste, tasteSummary, tasteFit, type TasteProfile } from './taste';
 import { buildTasteBlend, type TasteBlend } from './taste2';
+import { ARTIST_SUBS_KEY, withArtistSubs, type ArtistSubsMap } from './artist-subs';
 import { fold, matchRecordings } from './identity';
 import { buildProfile } from './profile';
 import { classify } from './classify';
@@ -22,6 +23,8 @@ import { SoundCloud } from './soundcloud';
 import { Spotify, looksLikeUrl, normaliseUrl, providerForUrl } from './spotify';
 import type { Store } from './store';
 import { YouTubeMusic } from './ytmusic';
+import { Genius, Shazam } from './listen/providers';
+import { resolveHits, type Evidence } from './listen/identify';
 
 export interface LocalDeps {
   store: Store;
@@ -87,6 +90,19 @@ const fail = (status: number, message: string, extra: Dict = {}): LocalResponse 
 const unixNow = (): number => Date.now() / 1000;
 const newId = (): string => Math.random().toString(16).slice(2, 14).padEnd(12, '0');
 
+/** The songs in `incoming` whose key the pool does not hold yet, in their original order. */
+export function addNewCandidates(pool: Dict[], incoming: Dict[]): Dict[] {
+  const have = new Set(pool.map((c) => String(c['key'])));
+  const out: Dict[] = [];
+  for (const c of incoming) {
+    const k = String(c['key']);
+    if (have.has(k)) continue;
+    have.add(k);
+    out.push(c);
+  }
+  return out;
+}
+
 export class LocalApi {
   readonly store: Store;
   readonly http: Http;
@@ -95,6 +111,8 @@ export class LocalApi {
   readonly sc: SoundCloud;
   readonly apple: AppleMusic;
   readonly sp: Spotify;
+  readonly genius: Genius;
+  readonly shazam: Shazam;
   private readonly spotifySearch: ((q: string, limit: number) => Promise<Dict[]>) | null;
   readonly pipeline: Pipeline;
   private readonly encoder: Embedder | null;
@@ -117,6 +135,8 @@ export class LocalApi {
     this.sc = new SoundCloud(this.http, this.store);
     this.apple = new AppleMusic(this.http, this.store);
     this.sp = new Spotify(this.http, this.store);
+    this.genius = new Genius(this.http);
+    this.shazam = new Shazam(this.http);
     this.spotifySearch = deps.spotifySearch ? deps.spotifySearch(this.http) : null;
     this.pipeline = new Pipeline(this.store, this.http, this.dz, this.ytm, this.sc, this.apple, this.spotifySearch, this.encoder);
     this.store.expireImpressions(unixNow() - DEFAULT_ENGINE.exposureWindowDays * 86400 * 4);
@@ -150,6 +170,8 @@ export class LocalApi {
     try {
       if (m === 'GET' && path === '/api/health') return ok(await this.healthRoute(q.get('refresh') === '1' || q.get('refresh') === 'true'));
       if (m === 'GET' && path === '/api/search') return ok(await this.search(q.get('q') ?? '', q.get('sources') ?? 'ytmusic,deezer,soundcloud,apple', Number(q.get('limit') ?? 12)));
+      if (m === 'GET' && path === '/api/search/lyrics') return await this.searchLyrics(q.get('q') ?? '');
+      if (m === 'POST' && path === '/api/identify/audio') return await this.identifyAudio(body ?? {});
       if (m === 'POST' && path === '/api/resolve') return await this.resolve(String(body?.['url'] ?? ''));
       if (m === 'POST' && path === '/api/complete-spotify') return ok(await this.completeSpotify(String(body?.['title'] ?? ''), String(body?.['artist'] ?? '')));
       if (path === '/api/seeds') return m === 'PUT' ? await this.putSeeds(body ?? {}) : ok({ seeds: this.store.seeds() });
@@ -292,6 +314,65 @@ export class LocalApi {
     const results = this.dedupe(lists).map((t) => ({ ...cleanTrack(t), also_on: t['also_on'] ?? [] }));
     const ms = performance.now() - t0;
     return { query: q, results, sources: status, ms: Math.round(ms), bytes: meter.total };
+  }
+
+  // ---- identify by lyrics / audio ------------------------------------------------------
+  /** What went wrong with a Genius/Shazam call, in terms the UI has copy for. */
+  private identifyFailure(e: unknown, what: 'lyrics' | 'audio'): LocalResponse {
+    const msg = String((e as Error)?.message ?? e);
+    if (e instanceof BudgetExceeded) return fail(429, 'The daily transfer allowance is used up.', { code: 'budget' });
+    if (/HTTP (429|5\d\d)/.test(msg)) return fail(503, `The ${what} service is busy.`, { code: 'busy' });
+    if (/HTTP 4\d\d/.test(msg)) return fail(502, `The ${what} service refused the request.`, { code: 'refused' });
+    if (e instanceof FetchError || e instanceof TypeError || /network|timed out|fetch|Socket|Unknown ?Host|Connect/i.test(msg)) return fail(503, 'No connection.', { code: 'offline' });
+    return fail(500, `${(e as Error).name}: ${msg}`, { code: 'failed' });
+  }
+
+  private searchersForIdentify(): Record<string, { search(q: string, n: number, c: Ctx): Promise<Dict[]> }> {
+    return { deezer: this.dz as never, ytmusic: this.ytm as never, apple: this.apple as never };
+  }
+
+  private async searchLyrics(raw: string): Promise<LocalResponse> {
+    const q = raw.trim().replace(/\s+/g, ' ').slice(0, 200);
+    if (!q) return ok({ query: q, results: [], sources: {}, mode: 'lyrics', ms: 0 });
+    const t0 = performance.now();
+    const meter = this.searchMeter();
+    const c: Ctx = { meter };
+    let hits;
+    try {
+      hits = await this.genius.searchLyrics(q, c);
+    } catch (e) {
+      return this.identifyFailure(e, 'lyrics');
+    }
+    const tagged = hits.map((h) => ({ ...h, evidence: { kind: 'lyrics', snippet: h.snippet, ranges: h.ranges } as Evidence }));
+    const { results, unplayable } = await resolveHits(tagged, this.searchersForIdentify(), c);
+    return ok({
+      query: q, mode: 'lyrics', results, ms: Math.round(performance.now() - t0), bytes: meter.total,
+      sources: { genius: { state: 'ok', count: hits.length }, ...(unplayable ? { unplayable: { state: 'skipped', count: unplayable } } : {}) },
+      named: hits.length, unplayable,
+    });
+  }
+
+  private async identifyAudio(body: Dict): Promise<LocalResponse> {
+    const uri = String(body['signature'] ?? '');
+    const ms = Number(body['ms']);
+    if (!uri.startsWith('data:audio/vnd.shazam.sig;base64,') || uri.length > 400_000) return fail(400, 'That is not a fingerprint.', { code: 'bad_request' });
+    if (!Number.isFinite(ms) || ms < 1000 || ms > 30_000) return fail(400, 'The clip length is not valid.', { code: 'bad_request' });
+    const t0 = performance.now();
+    const meter = this.searchMeter();
+    const c: Ctx = { meter };
+    let hit;
+    try {
+      hit = await this.shazam.identify(uri, ms, c);
+    } catch (e) {
+      return this.identifyFailure(e, 'audio');
+    }
+    if (!hit) return ok({ query: '', mode: 'audio', results: [], sources: { shazam: { state: 'ok', count: 0 } }, ms: Math.round(performance.now() - t0), bytes: meter.total, named: 0, unplayable: 0 });
+    const { results, unplayable } = await resolveHits([{ ...hit, evidence: { kind: 'audio', offset: hit.offset } as Evidence }], this.searchersForIdentify(), c);
+    return ok({
+      query: `${hit.artist} ${hit.title}`, mode: 'audio', results, ms: Math.round(performance.now() - t0), bytes: meter.total,
+      sources: { shazam: { state: 'ok', count: 1 }, ...(unplayable ? { unplayable: { state: 'skipped', count: unplayable } } : {}) },
+      named: 1, unplayable, heard: { title: hit.title, artist: hit.artist },
+    });
   }
 
   private async resolve(raw: string): Promise<LocalResponse> {
@@ -546,12 +627,13 @@ export class LocalApi {
               }
               todo = picks.slice(0, budgetN);
             }
-            for (const c of todo.slice(0, budgetN)) {
+            // Three at a time: the next previews download while the worker analyses one.
+            await pmap(todo.slice(0, budgetN), 3, async (c) => {
               job.token.check();
               job.progress = `Comparing how the songs sound (${(job.audio['embedded'] ?? 0) + 1} of ${Math.min(budgetN, todo.length)})`;
               const v = await p.vectorFor(job, c['dz_id'], c['preview']);
               if (v) vectors.set(c['key'], v);
-            }
+            });
           } else {
             job.audio['skipped'] = 'No starting song has a legitimately available preview, so there is nothing to compare against.';
           }
@@ -600,6 +682,15 @@ export class LocalApi {
           if (tag) cand['tags'] = [tag];
         }
       }
+      // A song placed in hip-hop only by inference (its artist's other songs) had no tag when enrich
+      // asked for subgenres, so it was skipped. Ask again now that every song has its family.
+      job.progress = 'Naming hip-hop subgenres';
+      scored = E.scoreAll(cands as never, ctx);
+      chosen = E.select(scored, ctx);
+      // Ask about the songs the person will see, in ranked order, not the raw gathering order.
+      const byKey = new Map(cands.map((c) => [String(c['key']), c]));
+      const shown = chosen.map((x) => byKey.get(x.track.key)).filter((c): c is Dict => Boolean(c));
+      await p.subgenresFromMusicBrainz(job, shown, 12);
       scored = E.scoreAll(cands as never, ctx);
       chosen = E.select(scored, ctx);
       job.timings['total_ms'] = since();
@@ -641,12 +732,39 @@ export class LocalApi {
       taste2: v2 ? this.taste2() : null,
       now: new Date(),
     };
+    // Learning must also widen what is worth playing next, not only reorder what was found before. When the
+    // unplayed part of the list runs low, the same starting songs are asked again and only songs the pool
+    // does not hold are added.
+    const unplayed = pool.cands.filter((c) => !exclude.has(String(c['key'])));
+    if (unplayed.length < cfg.queueSize * 2) await this.topUpPool(pool, settings, cfg);
     const cands = pool.cands.filter((c) => !exclude.has(String(c['key'])));
     const chosen = E.select(E.scoreAll(cands as never, ctx), ctx);
     const out = this.serialise(chosen, ctx, 'live', pool.job) as Dict;
     out['taste'] = tasteSummary(ctx.taste);
     out['pool'] = pool.cands.length;
     return ok(out);
+  }
+
+  /**
+   * Adds songs the services name for the starting songs that the pool does not hold yet. A failed or empty
+   * answer leaves the pool as it was, so the list keeps playing. New songs take the same shape as the first
+   * run's candidates, so the same scorer ranks them.
+   */
+  private async topUpPool(pool: { cands: Dict[]; ctx: E.Context; job: Job }, settings: Dict, cfg: EngineConfig): Promise<void> {
+    const seeds = this.store.seeds() as Dict[];
+    if (!seeds.length) return;
+    const job = new Job('topup');
+    try {
+      job.meter = this.pipeline.meter(settings);
+      const profiles: Record<string, Dict> = {};
+      const profs = await pmap(seeds, 3, (sd) => this.pipeline.profileSeed(job, sd));
+      seeds.forEach((sd, i) => (profiles[String(sd['key'])] = profs[i] as Dict));
+      const seedViews = seeds.map((sd) => this.pipeline.seedView(sd, profiles[String(sd['key'])] as Dict));
+      const { cands } = await this.pipeline.gather(job, seedViews, profiles, cfg, Boolean(settings['fresh']));
+      pool.cands.push(...addNewCandidates(pool.cands, cands));
+    } catch {
+      /* a failed top-up leaves the current pool in place; the list keeps playing */
+    }
   }
 
   /** Songs the catalogue gave no tempo for get the one measured from their preview, when there is one. */
@@ -762,9 +880,15 @@ export class LocalApi {
     return { state, events: rows.length, taste: tasteSummary(this.taste()) };
   }
 
+  /** Saved plays with each hip-hop artist's remembered subgenres added to a track that only names the family. */
+  private historyRows() {
+    const map = this.store.get<ArtistSubsMap>(ARTIST_SUBS_KEY);
+    return this.store.feedback().map((r) => (r.track ? { ...r, track: withArtistSubs(r.track as Dict, map, r.artist ?? undefined) } : r));
+  }
+
   /** The listening taste as of now, from every stored playback and feedback event. */
   taste(): TasteProfile {
-    return buildTaste(this.store.feedback().map((r) => ({ key: r.key, kind: r.kind, ts: r.ts, track: r.track })), unixNow());
+    return buildTaste(this.historyRows().map((r) => ({ key: r.key, kind: r.kind, ts: r.ts, track: r.track })), unixNow());
   }
 
   /** One id per LocalApi lifetime: "current session" for the session taste horizon. */
@@ -772,7 +896,7 @@ export class LocalApi {
 
   /** v2 three-horizon taste (long / recent / this session), confidence-aware. */
   taste2(): TasteBlend {
-    const rows = this.store.feedback().map((r) => ({
+    const rows = this.historyRows().map((r) => ({
       key: r.key, kind: r.kind, ts: r.ts, track: r.track,
       event_id: r.event_id, medium: r.medium ?? null, confidence: r.confidence ?? null, session: r.session ?? null,
     }));

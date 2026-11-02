@@ -4,6 +4,7 @@
  * provider relatedness never become tags.
  */
 import { fold } from './identity';
+import { SUBS } from './genre-table';
 
 // alias -> canonical
 const ALIASES: Record<string, string> = {
@@ -56,6 +57,22 @@ const KNOWN = new Set<string>([
   'soul', 'r&b', 'hip-hop', 'latin', 'metal', 'punk', 'gospel', 'world', 'soundtrack', 'kids',
 ]);
 
+// Hip-hop subgenres (genre-table.ts) are real tags. Their words used to collapse into plain 'hip-hop'
+// ('boom bap', 'crunk', 'g funk') or be dropped, which is why every rap song read "General hip-hop".
+// Only the hip-hop family is taken from the table: other families keep their existing names, so their
+// tags, taste and golden results do not move. 'soundcloud' is a platform, not a sound.
+const NOT_A_GENRE = new Set(['soundcloud']);
+const HIPHOP_SUB = new Map<string, string>();
+for (const s of SUBS) {
+  if (s.family !== 'hip-hop') continue;
+  KNOWN.add(s.key);
+  if (!Object.prototype.hasOwnProperty.call(PARENT, s.key)) PARENT[s.key] = 'hip-hop';
+  for (const a of [s.key, s.name, ...s.aliases]) {
+    const k = fold(a);
+    if (k && !NOT_A_GENRE.has(k) && !HIPHOP_SUB.has(k)) HIPHOP_SUB.set(k, s.key);
+  }
+}
+
 const SCOPE_WEIGHT: Record<string, number> = { track: 1.0, album: 0.8, artist: 0.55 };
 
 export interface Tag {
@@ -70,6 +87,8 @@ export interface Tag {
 export function normalize(name: string): string | null {
   const f = fold(name);
   if (!f || f.length > 40) return null;
+  const sub = HIPHOP_SUB.get(f);
+  if (sub) return sub;
   const canon = Object.prototype.hasOwnProperty.call(ALIASES, f) ? (ALIASES[f] ?? f) : f.replace(/ /g, '-');
   return KNOWN.has(canon) ? canon : null; // free-form uploader tags ("meh", "free download") are dropped
 }

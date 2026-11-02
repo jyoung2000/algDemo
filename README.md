@@ -15,9 +15,13 @@ the artwork and the icons from `packages/aqua-ui`. No other app in the repo depe
 - A 22.4 MB audio model (DCLAP, AGPL-3.0, see `docs/LICENSES.md`) is bundled in both apps and
   re-orders the queue by how songs sound, using 30-second previews.
 - Discovery needs an internet connection. Offline you can still see your last queue, but nothing new is found.
-- **Not bundled: music downloaders (yt-dlp, spotDL).** Songs play through YouTube's own embedded player
-  or SoundCloud's widget, or as a 30-second Deezer preview; nothing is ripped or saved. The apps' network
-  allowlist (`web/src/engine/net.ts`) contains search and metadata hosts only.
+- **Bundled: music downloaders (yt-dlp, spotDL, ffmpeg).** Songs play through YouTube's own embedded player
+  or SoundCloud's widget, or as a 30-second Deezer preview. The downloaders are a separate, explicit "Download"
+  action: yt-dlp saves YouTube, YouTube Music and SoundCloud links, and spotDL saves Spotify track links, to the
+  user's chosen folder (Windows) or the phone's Music folder (Android). The Windows exe carries yt-dlp, spotDL and
+  ffmpeg; the Android app unpacks yt-dlp, its Python runtime and ffmpeg from the APK on first run. Licences and
+  versions are in `docs/LICENSES.md`. The network allowlist (`web/src/engine/net.ts`) covers search and metadata
+  hosts; the downloader hosts are checked separately in `windows/downloads.cjs` and `Downloads.kt`.
 - Spotify has no keyless catalog search, so Spotify songs come in by link, not by typing.
 
 ## Improved ranking (recsys-v2 branch)

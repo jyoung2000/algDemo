@@ -1,5 +1,5 @@
 /**
- * The genre model the classifier uses: the Taste Picker's 8 families and 83 subgenres (names, tempo
+ * The genre model the classifier uses: the Taste Picker's 8 families and 83 subgenres, plus extra hip-hop subgenres (names, tempo
  * ranges and sound notes come from taste-catalog.ts, generated from the picker), plus the words that
  * name each one on the streaming services. Aliases are folded (lower case, no punctuation).
  *
@@ -47,16 +47,25 @@ export const SUBS: SubDef[] = [
   { key: 'hardcore-punk', name: 'Hardcore punk revival', family: 'rock', aliases: ['hardcore punk', 'hardcore', 'hardcore-punk'] },
   // Hip-hop
   { key: 'lo-fi', name: 'Lo-fi hip-hop', family: 'hip-hop', aliases: ['lo fi hip hop', 'lofi hip hop', 'lo fi beats', 'chillhop'] },
-  { key: 'boom-bap', name: 'Boom bap revival', family: 'hip-hop', aliases: ['boom bap', 'boom-bap', 'old school hip hop', 'golden age hip hop'] },
+  { key: 'boom-bap', name: 'Boom bap revival', family: 'hip-hop', aliases: ['boom bap', 'boom-bap', 'old school hip hop', 'golden age hip hop', 'east coast hip hop', 'east coast rap', 'new york hip hop'] },
   { key: 'jersey-club', name: 'Jersey club (rap crossover)', family: 'hip-hop', aliases: ['jersey club', 'jersey-club'] },
-  { key: 'trap', name: 'Trap', family: 'hip-hop', aliases: ['trap music', 'southern trap', 'atlanta trap'] },
-  { key: 'drill', name: 'NY / Brooklyn drill', family: 'hip-hop', aliases: ['drill', 'ny drill', 'brooklyn drill', 'chicago drill'] },
+  { key: 'trap', name: 'Trap', family: 'hip-hop', aliases: ['trap music', 'southern trap', 'atlanta trap', 'mumble rap', 'hip hop trap'] },
+  { key: 'drill', name: 'NY / Brooklyn drill', family: 'hip-hop', aliases: ['drill', 'ny drill', 'brooklyn drill', 'chicago drill', 'bronx drill', 'drill rap'] },
   { key: 'plugg', name: 'Plugg / pluggnb', family: 'hip-hop', aliases: ['plugg', 'pluggnb', 'plugg nb'] },
-  { key: 'phonk', name: 'Phonk (OG and drift)', family: 'hip-hop', aliases: ['phonk', 'drift phonk', 'memphis phonk', 'memphis rap'] },
+  { key: 'phonk', name: 'Phonk (OG and drift)', family: 'hip-hop', aliases: ['phonk', 'drift phonk', 'memphis phonk', 'memphis rap', 'brazilian phonk'] },
   { key: 'trap-metal', name: 'Trap metal / SoundCloud rap', family: 'hip-hop', aliases: ['trap metal', 'soundcloud rap', 'soundcloud', 'emo rap'] },
   { key: 'uk-drill', name: 'UK drill', family: 'hip-hop', aliases: ['uk drill', 'uk-drill'] },
   { key: 'sexy-drill', name: 'Sexy drill', family: 'hip-hop', aliases: ['sexy drill'] },
   { key: 'rage', name: 'Rage', family: 'hip-hop', aliases: ['rage', 'rage rap', 'rage beat'] },
+  // Hip-hop subgenres listeners tell apart that the picker has no cell for. They carry no tempo range
+  // (so tempo never invents them); only a tag or a community tag can name them. Words come from real
+  // MusicBrainz artist tags (Pop Smoke, Playboi Carti, Kendrick Lamar, MF DOOM).
+  { key: 'cloud-rap', name: 'Cloud / melodic rap', family: 'hip-hop', aliases: ['cloud rap', 'melodic rap', 'sad rap', 'dream rap', 'ethereal rap'] },
+  { key: 'conscious', name: 'Conscious / jazz rap', family: 'hip-hop', aliases: ['conscious hip hop', 'conscious rap', 'political hip hop', 'lyrical hip hop', 'jazz rap', 'jazz hip hop', 'hardcore hip hop'] },
+  { key: 'west-coast', name: 'West Coast / G-funk', family: 'hip-hop', aliases: ['west coast hip hop', 'west coast rap', 'g funk', 'g-funk', 'gangsta rap', 'hyphy', 'bay area hip hop'] },
+  { key: 'southern', name: 'Southern hip-hop / crunk', family: 'hip-hop', aliases: ['southern hip hop', 'southern rap', 'dirty south', 'crunk', 'houston rap', 'chopped and screwed', 'chopped screwed', 'bounce music', 'miami bass'] },
+  { key: 'alt-hip-hop', name: 'Alternative / underground hip-hop', family: 'hip-hop', aliases: ['alternative hip hop', 'alternative rap', 'underground hip hop', 'underground rap', 'abstract hip hop', 'experimental hip hop', 'indie rap', 'left field hip hop'] },
+  { key: 'grime', name: 'Grime / UK rap', family: 'hip-hop', aliases: ['grime', 'uk hip hop', 'uk rap', 'road rap'] },
   // Pop
   { key: 'alt-pop', name: 'Alt-pop / dark pop', family: 'pop', aliases: ['alt pop', 'alternative pop', 'dark pop', 'alt-pop'] },
   { key: 'bedroom-pop', name: 'Bedroom pop', family: 'pop', aliases: ['bedroom pop', 'bedroom-pop'] },

@@ -165,5 +165,11 @@ export function tasteSummary(taste: TasteProfile | null | undefined): Record<str
     skip_bpm: taste.skipBpm !== null ? Math.round(taste.skipBpm) : null,
     likes: liked.map((g) => ({ name: g.name, label: g.label, score: r(g.score), plays: g.plays })),
     avoids: avoided.map((g) => ({ name: g.name, label: g.label, score: r(g.score), skips: g.skips })),
+    // Every genre with a meaningful score, strongest first: the Sound card draws the whole scope from this.
+    genres: list
+      .filter((g) => Math.abs(g.score) >= 0.05)
+      .sort((a, b) => Math.abs(b.score) - Math.abs(a.score))
+      .slice(0, 60)
+      .map((g) => ({ name: g.name, label: g.label, score: r(g.score), plays: g.plays, skips: g.skips })),
   };
 }

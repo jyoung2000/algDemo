@@ -2,7 +2,7 @@
  * The ONNX session (port of audio.py's Encoder). onnxruntime-web is injected so tests can use the same
  * package under node and the WebView can point it at the bundled wasm files.
  */
-import { DIM, SR, logMel, meanNormalise, segmentsOf, N_MELS } from './audio';
+import { DIM, SR, estimateBpm, logMel, meanNormalise, segmentsOf, trimSilence, N_MELS } from './audio';
 
 export interface OrtTensorLike {
   data: Float32Array | ArrayLike<number>;
@@ -24,7 +24,21 @@ export interface EmbedResult {
   inferMs: number;
 }
 
-export class Encoder {
+/** What one decoded preview yields: its tempo and, when asked, its embedding. */
+export interface Analysis {
+  /** The clip was shorter than 5 s once silence was trimmed; nothing else is set. */
+  tooShort: boolean;
+  bpm: number | null;
+  vector: Float32Array | null;
+  inferMs: number;
+}
+
+/** The analysis step, shared by the in-thread Encoder and the proxy for the worker that hosts one. */
+export interface Analyser {
+  analyse(y: Float32Array, embed: boolean): Promise<Analysis>;
+}
+
+export class Encoder implements Analyser {
   private session: Promise<OrtSessionLike> | null = null;
   private chain: Promise<unknown> = Promise.resolve();
   error: string | null = null;
@@ -51,6 +65,16 @@ export class Encoder {
       throw e;
     });
     return this.session;
+  }
+
+  /** Trim, measure tempo and (optionally) embed one decoded clip. Heavy: run it off the UI thread. */
+  async analyse(decoded: Float32Array, embed: boolean): Promise<Analysis> {
+    const y = trimSilence(decoded);
+    if (y.length < SR * 5) return { tooShort: true, bpm: null, vector: null, inferMs: 0 };
+    const bpm = estimateBpm(y);
+    if (!embed) return { tooShort: false, bpm, vector: null, inferMs: 0 };
+    const r = await this.embedAudio(y);
+    return { tooShort: false, bpm, vector: r.vector, inferMs: r.inferMs };
   }
 
   /** One worker: calls are serialised, as the Python Encoder's lock does. */

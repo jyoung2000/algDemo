@@ -26,6 +26,8 @@ export const ALLOWED_HOSTS: ReadonlySet<string> = new Set([
   'tidal.com', 'resources.tidal.com',
   'api.song.link',
   'lrclib.net', 'musicbrainz.org',
+  // Song identification: Genius lyric search (words typed by the user) and Shazam's tag endpoint (an audio fingerprint, never sound).
+  'genius.com', 'amp.shazam.com',
   'i.ytimg.com',
 ]);
 // Deezer preview/image CDN and SoundCloud media CDN. Keep in step with MainActivity.kt.
@@ -108,6 +110,14 @@ export class Meter {
     this.counts[category] = (this.counts[category] ?? 0) + n;
     this.sink?.(category, n);
   }
+  /**
+   * A small allowance for work that must still run after a request has used up its own cap (a few
+   * kilobytes of artist tags). It has its own cap but never exceeds what is left of the DAY, and what
+   * it reads is still counted against the day through `sink`.
+   */
+  reserve(cap: number, sink?: (category: string, n: number) => void): Meter {
+    return new Meter(cap, Math.max(0, this.daily - this.total), sink ?? this.sink);
+  }
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -129,7 +139,7 @@ export class HostPacer {
   }
 }
 
-export const PACER = new HostPacer({ 'api.deezer.com': 0.11, 'soundcloud.com': 0.3, 'open.spotify.com': 0.2 });
+export const PACER = new HostPacer({ 'api.deezer.com': 0.11, 'soundcloud.com': 0.3, 'open.spotify.com': 0.2, 'genius.com': 1, 'amp.shazam.com': 1, 'musicbrainz.org': 1.1 });
 
 export interface GetOptions {
   maxBytes: number;

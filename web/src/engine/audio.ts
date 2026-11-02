@@ -54,11 +54,24 @@ export function melFilterbank(sr = SR, nFft = N_FFT, nMels = N_MELS, fmin = 0, f
 }
 
 let mel: Float32Array[] | null = null;
+/** Per mel row, the first and one-past-last FFT bin with a non-zero weight (a Slaney triangle is narrow). */
+let melSpan: Int32Array | null = null;
 let window: Float64Array | null = null;
 let twiddle: { cos: Float64Array; sin: Float64Array; rev: Uint32Array } | null = null;
 
 function tables() {
-  mel ??= melFilterbank();
+  if (!mel) {
+    mel = melFilterbank();
+    melSpan = new Int32Array(mel.length * 2);
+    mel.forEach((row, m) => {
+      let lo = 0;
+      let hi = row.length;
+      while (lo < hi && row[lo] === 0) lo++;
+      while (hi > lo && row[hi - 1] === 0) hi--;
+      melSpan![m * 2] = lo;
+      melSpan![m * 2 + 1] = hi;
+    });
+  }
   window ??= Float64Array.from({ length: N_FFT }, (_, i) => Math.fround(0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N_FFT)));
   if (!twiddle) {
     const half = N_FFT / 2;
@@ -75,7 +88,7 @@ function tables() {
       rev,
     };
   }
-  return { mel, window, twiddle };
+  return { mel, window, twiddle, span: melSpan! };
 }
 
 /** In-place radix-2 complex FFT of length N_FFT. */
@@ -123,7 +136,7 @@ const reflect = (i: number, n: number): number => {
 
 /** (n_mels x frames) log-power mel for one segment, center=True with reflect padding, row-major. */
 export function logMel(segment: Float32Array): { data: Float32Array; frames: number } {
-  const { mel: fb, window: win } = tables();
+  const { mel: fb, window: win, span } = tables();
   const pad = N_FFT / 2;
   const padded = segment.length + 2 * pad;
   const frames = 1 + Math.floor((padded - N_FFT) / HOP_MELS);
@@ -143,7 +156,8 @@ export function logMel(segment: Float32Array): { data: Float32Array; frames: num
     for (let m = 0; m < N_MELS; m++) {
       const row = fb[m]!;
       let acc = 0;
-      for (let k = 0; k < bins; k++) acc += row[k]! * power[k]!;
+      // Only the bins the triangle covers: the rest add exactly 0, so the sum is unchanged.
+      for (let k = span[m * 2]!, end = span[m * 2 + 1]!; k < end; k++) acc += row[k]! * power[k]!;
       out[m * frames + f] = 10 * Math.log10(Math.max(1e-10, acc));
     }
   }

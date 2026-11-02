@@ -55,6 +55,16 @@ Other candidates were looked at and not used. `yassinsolim/soundalike` was not c
 encoder. `asg017/sqlite-vec` was not needed, because brute-force cosine over a short list of at
 most a few hundred vectors is enough.
 
+## Song identification (audio and lyrics search)
+
+| Item | Detail |
+| --- | --- |
+| Audio fingerprint | `web/src/engine/listen/fingerprint.ts` is a TypeScript port of SongRec's signature algorithm and format (<https://github.com/marin-m/SongRec>, commit `40372e5`, `src/core/fingerprinting/algorithm.rs` and `signature_format.rs`). |
+| License | **GPL-3.0-or-later** (SongRec `Cargo.toml` and `LICENSE`). The port is a derivative work under the same license. GPL-3.0 section 13 allows combining it with the AGPL-3.0 code this app already ships, and each release already carries its corresponding source. |
+| Request shape | The Shazam tag request and response fields follow ShazamIO (<https://github.com/shazamio/ShazamIO>, MIT). No ShazamIO code is included. |
+
+Only the fingerprint, a list of spectral peaks, is sent to Shazam. Sound never leaves the device, and it cannot be rebuilt from the fingerprint.
+
 ## Data sources and terms
 
 | Source | How it is used | Terms to note |
@@ -63,6 +73,8 @@ most a few hundred vectors is enough.
 | YouTube Music (via ytmusicapi) | Unauthenticated search, radio, related | ytmusicapi is an unofficial client. YouTube's terms apply. Playback is YouTube's own embed or an outbound link. |
 | SoundCloud (via yt-dlp) | Resolving public track links; widget/oEmbed links | yt-dlp obtains a public client id itself, so there is no developer key, but this is not an official API grant. SoundCloud's terms apply. |
 | Spotify oEmbed | Title and artwork for pasted track links | Public oEmbed endpoint. No audio is extracted; songs open in Spotify. |
+| Genius lyric search (`genius.com/api/search/lyric`) | Names songs from words the user types | Unofficial, keyless endpoint, used by the MIT `lyricsgenius` library's public API. No lyrics are stored or displayed beyond the short matching snippet Genius returns. It can change or throttle without notice. |
+| Shazam tag endpoint (`amp.shazam.com`) | Names a song from an on-device audio fingerprint | Undocumented, reverse-engineered endpoint, as SongRec and ShazamIO use it. Its terms are unclear and it can be rate limited (HTTP 429) or changed without notice. The app reports that as "busy" and does not retry on its own. |
 
 This is a local demo for personal, non-commercial use. It is not affiliated with Apple, Deezer,
 Google/YouTube, SoundCloud or Spotify.

@@ -98,8 +98,23 @@ app.whenReady().then(() => {
     const r = await net.fetch(pathToFileURL(file).toString(), { bypassCustomProtocolHandlers: true });
     return new Response(r.body, { status: 200, headers: { 'content-type': MIME[ext] || 'application/octet-stream', 'cache-control': 'no-cache' } });
   });
-  // The app plays audio from YouTube's embed; allow media and fullscreen, deny every other permission.
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'media' || permission === 'fullscreen'));
+  // Fullscreen for YouTube's embed; the microphone for the search bar's Mic (song identification), and only for
+  // the app's own page and never the camera. Every other permission is denied. Windows' own microphone privacy
+  // switch still applies; when it is off the page gets NotAllowedError and says where to turn it on.
+  const fromApp = (u) => {
+    try {
+      return new URL(u).host === APP_HOST;
+    } catch {
+      return false;
+    }
+  };
+  session.defaultSession.setPermissionRequestHandler((wc, permission, cb, details) => {
+    if (permission === 'fullscreen') return cb(true);
+    if (permission !== 'media') return cb(false);
+    const types = (details && details.mediaTypes) || [];
+    cb(fromApp((details && details.requestingUrl) || wc.getURL()) && types.length > 0 && types.every((t) => t === 'audio'));
+  });
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, origin) => permission === 'fullscreen' || (permission === 'media' && fromApp(origin)));
   // YouTube's embed refuses to play (error 153) when the request carries no Referer. The page comes from a
   // custom handler, which Chromium sends none for, so give embed and player requests the app origin, as
   // the Android WebView does.

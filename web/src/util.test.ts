@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RecItem, TasteSummary } from './api';
-import { ListenMeter, addSeed, describeCharacteristics, describeTaste, mergeRerank, qualifiesCompletion, toneLabel } from './util';
+import { ListenMeter, addSeed, describeCharacteristics, describeTaste, mergeRerank, playbackOfTrack, qualifiesCompletion, toneLabel } from './util';
 
 const item = (key: string, rank: number): RecItem => ({ rank, track: { key } }) as unknown as RecItem;
 
@@ -72,6 +72,30 @@ describe('mergeRerank', () => {
     const out = mergeRerank(prev, next, new Set(['a', 'b']));
     expect(out.map((x) => x.track.key)).toEqual(['a', 'b', 'd', 'c']);
     expect(out.map((x) => x.rank)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe('playbackOfTrack open links', () => {
+  // one link per service: also_on can name the same service more than once, and the primary service may repeat in it
+  const base = { provider: 'ytmusic', platform_id: 'abc', url: 'https://music.youtube.com/watch?v=abc', title: 'Around the World', artist: 'Daft Punk' };
+  it('lists the primary service once, then each other service once', () => {
+    const t = {
+      ...base,
+      also_on: [
+        { provider: 'deezer', url: 'https://deezer.example/1' },
+        { provider: 'apple', url: 'https://apple.example/1' },
+        { provider: 'apple', url: 'https://apple.example/1' },
+        { provider: 'apple', url: 'https://apple.example/2' },
+        { provider: 'spotify', url: 'https://open.spotify.example/1' },
+        { provider: 'spotify', url: 'https://open.spotify.example/1' },
+        { provider: 'ytmusic', url: 'https://music.youtube.com/watch?v=abc' },
+      ],
+    } as never;
+    expect(playbackOfTrack(t).open.map((o) => o.provider)).toEqual(['ytmusic', 'deezer', 'apple', 'spotify']);
+  });
+  it('skips an entry with no url', () => {
+    const t = { ...base, also_on: [{ provider: 'deezer', url: '' }] } as never;
+    expect(playbackOfTrack(t).open.map((o) => o.provider)).toEqual(['ytmusic']);
   });
 });
 

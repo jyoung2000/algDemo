@@ -15,6 +15,7 @@
   --accent-soft: #e6effb;
   --radius: 12px;
   --dock-h: 76px;
+  --tab-h: 56px;
   --side-w: 188px;
   --rail-w: 312px;
 }
@@ -42,9 +43,9 @@ body {
 /* ------------------------------------------------------------------ layout */
 .app {
   display: grid;
-  grid-template-columns: var(--side-w) minmax(0, 1fr) var(--rail-w);
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
-  max-width: 1480px;
+  max-width: 920px;
   margin: 0 auto;
   padding: 20px 24px 40px;
   align-items: start;
@@ -56,16 +57,10 @@ body {
   gap: 16px;
 }
 .rail {
-  position: sticky;
-  top: 20px;
   min-width: 0;
 }
 
 @media (max-width: 1180px) {
-  .app {
-    --side-w: 64px;
-    --rail-w: 280px;
-  }
   .brand__name,
   .side__item span,
   .side__count {
@@ -76,18 +71,27 @@ body {
   }
 }
 
-/* ------------------------------------------------------------------ sidebar */
+/* ------------------------------------------------------------------ sidebar
+   Desktop: one column, so the navigation is a top bar across it (the sidebar grid column is gone).
+   Phone: the same tabs become a fixed bottom bar (see the phone block further down). */
 .side {
   position: sticky;
-  top: 20px;
-  display: grid;
-  gap: 14px;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 -24px;
+  padding: 8px 24px;
+  background: rgba(250, 249, 247, 0.92);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--hair);
 }
 .brand {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 4px 6px 6px;
+  padding: 0;
 }
 .brand__mark {
   width: 30px;
@@ -108,22 +112,27 @@ body {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
+  display: flex;
   gap: 2px;
+  flex: 1 1 auto;
+  justify-content: flex-end;
 }
 .side__item {
   appearance: none;
   border: 0;
   background: none;
-  width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 8px;
+  padding: 6px 12px;
   border-radius: 8px;
   color: var(--ink-2);
   text-align: left;
   cursor: pointer;
+  transition: background-color 100ms ease, color 100ms ease, transform 70ms ease;
+}
+.side__item:active {
+  transform: translateY(1px);
 }
 .side__item:hover {
   background: rgba(0, 0, 0, 0.04);
@@ -141,6 +150,7 @@ body {
   color: var(--ink-3);
   font-size: 12px;
 }
+
 
 /* ------------------------------------------------------------------ shared surfaces */
 .card,
@@ -190,6 +200,15 @@ body {
 }
 .state--bad {
   color: var(--danger);
+}
+/* A newer answer is on its way: the list on screen is the last one, so it stays and only softens. No layout change. */
+.is-refreshing > .tracks,
+.is-refreshing > .srcline {
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+.is-refreshing > .tracks {
+  pointer-events: none;
 }
 .empty {
   padding: 18px 8px;
@@ -255,7 +274,7 @@ body {
   max-width: min(92vw, 520px);
 }
 .app--docked.has-dock .toast {
-  bottom: calc(var(--dock-h) + 16px);
+  bottom: calc(var(--tab-h) + var(--dock-h) + 16px);
 }
 .linkbtn {
   appearance: none;
@@ -339,37 +358,345 @@ a.push {
 
 /* ------------------------------------------------------------------ search */
 .search__form {
-  display: flex;
-  gap: 10px;
-  align-items: center;
+  /* One full-width field. There is no Search button: results follow the typing and Enter submits. File and Mic sit
+     inside the bar's right end; while there is text a Clear button takes File's place so the Mic never moves. */
+  position: relative;
 }
 .search__field {
   position: relative;
-  flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
   display: flex;
   align-items: center;
 }
 .search__icon {
   position: absolute;
-  left: 11px;
+  left: 14px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
   color: var(--ink-3);
   pointer-events: none;
 }
+/* Styleguide §6 "The recessed field": light from above, so the well is shadowed at the top with a lit lower lip. */
 .search__field .field {
   width: 100%;
-  min-height: 38px;
-  padding: 6px 12px 7px 34px;
-  border-radius: 19px;
-  font-size: 15px;
+  min-height: 44px;
+  padding: 6px 96px 7px 40px;
+  border-radius: 22px;
+  font-size: 16px;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 20%), inset 0 2px 3px rgb(0 0 0 / 32%), 0 1px 0 rgb(255 255 255 / 70%);
+}
+.search__field .field:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
 }
 .search__field .field::placeholder {
-  font-size: 15px;
+  font-size: 16px;
+}
+.search__field .field::-webkit-search-cancel-button {
+  display: none;
+}
+.search__spin {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #c4c2ba;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: search-spin 0.8s linear infinite;
+}
+@keyframes search-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.search__clear {
+  display: none;
+}
+.search__form.has-text .search__clear {
+  display: grid;
+  place-items: center;
+  position: absolute;
+  top: 0;
+  right: 46px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 22px;
+  background: transparent;
+  color: var(--ink-3);
+}
+.search__clear:active {
+  background: rgba(0, 0, 0, 0.08);
+}
+.search__clear:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.search__clear[disabled] {
+  opacity: 0.5;
 }
 .search__hint {
   margin: 8px 2px 0;
   color: var(--ink-3);
   font-size: 12px;
+}
+
+/* Identify-by-sound (Fable/Astra search-bar extension): File and Listen beside Search, and one status panel in the
+   results area. There is no mode switch: the one field takes a title, lyrics or a link. */
+.find__acts {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  height: 44px;
+  display: inline-flex;
+  gap: 0;
+}
+.find__act {
+  /* Self-drawn rather than the gel border-image: that art has 30 px end caps and squashes on a small icon button. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-image: none;
+  border-radius: 22px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  overflow: visible;
+}
+.find__act:hover:not([disabled]) {
+  background: rgba(0, 0, 0, 0.05);
+}
+.find__act:active:not([disabled]) {
+  background: rgba(0, 0, 0, 0.1);
+}
+.find__act:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.search__form.has-text .find__act--file {
+  display: none;
+}
+.find__act[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+.find__act--mic {
+  color: var(--accent);
+}
+.find__glyph {
+  flex: none;
+  display: block;
+  overflow: visible;
+}
+.find__help {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #ecd7b0;
+  border-radius: 10px;
+  background: #fdf7ea;
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+.find__help p {
+  margin: 0;
+}
+.find__help-title {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-weight: 700;
+  color: var(--ink);
+}
+.find__help-title svg {
+  color: var(--warning);
+}
+.find__help-body {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.find__help-detail {
+  color: var(--ink-3);
+}
+.listen {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.listen__pulse {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: #fff;
+  border: 1px solid #b8cff0;
+}
+.listen__pulse.is-live {
+  color: #fff;
+  background: var(--accent);
+  /* --lvl (0..1) is written from the microphone every frame: the ring grows with the sound */
+  box-shadow: 0 0 0 calc(2px + var(--lvl, 0) * 12px) rgba(31, 111, 209, calc(0.18 + var(--lvl, 0) * 0.3));
+  transform: scale(calc(1 + var(--lvl, 0) * 0.12));
+  transition: box-shadow 70ms linear, transform 70ms linear;
+}
+.listen__bars {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 36px;
+  max-width: 260px;
+}
+.listen__bar {
+  --h: 0.08;
+  flex: 1 1 0;
+  min-width: 2px;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(var(--accent), #5aa0f0);
+  transform: scaleY(var(--h));
+  transform-origin: center;
+  transition: transform 60ms linear;
+}
+.listen__now {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.listen__label {
+  margin: 0;
+  color: var(--ink);
+}
+.listen__sub {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.listen__sub--warn {
+  color: #8a4b00;
+}
+.micset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+.micset__row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.micset__select {
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 100%;
+}
+.micset__test {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  box-sizing: border-box;
+  min-width: 0;
+}
+.micset__test .listen__bars {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.micset__db {
+  flex: none;
+  min-width: 52px;
+  text-align: right;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.micset__state {
+  margin: 0;
+  color: var(--ink-2);
+}
+.micset__state.is-ok {
+  color: #1f6b2a;
+}
+.micset__state.is-warn {
+  color: #8a4b00;
+}
+.listen__row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.listen__meter {
+  flex: 1 1 auto;
+  max-width: 220px;
+  height: 6px;
+  border-radius: 3px;
+  background: #fff;
+  border: 1px solid #c9d8ee;
+  overflow: hidden;
+}
+.listen__level {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 90ms linear;
+}
+.listen__time {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.listen__actions {
+  flex: none;
+  display: inline-flex;
+  gap: 6px;
+}
+.track__evidence {
+  color: var(--ink-3);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.track__evidence--quote {
+  font-style: italic;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.track__evidence mark {
+  background: #fff1b8;
+  color: var(--ink);
+  font-style: normal;
+  border-radius: 2px;
+  padding: 0 1px;
 }
 .results {
   margin-top: 12px;
@@ -759,6 +1086,11 @@ a.push {
 .rec:focus-visible {
   box-shadow: inset 0 0 0 2px var(--focus);
 }
+/* The row being played carries the same highlight as the focused row, so the list always shows what the player has. */
+.rec.is-playing {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
 .rec.is-playing .rec__title {
   color: var(--accent);
 }
@@ -924,27 +1256,141 @@ a.push {
   border: 1px solid #cfccc4;
   border-radius: 22px;
   box-shadow: inset 0 1px 0 #fff, var(--shadow);
-  padding: 14px;
+  padding: 12px 14px;
   display: grid;
   gap: 12px;
 }
+/* Desktop panel: one horizontal strip, never taller than half the viewport. The art and title sit left, the transport
+   and progress centre, the volume right. The click wheel and Up next are phone-dock controls, so they stay out here. */
+.np--panel {
+  max-height: 50vh;
+  overflow: hidden;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.4fr) minmax(150px, 0.85fr);
+  grid-template-areas: 'main prog vol' 'main tx links';
+  align-items: center;
+  column-gap: 18px;
+  row-gap: 6px;
+}
 .np--panel .np__main {
-  display: grid;
-  gap: 10px;
-  justify-items: center;
-  padding: 12px;
-  border-radius: 10px;
-  border: 1px solid #7f8a8e;
-  background: linear-gradient(var(--lcd-top), var(--lcd-bot));
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
-  color: var(--lcd-ink);
+  grid-area: main;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--ink);
 }
 .np--panel .np__main .art {
-  width: 100%;
-  max-width: 196px;
-  height: auto;
-  aspect-ratio: 1;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  width: 52px;
+  height: 52px;
+  flex: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.np--panel .np__embed {
+  width: 128px;
+  flex: none;
+  aspect-ratio: 16 / 9;
+}
+.np--panel .np__text {
+  /* min-width 0 lets the title ellipsise inside its column instead of pushing into the progress bar */
+  text-align: left;
+  min-width: 0;
+  flex: 1 1 0;
+  overflow: hidden;
+}
+.np--panel .np__title,
+.np--panel .np__artist {
+  display: block;
+}
+.np--panel .np__note {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  font-size: 11px;
+  color: var(--ink-3);
+  opacity: 1;
+}
+.np--panel .prog {
+  grid-area: prog;
+  min-width: 0;
+}
+/* Aqua slider (aqua.css §13): recessed silver channel, Aqua-blue fill, glossy round thumb. */
+.np .prog__bar {
+  height: 7px;
+  min-width: 0;
+  border: 1px solid #8c8c8c;
+  border-radius: 4px;
+  background:
+    linear-gradient(to bottom, rgb(255 255 255 / 55%) 0 1px, transparent 1px) 0 0 / var(--pct, 0%) 100% no-repeat,
+    linear-gradient(to bottom, var(--aqua-top), var(--aqua-mid) 50%, var(--aqua-lower)) 0 0 / var(--pct, 0%) 100% no-repeat,
+    linear-gradient(#b7b7b7, #e9e9e9 60%, #f4f4f4);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 25%), 0 1px rgb(255 255 255 / 60%);
+}
+.np .prog__bar::-webkit-slider-thumb {
+  width: 15px;
+  height: 15px;
+  background: linear-gradient(to bottom, #fff 0%, #f2f3f4 52%, #dfe1e4 100%);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 90%), 0 1px 2px rgb(0 0 0 / 38%);
+}
+.np .prog__bar::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  background: linear-gradient(to bottom, #fff 0%, #f2f3f4 52%, #dfe1e4 100%);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 90%), 0 1px 2px rgb(0 0 0 / 38%);
+}
+.np .prog__bar:active::-webkit-slider-thumb {
+  background: linear-gradient(to bottom, #e9eaec 0%, #d7d9dc 52%, #c8cbcf 100%);
+}
+.np .prog__bar:focus-visible {
+  outline: none;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 25%), 0 0 0 1px var(--aq-ring), 0 0 2px 3px var(--aq-halo);
+}
+.np .prog__bar:disabled {
+  filter: grayscale(0.9) brightness(1.05);
+}
+.np--panel .transport {
+  grid-area: tx;
+  justify-content: center;
+}
+.np--panel .vol {
+  grid-area: vol;
+}
+.np--panel .np__open {
+  /* Open-in links: one scrolling row under the transport, so a long provider list never adds height. */
+  grid-area: links;
+  justify-self: stretch;
+  align-self: center;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  justify-content: flex-start;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+  scrollbar-width: none;
+}
+.np--panel .np__open .openlink {
+  padding: 2px 9px;
+  font-size: 11px;
+  white-space: nowrap;
+  flex: none;
+  border: 1px solid #8c8c8c;
+  border-radius: 11px;
+  background: linear-gradient(to bottom, #fff, #ececec 50%, #dcdcdc);
+  box-shadow: inset 0 1px rgb(255 255 255 / 90%), 0 1px 1px rgb(0 0 0 / 15%);
+  color: var(--ink);
+}
+.np--panel .np__open .openlink:hover {
+  background: linear-gradient(to bottom, #fff, #e4f3fd 50%, #cbe6f8);
+  border-color: var(--aqua-rim);
+}
+.np--panel .wheel,
+.np--panel .upnext {
+  display: none;
 }
 .np__embed {
   width: 100%;
@@ -1035,9 +1481,11 @@ a.push {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  border: 1px solid #b9b6ae;
-  background: radial-gradient(circle at 50% 30%, #fff, #ecebe7 70%, #dedcd6);
-  box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(0, 0, 0, 0.18);
+  border: 1px solid #7a7a7a;
+  background:
+    linear-gradient(to bottom, rgb(255 255 255 / 90%) 0%, rgb(255 255 255 / 40%) 45%, rgb(0 0 0 / 3%) 50%, rgb(0 0 0 / 10%) 100%),
+    linear-gradient(to bottom, #fbfbfb, #dedede 50%, #c9c9c9);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 90%), inset 0 -1px rgb(0 0 0 / 15%), 0 1px 2px rgba(0, 0, 0, 0.25);
   display: grid;
   place-items: center;
   color: var(--ink);
@@ -1048,7 +1496,14 @@ a.push {
   height: 48px;
   color: #fff;
   border-color: var(--aqua-rim);
-  background: radial-gradient(circle at 50% 25%, var(--aqua-spec), var(--aqua-top) 25%, var(--aqua-mid) 60%, var(--aqua-lower));
+  background:
+    linear-gradient(to bottom, rgb(255 255 255 / 70%) 0%, rgb(255 255 255 / 15%) 48%, transparent 50%),
+    linear-gradient(to bottom, var(--aqua-top), var(--aqua-mid) 48%, var(--aqua-lower) 52%, var(--aqua-bot));
+  box-shadow: inset 0 1px 0 var(--aqua-spec), inset 0 -1px rgb(0 40 95 / 35%), 0 1px 3px rgba(0, 40, 95, 0.4);
+}
+.tbtn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--aq-ring), 0 0 2px 3px var(--aq-halo);
 }
 .tbtn:active:not(:disabled) {
   transform: translateY(1px);
@@ -1067,8 +1522,8 @@ a.push {
 }
 .wheel__ring {
   position: relative;
-  width: 168px;
-  height: 168px;
+  width: 132px;
+  height: 132px;
   border-radius: 50%;
   background: radial-gradient(circle at 50% 30%, #ffffff, #efeeea 55%, #dcdad3);
   box-shadow: inset 0 1px 0 #fff, inset 0 -2px 6px rgba(0, 0, 0, 0.08), 0 0 0 1px #c9c6be, 0 2px 6px rgba(0, 0, 0, 0.12);
@@ -1493,6 +1948,18 @@ a.push {
   margin: 8px 0 0;
   white-space: pre;
 }
+@media (max-width: 360px) {
+  /* A 320px phone: the bars may shrink so the table never pushes the page (and the fixed tab bar) sideways. */
+  .pcell .sbar,
+  .pcell .pbar {
+    min-width: 40px;
+  }
+  .ptable th,
+  .ptable td {
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+}
 @media (max-width: 480px) {
   /* On a phone the bar column takes the room the other columns leave, so a bar stays readable. */
   .ptable__bar {
@@ -1524,57 +1991,93 @@ a.push {
     gap: 12px;
     padding: 0 12px 24px;
   }
+  /* Phone: the tabs are a fixed bottom bar; the docked player sits above it (--tab-h + --dock-h). */
+  .app {
+    padding-bottom: calc(var(--tab-h) + 24px + env(safe-area-inset-bottom));
+  }
   .app.has-dock {
-    padding-bottom: calc(var(--dock-h) + 24px + env(safe-area-inset-bottom));
+    padding-bottom: calc(var(--tab-h) + var(--dock-h) + 24px + env(safe-area-inset-bottom));
   }
   .side {
-    position: sticky;
-    top: 0;
-    z-index: 20;
-    grid-template-columns: auto 1fr auto;
-    align-items: center;
-    gap: 8px;
-    margin: 0 -12px;
-    padding: 8px 12px;
-    background: rgba(250, 249, 247, 0.92);
-    backdrop-filter: blur(10px);
-    border-bottom: 1px solid var(--hair);
-  }
-  .brand {
-    padding: 0;
-  }
-  .brand__name {
-    display: inline;
-  }
-  .side__nav {
-    grid-auto-flow: column;
-    justify-content: center;
-    gap: 4px;
-  }
-  .side__item {
-    padding: 8px 10px;
-    min-height: 40px;
-  }
-  .side__item span {
-    display: inline;
-  }
-  .side__count {
-    display: block;
-    padding: 0;
-    font-size: 11px;
-    text-align: right;
-  }
-  .rail {
-    position: static;
-  }
-  .np--docked {
     position: fixed;
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 30;
+    top: auto;
+    z-index: 25;
+    margin: 0;
+    padding: 4px 6px calc(4px + env(safe-area-inset-bottom));
+    height: calc(var(--tab-h) + env(safe-area-inset-bottom));
+    background: rgba(250, 249, 247, 0.94);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--hair);
+    border-bottom: 0;
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+  }
+  /* The brand and the count are not part of a tab bar on a phone. */
+  .brand {
+    display: none;
+  }
+  .side__count {
+    display: none;
+  }
+  .side__nav {
+    flex: 1 1 auto;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    justify-content: stretch;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+  }
+  .side__nav > li {
+    min-width: 0;
+    display: flex;
+  }
+  .side__item {
+    flex: 1 1 auto;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    min-height: 48px;
+    padding: 6px 2px;
+    font-size: 11px;
+    line-height: 1.1;
+    position: relative;
+  }
+  .side__item span {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .side__item .count {
+    position: absolute;
+    margin-left: 22px;
+    margin-top: -4px;
+  }
+  .side__item.is-on {
+    box-shadow: none;
+    color: var(--accent);
+    background: none;
+  }
+  .rail {
+    position: static;
+  }
+
+  .np--docked {
+    position: fixed;
+    left: 0;
+    right: 0;
+    /* Above the tab bar, never over it. */
+    bottom: calc(var(--tab-h) + env(safe-area-inset-bottom));
+    z-index: 24;
     border-radius: 16px 16px 0 0;
-    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+    padding: 8px 12px 8px;
     min-height: var(--dock-h);
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
@@ -1591,22 +2094,43 @@ a.push {
     min-width: 0;
   }
   .np--docked .np__embed {
-    width: 120px;
+    width: 96px;
     flex: none;
   }
   .np--docked .np__text {
+    /* The title column must keep real width: the embed and the controls are fixed, the text takes what is left. */
     text-align: left;
+    min-width: 0;
+    flex: 1 1 0;
+    overflow: hidden;
   }
   .np__dockctl {
     display: grid;
     gap: 2px;
+    width: 152px;
   }
+  .np--docked .vol__n {
+    display: none;
+  }
+
   .np--docked .transport {
     gap: 6px;
   }
   .np--docked .tbtn {
     width: 44px;
     height: 44px;
+  }
+  .np--docked .vol__btn {
+    width: 44px;
+    height: 44px;
+  }
+  .np--docked .vol__bar {
+    height: 44px;
+    border: 0;
+    box-shadow: none;
+    background:
+      linear-gradient(to bottom, var(--aqua-top), var(--aqua-mid) 50%, var(--aqua-lower)) 0 50% / var(--pct, 0%) 6px no-repeat,
+      linear-gradient(#b7b7b7, #e9e9e9 60%, #f4f4f4) 0 50% / 100% 6px no-repeat;
   }
   .np--docked .prog {
     display: none;
@@ -1672,6 +2196,7 @@ a.push {
   }
   /* Touch-sized controls on narrow screens, whatever the pointer reports. */
   .search__field,
+  .search__field .field,
   .search__form .push {
     min-height: 44px;
   }
@@ -1685,8 +2210,8 @@ a.push {
     padding: 0 8px;
   }
   .dial input[type='range'] {
-    /* The thumb needs a 32px touch target, but the track is painted 6px tall, centred in it. */
-    height: 32px;
+    /* The thumb needs a 44px touch target, but the track is painted 6px tall, centred in it. */
+    height: 44px;
     background: linear-gradient(to right, var(--aqua-mid) var(--pct, 50%), #dcdcd8 var(--pct, 50%)) center / 100% 6px no-repeat;
   }
 }
@@ -1700,9 +2225,12 @@ a.push {
   }
 }
 @media (max-width: 480px) {
-  .search__form .push {
-    min-width: 0;
-    padding: 0 12px;
+  .listen {
+    flex-wrap: wrap;
+  }
+  .listen__actions {
+    width: 100%;
+    justify-content: flex-end;
   }
   .side__item span {
     display: none;
@@ -1860,14 +2388,14 @@ a.push {
 }
 .tpick__readout {
   font-size: 13px;
-  color: color-mix(in srgb, currentColor 62%, transparent);
+  color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
 .tpick__axes {
   display: flex;
   justify-content: space-between;
   font-size: 12px;
-  color: color-mix(in srgb, currentColor 62%, transparent);
+  color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
 .tpick__field {
@@ -1921,7 +2449,7 @@ a.push {
   font-weight: 700;
   letter-spacing: 0.03em;
   text-transform: uppercase;
-  color: color-mix(in srgb, currentColor 62%, transparent);
+  color: var(--ink-2);
   text-align: center;
 }
 .tpick__fams span {
@@ -1946,7 +2474,7 @@ a.push {
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: color-mix(in srgb, currentColor 62%, transparent);
+  color: var(--ink-2);
 }
 .tpick__sound {
   margin: 0;
@@ -1962,7 +2490,7 @@ a.push {
   align-items: center;
 }
 .tpick__kv dt {
-  color: color-mix(in srgb, currentColor 62%, transparent);
+  color: var(--ink-2);
 }
 .tpick__kv dd {
   margin: 0;
@@ -1995,7 +2523,7 @@ a.push {
 }
 .tpick__hint {
   font-size: 12px;
-  color: color-mix(in srgb, currentColor 62%, transparent);
+  color: var(--ink-2);
   font-weight: 500;
 }
 .tpick__chips {
@@ -2012,7 +2540,7 @@ a.push {
   font: inherit;
   font-size: 12px;
   font-weight: 600;
-  color: color-mix(in srgb, currentColor 62%, transparent);
+  color: var(--ink-2);
   cursor: pointer;
 }
 .tpick__chip[data-fit='1'] {
@@ -2054,13 +2582,13 @@ a.push {
 .tpick__fam header span {
   margin-left: auto;
   font-size: 12px;
-  color: color-mix(in srgb, currentColor 62%, transparent);
+  color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
 .tpick__fam p {
   margin: 0;
   font-size: 13px;
-  color: color-mix(in srgb, currentColor 62%, transparent);
+  color: var(--ink-2);
   line-height: 1.45;
 }
 @media (max-width: 480px) {
@@ -2129,4 +2657,419 @@ a.push {
   box-shadow:
     0 0 0 3px rgba(255, 255, 255, 0.28),
     0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+/* Your sound (UX: taste visualiser). Gradient bar of the genre families the user keeps, redrawn on every
+   learned song. Colour is always paired with a name and a percent. Motion is a width/opacity transition
+   only, which the global reduced-motion rule above switches off. */
+.sound {
+  background: var(--panel);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 14px 10px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.sound__head {
+  all: unset;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin: -6px -4px 0;
+  padding: 6px 4px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.sound__head:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.sound__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.sound__sum {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.sound__chev {
+  display: grid;
+  place-items: center;
+  color: var(--ink-2);
+}
+.sound__live {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--hair);
+}
+.sound__live.is-on {
+  background: #1d7f3c;
+  box-shadow: 0 0 0 3px rgba(29, 127, 60, 0.18);
+}
+@property --c0 { syntax: '<color>'; inherits: false; initial-value: transparent; }
+@property --c1 { syntax: '<color>'; inherits: false; initial-value: transparent; }
+@property --c2 { syntax: '<color>'; inherits: false; initial-value: transparent; }
+@property --c3 { syntax: '<color>'; inherits: false; initial-value: transparent; }
+@property --c4 { syntax: '<color>'; inherits: false; initial-value: transparent; }
+@property --c5 { syntax: '<color>'; inherits: false; initial-value: transparent; }
+@property --c6 { syntax: '<color>'; inherits: false; initial-value: transparent; }
+@property --c7 { syntax: '<color>'; inherits: false; initial-value: transparent; }
+@property --p0 { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+@property --p1 { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+@property --p2 { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+@property --p3 { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+@property --p4 { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+@property --p5 { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+@property --p6 { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+@property --p7 { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+
+.sound__bar {
+  height: 14px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--pearl-2);
+}
+.sound__bar.is-pulse {
+  animation: sound-pulse 900ms ease-out;
+}
+@keyframes sound-pulse {
+  from { filter: brightness(1.08); }
+  to { filter: none; }
+}
+/* One gradient across the whole bar. Colours and stop positions come from CSS variables set from the
+   taste, so a change transitions the gradient itself. */
+.sound__grad {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg,
+    var(--c0) var(--p0),
+    var(--c1) var(--p1),
+    var(--c2) var(--p2),
+    var(--c3) var(--p3),
+    var(--c4) var(--p4),
+    var(--c5) var(--p5),
+    var(--c6) var(--p6),
+    var(--c7) var(--p7));
+  /* Blended in OKLCH so the middle passes through real hues, not grey; the line above is the fallback. */
+  background: linear-gradient(90deg in oklch,
+    var(--c0) var(--p0),
+    var(--c1) var(--p1),
+    var(--c2) var(--p2),
+    var(--c3) var(--p3),
+    var(--c4) var(--p4),
+    var(--c5) var(--p5),
+    var(--c6) var(--p6),
+    var(--c7) var(--p7));
+  transition: --c0 900ms ease, --p0 900ms ease, --c1 900ms ease, --p1 900ms ease, --c2 900ms ease, --p2 900ms ease, --c3 900ms ease, --p3 900ms ease, --c4 900ms ease, --p4 900ms ease, --c5 900ms ease, --p5 900ms ease, --c6 900ms ease, --p6 900ms ease, --c7 900ms ease, --p7 900ms ease;
+}
+.sound__grad--empty {
+  background: repeating-linear-gradient(90deg, var(--hair-2) 0 8px, transparent 8px 14px);
+}
+.sound__changes {
+  margin: 0;
+  min-height: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.sound__chg {
+  font-weight: 600;
+}
+.sound__chg--up {
+  color: #1d7f3c;
+}
+.sound__chg--down {
+  color: #a63232;
+}
+.sound__chg--new {
+  color: var(--accent);
+}
+.sound__body {
+  display: grid;
+  gap: 12px;
+  padding-top: 4px;
+  border-top: 1px solid var(--hair-2);
+}
+.sound__fams {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.sfam__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.sfam__dot,
+.schip__dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.sfam__name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--ink);
+}
+.sfam__pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+.sfam__track {
+  height: 6px;
+  margin-top: 5px;
+  border-radius: 3px;
+  background: var(--pearl-2);
+  overflow: hidden;
+}
+.sfam__fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 600ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.sfam__subs {
+  list-style: none;
+  margin: 7px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.schip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 9px;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--pearl);
+}
+.schip b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+.sound__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.sound__facts b {
+  color: var(--ink);
+}
+.sound__histh {
+  margin: 0 0 6px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.sound__histh span {
+  font-weight: 400;
+  color: var(--ink-3);
+}
+.ribbon {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 2px;
+  height: 36px;
+}
+.ribbon__col {
+  flex: 1;
+  min-width: 0;
+}
+.ribbon__stack {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+}
+.sound__note,
+.sound__empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+@media (max-width: 480px) {
+  .sound {
+    padding: 10px 12px 8px;
+  }
+  .sound__sum {
+    font-size: 11px;
+  }
+}
+
+/* ------------------------------------------------------------------ phone polish
+   Measured on a 412px Android WebView: the formula <pre> stretched the page to 1148px, the capability
+   table scrolled sideways, and most controls were under 44px. Rules below apply to phones and touch only;
+   the desktop layout is untouched. */
+.formula {
+  margin: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--pearl);
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.card > *,
+.main > * {
+  min-width: 0;
+}
+@media (max-width: 899px) {
+  .main {
+    gap: 16px;
+  }
+  /* Row headers keep whole words: `anywhere` lets auto-sized columns shrink below a word and split it mid-letter. */
+  .ptable tbody th {
+    overflow-wrap: break-word;
+  }
+  /* Phone header: the tab bar is the fixed bottom bar set above (no top-strip grid here). */
+  .side__item span {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .side__item .count {
+    position: absolute;
+    margin-left: 22px;
+    margin-top: -4px;
+  }
+  .side__item {
+    position: relative;
+  }
+  .sound {
+    padding: 14px 12px;
+    gap: 12px;
+  }
+  .sound__head {
+    min-height: 44px;
+  }
+  .sound__sum {
+    font-size: 12px;
+  }
+
+  /* The capability table becomes one card per source: no sideways scrolling on a phone. */
+  .captable {
+    overflow: visible;
+    border: 0;
+    gap: 10px;
+  }
+  .captable__row--head {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .captable__row {
+    min-width: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border: 1px solid var(--hair);
+    border-radius: 10px;
+    padding: 6px 4px;
+  }
+  .captable__row:last-child {
+    border-bottom: 1px solid var(--hair);
+  }
+  .captable__row > span {
+    min-width: 0;
+    padding: 6px 8px;
+    overflow-wrap: anywhere;
+  }
+  .captable__row > .captable__src {
+    grid-column: 1 / -1;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--hair-2);
+    margin-bottom: 2px;
+  }
+  .captable__row > .cap::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-3);
+  }
+}
+@media (pointer: coarse), (max-width: 899px) {
+  /* Finger-sized targets (44px). The visible track and thumb stay as drawn; the hit area grows. */
+  .go__fresh,
+  .chk {
+    min-height: 44px;
+  }
+  .go__fresh input,
+  input[type='checkbox'] {
+    width: 22px;
+    height: 22px;
+    flex: none;
+  }
+  .field--num {
+    min-height: 44px;
+    font-size: 16px;
+    box-sizing: border-box;
+  }
+  .iconbtn {
+    width: 44px;
+    height: 44px;
+  }
+  .tpick__chip,
+  .whybtn,
+  .openlink {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 420px) {
+  /* Narrow phone: art and title take the whole top row; transport and volume share the row under it. */
+  :root {
+    --dock-h: 132px;
+  }
+  .np--docked {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 4px;
+  }
+  .np--docked .np__dockctl {
+    width: auto;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: 6px;
+  }
 }

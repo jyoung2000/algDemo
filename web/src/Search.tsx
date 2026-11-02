@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
-import { api, ApiError, type ResolveResponse, type SearchResponse, type SourceState, type Track } from './api';
+import { api, ApiError, type Evidence, type IdentifyResponse, type ResolveResponse, type SearchResponse, type SourceState, type Track } from './api';
 import { Art } from './Art';
 import { PROVIDER_LABEL, artistOf, classNames, fmtDuration, fmtRelease, looksLikeUrl, markKey } from './util';
 
@@ -11,47 +11,174 @@ interface Props {
   onDownload?: (t: Track) => void;
 }
 
+type Origin = 'lyrics' | 'audio';
+type HelpCode = 'denied' | 'no_mic' | 'mic_failed' | 'no_capture' | 'unsupported' | 'unreadable' | 'too_long' | 'short' | 'busy' | 'offline' | 'budget' | 'refused' | 'failed';
+type AudioPhase = 'permission' | 'listening' | 'reading' | 'analysing';
+/** The lyric half of a plain-text search, which arrives after (and independently of) the title half. */
+type LyricPart = { state: 'pending' } | { state: 'ok'; tracks: Track[]; named: number; unplayable: number } | { state: 'failed'; code: string };
+
 type View =
   | { kind: 'idle' }
   | { kind: 'loading'; what: 'search' | 'link' }
-  | { kind: 'results'; tracks: Track[]; sources: Record<string, SourceState>; query: string; ms: number }
+  | { kind: 'results'; tracks: Track[]; sources: Record<string, SourceState>; query: string; ms: number; lyrics?: LyricPart | undefined }
+  | { kind: 'identified'; origin: Origin; tracks: Track[]; query: string; named: number; unplayable: number; heard?: { title: string; artist: string } | undefined }
+  | { kind: 'audio'; phase: AudioPhase; name?: string; elapsed?: number; level?: number; device?: string; quiet?: boolean }
+  | { kind: 'help'; code: HelpCode; origin: Origin; detail?: string | undefined }
   | { kind: 'choice'; res: Extract<ResolveResponse, { kind: 'choice' }> }
   | { kind: 'error'; message: string };
 
 const AUTOCOMPLETE_MS = 450;
+// On a phone the engine runs on the device, so the pause after the last key can be shorter.
+const AUTOCOMPLETE_PHONE_MS = 250;
+// Genius is slower and more rate limited than the catalogues, so typing-time lyric lookups start a little after the title ones.
+const LYRIC_LAG_MS = 250;
+const CACHE_MS = 5 * 60_000;
+const CACHE_MAX = 30;
+const MIN_CLIP_S = 3;
+const LIMIT_S = 12;
+const AUDIO_ACCEPT = '.mp3,.m4a,.aac,.wav,.ogg,.oga,.opus,.flac,.webm,audio/*';
+
+const isAndroid = (): boolean => typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+const fmtClock = (s: number): string => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const isAbort = (e: unknown): boolean => (e as { name?: string } | null)?.name === 'AbortError';
+const offline = (): boolean => typeof navigator !== 'undefined' && navigator.onLine === false;
+// Loaded on first use of File or Mic, so the fingerprint code stays out of the startup bundle.
+const listen = () => import('./engine/listen');
 
 /**
- * The one prominent field. Titles search live providers (debounced while typing, immediately on
- * Enter); links are resolved on Enter, on Search or when pasted. A newer request aborts the older one.
- * Typing is never a preference signal: only the Add button makes a starting song.
+ * Whether the words are enough to ask Genius while the person is still typing. One word matches half the
+ * catalogue, so a live lyric search waits for two words.
+ */
+export function liveLyricsReady(text: string): boolean {
+  const t = text.trim();
+  return t.length >= 8 && t.split(/\s+/).filter(Boolean).length >= 2;
+}
+
+/**
+ * Which half of a plain-text answer leads. Four words or more is a line of a song, so its lyric matches go
+ * first; a short query is almost always a title or an artist.
+ */
+export function lyricsLead(query: string, lyricMatches: number): boolean {
+  return lyricMatches > 0 && query.trim().split(/\s+/).filter(Boolean).length >= 4;
+}
+
+const wait = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    const t = window.setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => (window.clearTimeout(t), reject(new DOMException('Aborted', 'AbortError'))), { once: true });
+  });
+
+const NARROW = '(max-width: 480px)';
+function useNarrow(): boolean {
+  const [m, setM] = useState(() => window.matchMedia(NARROW).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(NARROW);
+    const on = () => setM(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return m;
+}
+
+/**
+ * The one prominent field. Whatever is typed is understood without a mode switch:
+ *  - A music link is resolved (on Enter, on Search or when pasted).
+ *  - Anything else searches titles on the live providers, and from two words on also asks Genius which songs
+ *    contain those words. Both run as you type (debounced) and at once on Enter; the title answer shows as soon
+ *    as it lands and the lyric matches join it.
+ *  - Live results never blank the list: the last answer stays, dimmed, until the next one lands.
+ *  - File / Mic: up to 12 s is fingerprinted on the device; only the fingerprint goes to Shazam.
+ * A newer request aborts the older one. Searching or identifying is never a preference signal: only Add makes a starting song.
  */
 export function Search({ seeds, onAdd, onPreview, onDownload }: Props) {
   const [q, setQ] = useState('');
   const [view, setView] = useState<View>({ kind: 'idle' });
   const [artistFix, setArtistFix] = useState('');
+  /** A newer answer is on its way; the list on screen is the previous one. */
+  const [refreshing, setRefreshing] = useState(false);
+  const narrow = useNarrow();
+  const kind = useRef<View['kind']>('idle');
+  const cache = useRef(new Map<string, { at: number; view: View }>());
   const ctl = useRef<AbortController | null>(null);
   const timer = useRef<number | null>(null);
+  const rec = useRef<{ stop(): void; cancel(): void } | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const micBtn = useRef<HTMLButtonElement>(null);
+  const fileBtn = useRef<HTMLButtonElement>(null);
+  const stopBtn = useRef<HTMLButtonElement>(null);
+  const cancelBtn = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const bars = useRef<HTMLSpanElement>(null);
+  const initiator = useRef<'mic' | 'file' | null>(null);
   const seedKeys = new Set(seeds.map((s) => s.key));
+  const busyAudio = view.kind === 'audio';
+  const phase: AudioPhase | null = view.kind === 'audio' ? view.phase : null;
+  kind.current = view.kind;
 
   const cancel = () => {
     if (timer.current != null) window.clearTimeout(timer.current);
     timer.current = null;
     ctl.current?.abort();
     ctl.current = null;
+    rec.current?.cancel();
+    rec.current = null;
+    setRefreshing(false);
   };
 
-  const run = async (text: string) => {
-    const s = text.trim();
+  const fresh = (): AbortController => {
     cancel();
-    if (!s) {
-      setView({ kind: 'idle' });
-      return;
-    }
     const c = new AbortController();
     ctl.current = c;
+    return c;
+  };
+
+  const showIdentified = (r: IdentifyResponse, origin: Origin) =>
+    setView({ kind: 'identified', origin, tracks: r.results, query: r.query, named: r.named ?? 0, unplayable: r.unplayable ?? 0, heard: r.heard });
+
+  /** Maps a failed Genius/Shazam call to copy. Nothing retries on its own. */
+  const failService = (e: unknown, c: AbortController, origin: Origin) => {
+    if (c.signal.aborted || isAbort(e)) return;
+    setRefreshing(false);
+    const code = e instanceof ApiError ? (e.body as { code?: string } | null)?.code : undefined;
+    if (code === 'busy' || code === 'offline' || code === 'budget' || code === 'refused') setView({ kind: 'help', code, origin });
+    else if (offline()) setView({ kind: 'help', code: 'offline', origin });
+    else setView({ kind: 'help', code: 'failed', origin, detail: e instanceof Error ? e.message : String(e) });
+  };
+
+  /** Shows a finished answer and remembers it, so backspacing to an earlier phrase is instant and costs no request. */
+  const land = (key: string, v: View) => {
+    const c = cache.current;
+    c.delete(key);
+    c.set(key, { at: Date.now(), view: v });
+    while (c.size > CACHE_MAX) c.delete(c.keys().next().value as string);
+    setView(v);
+    setRefreshing(false);
+  };
+
+  /** Starts a request. A list already on screen stays (dimmed) instead of giving way to "Searching…". */
+  const begin = (what: 'search' | 'link') => {
+    if (kind.current === 'results' || kind.current === 'identified') setRefreshing(true);
+    else setView({ kind: 'loading', what });
+  };
+
+  const run = async (text: string, live = false) => {
+    const s = text.trim();
+    if (!s) {
+      cancel();
+      setView({ kind: 'error', message: 'Enter a title, artist, some lyrics or a music link.' });
+      return;
+    }
     const link = looksLikeUrl(s);
-    setView({ kind: 'loading', what: link ? 'link' : 'search' });
+    const key = s.toLowerCase().replace(/\s+/g, ' ');
+    const hit = cache.current.get(key);
+    if (hit && !link && Date.now() - hit.at < CACHE_MS) {
+      cancel();
+      setView(hit.view);
+      return;
+    }
+    const c = fresh();
+    begin(link ? 'link' : 'search');
     try {
       if (link) {
         const r = await api.resolve(s, c.signal);
@@ -59,25 +186,140 @@ export function Search({ seeds, onAdd, onPreview, onDownload }: Props) {
         if (r.kind === 'track') setView({ kind: 'results', tracks: [r.track], sources: { [r.track.provider]: { state: 'ok', count: 1, ms: r.ms } }, query: s, ms: r.ms });
         else if (r.kind === 'choice') setView({ kind: 'choice', res: r });
         else setView({ kind: 'error', message: r.message });
-      } else {
-        const r: SearchResponse = await api.search(s, c.signal);
-        if (c.signal.aborted) return;
-        setView({ kind: 'results', tracks: r.results, sources: r.sources, query: s, ms: r.ms });
+        setRefreshing(false);
+        return;
       }
+      // Titles and lyrics are asked together. Neither waits for the other to be shown, and a failed half never hides the other.
+      let songs: SearchResponse | null = null;
+      let lyrics: LyricPart | undefined = liveLyricsReady(s) && !offline() ? { state: 'pending' } : undefined;
+      const show = (final: boolean) => {
+        if (c.signal.aborted) return;
+        const v: View = { kind: 'results', tracks: songs?.results ?? [], sources: songs?.sources ?? {}, query: s, ms: songs?.ms ?? 0, lyrics };
+        if (final && lyrics?.state !== 'failed') land(key, v);
+        else {
+          setView(v);
+          setRefreshing(false);
+        }
+      };
+      const songsP = api.search(s, c.signal).then((r) => {
+        songs = r;
+        if (lyrics?.state === 'pending') show(false);
+      });
+      const lyricsP = lyrics
+        ? (live ? wait(LYRIC_LAG_MS, c.signal) : Promise.resolve()).then(() => api.searchLyrics(s, c.signal)).then(
+            (r) => {
+              lyrics = { state: 'ok', tracks: r.results, named: r.named ?? 0, unplayable: r.unplayable ?? 0 };
+            },
+            (e) => {
+              if (c.signal.aborted || isAbort(e)) return;
+              lyrics = { state: 'failed', code: e instanceof ApiError ? ((e.body as { code?: string } | null)?.code ?? 'failed') : 'failed' };
+            },
+          )
+        : Promise.resolve();
+      const [sr] = await Promise.allSettled([songsP, lyricsP]);
+      if (c.signal.aborted) return;
+      if (sr.status === 'rejected' && (isAbort(sr.reason) || (lyrics as LyricPart | undefined)?.state !== 'ok')) throw sr.reason;
+      show(true);
     } catch (e) {
-      if (c.signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) return;
+      if (c.signal.aborted || isAbort(e)) return;
+      setRefreshing(false);
+      // A search made while typing that fails keeps the list it had; only one the person asked for says it failed.
+      if (live && (kind.current === 'results' || kind.current === 'identified')) return;
       setView({ kind: 'error', message: e instanceof ApiError ? e.message : 'The discovery server did not answer. Is it running?' });
     }
+  };
+
+  /** Fingerprint on the device, then ask Shazam about the fingerprint only. */
+  const identify = async (samples: Float32Array, c: AbortController) => {
+    const L = await listen();
+    if (c.signal.aborted) return;
+    if (samples.length < MIN_CLIP_S * L.SAMPLE_RATE) return setView({ kind: 'help', code: 'short', origin: 'audio' });
+    if (offline()) return setView({ kind: 'help', code: 'offline', origin: 'audio' });
+    setView({ kind: 'audio', phase: 'analysing' });
+    try {
+      const sig = await L.makeSignature(L.pickWindow(samples), c.signal);
+      if (c.signal.aborted) return;
+      // Silence has too few peaks to match: say so instead of sending it.
+      if (L.peakCount(sig) < 20) return setView({ kind: 'identified', origin: 'audio', tracks: [], query: '', named: 0, unplayable: 0 });
+      const r = await api.identifyAudio(L.signatureUri(sig), L.signatureMillis(sig), c.signal);
+      if (!c.signal.aborted) showIdentified(r, 'audio');
+    } catch (e) {
+      failService(e, c, 'audio');
+    }
+  };
+
+  const captureFailed = (e: unknown, c: AbortController, from: 'mic' | 'file') => {
+    if (c.signal.aborted || isAbort(e)) return;
+    const code = (e as { code?: string } | null)?.code ?? '';
+    if (code === 'cancelled') return;
+    const map: Record<string, HelpCode> = { denied: 'denied', no_mic: 'no_mic', mic_failed: 'mic_failed', unreadable: 'unreadable', too_long: 'too_long', unsupported: from === 'mic' ? 'no_capture' : 'unsupported' };
+    setView({ kind: 'help', code: map[code] ?? (from === 'mic' ? 'mic_failed' : 'unreadable'), origin: 'audio', detail: e instanceof Error ? e.message : String(e) });
+  };
+
+  const startMic = async () => {
+    const c = fresh();
+    initiator.current = 'mic';
+    setView({ kind: 'audio', phase: 'permission' });
+    try {
+      const L = await listen();
+      let loudest = 0;
+      const r = await L.recordMic((elapsed, level) => {
+        loudest = Math.max(loudest, level);
+        // 2.5 s of nothing at all means the wrong microphone or a muted one: say so while there is still time to switch
+        if (!c.signal.aborted) setView((v) => (v.kind === 'audio' && v.phase === 'listening' ? { ...v, elapsed, level, quiet: elapsed >= 2.5 && loudest < 0.08 } : v));
+      }, c.signal, (bands, peak) => {
+        // straight to the DOM: re-rendering React 60 times a second for 24 bars would cost more than the sound it draws
+        const el = bars.current;
+        if (!el) return;
+        let top = 0;
+        for (let i = 0; i < bands.length; i++) {
+          const v = bands[i]!;
+          if (v > top) top = v;
+          (el.children[i] as HTMLElement | undefined)?.style.setProperty('--h', String(Math.max(0.08, v)));
+        }
+        panel.current?.style.setProperty('--lvl', (peak < L.SILENT_PEAK ? 0 : top).toFixed(3));
+      });
+      if (c.signal.aborted) return r.cancel();
+      rec.current = r;
+      setView({ kind: 'audio', phase: 'listening', elapsed: 0, level: 0, device: r.device });
+      const samples = await r.done;
+      rec.current = null;
+      await identify(samples, c);
+    } catch (e) {
+      rec.current = null;
+      captureFailed(e, c, 'mic');
+    }
+  };
+
+  const startFile = async (file: File | undefined) => {
+    if (!file) return;
+    const c = fresh();
+    initiator.current = 'file';
+    setView({ kind: 'audio', phase: 'reading', name: file.name });
+    try {
+      const L = await listen();
+      const samples = await L.samplesFromFile(file, c.signal);
+      if (!c.signal.aborted) await identify(samples, c);
+    } catch (e) {
+      captureFailed(e, c, 'file');
+    }
+  };
+
+  const stopAudio = () => {
+    cancel();
+    setView({ kind: 'idle' });
   };
 
   const onChange = (v: string) => {
     setQ(v);
     if (timer.current != null) window.clearTimeout(timer.current);
-    const s = v.trim();
-    if (s.length >= 3 && !looksLikeUrl(s)) timer.current = window.setTimeout(() => void run(s), AUTOCOMPLETE_MS);
-    else if (!s) {
+    timer.current = null;
+    const t = v.trim();
+    if (!t) {
       cancel();
       setView({ kind: 'idle' });
+    } else if (t.length >= 3 && !looksLikeUrl(t)) {
+      timer.current = window.setTimeout(() => void run(t, true), narrow ? AUTOCOMPLETE_PHONE_MS : AUTOCOMPLETE_MS);
     }
   };
 
@@ -87,6 +329,32 @@ export function Search({ seeds, onAdd, onPreview, onDownload }: Props) {
   };
 
   useEffect(() => cancel, []);
+
+  // No hidden listening: leaving the app (Android home, switching away on Windows) discards a capture in progress.
+  useEffect(() => {
+    const onHide = () => {
+      if (document.hidden && rec.current) {
+        cancel();
+        setView({ kind: 'idle' });
+      }
+    };
+    document.addEventListener('visibilitychange', onHide);
+    return () => document.removeEventListener('visibilitychange', onHide);
+  }, []);
+
+  // Focus goes to Stop when listening starts (which also closes the Android keyboard), to Cancel while reading or
+  // identifying, and back to the button that started it when the panel closes. Results are announced, never focused.
+  useEffect(() => {
+    if (phase === 'listening') stopBtn.current?.focus();
+    else if (phase === 'reading' || phase === 'analysing') {
+      const a = document.activeElement;
+      if (!a || a === document.body || panel.current?.contains(a)) cancelBtn.current?.focus();
+    } else if (!phase && initiator.current) {
+      const a = document.activeElement;
+      if (!a || a === document.body) (initiator.current === 'file' ? fileBtn.current : micBtn.current)?.focus();
+      initiator.current = null;
+    }
+  }, [phase]);
 
   const fixSpotify = async (title: string) => {
     if (!artistFix.trim()) return;
@@ -99,59 +367,166 @@ export function Search({ seeds, onAdd, onPreview, onDownload }: Props) {
     }
   };
 
+  const label = 'Search by song, artist, lyrics or music link';
+  // The full sentence does not fit inside the phone's bar; the accessible label stays complete.
+  const placeholder = !narrow ? label : 'Song, lyrics or link';
+
   return (
-    <section className={'search'} aria-label="Find songs">
-      <form className="search__form" role="search" onSubmit={submit}>
+    <section
+      className={'search'}
+      aria-label="Find songs"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && busyAudio) {
+          e.preventDefault();
+          stopAudio();
+        }
+      }}
+    >
+      <form className={classNames('search__form', q && 'has-text')} role="search" onSubmit={submit}>
         <label className="sr" htmlFor="q">
-          Search a song or paste a music link
+          {label}
         </label>
-        <span className="search__icon" aria-hidden="true">
-          <Glyph name="search" size={16} />
-        </span>
-        <input
-          ref={input}
-          id="q"
-          className="field search__field"
-          type="search"
-          inputMode="search"
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="Search a song or paste a music link"
-          value={q}
-          onChange={(e) => onChange(e.target.value)}
-          onPaste={(e) => {
-            const t = e.clipboardData.getData('text');
-            if (looksLikeUrl(t)) {
-              e.preventDefault();
-              setQ(t.trim());
-              void run(t);
-            }
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape' && q) {
-              e.preventDefault();
+        <span className="search__field">
+          <span className="search__icon" aria-hidden="true">
+            {view.kind === 'loading' || refreshing ? <span className="search__spin" /> : <Glyph name="search" size={16} />}
+          </span>
+          <input
+            ref={input}
+            id="q"
+            className="field"
+            type="search"
+            inputMode="search"
+            enterKeyHint="search"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={placeholder}
+            value={q}
+            disabled={busyAudio}
+            onChange={(e) => onChange(e.target.value)}
+            onPaste={(e) => {
+              const t = e.clipboardData.getData('text');
+              if (looksLikeUrl(t)) {
+                e.preventDefault();
+                setQ(t.trim());
+                void run(t);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && q && !busyAudio) {
+                e.preventDefault();
+                setQ('');
+                cancel();
+                setView({ kind: 'idle' });
+              }
+            }}
+            aria-describedby="q-hint q-privacy"
+          />
+          {/* Shown while there is text: clears the field and the results, and puts the cursor back. */}
+          <button
+            className="search__clear"
+            type="button"
+            aria-label="Clear search"
+            disabled={busyAudio}
+            onClick={() => {
               setQ('');
               cancel();
               setView({ kind: 'idle' });
-            }
+              input.current?.focus();
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+          <span className="find__acts">
+            <button ref={fileBtn} className="find__act find__act--file" type="button" disabled={busyAudio} onClick={() => fileInput.current?.click()} aria-label="Identify a song from an audio file" title="Identify a song from an audio file">
+              <FolderGlyph />
+            </button>
+            <button ref={micBtn} className="find__act find__act--mic" type="button" disabled={busyAudio} onClick={() => void startMic()} aria-label="Identify a song with the microphone" title="Identify a song with the microphone">
+              <MicGlyph />
+            </button>
+          </span>
+        </span>
+        <input
+          ref={fileInput}
+          className="sr"
+          type="file"
+          tabIndex={-1}
+          aria-hidden="true"
+          accept={AUDIO_ACCEPT}
+          onChange={(e) => {
+            void startFile(e.target.files?.[0]);
+            e.target.value = '';
           }}
-          aria-describedby="q-hint"
         />
-        <button className="push push--default" type="submit" disabled={!q.trim()}>
-          Search
-        </button>
       </form>
       <p id="q-hint" className="search__hint">
-        Song titles, or links from Spotify, SoundCloud, YouTube, YouTube Music and Deezer.
+        Type a title, an artist, a line you remember from the lyrics, or paste a music link. Results update as you type.
+      </p>
+      <p id="q-privacy" className="search__hint">
+        Audio is fingerprinted on your device; only fingerprints go to Shazam, and lyric words go to Genius.
       </p>
 
-      <div aria-live="polite" aria-busy={view.kind === 'loading'}>
+      <div className={classNames(refreshing && 'is-refreshing')} aria-live="polite" aria-busy={view.kind === 'loading' || refreshing || busyAudio}>
         {view.kind === 'loading' && (
           <p className="state">
             <span className="sdot sdot--busy" aria-hidden="true" />
             {view.what === 'link' ? 'Reading the link…' : 'Searching…'}
           </p>
         )}
+        {view.kind === 'audio' && (
+          <div className="listen" ref={panel}>
+            <span className={classNames('listen__pulse', view.phase === 'listening' && 'is-live')} aria-hidden="true">
+              {view.phase === 'reading' ? <FolderGlyph size={20} /> : <MicGlyph size={20} />}
+            </span>
+            <div className="listen__now">
+              <p className="listen__label">
+                {view.phase === 'permission'
+                  ? 'Waiting for microphone permission…'
+                  : view.phase === 'listening'
+                    ? 'Listening. Stops after 12 seconds.'
+                    : view.phase === 'reading'
+                      ? `Reading “${view.name ?? 'your file'}”…`
+                      : 'Identifying your clip…'}
+              </p>
+              {view.phase === 'listening' && (
+                <span className="listen__bars" ref={bars} aria-hidden="true">
+                  {Array.from({ length: 24 }, (_, i) => (
+                    <span key={i} className="listen__bar" />
+                  ))}
+                </span>
+              )}
+              {view.phase === 'listening' && (
+                <span className="listen__row" aria-hidden="true">
+                  <span className="listen__meter" title="Microphone level">
+                    <span className="listen__level" style={{ transform: `scaleX(${Math.max(0.03, view.level ?? 0)})` }} />
+                  </span>
+                  <span className="listen__time">
+                    {fmtClock(view.elapsed ?? 0)} / {fmtClock(LIMIT_S)}
+                  </span>
+                </span>
+              )}
+              {view.phase === 'reading' && <span className="listen__sub">Uses 12 seconds from the middle of the file.</span>}
+              {view.phase === 'listening' && view.quiet && (
+                <span className="listen__sub listen__sub--warn" role="status">
+                  Not hearing anything{view.device ? ` on ${view.device}` : ''}. Choose another microphone under Settings, or check it is not muted.
+                </span>
+              )}
+              {view.phase === 'listening' && !view.quiet && view.device && <span className="listen__sub">Using {view.device}</span>}
+            </div>
+            <span className="listen__actions">
+              {view.phase === 'listening' && (
+                <button ref={stopBtn} className="push push--default" type="button" onClick={() => rec.current?.stop()} aria-label="Stop listening and identify">
+                  Stop
+                </button>
+              )}
+              <button ref={cancelBtn} className="push" type="button" onClick={stopAudio} aria-label="Cancel identification">
+                Cancel
+              </button>
+            </span>
+          </div>
+        )}
+        {view.kind === 'help' && <Help code={view.code} origin={view.origin} detail={view.detail} onRetry={view.origin === 'lyrics' ? () => void run(q) : undefined} />}
         {view.kind === 'error' && (
           <p className="state state--bad" role="alert">
             <Glyph name="warning" size={14} /> {view.message}
@@ -180,20 +555,195 @@ export function Search({ seeds, onAdd, onPreview, onDownload }: Props) {
             {view.res.tracks.length > 0 && <TrackList tracks={view.res.tracks} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} label="Choose a song" />}
           </div>
         )}
-        {view.kind === 'results' &&
-          (view.tracks.length ? (
-            <>
-              <SourceLine sources={view.sources} />
-              <TrackList tracks={view.tracks} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} label={`Results for ${view.query}`} />
-            </>
-          ) : (
-            <p className="state">
-              No songs found for “{view.query}”.
-              {Object.values(view.sources).some((s) => s.state !== 'ok') ? ' Some sources did not answer; try again in a moment.' : ' Try the artist and title together.'}
-            </p>
-          ))}
+        {view.kind === 'results' && <ResultsView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} />}
+        {view.kind === 'identified' && <IdentifiedView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} />}
       </div>
     </section>
+  );
+}
+
+const LYRIC_NOTE: Record<string, string> = {
+  busy: 'Genius is busy, so lyric matches are missing. Keep typing or press Search to try again.',
+  offline: 'No connection for the lyric search.',
+  budget: 'Today’s transfer allowance is used up, so lyrics were not searched.',
+  refused: 'Genius refused the lyric search.',
+};
+
+/** Title results and lyric matches for one plain-text query, in the order that suits the query. */
+function ResultsView({
+  view,
+  seedKeys,
+  onAdd,
+  onPreview,
+  onDownload,
+}: {
+  view: Extract<View, { kind: 'results' }>;
+  seedKeys: Set<string>;
+  onAdd: (t: Track) => void;
+  onPreview: (t: Track) => void;
+  onDownload?: ((t: Track) => void) | undefined;
+}) {
+  const lyr = view.lyrics;
+  const titleKeys = new Set(view.tracks.map((t) => t.key));
+  const lyricTracks = lyr?.state === 'ok' ? lyr.tracks.filter((t) => !titleKeys.has(t.key)) : [];
+  const lead = lyricsLead(view.query, lyricTracks.length);
+  const common = { seedKeys, onAdd, onPreview, onDownload } as const;
+
+  const titles = view.tracks.length ? (
+    <div key="titles">
+      <SourceLine sources={view.sources} />
+      <TrackList tracks={view.tracks} {...common} label={`Results for ${view.query}`} />
+    </div>
+  ) : null;
+
+  const lyricBlock = lyricTracks.length ? (
+    <div key="lyrics">
+      <p className="srcline">
+        <span className="srcline__item">
+          <span className="sdot sdot--ok" aria-hidden="true" />
+          Lyrics matched via Genius. {lyricTracks.length === 1 ? '1 match found.' : `${lyricTracks.length} matches found.`}
+          {lyr?.state === 'ok' && lyr.unplayable > 0 ? ` ${lyr.unplayable} more ${lyr.unplayable === 1 ? 'is' : 'are'} not on a service Airwave plays from.` : ''}
+        </span>
+      </p>
+      <TrackList tracks={lyricTracks} {...common} label={`Songs with the words ${view.query}`} />
+    </div>
+  ) : null;
+
+  const blocks = lead ? [lyricBlock, titles] : [titles, lyricBlock];
+  const none = !view.tracks.length && !lyricTracks.length;
+
+  return (
+    <>
+      {blocks}
+      {lyr?.state === 'pending' && (
+        <p className="state">
+          <span className="sdot sdot--busy" aria-hidden="true" />
+          Checking lyrics…
+        </p>
+      )}
+      {lyr?.state === 'failed' && (
+        <p className="state" role="status">
+          <Glyph name="info" size={14} /> {LYRIC_NOTE[lyr.code] ?? 'The lyric search failed.'}
+        </p>
+      )}
+      {none && lyr?.state !== 'pending' && (
+        <p className="state">
+          {lyr?.state === 'ok' && lyr.named > 0
+            ? `No songs found for “${view.query}”. Genius found songs with these words, but none is on a service Airwave plays from.`
+            : `No songs found for “${view.query}”.${Object.values(view.sources).some((x) => x.state !== 'ok') ? ' Some sources did not answer; try again in a moment.' : ' Try the artist and title together, or a different line of the lyrics.'}`}
+        </p>
+      )}
+    </>
+  );
+}
+
+function IdentifiedView({
+  view,
+  seedKeys,
+  onAdd,
+  onPreview,
+  onDownload,
+}: {
+  view: Extract<View, { kind: 'identified' }>;
+  seedKeys: Set<string>;
+  onAdd: (t: Track) => void;
+  onPreview: (t: Track) => void;
+  onDownload?: ((t: Track) => void) | undefined;
+}) {
+  const n = view.tracks.length;
+  if (!n) {
+    let text: string;
+    if (view.origin === 'audio' && view.heard) text = `Shazam heard “${view.heard.title}” by ${view.heard.artist}, but it is not on a service Airwave plays from. Try searching for it by title.`;
+    else if (view.named > 0) text = 'Genius found songs with these words, but none is on a service Airwave plays from. Try a different line.';
+    else if (view.origin === 'lyrics') text = 'No lyric match found. Try a different line or fewer words.';
+    else text = 'No match found in this clip. Try a clearer section with music playing, or search by title or lyrics.';
+    return <p className="state">{text}</p>;
+  }
+  const more = view.unplayable > 0 ? ` ${view.unplayable} more ${view.unplayable === 1 ? 'is' : 'are'} not on a service Airwave plays from.` : '';
+  return (
+    <>
+      <p className="srcline">
+        <span className="srcline__item">
+          <span className="sdot sdot--ok" aria-hidden="true" />
+          {view.origin === 'lyrics' ? 'Lyrics matched via Genius.' : 'Audio identified via Shazam.'} {n === 1 ? '1 match found.' : `${n} matches found.`} Use Play to preview or Add to choose a starting song.{more}
+        </span>
+      </p>
+      <TrackList
+        tracks={view.tracks}
+        seedKeys={seedKeys}
+        onAdd={onAdd}
+        onPreview={onPreview}
+        onDownload={onDownload}
+        label={view.origin === 'lyrics' ? `Songs with the words ${view.query}` : 'Songs heard in your clip'}
+      />
+    </>
+  );
+}
+
+const HELP: Record<HelpCode, { title: string; body: string }> = {
+  denied: { title: 'Microphone access is off.', body: '' },
+  no_mic: { title: 'No microphone found.', body: 'Connect or turn on a microphone and try again, or choose an audio file.' },
+  mic_failed: { title: 'The microphone could not start.', body: 'Check that no other app is using it, then try again.' },
+  no_capture: { title: 'The microphone is not available here.', body: 'Choose an audio file instead.' },
+  unsupported: { title: 'That is not an audio file this app can read.', body: 'Choose an MP3, M4A, WAV, OGG, FLAC or WebM file.' },
+  unreadable: { title: 'This file could not be read.', body: 'It may be damaged or use an unsupported codec. Try another MP3, M4A, WAV, OGG, FLAC or WebM file.' },
+  too_long: { title: 'This file is too large to read here.', body: 'Trim it to a short clip and choose it again.' },
+  short: { title: 'That clip was too short.', body: 'Let it listen for at least 3 seconds while the music plays.' },
+  busy: { title: 'Shazam is busy.', body: 'Wait a moment, then try again.' },
+  offline: { title: 'You are offline.', body: 'Connect to the internet, then try again.' },
+  budget: { title: 'Today’s transfer allowance is used up.', body: 'It resets tomorrow, or raise it in Settings.' },
+  refused: { title: 'Shazam refused the request.', body: 'The service may have changed. Search by title or lyrics instead.' },
+  failed: { title: 'Identification failed.', body: 'Try again, or search by title.' },
+};
+
+function Help({ code, origin, detail, onRetry }: { code: HelpCode; origin: Origin; detail?: string | undefined; onRetry?: (() => void) | undefined }) {
+  let title = HELP[code].title;
+  let body: ReactNode = HELP[code].body;
+  if (origin === 'lyrics') {
+    if (code === 'busy') title = 'Genius is busy.';
+    if (code === 'failed') title = 'The lyrics search failed.';
+    if (code === 'refused') {
+      title = 'Genius refused the request.';
+      body = 'The service may have changed. Search by title instead.';
+    }
+  }
+  if (code === 'denied') {
+    body = isAndroid()
+      ? 'Allow it in Android Settings → Apps → Airwave Discovery → Permissions → Microphone, then try again. You can also choose an audio file.'
+      : 'Turn on “Microphone access” and “Let desktop apps access your microphone” in Windows Settings → Privacy & security → Microphone, then try again.';
+  }
+  return (
+    <div className="find__help" role="status">
+      <p className="find__help-title">
+        <Glyph name="warning" size={14} /> {title}
+      </p>
+      <p className="find__help-body">
+        {body}
+        {code === 'failed' && detail ? <span className="find__help-detail"> ({detail})</span> : null}
+      </p>
+      {onRetry && (code === 'busy' || code === 'offline' || code === 'failed') && (
+        <button className="push" type="button" onClick={onRetry}>
+          Try again
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** aqua-ui has no microphone glyph; drawn here on the same 24-unit grid, in currentColor. */
+function FolderGlyph({ size = 18 }: { size?: number }) {
+  return (
+    <svg className="find__glyph" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="currentColor">
+      <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4.1c.6 0 1.2.25 1.6.7l1.4 1.5h5.9A2.5 2.5 0 0 1 21 8.7v8.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z" />
+    </svg>
+  );
+}
+
+function MicGlyph({ size = 18 }: { size?: number }) {
+  return (
+    <svg className="find__glyph" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="currentColor">
+      <path d="M12 14.5a3.5 3.5 0 0 0 3.5-3.5V5.5a3.5 3.5 0 0 0-7 0V11a3.5 3.5 0 0 0 3.5 3.5zm6.3-3.6h-1.9a4.4 4.4 0 0 1-8.8 0H5.7a6.3 6.3 0 0 0 5.35 6.2V20H8v2h8v-2h-3.05v-2.9a6.3 6.3 0 0 0 5.35-6.2z" />
+    </svg>
   );
 }
 
@@ -213,7 +763,35 @@ function SourceLine({ sources }: { sources: Record<string, SourceState> }) {
   );
 }
 
-function TrackList({ tracks, seedKeys, onAdd, onPreview, onDownload, label }: { tracks: Track[]; seedKeys: Set<string>; onAdd: (t: Track) => void; onPreview: (t: Track) => void; onDownload?: (t: Track) => void; label: string }) {
+/** The matching lyric lines with the matched words in <mark>; line breaks shown as " / ". Plain text, never provider HTML. */
+export function LyricSnippet({ snippet, ranges }: { snippet: string; ranges: [number, number][] }) {
+  const parts: ReactNode[] = [];
+  const plain = (t: string) => t.replace(/\s*\n\s*/g, ' / ');
+  let at = 0;
+  [...ranges]
+    .sort((a, b) => a[0] - b[0])
+    .forEach(([a, b], i) => {
+      if (a < at || b <= a || b > snippet.length) return;
+      if (a > at) parts.push(plain(snippet.slice(at, a)));
+      parts.push(<mark key={i}>{plain(snippet.slice(a, b))}</mark>);
+      at = b;
+    });
+  if (at < snippet.length) parts.push(plain(snippet.slice(at)));
+  return <>“{parts}”</>;
+}
+
+function EvidenceLine({ e }: { e: Evidence }) {
+  if (e.kind === 'lyrics') {
+    return (
+      <span className="track__evidence track__evidence--quote">
+        <LyricSnippet snippet={e.snippet} ranges={e.ranges} />
+      </span>
+    );
+  }
+  return <span className="track__evidence">Heard in your clip{typeof e.offset === 'number' ? ` · ${fmtClock(e.offset)} into the song` : ''}</span>;
+}
+
+function TrackList({ tracks, seedKeys, onAdd, onPreview, onDownload, label }: { tracks: Track[]; seedKeys: Set<string>; onAdd: (t: Track) => void; onPreview: (t: Track) => void; onDownload?: ((t: Track) => void) | undefined; label: string }) {
   return (
     <ul className="well tracks" aria-label={label}>
       {tracks.map((t) => {
@@ -233,6 +811,7 @@ function TrackList({ tracks, seedKeys, onAdd, onPreview, onDownload, label }: { 
               </span>
               <span className="track__artist">{artistOf(t)}</span>
               {meta && <span className="track__meta">{meta}</span>}
+              {t.evidence && <EvidenceLine e={t.evidence} />}
               {t.warning && <span className="track__warn">{t.warning}</span>}
             </div>
             <span className="track__dur">{fmtDuration(t.duration)}</span>

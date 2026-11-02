@@ -10,6 +10,8 @@
  * (Deezer album genre is 0.8): artist 0.45, sound 0.3..0.55 by similarity, seed 0.25.
  */
 import { type Tag, makeTag, tagStrength } from './genres';
+import { SUBS } from './genre-table';
+import { fold } from './identity';
 import type { Store } from './store';
 import type { Dict } from './shape';
 
@@ -120,4 +122,36 @@ export function tagsFromMusicBrainz(body: Dict): Tag[] {
     .map((t) => makeTag(String(t['name'] ?? ''), 'MusicBrainz listeners', 'track', 0.6))
     .filter((t): t is Tag => t !== null && !seen.has(t.name) && (seen.add(t.name), true))
     .map((t) => ({ ...t, inferred: true }));
+}
+
+const HIPHOP_SUB_KEYS = new Set(SUBS.filter((x) => x.family === 'hip-hop').map((x) => x.key));
+export const MB_ARTIST_SOURCE = 'MusicBrainz artist tags';
+
+/** True when a song is placed in hip-hop but no tag names which kind. */
+export function needsHipHopSub(tags: Tag[] | null | undefined): boolean {
+  const t = (tags ?? []).filter(Boolean); // a family guessed from the artist or seed still needs its subgenre named
+  return t.some((g) => g.name === 'hip-hop') && !t.some((g) => HIPHOP_SUB_KEYS.has(g.name));
+}
+
+/**
+ * MusicBrainz artist search: the artist's community tags ("drill", "cloud rap", "jazz rap") name the
+ * hip-hop subgenres a family-only tag cannot. Only an exact, top-scoring name match is trusted, only
+ * hip-hop subgenres are kept, and the best two by vote count are returned, each below album-level
+ * metadata in confidence. Pure, so it can be tested without a network.
+ */
+export function hipHopSubsFromArtist(body: Dict, artist: string): Tag[] {
+  const hit = ((body['artists'] as Dict[] | undefined) ?? [])[0];
+  if (!hit || Number(hit['score'] ?? 0) < 95 || fold(String(hit['name'] ?? '')) !== fold(artist)) return [];
+  const votes = new Map<string, number>();
+  const label = new Map<string, string>();
+  for (const t of (hit['tags'] as Dict[] | undefined) ?? []) {
+    const tag = makeTag(String(t['name'] ?? ''), MB_ARTIST_SOURCE, 'artist', 0.5);
+    if (!tag || !HIPHOP_SUB_KEYS.has(tag.name)) continue;
+    votes.set(tag.name, (votes.get(tag.name) ?? 0) + Math.max(1, Number(t['count'] ?? 1)));
+    if (!label.has(tag.name)) label.set(tag.name, tag.label);
+  }
+  return [...votes.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([name]) => ({ name, label: label.get(name) ?? name, source: MB_ARTIST_SOURCE, scope: 'artist', confidence: 0.5, inferred: false }));
 }
