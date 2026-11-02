@@ -130,9 +130,10 @@ export function trackFromSearchItem(t: Record<string, unknown>): Track | null {
   const items = ((t['artists'] as { items?: Array<{ profile?: { name?: string } }> } | undefined)?.items) ?? [];
   const artists = items.map((a) => a.profile?.name ?? '').filter(Boolean);
   const ms = (t['duration'] as { totalMilliseconds?: number } | undefined)?.totalMilliseconds;
-  // searchDesktop carries the album and its cover under albumOfTrack. Without these the row has no
-  // artwork at all, and this is the search path both the Android app and the Windows shell prefer.
-  const album = t['albumOfTrack'] as { name?: unknown; coverArt?: { sources?: unknown } } | undefined;
+  // The cover lives on the track's album. Verified against a live searchDesktop response (2026-11-02):
+  // data.search.tracks.items[].track.album.coverArt.sources[] — three sources, 64/300/640 wide.
+  // albumOfTrack is accepted too: other pathfinder operations name the same object that way.
+  const album = (t['album'] ?? t['albumOfTrack']) as { name?: unknown; coverArt?: { sources?: unknown } } | undefined;
   const sources = Array.isArray(album?.coverArt?.sources) ? (album.coverArt.sources as Array<Record<string, unknown>>) : [];
   let artwork: string | null = null;
   let widest = -1;
