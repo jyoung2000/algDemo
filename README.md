@@ -66,6 +66,13 @@ cd discovery-demo/windows && ../../node_modules/.bin/electron-builder --win port
 cd discovery-demo/android && ./gradlew assembleDebug    # then: adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+**Signing.** Release builds are signed when a signing folder exists outside the repo: `~/airwave-signing`, or the folder named by
+`AIRWAVE_SIGNING_DIR`. It holds `keystore.properties` (Android: `storeFile`, `storePassword`, `keyAlias`, `keyPassword`) and
+`codesign.properties` (Windows: `pfxFile`, `pfxPassword`). Build the Android release with `./gradlew assembleRelease`. Without the
+folder both builds are left unsigned. The certificates are self-signed: they identify the publisher and keep updates installable over
+each other, but Windows SmartScreen still warns until the user trusts `airwave-discovery-codesign.cer`, and Play Protect treats a
+sideloaded APK as from an unknown developer. Keep the keystore: an APK signed with a different key cannot update this one.
+
 Run the Windows app from source with `../../node_modules/electron/dist/electron.exe discovery-demo/windows`
 after building `web`. Both builds are unsigned or debug-signed: Windows SmartScreen warns on the first run of
 the exe, and the APK has no release keystore. The Windows exe is about 107 MB because it carries Electron and

@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
   id("com.android.application")
   id("org.jetbrains.kotlin.android")
@@ -25,6 +27,14 @@ val syncWebAssets by tasks.registering(Sync::class) {
   }
 }
 
+// Release signing reads a keystore.properties file kept OUTSIDE the repo: AIRWAVE_SIGNING_DIR, or ~/airwave-signing.
+// It holds storeFile, storePassword, keyAlias and keyPassword. Without it the release build is left unsigned.
+val signingProps = Properties().apply {
+  val dir = System.getenv("AIRWAVE_SIGNING_DIR") ?: "${System.getProperty("user.home")}/airwave-signing"
+  val f = File(dir, "keystore.properties")
+  if (f.isFile) f.inputStream().use { load(it) }
+}
+
 android {
   namespace = "com.nowplaying.discovery"
   compileSdk = 35
@@ -50,9 +60,21 @@ android {
   // The model and wasm are already compact; compressing them only slows start-up.
   androidResources { noCompress += listOf("onnx", "data", "wasm") }
 
+  signingConfigs {
+    if (signingProps.getProperty("storeFile") != null) {
+      create("release") {
+        storeFile = file(signingProps.getProperty("storeFile"))
+        storePassword = signingProps.getProperty("storePassword")
+        keyAlias = signingProps.getProperty("keyAlias")
+        keyPassword = signingProps.getProperty("keyPassword")
+      }
+    }
+  }
+
   buildTypes {
     release {
       isMinifyEnabled = false
+      signingConfigs.findByName("release")?.let { signingConfig = it }
     }
   }
 
