@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import { CATALOG } from './engine/taste-catalog';
 import {
   BAND,
@@ -7,14 +7,15 @@ import {
   MAP_FAMILIES,
   familyName,
   MAP_SUBS,
-  bottomPct,
   familyAt,
   fitsAt,
-  leftPct,
   pointFor,
   subAt,
   type MapSub,
 } from './taste-map';
+
+import { AUTO_FIT_DELAY, AUTO_FIT_DURATION, FULL_VIEW, fitTaste, pointAt, projectPoint, revealPoint, selectionInView, tweenView, validPoint, viewportBackground, zoomTaste, type TasteViewport } from './taste-viewport';
+import './taste-picker-zoom.css';
 
 const pct = (x: number) => `${Math.round(x)}%`;
 
@@ -37,21 +38,74 @@ export function TastePicker({ placed, trail }: { placed?: { hue: number; bpm: nu
   const [hue, setHue] = useState(246);
   const [bpm, setBpm] = useState(126);
   const field = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<TasteViewport>(FULL_VIEW);
+  const currentView = useRef(view);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const frame = useRef<number | undefined>(undefined);
+  const manual = useRef(false);
+  const autoStarted = useRef(false);
+  const points = [...(placed ?? []), ...(trail ?? [])].filter(validPoint);
+  const pointsKey = JSON.stringify(points.map(p => [p.hue, p.bpm]));
+  const latestPoints = useRef(points);
+  latestPoints.current = points;
+  const updateView = (v: TasteViewport) => { currentView.current = v; setView(v); };
+  const stopMotion = () => {
+    clearTimeout(timer.current);
+    if (frame.current !== undefined) cancelAnimationFrame(frame.current);
+  };
+  const cancelAuto = () => { manual.current = true; stopMotion(); };
+  const select = (p: { hue: number; bpm: number }) => { setHue(p.hue); setBpm(p.bpm); };
+  const fit = () => {
+    cancelAuto();
+    const target = fitTaste(latestPoints.current);
+    select(selectionInView(target, { hue, bpm }));
+    updateView(target);
+  };
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onPreference = () => { if (media.matches) cancelAuto(); };
+    media.addEventListener('change', onPreference);
+    if (!media.matches && !manual.current && !autoStarted.current && latestPoints.current.length) {
+      timer.current = setTimeout(() => {
+        autoStarted.current = true;
+        const target = fitTaste(latestPoints.current);
+        select(selectionInView(target, { hue, bpm }));
+        const from = currentView.current;
+        const start = performance.now();
+        const tick = (now: number) => {
+          if (manual.current || media.matches) return;
+          const progress = (now - start) / AUTO_FIT_DURATION;
+          updateView(tweenView(from, target, progress));
+          if (progress < 1) frame.current = requestAnimationFrame(tick);
+        };
+        frame.current = requestAnimationFrame(tick);
+      }, AUTO_FIT_DELAY);
+    }
+    return () => { stopMotion(); media.removeEventListener('change', onPreference); };
+  }, [pointsKey]);
+  const pos = (h: number, b: number) => {
+    const p = projectPoint(view, { hue: h, bpm: b });
+    return { left: `${p.left}%`, bottom: `${p.bottom}%` };
+  };
+  const zoom = (delta: number) => {
+    cancelAuto();
+    updateView(zoomTaste(currentView.current, 1 / currentView.current.size + delta, { hue, bpm }));
+  };
 
   const sub: MapSub = useMemo(() => subAt(hue, bpm), [hue, bpm]);
   const fam = familyAt(hue);
-  const fit = useMemo(() => new Set(fitsAt(fam, bpm)), [fam, bpm]);
+  const fittingSubs = useMemo(() => new Set(fitsAt(fam, bpm)), [fam, bpm]);
   const famSubs = MAP_SUBS.filter((s) => s.family === fam);
   const felt = sub.halftime ? ` (felt as ${Math.round(sub.lo / 2)}–${Math.round(sub.hi / 2)})` : '';
 
   const setFrom = (clientX: number, clientY: number) => {
     const r = field.current?.getBoundingClientRect();
-    if (!r) return;
-    setHue(Math.min(359.9, Math.max(0, ((clientX - r.left) / r.width) * 360)));
-    setBpm(Math.round(BPM_MIN + Math.min(1, Math.max(0, 1 - (clientY - r.top) / r.height)) * (BPM_MAX - BPM_MIN)));
+    if (!r || !r.width || !r.height) return;
+    const p = pointAt(currentView.current, (clientX - r.left) / r.width, 1 - (clientY - r.top) / r.height);
+    select({ hue: Math.min(359.9, p.hue), bpm: p.bpm });
   };
   const onDown = (e: PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || e.isPrimary === false) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     setFrom(e.clientX, e.clientY);
   };
@@ -68,44 +122,52 @@ export function TastePicker({ placed, trail }: { placed?: { hue: number; bpm: nu
     const d = step[e.key];
     if (!d) return;
     e.preventDefault();
-    setHue((h) => Math.min(359.9, Math.max(0, h + d[0])));
-    setBpm((b) => Math.min(BPM_MAX, Math.max(BPM_MIN, b + d[1])));
+    const p = { hue: Math.min(359.9, Math.max(0, hue + d[0])), bpm: Math.min(BPM_MAX, Math.max(BPM_MIN, bpm + d[1])) };
+    select(p);
+    updateView(revealPoint(currentView.current, p));
   };
   const jump = (s: MapSub) => {
     const p = pointFor(s);
-    setHue(p.hue);
-    setBpm(Math.round(p.bpm));
+    cancelAuto();
+    select(p);
+    updateView(revealPoint(currentView.current, p));
   };
 
   return (
-    <div className="tpick">
+    <div className="tpick" onPointerDownCapture={cancelAuto} onKeyDownCapture={cancelAuto} onWheelCapture={cancelAuto}>
       <div className="tpick__head">
         <div className="tpick__title">{sub.name}</div>
         <div className="tpick__readout">
-          {familyName(fam)} · {bpm} BPM · {sub.years}
+          {familyName(fam)} · {Math.round(bpm)} BPM · {sub.years}
         </div>
       </div>
 
+      <div className="tpick__zoom" role="group" aria-label="Taste maker zoom controls">
+        <button type="button" aria-label="Zoom out" disabled={view.size >= 1} onClick={() => zoom(-.5)}>−</button>
+        <span className="tpick__zoom-level" aria-label="Map zoom">{(1 / view.size).toFixed(1)}×</span>
+        <button type="button" aria-label="Zoom in" disabled={view.size <= .25} onClick={() => zoom(.5)}>+</button>
+        <button type="button" onClick={() => { cancelAuto(); updateView(FULL_VIEW); }}>Show all</button>
+        <button type="button" disabled={!points.length} onClick={fit}>My taste</button>
+      </div>
       <div className="tpick__axes">
-        <span>Genre →</span>
-        <span>{BPM_MAX} BPM</span>
+        <span>Genre → · {Math.round(view.x * 360)}–{Math.round((view.x + view.size) * 360)}°</span>
+        <span>{Math.round(pointAt(view, 0, 1).bpm)} BPM</span>
       </div>
       <div
         ref={field}
         className="tpick__field"
         role="img"
         tabIndex={0}
-        aria-label={`Taste field. Left to right is the genre spectrum; bottom to top is ${BPM_MIN} to ${BPM_MAX} BPM. Drag, tap, or use the arrow keys.`}
-        aria-valuetext={`${sub.name}, ${familyName(fam)}, ${bpm} BPM`}
+        aria-label={`Taste maker field. Visible genre spectrum ${Math.round(view.x * 360)} to ${Math.round((view.x + view.size) * 360)} degrees; bottom to top is ${Math.round(pointAt(view, 0, 0).bpm)} to ${Math.round(pointAt(view, 0, 1).bpm)} BPM. Selected ${sub.name}, ${Math.round(bpm)} BPM. Drag, tap, or use the arrow keys.`}
         onPointerDown={onDown}
         onPointerMove={onMove}
         onKeyDown={onKey}
-        style={{ ['--tp-h' as string]: BAND }}
+        style={{ ['--tp-h' as string]: BAND, ...viewportBackground(view) }}
       >
         {trail && trail.length > 1 && (
           <svg className="tpick__trail" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
             <polyline
-              points={trail.map((p) => `${leftPct(p.hue)},${100 - bottomPct(p.bpm)}`).join(' ')}
+              points={trail.map((p) => `${projectPoint(view, p).left},${100 - projectPoint(view, p).bottom}`).join(' ')}
               vectorEffect="non-scaling-stroke"
             />
           </svg>
@@ -115,7 +177,7 @@ export function TastePicker({ placed, trail }: { placed?: { hue: number; bpm: nu
             key={`trail-${i}`}
             className={i === trail.length - 1 ? 'tpick__step tpick__step--now' : 'tpick__step'}
             title={`${i + 1}. ${p.label}`}
-            style={{ left: `${leftPct(p.hue)}%`, bottom: `${bottomPct(p.bpm)}%` }}
+            style={{ ...pos(p.hue, p.bpm) }}
           >
             {p.art ? <img src={p.art} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /> : null}
             <i aria-hidden="true">{i + 1}</i>
@@ -126,18 +188,21 @@ export function TastePicker({ placed, trail }: { placed?: { hue: number; bpm: nu
             key={i}
             className="tpick__placed"
             title={p.label}
-            style={{ left: `${leftPct(p.hue)}%`, bottom: `${bottomPct(p.bpm)}%`, background: `hsl(${p.hue} 90% 62%)` }}
+            style={{ ...pos(p.hue, p.bpm), background: `hsl(${p.hue} 90% 62%)` }}
           />
         ))}
-        <span className="tpick__dot" style={{ left: `${leftPct(hue)}%`, bottom: `${bottomPct(bpm)}%`, background: `hsl(${hue} 90% 66%)` }} />
+        <span className="tpick__dot" style={{ ...pos(hue, bpm), background: `hsl(${hue} 90% 66%)` }} />
       </div>
       <div className="tpick__axes">
         <span />
-        <span>{BPM_MIN} BPM</span>
+        <span>{Math.round(pointAt(view, 0, 0).bpm)} BPM</span>
       </div>
       <div className="tpick__fams" aria-hidden="true">
         {MAP_FAMILIES.map((f, i) => (
-          <span key={f.name} aria-current={i === fam}>
+          <span key={f.name} aria-current={i === fam} style={{
+            left: `${Math.max(0, (i / 8 - view.x) / view.size) * 100}%`,
+            width: `${Math.max(0, Math.min(1, ((i + 1) / 8 - view.x) / view.size) - Math.max(0, (i / 8 - view.x) / view.size)) * 100}%`,
+          }}>
             {SHORT[f.name] ?? f.name}
           </span>
         ))}
@@ -149,7 +214,7 @@ export function TastePicker({ placed, trail }: { placed?: { hue: number; bpm: nu
         <dl className="tpick__kv">
           <dt>Tempo</dt>
           <dd>
-            {Math.max(sub.lo, bpm - 4)}–{Math.min(sub.hi, bpm + 4)} BPM{felt} · {sub.name} runs {sub.lo}–{sub.hi}
+            {Math.round(Math.max(sub.lo, bpm - 4))}–{Math.round(Math.min(sub.hi, bpm + 4))} BPM{felt} · {sub.name} runs {sub.lo}–{sub.hi}
           </dd>
           <dt>Era</dt>
           <dd>{sub.years}</dd>
@@ -180,7 +245,7 @@ export function TastePicker({ placed, trail }: { placed?: { hue: number; bpm: nu
             key={s.key}
             type="button"
             className="tpick__chip"
-            data-fit={fit.has(MAP_SUBS.filter((x) => x.family === fam).indexOf(s)) ? 1 : 0}
+            data-fit={fittingSubs.has(MAP_SUBS.filter((x) => x.family === fam).indexOf(s)) ? 1 : 0}
             aria-pressed={s.key === sub.key}
             onClick={() => jump(s)}
           >

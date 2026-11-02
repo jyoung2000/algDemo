@@ -1,0 +1,29 @@
+/* More specific than the shared stylesheet regardless of import order. */
+.tpick .tpick__field { touch-action: pinch-zoom; background-repeat: no-repeat; }
+.tpick .tpick__dot, .tpick .tpick__placed, .tpick .tpick__step {
+  margin: 0;
+  transform: translate(-50%, 50%);
+}
+.tpick .tpick__zoom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tpick .tpick__zoom button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  background: var(--panel, #fff);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.tpick .tpick__zoom button:disabled { opacity: .45; cursor: default; }
+.tpick .tpick__zoom button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tpick .tpick__zoom-level { color: var(--ink-2, #565b60); font-variant-numeric: tabular-nums; }
+.tpick .tpick__fams { display: block; position: relative; height: 18px; overflow: hidden; }
+.tpick .tpick__fams span { position: absolute; top: 0; }

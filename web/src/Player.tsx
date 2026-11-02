@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
 import { api, type Playback, type Track } from './api';
+import { PREVIEW_ROUTE } from './engine/shape';
 import { Art } from './Art';
 import { Volume } from './Volume';
+import { PlayerActions, type TrackActionProps } from './PlayerActions';
 import { Wheel } from './Wheel';
 import { loadYouTube, youtubeEmbedUrl, type YTPlayer } from './youtube';
 import { ListenMeter, PROVIDER_LABEL, artistOf, classNames, fmtDuration, isSilent, markKey, qualifiesCompletion, toggleMuteState, type RepeatMode } from './util';
@@ -27,6 +29,8 @@ interface Props {
   canNext: boolean;
   shuffle: boolean;
   repeat: RepeatMode;
+  /** Like, dislike and download for the song now playing. */
+  actions: TrackActionProps;
   onShuffle: () => void;
   onRepeat: () => void;
   onPrev: () => void;
@@ -86,7 +90,7 @@ type Mode = 'full' | 'preview' | 'embed' | 'none';
  * A song with no YouTube Music version falls back to its 30-second Deezer preview in an <audio>
  * element. SoundCloud songs play in SoundCloud's widget, whose progress and volume Airwave cannot reach.
  */
-export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, repeat, onShuffle, onRepeat, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext }: Props) {
+export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, repeat, actions, onShuffle, onRepeat, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext }: Props) {
   const audio = useRef<HTMLAudioElement>(null);
   const meter = useRef(new ListenMeter());
   const [paused, setPaused] = useState(true);
@@ -230,12 +234,33 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     if (!a) return;
     if (src) {
       setLoading(true);
-      a.src = src;
-      a.play().catch(() => {
-        // Autoplay can be refused; the user presses play. Not an error and not a skip.
-        setLoading(false);
-        setPaused(true);
-      });
+      // The catalogue holds a stable route, not a playable address: Deezer signs its preview URLs for
+      // about fifteen minutes, so one is fetched now. A late answer for a song the user has already
+      // moved past must not take over the element, hence the live check.
+      let live = true;
+      const begin = (url: string) => {
+        if (!live || audio.current !== a) return;
+        a.src = url;
+        a.play().catch(() => {
+          // Autoplay can be refused; the user presses play. Not an error and not a skip.
+          setLoading(false);
+          setPaused(true);
+        });
+      };
+      if (src.startsWith(PREVIEW_ROUTE)) {
+        api.previewUrl(src).then(
+          (r) => begin(r.url),
+          (e: unknown) => {
+            if (!live) return;
+            setLoading(false);
+            setPaused(true);
+            setErr(e instanceof Error && e.message ? e.message : 'This preview could not be reached.');
+          },
+        );
+      } else begin(src);
+      return () => {
+        live = false;
+      };
     } else {
       a.pause();
       a.removeAttribute('src');
@@ -487,12 +512,14 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
                 {transport}
                 {volume}
               </div>
+              <PlayerActions key={t!.key} {...actions} />
             </div>
           ) : (
             <>
               {progress}
               {transport}
               {volume}
+              <PlayerActions key={t!.key} {...actions} />
               {openLinks}
             </>
           )}

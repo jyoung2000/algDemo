@@ -39,8 +39,14 @@ describe('the player strip (NP-STRIP-001)', () => {
     expect(css).toMatch(/\.vol__bar \{[^}]*padding: 8px 0;[^}]*background-clip: content-box;/);
   });
 
-  it('reserves a dock tall enough for the title row, the progress row and the controls', () => {
+  it('reserves a dock fallback height, then measures the real dock at runtime', () => {
+    // The CSS value is only the first paint's estimate: App.tsx measures .np--docked and sets --dock-h,
+    // because the dock's rows wrap differently by width, language and whether a song is playing.
     expect(css).toMatch(/@media \(max-width: 899px\) \{\s*\/\* Docked player[^}]*:root \{\s*--dock-h: 150px;/);
+    const app = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    expect(app).toMatch(/querySelector<HTMLElement>\('\.np--docked'\)/);
+    expect(app).toMatch(/setProperty\('--dock-h', `\$\{dock\.offsetHeight\}px`\)/);
+    expect(app).toMatch(/new ResizeObserver\(set\)/);
   });
 
   it('fixes the desktop player to the bottom of the window and leaves room under the list', () => {

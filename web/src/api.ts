@@ -426,6 +426,12 @@ export const api = {
   importHistory: (events: import('./engine/import').ImportedEvent[]) => call<{ recorded: number; duplicates: number; skipped: number }>('/api/import/history', { method: 'POST', body: json({ events }) }),
   impressions: (keys: string[]) => call<{ recorded: number }>('/api/impressions', { method: 'POST', body: json({ keys }) }),
   fullSong: (track: Track) => call<{ id: string | null; source: string }>('/api/full-song', { method: 'POST', body: json({ track }) }),
+  /**
+   * A signed, playable address for a Deezer preview. The catalogue holds the stable route
+   * (/api/preview/deezer/<id>) because Deezer's own URLs are signed for about fifteen minutes;
+   * an <audio> element cannot play that route, so it is exchanged for a fresh URL at play time.
+   */
+  previewUrl: (route: string) => call<{ url: string }>(route.replace('/api/preview/', '/api/preview-url/')),
   saved: () => call<{ items: SavedItem[] }>('/api/saved'),
   health: (refresh = false) => call<Health>(`/api/health${refresh ? '?refresh=1' : ''}`),
   status: () => call<Status>('/api/status'),

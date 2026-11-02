@@ -23,6 +23,8 @@ const active = (j: DlJob): boolean => j.state === 'queued' || j.state === 'runni
 export function useDownloads(flash: (m: string) => void) {
   const on = downloadsAvailable();
   const [jobs, setJobs] = useState<DlJob[]>([]);
+  /** Which native job each song's download button started, so the button can show that job's state. */
+  const [trackJobs, setTrackJobs] = useState<Record<string, string>>({});
   const [format, setFormatState] = useState<DlFormat>(loadFormat);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -74,7 +76,7 @@ export function useDownloads(flash: (m: string) => void) {
   }, []);
 
   const start = useCallback(
-    async (tool: DlTool, url: string, label: string) => {
+    async (tool: DlTool, url: string, label: string): Promise<DlJob | null> => {
       try {
         if (tool === 'spotdl' && !(await spotdlHere())) {
           // spotDL's own method: read the Spotify track, find it on YouTube Music, fetch that with yt-dlp.
@@ -96,15 +98,15 @@ export function useDownloads(flash: (m: string) => void) {
           const r2 = await dl.start(target.url, target.tool, format, label === url ? song.title : label);
           flash(`Downloading “${r2.job.label || label}”. Follow it in Downloads.`);
           poll();
-          return true;
+          return r2.job;
         }
         const r = await dl.start(url, tool, format, label);
         flash(`Downloading “${r.job.label || label}”. Follow it in Downloads.`);
         poll();
-        return true;
+        return r.job;
       } catch (e) {
         flash((e as Error).message);
-        return false;
+        return null;
       }
     },
     [format, flash, poll, spotdlHere],
@@ -113,9 +115,13 @@ export function useDownloads(flash: (m: string) => void) {
   /** Songs with their own link go straight to a tool; others are matched on YouTube Music first. */
   const downloadTrack = useCallback(
     async (t: Track) => {
+      const remember = (job: DlJob | null) => {
+        if (job) setTrackJobs((m) => ({ ...m, [t.key]: job.id }));
+        return Boolean(job);
+      };
       const label = `${t.title}${t.artists?.length ? ` — ${t.artists.join(', ')}` : ''}`;
       const direct = targetFor(t);
-      if (direct) return start(direct.tool, direct.url, label);
+      if (direct) return remember(await start(direct.tool, direct.url, label));
       flash(`Finding “${t.title}” on YouTube Music…`);
       try {
         const m = await api.fullSong(t);
@@ -124,7 +130,7 @@ export function useDownloads(flash: (m: string) => void) {
           flash(`No confident YouTube Music match for “${t.title}”, so nothing was downloaded.`);
           return false;
         }
-        return start(target.tool, target.url, label);
+        return remember(await start(target.tool, target.url, label));
       } catch (e) {
         flash(`Could not look up “${t.title}”: ${(e as Error).message}`);
         return false;
@@ -133,7 +139,21 @@ export function useDownloads(flash: (m: string) => void) {
     [start, flash],
   );
 
-  return { on, jobs, refresh: poll, format, setFormat, start, downloadTrack, activeCount: jobs.filter(active).length };
+  /** What the song's own download button shows: the state of the job that button started. */
+  const trackState = useCallback(
+    (key: string | null | undefined): 'idle' | 'working' | 'done' | 'error' => {
+      const id = key ? trackJobs[key] : undefined;
+      const job = id ? jobs.find((j) => j.id === id) : undefined;
+      if (!job) return 'idle';
+      if (active(job)) return 'working';
+      if (job.state === 'done') return 'done';
+      if (job.state === 'failed') return 'error';
+      return 'idle';
+    },
+    [jobs, trackJobs],
+  );
+
+  return { on, jobs, refresh: poll, format, setFormat, start, downloadTrack, trackState, activeCount: jobs.filter(active).length };
 }
 
 export type Downloads = ReturnType<typeof useDownloads>;
@@ -164,7 +184,7 @@ export function DownloadsView({ d }: { d: Downloads }) {
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!linkOk) return;
-    void d.start(tool, link.trim(), link.trim()).then((ok) => ok && setLink(''));
+    void d.start(tool, link.trim(), link.trim()).then((job) => job && setLink(''));
   };
 
   return (

@@ -376,6 +376,26 @@ export function App() {
     return () => ro.disconnect();
   }, [docked, Boolean(playing)]);
 
+  // The phone dock is measured the same way: its rows (title, progress, controls, song actions) wrap
+  // differently by width and language, so a fixed --dock-h would either cover the last song or leave a gap.
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!docked || !playing) {
+      root.style.removeProperty('--dock-h');
+      return;
+    }
+    const dock = document.querySelector<HTMLElement>('.np--docked');
+    if (!dock) return;
+    const set = () => root.style.setProperty('--dock-h', `${dock.offsetHeight}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(dock);
+    return () => {
+      ro.disconnect();
+      root.style.removeProperty('--dock-h');
+    };
+  }, [docked, Boolean(playing)]);
+
   return (
     <div className={classNames('app', docked && 'app--docked', playing && docked && 'has-dock', !docked && 'has-strip')}>
       <a className="skip" href="#main">
@@ -713,6 +733,33 @@ export function App() {
           canNext={Boolean(nextStep)}
           shuffle={shuffle}
           repeat={repeat}
+          actions={{
+            flags: (playing && flags[playing.track.key]) || {},
+            downloadState: dls.trackState(playing?.track.key),
+            downloadAvailable: dls.on,
+            onFeedback: async (kind) => {
+              const it = playing ? items.find((x) => x.track.key === playing.track.key) : undefined;
+              if (it) {
+                onFeedback(it, kind);
+                return;
+              }
+              if (!playing) return;
+              // The song playing may have left the list (a new queue, or a search result): record it directly.
+              setFlags((f) => {
+                const cur = { ...(f[playing.track.key] ?? {}) };
+                if (kind === 'like') Object.assign(cur, { like: true, dislike: false });
+                if (kind === 'unlike') cur.like = false;
+                if (kind === 'dislike') Object.assign(cur, { dislike: true, like: false });
+                if (kind === 'undislike') cur.dislike = false;
+                return { ...f, [playing.track.key]: cur };
+              });
+              if (result?.sample) return;
+              await api.feedback(kind, playing.track, { event_id: newEventId(kind, playing.track.key) });
+              await refreshTaste();
+            },
+            onDownload: async () => (playing ? dls.downloadTrack(playing.track) : false),
+            onDownloads: () => setTab('downloads'),
+          }}
           onShuffle={toggleShuffle}
           onRepeat={cycleRepeat}
           onPrev={goPrev}

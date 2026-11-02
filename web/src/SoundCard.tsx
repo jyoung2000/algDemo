@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import type { TasteSummary } from './api';
 import { classNames } from './util';
-import { SNAPSHOT_MAX, describeSound, gradientStops, pushSnapshot, snapshotColor, soundChanges, soundView, familyLabel, type Change, type Snapshot, type SoundView } from './taste-view';
+import { SNAPSHOT_MAX, describeSound, gradientStops, pushSnapshot, soundChanges, soundView, type Change, type Snapshot, type SoundView } from './taste-view';
+import { GenreTicker } from './GenreTicker';
+import { TasteHistory } from './TasteHistory';
+import './mobile-refinement.css';
 
 const STORE_KEY = 'airwave.sound.history';
-const pct = (x: number) => `${Math.round(x * 100)}%`;
 
 function loadHistory(): Snapshot[] {
   try {
@@ -68,12 +70,13 @@ export function SoundCard({ taste, listening, defaultOpen = false }: { taste: Ta
           <span className={classNames('sound__live', listening && 'is-on')} aria-hidden="true" />
           Your sound
         </span>
-        <span className="sound__sum">{summary}</span>
+        <span className="sound__summary-label">Your listening mix</span>
         <span className="sound__chev" aria-hidden="true">
           <Glyph name={open ? 'chevron-up' : 'chevron-down'} size={14} />
         </span>
       </button>
 
+      <GenreTicker entries={view?.leaves ?? []} />
       <div className={classNames('sound__bar', pulse && 'is-pulse')} role="img" aria-label={summary}>
         {view && view.families.length ? (
           <span className="sound__grad" style={barVars(view)} title={describeSound(view, 8)} />
@@ -141,18 +144,7 @@ export function SoundCard({ taste, listening, defaultOpen = false }: { taste: Ta
             </div>
           )}
 
-          {history.length > 1 && (
-            <div className="sound__hist">
-              <p className="sound__histh">How it has moved <span>last {history.length} updates, oldest left</span></p>
-              <ol className="ribbon" aria-label="Your sound over time, oldest first">
-                {history.map((s) => (
-                  <li key={s.t + ':' + s.events} className="ribbon__col" title={s.segs.slice(0, 4).map((g) => `${g.label ?? familyLabel(g.slug)} ${pct(g.share)}`).join(', ')}>
-                    <span className="ribbon__stack" style={{ background: gradientOfSnap(s) }} />
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
+          <TasteHistory history={history} />
           {view && view.unplaced.length > 0 && <p className="sound__note">Also liked, outside the eight families: {view.unplaced.slice(0, 4).join(', ')}.</p>}
           <p className="sound__note">Learned from {view?.events ?? 0} {view?.events === 1 ? 'song' : 'songs'} you played. Recent listening counts most; it halves every two weeks.</p>
         </div>
@@ -173,14 +165,4 @@ function barVars(view: SoundView): CSSProperties {
   return v as CSSProperties;
 }
 
-/** One column of the history: that update's breakdown as hard-edged bands, top to bottom, so each share is readable. */
-function gradientOfSnap(s: Snapshot): string {
-  const total = s.segs.reduce((a, g) => a + g.share, 0) || 1;
-  let at = 0;
-  const stops = s.segs.map((g) => {
-    const from = at;
-    at += (g.share / total) * 100;
-    return `${g.color ?? snapshotColor(g.slug)} ${from.toFixed(1)}% ${at.toFixed(1)}%`;
-  });
-  return stops.length ? `linear-gradient(180deg, ${stops.join(', ')})` : 'transparent';
-}
+
