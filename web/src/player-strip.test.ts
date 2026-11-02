@@ -39,12 +39,23 @@ describe('the player strip (NP-STRIP-001)', () => {
     expect(css).toMatch(/\.vol__bar \{[^}]*padding: 8px 0;[^}]*background-clip: content-box;/);
   });
 
-  it('stacks the docked controls on every docked width so five buttons fit', () => {
-    expect(css).toMatch(/@media \(max-width: 899px\) \{\s*\/\* Docked player[^}]*:root \{\s*--dock-h: 132px;/);
+  it('reserves a dock tall enough for the title row, the progress row and the controls', () => {
+    expect(css).toMatch(/@media \(max-width: 899px\) \{\s*\/\* Docked player[^}]*:root \{\s*--dock-h: 150px;/);
   });
 
   it('fixes the desktop player to the bottom of the window and leaves room under the list', () => {
     expect(css).toMatch(/@media \(min-width: 900px\) \{\s*\.rail \{[^}]*position: fixed;[^}]*bottom: 0;/);
     expect(css).toMatch(/\.app\.has-strip \{\s*padding-bottom:/);
+  });
+
+  it('keeps the phone dock inside the viewport: slim volume, always-visible playhead on touch (NP-STRIP-004)', () => {
+    // The dock is one column: progress on a full row, then transport and volume that may shrink, never push past the edge.
+    expect(css).toMatch(/\.np--docked \.np__dockctl \{[^}]*grid-template-columns: minmax\(0, 1fr\);/);
+    expect(css).toMatch(/\.np__controls \.vol \{[^}]*flex: 1 1 0;[^}]*min-width: 0;/);
+    // The volume channel is 4px; the touch area is padding, not a fat bar.
+    expect(css).toMatch(/\.np--docked \.vol__bar \{[^}]*height: 4px;[^}]*max-width: 112px;/);
+    // A touch screen has no hover: the playhead is drawn always, 18px, on a tall touch area.
+    expect(css).toMatch(/@media \(hover: none\), \(pointer: coarse\) \{\s*\.np \.prog__bar \{[^}]*padding: 12px 0;/);
+    expect(css).toMatch(/\.np \.prog__bar::-webkit-slider-thumb \{\s*width: 18px;\s*height: 18px;\s*opacity: 1;/);
   });
 });

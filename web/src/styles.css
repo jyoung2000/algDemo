@@ -1397,6 +1397,25 @@ a.push {
 .np .prog__bar:disabled {
   opacity: 0.45;
 }
+/* Playhead: a touch screen has no hover, so the head is always drawn there, larger, and the track gets a tall
+   invisible touch area (the drawn line stays 4px) so it can be dragged easily with a thumb. */
+@media (hover: none), (pointer: coarse) {
+  .np .prog__bar {
+    box-sizing: content-box;
+    padding: 12px 0;
+    background-clip: content-box;
+  }
+  .np .prog__bar::-webkit-slider-thumb {
+    width: 18px;
+    height: 18px;
+    opacity: 1;
+  }
+  .np .prog__bar::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    opacity: 1;
+  }
+}
 .np--panel .transport {
   grid-area: tx;
   justify-content: center;
@@ -2168,22 +2187,40 @@ a.push {
   }
 
   .np--docked .transport {
-    gap: 6px;
+    gap: 2px;
+    flex: none;
   }
   .np--docked .tbtn {
     width: 44px;
     height: 44px;
   }
-  .np--docked .tbtn--mode {
-    width: 40px;
-    height: 40px;
-  }
-  .np--docked .vol__btn {
+  .np--docked .tbtn--main {
     width: 44px;
     height: 44px;
   }
-  .np--docked .vol__bar {
+  .np--docked .tbtn--mode {
+    width: 36px;
     height: 44px;
+    border-radius: 12px;
+  }
+  .np--docked .vol__btn {
+    width: 40px;
+    height: 44px;
+  }
+  /* A slim channel: the bar is 4px tall, with the 44px touch area held by the padding so it is easy to hit. */
+  .np__controls .vol {
+    flex: 1 1 0;
+    min-width: 0;
+    width: auto;
+    gap: 2px;
+  }
+  .np--docked .vol__bar {
+    height: 4px;
+    min-width: 0;
+    flex: 1 1 auto;
+    width: auto;
+    max-width: 112px;
+    padding: 20px 0;
     border: 0;
     box-shadow: none;
     background:
@@ -2199,12 +2236,8 @@ a.push {
   .np__controls {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .np__controls .transport {
-    flex: 1 1 auto;
-    justify-content: center;
+    gap: 6px;
+    min-width: 0;
   }
   .card,
   .search,
@@ -3135,7 +3168,7 @@ a.push {
 @media (max-width: 899px) {
   /* Docked player (phone and narrow window): art and title take the whole top row; transport and volume share the row under it. */
   :root {
-    --dock-h: 132px;
+    --dock-h: 150px;
   }
   .np--docked {
     grid-template-columns: minmax(0, 1fr);
@@ -3143,9 +3176,10 @@ a.push {
   }
   .np--docked .np__dockctl {
     width: auto;
-    grid-template-columns: auto minmax(0, 1fr);
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
     align-items: center;
-    column-gap: 6px;
+    row-gap: 2px;
   }
 }
 

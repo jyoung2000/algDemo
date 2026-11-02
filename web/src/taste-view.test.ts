@@ -25,7 +25,33 @@ describe('soundView', () => {
     expect(v.families.length).toBeGreaterThanOrEqual(2);
     expect(v.families.reduce((a, f) => a + f.share, 0)).toBeCloseTo(1, 5);
     for (let i = 1; i < v.families.length; i++) expect(v.families[i - 1]!.share).toBeGreaterThanOrEqual(v.families[i]!.share);
-    expect(v.families[0]!.name).toMatch(/hip/i);
+    // Strongest first by share of kept listening: the family with the most plays leads, whatever its score.
+    expect(v.families[0]!.share).toBeGreaterThanOrEqual(v.families[v.families.length - 1]!.share);
+  });
+
+  it('header names the top three genres with the same percents the rows show', () => {
+    const v = soundView(summary([g('trap', 2, 6), g('rage', 2, 2), g('pop', 2, 2), g('house', 2, 2)]))!;
+    const header = describeSound(v, 3);
+    expect(header).toBe(v.leaves.slice(0, 3).map((l) => `${l.label} ${l.pct}%`).join(', '));
+    expect(header.split(',').length).toBe(3);
+    for (const l of v.leaves.slice(0, 3)) {
+      const row = v.families.flatMap((f) => [...f.subs.map((s) => [s.label, s.pct] as const), ...(f.broadPct ? [[`General ${f.name.toLowerCase()}`, f.broadPct] as const] : [])]).find(([n]) => n === l.label);
+      expect(row?.[1]).toBe(l.pct);
+    }
+  });
+
+  it('rounds every row together so the percents add to exactly 100 and a family is the sum of its rows', () => {
+    const v = soundView(summary([g('trap', 1, 1), g('rage', 1, 1), g('southern', 1, 1), g('hip-hop', 1, 1), g('pop', 1, 1), g('house', 1, 1), g('techno', 1, 1)]))!;
+    const rows = v.families.flatMap((f) => [...f.subs.map((s) => s.pct), f.broadPct]);
+    expect(rows.reduce((a, b) => a + b, 0)).toBe(100);
+    for (const f of v.families) expect(f.pct).toBe(f.subs.reduce((a, s) => a + s.pct, 0) + f.broadPct);
+    expect(v.families.reduce((a, f) => a + f.pct, 0)).toBe(100);
+  });
+
+  it('never puts a slash in a genre label', () => {
+    const v = soundView(summary([g('southern', 2, 2), g('trap-metal', 1, 1)]))!;
+    expect(v.leaves.every((l) => !l.label.includes('/'))).toBe(true);
+    expect(describeSound(v, 8)).not.toContain('/');
   });
 
   it('keeps the subgenre under its family and names it as the picker does', () => {
@@ -33,6 +59,7 @@ describe('soundView', () => {
     const f = v.families[0]!;
     expect(f.subs.map((s) => s.label.toLowerCase())).toContain('trap');
     expect(f.subs[0]!.share + f.broad).toBeCloseTo(f.share, 5);
+    expect(f.pct).toBe(f.subs.reduce((a, s) => a + s.pct, 0) + f.broadPct);
   });
 
   it('lists skipped genres separately and never as part of the gradient', () => {

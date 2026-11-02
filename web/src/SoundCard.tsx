@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import type { TasteSummary } from './api';
 import { classNames } from './util';
-import { SNAPSHOT_MAX, describeSound, gradientOf, gradientStops, pushSnapshot, snapshotColor, soundChanges, soundView, familyLabel, type Change, type Snapshot, type SoundView } from './taste-view';
+import { SNAPSHOT_MAX, describeSound, gradientStops, pushSnapshot, snapshotColor, soundChanges, soundView, familyLabel, type Change, type Snapshot, type SoundView } from './taste-view';
 
 const STORE_KEY = 'airwave.sound.history';
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -107,20 +107,20 @@ export function SoundCard({ taste, listening, defaultOpen = false }: { taste: Ta
                   <div className="sfam__row">
                     <span className="sfam__dot" style={{ background: f.color }} aria-hidden="true" />
                     <span className="sfam__name">{f.name}</span>
-                    <span className="sfam__pct">{pct(f.share)}</span>
+                    <span className="sfam__pct">{f.pct}%</span>
                   </div>
                   <div className="sfam__track" aria-hidden="true">
-                    <span className="sfam__fill" style={{ width: pct(f.share), background: f.color }} />
+                    <span className="sfam__fill" style={{ width: `${f.pct}%`, background: f.color }} />
                   </div>
-                  {(f.subs.length > 0 || f.broad > 0.01) && (
+                  {(f.subs.length > 0 || f.broadPct > 0) && (
                     <ul className="sfam__subs">
-                      {f.subs.slice(0, 5).map((s) => (
+                      {f.subs.map((s) => (
                         <li key={s.key} className="schip" title={`${s.label}: ${s.plays} kept`}>
                           <span className="schip__dot" style={{ background: s.color }} aria-hidden="true" />
-                          {s.label} <b>{pct(s.share)}</b>
+                          {s.label} <b>{s.pct}%</b>
                         </li>
                       ))}
-                      {f.broad > 0.01 && <li className="schip schip--broad">General {f.name.toLowerCase()} <b>{pct(f.broad)}</b></li>}
+                      {f.broadPct > 0 && <li className="schip schip--broad">General {f.name.toLowerCase()} <b>{f.broadPct}%</b></li>}
                     </ul>
                   )}
                 </li>
@@ -146,7 +146,7 @@ export function SoundCard({ taste, listening, defaultOpen = false }: { taste: Ta
               <p className="sound__histh">How it has moved <span>last {history.length} updates, oldest left</span></p>
               <ol className="ribbon" aria-label="Your sound over time, oldest first">
                 {history.map((s) => (
-                  <li key={s.t + ':' + s.events} className="ribbon__col" title={s.segs.map((g) => `${familyLabel(g.slug)} ${pct(g.share)}`).join(', ')}>
+                  <li key={s.t + ':' + s.events} className="ribbon__col" title={s.segs.slice(0, 4).map((g) => `${g.label ?? familyLabel(g.slug)} ${pct(g.share)}`).join(', ')}>
                     <span className="ribbon__stack" style={{ background: gradientOfSnap(s) }} />
                   </li>
                 ))}
@@ -173,7 +173,14 @@ function barVars(view: SoundView): CSSProperties {
   return v as CSSProperties;
 }
 
+/** One column of the history: that update's breakdown as hard-edged bands, top to bottom, so each share is readable. */
 function gradientOfSnap(s: Snapshot): string {
-  // Vertical stack: reuse the horizontal helper rotated.
-  return gradientOf(s.segs.map((g) => ({ color: snapshotColor(g.slug), share: g.share }))).replace('90deg', '180deg');
+  const total = s.segs.reduce((a, g) => a + g.share, 0) || 1;
+  let at = 0;
+  const stops = s.segs.map((g) => {
+    const from = at;
+    at += (g.share / total) * 100;
+    return `${g.color ?? snapshotColor(g.slug)} ${from.toFixed(1)}% ${at.toFixed(1)}%`;
+  });
+  return stops.length ? `linear-gradient(180deg, ${stops.join(', ')})` : 'transparent';
 }

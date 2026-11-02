@@ -18,6 +18,8 @@ export interface SubView {
   color: string;
   /** Share of the liked taste, 0..1. */
   share: number;
+  /** Whole percent for display; every row of the card is rounded together so they add to 100. */
+  pct: number;
   plays: number;
 }
 
@@ -27,9 +29,21 @@ export interface FamilyView {
   color: string;
   /** Share of the liked taste, 0..1; the shares of all families sum to 1. */
   share: number;
+  /** Whole percent: the sum of this family's rows, so a family never disagrees with what is inside it. */
+  pct: number;
   subs: SubView[];
   /** Share that names only the family (a tag like 'hip-hop' without a subgenre). */
   broad: number;
+  broadPct: number;
+}
+
+/** One row of the breakdown, a subgenre or a family's general share: what the header and the history draw. */
+export interface LeafView {
+  label: string;
+  color: string;
+  share: number;
+  pct: number;
+  family: string;
 }
 
 export interface AvoidView {
@@ -40,6 +54,8 @@ export interface AvoidView {
 
 export interface SoundView {
   families: FamilyView[];
+  /** Every row of the breakdown, strongest first. The header names the top three. */
+  leaves: LeafView[];
   /** What the bar blends: each subgenre (and each family's general share) with its own colour, by hue. */
   bar: { color: string; share: number }[];
   avoided: AvoidView[];
@@ -48,6 +64,9 @@ export interface SoundView {
   /** Liked genres the 8 families do not cover (shown as text, never dropped silently). */
   unplaced: string[];
 }
+
+/** Tag bubbles never carry a slash: 'Southern hip-hop / crunk' reads 'Southern hip-hop & crunk'. */
+export const plainLabel = (s: string) => s.replace(/\s*\/\s*/g, ' & ');
 
 const FAMILY_NAME = new Map(FAMILIES.map((f) => [f.slug, f.name] as const));
 // Soft, even-lightness colours: eight hues that sit next to each other without clashing when blended.
@@ -90,7 +109,11 @@ export function soundView(taste: TasteSummary | null | undefined): SoundView | n
   if (!taste || !taste.events) return null;
   const all: TasteGenre[] = taste.genres ?? [...taste.likes, ...taste.avoids];
   const liked = all.filter((g) => g.score > 0.05);
-  const total = liked.reduce((a, g) => a + g.score, 0);
+  // Share is the kept listening a genre accounts for: its plays (songs kept), out of all kept plays.
+  // Plays count each song once per genre, so the numbers match what the chips and the header say.
+  // Falls back to score when a profile carries no plays (older summaries).
+  const weightOf = (g: TasteGenre) => (g.plays ?? 0) > 0 ? (g.plays ?? 0) : g.score;
+  const total = liked.reduce((a, g) => a + weightOf(g), 0);
 
   const fam = new Map<string, FamilyView>();
   const unplaced: string[] = [];
@@ -100,10 +123,10 @@ export function soundView(taste: TasteSummary | null | undefined): SoundView | n
       unplaced.push(g.label || g.name);
       continue;
     }
-    const share = total > 0 ? g.score / total : 0;
+    const share = total > 0 ? weightOf(g) / total : 0;
     let f = fam.get(c.familySlug);
     if (!f) {
-      f = { slug: c.familySlug, name: c.family, color: familyColor(c.familySlug), share: 0, subs: [], broad: 0 };
+      f = { slug: c.familySlug, name: c.family, color: familyColor(c.familySlug), share: 0, pct: 0, subs: [], broad: 0, broadPct: 0 };
       fam.set(c.familySlug, f);
     }
     f.share += share;
@@ -112,7 +135,7 @@ export function soundView(taste: TasteSummary | null | undefined): SoundView | n
       if (have) {
         have.share += share;
         have.plays += g.plays ?? 0;
-      } else f.subs.push({ key: c.key, label: c.subgenre, color: c.color, share, plays: g.plays ?? 0 });
+      } else f.subs.push({ key: c.key, label: plainLabel(c.subgenre), color: c.color, share, pct: 0, plays: g.plays ?? 0 });
     } else f.broad += share;
   }
   for (const f of fam.values()) for (const sv of f.subs) sv.color = subColor(f.slug, sv.key);
@@ -123,13 +146,43 @@ export function soundView(taste: TasteSummary | null | undefined): SoundView | n
     .map((f) => ({ ...f, share: f.share * norm, broad: f.broad * norm, subs: f.subs.map((s) => ({ ...s, share: s.share * norm })).sort((a, b) => b.share - a.share) }))
     .sort((a, b) => b.share - a.share);
 
+  // Round every row together (largest remainder) so the percents add to exactly 100, and a family's
+  // percent is the sum of its own rows. Rounding each one alone gave 102% totals.
+  const rows: { share: number; set: (p: number) => void }[] = [];
+  for (const f of families) {
+    for (const s of f.subs) rows.push({ share: s.share, set: (p) => (s.pct = p) });
+    if (f.broad > 0.0005) rows.push({ share: f.broad, set: (p) => (f.broadPct = p) });
+  }
+  const rowTotal = rows.reduce((a, r) => a + r.share, 0) || 1;
+  const exact = rows.map((r) => (r.share / rowTotal) * 100);
+  const floors = exact.map(Math.floor);
+  let left = 100 - floors.reduce((a, b) => a + b, 0);
+  exact
+    .map((x, i) => ({ i, rem: x - Math.floor(x) }))
+    .sort((a, b) => b.rem - a.rem || a.i - b.i)
+    .forEach(({ i }) => {
+      if (left > 0) {
+        floors[i]!++;
+        left--;
+      }
+    });
+  rows.forEach((r, i) => r.set(floors[i]!));
+  for (const f of families) f.pct = f.subs.reduce((a, s) => a + s.pct, 0) + f.broadPct;
+  families.sort((a, b) => b.pct - a.pct || b.share - a.share);
+  const topRows: LeafView[] = families
+    .flatMap((f) => [
+      ...f.subs.map((s) => ({ label: s.label, color: s.color, share: s.share, pct: s.pct, family: f.name })),
+      ...(f.broadPct > 0 ? [{ label: `General ${f.name.toLowerCase()}`, color: f.color, share: f.broad, pct: f.broadPct, family: f.name }] : []),
+    ])
+    .sort((a, b) => b.pct - a.pct || b.share - a.share);
+
   const avoided: AvoidView[] = all
     .filter((g) => g.score < -0.15)
     .sort((a, b) => a.score - b.score)
     .slice(0, 4)
     .map((g) => {
       const c = classify([tagOf(g)], null);
-      return { label: (c?.subgenre ?? g.label) || g.name, family: c?.family ?? null, skips: g.skips ?? 0 };
+      return { label: plainLabel((c?.subgenre ?? g.label) || g.name), family: c?.family ?? null, skips: g.skips ?? 0 };
     });
 
   // The bar: one entry per subgenre plus each family's general share, in spectrum order, at most 8
@@ -142,15 +195,19 @@ export function soundView(taste: TasteSummary | null | undefined): SoundView | n
   const kept = keep.reduce((a, l) => a + l.share, 0) || 1;
   const bar = keep.sort((a, b) => a.hue - b.hue).map((l) => ({ color: l.color, share: l.share / kept }));
 
-  return { families, bar, avoided, bpm: taste.bpm, events: taste.events, unplaced };
+  return { families, leaves: topRows, bar, avoided, bpm: taste.bpm, events: taste.events, unplaced };
 }
 
-/** Plain-words list for assistive tech and for the collapsed bar: "Hip-hop 62%, Pop 25%". */
+/**
+ * Plain-words list for the header and assistive tech: the top genres with their percents, e.g.
+ * "Trap 38%, General hip-hop 38%, Rage 12%". These are the same rounded rows the breakdown draws, so the
+ * header never disagrees with the rows below it.
+ */
 export function describeSound(v: SoundView | null, max = 3): string {
-  if (!v || !v.families.length) return 'Still learning your sound';
-  return v.families
+  if (!v || !v.leaves.length) return 'Still learning your sound';
+  return v.leaves
     .slice(0, max)
-    .map((f) => `${f.name} ${Math.round(f.share * 100)}%`)
+    .map((l) => `${l.label} ${l.pct}%`)
     .join(', ');
 }
 
@@ -223,7 +280,8 @@ export function soundChanges(prev: SoundView | null, next: SoundView | null, min
 export interface Snapshot {
   t: number;
   events: number;
-  segs: { slug: string; share: number }[];
+  /** Family-only entries are older saves; new ones carry the genre row's own label and colour. */
+  segs: { slug: string; share: number; label?: string; color?: string }[];
 }
 
 export const SNAPSHOT_MAX = 16;
@@ -231,7 +289,7 @@ export const SNAPSHOT_MAX = 16;
 /** Adds the current state to the history when it differs from the newest one; keeps the last SNAPSHOT_MAX. */
 export function pushSnapshot(list: Snapshot[], v: SoundView | null, now: number): Snapshot[] {
   if (!v || !v.families.length) return list;
-  const segs = v.families.map((f) => ({ slug: f.slug, share: Math.round(f.share * 1000) / 1000 }));
+  const segs = v.leaves.map((l) => ({ slug: l.family, share: Math.round(l.share * 1000) / 1000, label: l.label, color: l.color }));
   const last = list[list.length - 1];
   if (last && last.events === v.events && JSON.stringify(last.segs) === JSON.stringify(segs)) return list;
   return [...list, { t: now, events: v.events, segs }].slice(-SNAPSHOT_MAX);
