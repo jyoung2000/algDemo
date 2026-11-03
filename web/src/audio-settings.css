@@ -85,20 +85,128 @@
   border: 0;
 }
 .audio-settings__bands legend { margin-bottom: 8px; }
-.audio-settings__band-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 24px;
+
+/* ---- the equalizer rail: a dB scale, a preamp fader, ten band faders, in one row ----
+   Shape after the suite's own equalizer (music-player, after the iTunes window): vertical faders
+   side by side, low to high, short labels under each, value above. The faders are native
+   horizontal ranges rotated a quarter turn, so drag, arrow keys, Home/End, the Aqua thumb and the
+   44px target are all the ones the rest of the app has. Ten horizontal sliders in two columns
+   read as a settings form, not an equalizer. */
+.eqr {
+  --eqr-rail: 150px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 6px 6px;
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  background: var(--panel-2, #f4f4f2);
 }
-.audio-settings__band { min-width: 0; }
+.eqr__scale {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  justify-content: space-between;
+  /* the scale spans the rail only: value above and label below are not part of it */
+  height: var(--eqr-rail);
+  margin-bottom: 20px;
+  padding: 0 6px 0 2px;
+  color: var(--ink-2);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+/* The ten bands are one group inside the row; it lays them out exactly as the row does. */
+.eqr__bands {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  gap: 2px;
+}
+.eqr__band {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.eqr__band--preamp {
+  margin-right: 8px;
+  padding-right: 8px;
+  border-right: 1px solid var(--hair);
+}
+.eqr__value,
+.eqr__label {
+  color: var(--ink-2);
+  font-size: 10px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.eqr__band--preamp .eqr__label { font-weight: 700; }
+/* The rail box is tall and narrow; the input inside is drawn wide and rotated into it. */
+.eqr__rail {
+  position: relative;
+  width: 44px;
+  height: var(--eqr-rail);
+  /* the 0 dB centre line, through every rail, so a flat band reads as flat */
+  background: linear-gradient(to bottom, transparent calc(50% - 0.5px), var(--ink-3) calc(50% - 0.5px), var(--ink-3) calc(50% + 0.5px), transparent calc(50% + 0.5px));
+}
+.eqr__rail input {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  box-sizing: border-box;
+  width: var(--eqr-rail);
+  height: 44px;
+  margin: 0;
+  padding: 19px 0;
+  border: 0;
+  appearance: none;
+  background: linear-gradient(to right, #0071e3 var(--pct, 50%), #dcdcd8 var(--pct, 50%));
+  background-clip: content-box;
+  border-radius: 3px;
+  box-shadow: none;
+  cursor: ns-resize;
+  /* -90°: the range's max (right) becomes the top, so up is louder */
+  transform: translate(-50%, -50%) rotate(-90deg);
+}
+.eqr__rail input::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.22), 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.eqr__rail input::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.22), 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.eqr__rail input:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+/* Eleven 44px rails need 484px plus the scale; under that, the row scrolls sideways rather than
+   stacking — an equalizer that wraps into two rows stops being an equalizer. */
+@media (max-width: 560px) {
+  .eqr { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+  .eqr__bands { flex: none; }
+  .eqr__band { flex: 0 0 40px; }
+  .eqr__rail { width: 40px; }
+}
 .audio-settings input:focus-visible,
 .audio-settings select:focus-visible,
 .audio-settings .chk:has(input:focus-visible) .box {
   outline: 2px solid var(--focus, var(--accent));
   outline-offset: 2px;
-}
-@media (max-width: 520px) {
-  .audio-settings__band-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (pointer: coarse) {
   .audio-settings .audio-settings__preset { font-size: 16px; }

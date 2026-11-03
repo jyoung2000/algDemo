@@ -17,6 +17,33 @@ interface Props {
 const db = (value: number) => `${value > 0 ? '+' : ''}${value.toFixed(1)} dB`;
 const fill = (value: number, min: number, max: number): CSSProperties =>
   ({ '--pct': `${((value - min) / (max - min)) * 100}%` } as CSSProperties);
+/** The label every graphic equalizer prints under a band: "1K", not "1000 Hz". */
+const shortHz = (hz: number) => (hz >= 1000 ? `${hz / 1000}K` : String(hz));
+
+/**
+ * One vertical fader. The input stays a native horizontal range — drag, arrow keys, Home/End,
+ * the 44px target and the Aqua thumb all come for free — and is turned on its side by the
+ * stylesheet, so left/right on the keyboard still mean down/up as they do on every rotated fader.
+ */
+function Fader({ id, label, name, value, min, max, step, onChange, strong }: {
+  id: string; label: string; name: string; value: number; min: number; max: number; step: number;
+  onChange: (value: number) => void; strong?: boolean;
+}) {
+  return (
+    <div className={`eqr__band${strong ? ' eqr__band--preamp' : ''}`}>
+      <output className="eqr__value" htmlFor={id} aria-hidden="true">{value > 0 ? '+' : ''}{value.toFixed(1)}</output>
+      <div className="eqr__rail">
+        <input
+          id={id} type="range" min={min} max={max} step={step} value={value}
+          aria-label={name} aria-orientation="vertical" aria-valuetext={db(value)}
+          style={fill(value, min, max)}
+          onChange={(event) => onChange(Number(event.target.value))}
+        />
+      </div>
+      <span className="eqr__label" aria-hidden="true">{label}</span>
+    </div>
+  );
+}
 
 /** MIXER-001 / EQ-001: settings only; App owns applying them to the audio engine. */
 export function AudioSettings({ settings, onSettings }: Props) {
@@ -91,43 +118,38 @@ export function AudioSettings({ settings, onSettings }: Props) {
           <option value="custom" disabled>Custom</option>
           {EQ_PRESETS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select>
+        {/*
+          A graphic equalizer, in the shape people expect and the suite already draws
+          (music-player's Equalizer, after the iTunes window): a dB scale on the left, the preamp
+          as the first fader, then the ten bands as vertical faders in one row, low to high.
+          Ten horizontal sliders in two columns read as a settings form, not an equalizer.
+        */}
         <fieldset className="audio-settings__bands">
-          <legend>Frequency bands</legend>
-          <div className="audio-settings__band-grid">
-            {EQ_BANDS_HZ.map((hz, index) => {
-              const gain = eq.gains[index] ?? 0;
-              const bandId = `${id}-band-${hz}`;
-              return (
-                <div className="audio-settings__band" key={hz}>
-                  <div className="audio-settings__heading">
-                    <label htmlFor={bandId}>{hz} Hz</label>
-                    <output id={`${bandId}-output`} htmlFor={bandId}>{db(gain)}</output>
-                  </div>
-                  <div className="dial audio-settings__range">
-                    <input id={bandId} type="range" min={EQ_GAIN_MIN_DB} max={EQ_GAIN_MAX_DB}
-                      step={0.5} value={gain} aria-valuetext={db(gain)}
-                      aria-describedby={`${bandId}-output`} style={fill(gain, EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB)}
-                      onChange={(event) => {
-                        const gains = [...eq.gains];
-                        gains[index] = clampGain(Number(event.target.value));
-                        updateEq({ gains, presetId: 'custom' });
-                      }} />
-                  </div>
-                </div>
-              );
-            })}
+          <legend>Equalizer faders</legend>
+          <div className="eqr" role="presentation">
+            <div className="eqr__scale" aria-hidden="true">
+              <span>+12</span><span>0</span><span>−12</span>
+            </div>
+            <Fader
+              id={`${id}-preamp`} label="Pre" name="Preamp" strong
+              value={eq.preampDb} min={EQ_PREAMP_MIN_DB} max={EQ_PREAMP_MAX_DB} step={0.5}
+              onChange={(value) => updateEq({ preampDb: clampPreamp(value), presetId: 'custom' })}
+            />
+            <div className="eqr__bands" role="group" aria-label="Frequency bands">
+              {EQ_BANDS_HZ.map((hz, index) => (
+                <Fader
+                  key={hz} id={`${id}-band-${hz}`} label={shortHz(hz)} name={`${hz} Hz`}
+                  value={eq.gains[index] ?? 0} min={EQ_GAIN_MIN_DB} max={EQ_GAIN_MAX_DB} step={0.5}
+                  onChange={(value) => {
+                    const gains = [...eq.gains];
+                    gains[index] = clampGain(value);
+                    updateEq({ gains, presetId: 'custom' });
+                  }}
+                />
+              ))}
+            </div>
           </div>
         </fieldset>
-        <div className="audio-settings__heading">
-          <label htmlFor={`${id}-preamp`}>Preamp</label>
-          <output id={`${id}-preamp-output`} htmlFor={`${id}-preamp`}>{db(eq.preampDb)}</output>
-        </div>
-        <div className="dial audio-settings__range">
-          <input id={`${id}-preamp`} type="range" min={EQ_PREAMP_MIN_DB} max={EQ_PREAMP_MAX_DB}
-            step={0.5} value={eq.preampDb} aria-valuetext={db(eq.preampDb)}
-            aria-describedby={`${id}-preamp-output`} style={fill(eq.preampDb, EQ_PREAMP_MIN_DB, EQ_PREAMP_MAX_DB)}
-            onChange={(event) => updateEq({ preampDb: clampPreamp(Number(event.target.value)), presetId: 'custom' })} />
-        </div>
         <label className="chk audio-settings__toggle">
           <input type="checkbox" checked={eq.limiter} aria-describedby={`${id}-limiter-help`}
             onChange={(event) => updateEq({ limiter: event.target.checked })} />

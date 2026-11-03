@@ -81,6 +81,33 @@ describe('Audio settings — MIXER-001 and EQ-001', () => {
     for (const preset of EQ_PRESETS) expect(within(select).getByRole('option', { name: preset.name })).toBeTruthy();
   });
 
+  it('lays the bands out as a graphic equalizer: one rail of vertical faders, side by side', () => {
+    // The owner's screenshot showed ten horizontal sliders in two columns, which reads as a form,
+    // not an equalizer. The suite's own equalizer (music-player Equalizer.tsx, after the iTunes
+    // window) is the reference: a dB scale, a preamp fader, then the ten bands as vertical faders
+    // in one row, short labels in the EQ convention ("1K"), the full frequency as the accessible name.
+    render(panel());
+    const bank = screen.getByRole('group', { name: 'Frequency bands' });
+    const rails = within(bank).getAllByRole('slider');
+    expect(rails).toHaveLength(10);
+    for (const input of rails) expect(input.getAttribute('aria-orientation')).toBe('vertical');
+    // Order is low to high, left to right, as on every graphic equalizer.
+    expect(rails.map((r) => r.getAttribute('aria-label'))).toEqual(EQ_BANDS_HZ.map((hz) => `${hz} Hz`));
+    // Visible labels use the short form.
+    const labels = [...bank.querySelectorAll('.eqr__label')].map((l) => l.textContent?.trim());
+    expect(labels).toEqual(['32', '64', '125', '250', '500', '1K', '2K', '4K', '8K', '16K']);
+    // The preamp is its own vertical fader beside the bands, not a horizontal slider underneath.
+    expect(slider('Preamp').getAttribute('aria-orientation')).toBe('vertical');
+    // One row: the bank is a horizontal flex container and nothing stacks it into columns.
+    expect(css).toMatch(/\.eqr\s*\{[^}]*display:\s*flex/);
+    expect(css).not.toMatch(/\.audio-settings__band-grid/);
+    // The rail keeps the 44px target while reading as vertical: the horizontal input is rotated.
+    expect(css).toMatch(/\.eqr__rail input\s*\{[^}]*rotate\(-90deg\)/);
+    expect(css).toMatch(/\.eqr__rail input\s*\{[^}]*height:\s*44px/);
+    // A dB scale sits beside the rails so the eye has a reference for 0.
+    expect(bank.closest('.eqr')?.querySelector('.eqr__scale')?.textContent).toMatch(/\+12.*0.*[−-]12/s);
+  });
+
   it('preserves complete EQ state when toggling on or limiter', () => {
     const eq = { ...applyPreset(EQ_DEFAULTS, 'rock'), preampDb: -2 };
     const onSettings = vi.fn();
@@ -138,7 +165,8 @@ describe('Audio settings — MIXER-001 and EQ-001', () => {
   it('keeps Aqua checkbox art, scoped 44px targets and visible focus — UX-TOUCH-001 / UX-FOCUS-001', () => {
     const { container } = render(panel());
     for (const input of container.querySelectorAll('.chk input')) expect(input.nextElementSibling?.classList.contains('box')).toBe(true);
-    for (const input of screen.getAllByRole('slider')) expect(input.closest('.dial')).toBeTruthy();
+    // Every slider has an in-flow 44px target: the crossfader on its .dial, each fader on its rail.
+    for (const input of screen.getAllByRole('slider')) expect(input.closest('.dial') ?? input.closest('.eqr__rail')).toBeTruthy();
     expect(css).toMatch(/\.audio-settings__range input\s*\{[^}]*height: 44px;/);
     expect(css).toMatch(/\.audio-settings__toggle\s*\{[^}]*min-height: 44px;/);
     expect(css).toMatch(/\.audio-settings__preset\s*\{[^}]*min-height: 44px;/);

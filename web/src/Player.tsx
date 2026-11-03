@@ -535,16 +535,12 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     />
   ) : null;
 
-  // What the mixer is doing, in the listener's words. Only shown when they turned it on and the
-  // current song is one it can actually reach, so it never contradicts the line above it.
-  // No glyph: the 12px shuffle mark read as a stray "x" beside the sentence, and `.np__note` is
-  // clamped to two lines in the panel, so the words need the whole width.
-  const mixLine =
-    playing && mix > 0 && mode === 'preview' && mixNote ? (
-      <p className="np__note np__note--mix" aria-live="polite">
-        {mixNote}
-      </p>
-    ) : null;
+  // What the mixer is doing, in the listener's words — and it takes the *place* of the preview
+  // note rather than stacking under it. Two grey lines under the artist made the strip forty
+  // pixels taller and read as clutter; and while the mixer is on, a preview is playing *because*
+  // of the mixer, so "no full version was found" would be the wrong explanation anyway.
+  // No glyph: a 12px shuffle mark read as a stray "x" beside the sentence.
+  const blending = playing && mix > 0 && mode === 'preview' && Boolean(mixNote);
 
   const status = !playing ? null : err ? (
     <p className="np__note np__note--bad">
@@ -554,6 +550,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     <p className="np__note">Finding the full song…</p>
   ) : mode === 'full' ? (
     <p className="np__note">{loading ? 'Loading the full song…' : 'Full song, played by YouTube’s own player.'}</p>
+  ) : blending ? (
+    <p className="np__note np__note--mix" aria-live="polite">{mixNote}</p>
   ) : src ? (
     <p className="np__note">
       {loading ? 'Loading the preview…' : badVideo ? '30-second preview from Deezer: YouTube won’t play the full song here.' : '30-second preview from Deezer: no full version was found.'}
@@ -660,7 +658,6 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
               <span className="np__title">{t!.title}</span>
               <span className="np__artist">{artistOf(t!)}</span>
               {!docked && status}
-              {!docked && mixLine}
               {/*
                 The docked strip is deliberately compact, so it carries no note lines — the same
                 reason `status` is hidden here. A blend still has to be announced, though, or a
@@ -668,7 +665,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
                 phone-width app: a blend runs there with no visible sign of it at all, so the
                 visible indicator for the strip is still an open design question.
               */}
-              {docked && mixLine && (
+              {docked && blending && (
                 <span className="vh" aria-live="polite">
                   {mixNote}
                 </span>
