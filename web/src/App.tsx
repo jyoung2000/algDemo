@@ -296,7 +296,7 @@ export function App() {
     return rest
       .filter(playable)
       .slice(0, 4)
-      .map((x) => ({ key: x.track.key, title: x.track.title, artist: artistOf(x.track), artwork: x.track.artwork, preview: x.playback.preview }));
+      .map((x) => ({ key: x.track.key, title: x.track.title, artist: artistOf(x.track), artwork: x.track.artwork, preview: x.playback.preview, track: x.track }));
   }, [items, inQueue, playingKey, shuffle, hidden]);
 
   // A skip or a full listen is recorded, then the songs still to come are ranked again with it.

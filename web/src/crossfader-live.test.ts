@@ -14,7 +14,11 @@ import { Player, type Playing, type UpNext } from './Player';
 import { PREVIEW_ROUTE } from './engine/shape';
 import { resetEngineForTests, setMixSlider } from './audio-engine';
 
-const lookedUp: string[] = [];
+const { lookedUp, fullVersions } = vi.hoisted(() => ({
+  lookedUp: [] as string[],
+  /** Songs the fake YouTube lookup reports a full version for. */
+  fullVersions: new Set<string>(),
+}));
 vi.mock('./api', () => ({
   api: {
     previewUrl: (route: string) => Promise.resolve({ url: `https://cdn.test/${route.split('/').pop()}.mp3` }),
@@ -22,7 +26,7 @@ vi.mock('./api', () => ({
     // so the lookup answers "none found" and the preview path is the one under test.
     fullSong: (t: { key: string }) => {
       lookedUp.push(t.key);
-      return Promise.resolve({ id: null, confident: false });
+      return Promise.resolve({ id: fullVersions.has(t.key) ? 'dQw4w9WgXcQ' : null, confident: fullVersions.has(t.key) });
     },
   },
 }));
@@ -108,7 +112,7 @@ const playing = (key: string): Playing => ({
   track: track(key) as Playing['track'],
   playback: { kind: 'preview', preview: route(key), provider: 'deezer', open: [], embed: null } as Playing['playback'],
 });
-const upNext = (key: string): UpNext[] => [{ key, title: `Song ${key}`, artist: 'A', artwork: null, preview: route(key) }];
+const upNext = (key: string): UpNext[] => [{ key, title: `Song ${key}`, artist: 'A', artwork: null, preview: route(key), track: track(key) as UpNext['track'] }];
 
 const props = {
   docked: false, canPrev: true, canNext: true, shuffle: false, repeat: 'off' as const,
@@ -126,7 +130,7 @@ const settle = async () => { await act(async () => { await Promise.resolve(); aw
 
 beforeEach(() => {
   ramps.length = 0; sourced.clear();
-  lookedUp.length = 0;
+  lookedUp.length = 0; fullVersions.clear();
   stubMedia();
   vi.stubGlobal('AudioContext', FakeContext);
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
@@ -213,32 +217,38 @@ describe('the crossfader, rendered', () => {
     expect(container.querySelector('.np__note--mix')).toBeNull();
   });
 
-  it('plays the preview rather than the full song while the mixer is on, so it can mix at all', async () => {
-    // Measured on the real app: every song in the list had a YouTube match, so every one played in
-    // YouTube's iframe, where the mixer cannot reach the audio. Without this preference the
-    // crossfader is a control that silently does nothing.
+  it('plays the full song whenever one exists, mixer on or off — the owner’s rule', async () => {
+    // Earlier this preferred the 30-second preview while the mixer was on, because only a
+    // preview can be routed through the mixer. The owner rejected that trade: "both softwares
+    // should play the full song not a 30 second preview". So the full song always wins, and the
+    // mixer reaches only songs that have no full version.
     const withVideo = (key: string): Playing => ({
-      // knownVideoId reads the track's own provider, which is how a song arrives already knowing
-      // its YouTube video — no lookup needed, so this is the strongest form of the conflict.
       track: { ...track(key), provider: 'ytmusic', platform_id: 'dQw4w9WgXcQ' } as Playing['track'],
       playback: { kind: 'full', preview: route(key), open: [], embed: null } as Playing['playback'],
     });
-
-    // Mixer off: the full song wins and the iframe is used.
-    const { container, unmount } = render(createElement(Player, { ...props, playing: withVideo('one'), upNext: upNext('two') }));
+    setMixSlider(70);
+    const { container } = render(createElement(Player, { ...props, playing: withVideo('one'), upNext: upNext('two') }));
     await settle();
     expect(container.querySelector('iframe')).not.toBeNull();
     expect(decks().some((d) => d.getAttribute('src'))).toBe(false);
-    unmount();
+  });
 
-    // Mixer on: the same song plays as its preview, on a deck, with no iframe.
-    setMixSlider(70);
-    const second = render(createElement(Player, { ...props, playing: withVideo('one'), upNext: upNext('two') }));
+  it('only cues a next song it has confirmed has no full version, so a blend never steals one', async () => {
+    // The lookahead asks YouTube about the next song before cueing its preview. If a full version
+    // exists, that song must play whole in its own player, so nothing is cued and the line says why.
+    setMixSlider(100);
+    fullVersions.add('two');
+    const { container, rerender } = render(createElement(Player, { ...props, playing: playing('one'), upNext: upNext('two') }));
     await settle();
-    expect(second.container.querySelector('iframe')).toBeNull();
-    expect(decks()[0]?.getAttribute('src')).toBe('https://cdn.test/one.mp3');
-    // And it never asks YouTube about a song it has already decided to play as a preview.
-    expect(lookedUp).not.toContain('one');
+    expect(lookedUp).toContain('two');
+    expect(decks()[1]?.getAttribute('src')).toBeNull();
+    expect(container.querySelector('.np__note--mix')?.textContent).toMatch(/full version/i);
+
+    // A next song with no full version is cued as before.
+    fullVersions.delete('two');
+    rerender(createElement(Player, { ...props, playing: playing('one'), upNext: upNext('three') }));
+    await settle();
+    expect(decks()[1]?.getAttribute('src')).toBe('https://cdn.test/three.mp3');
   });
 
   it('leaves the blended-in song playing instead of restarting it', async () => {
@@ -253,6 +263,8 @@ describe('the crossfader, rendered', () => {
     await settle();
     b.currentTime = 11;
     const playsBefore = (b.play as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+    // The lookahead has already asked about 'two' once, before cueing it. That is the only time.
+    const lookupsBefore = lookedUp.filter((k) => k === 'two').length;
 
     await act(async () => { a.dispatchEvent(new Event('ended')); });
     await settle();
@@ -267,7 +279,7 @@ describe('the crossfader, rendered', () => {
     // The regression this locks down: the blended-in song used to be looked up on YouTube like any
     // new song, and while that lookup ran its source counted as unresolved — so the load effect
     // paused the deck and stripped its src, killing the song the blend had just handed over.
-    expect(lookedUp).not.toContain('two');
+    expect(lookedUp.filter((k) => k === 'two')).toHaveLength(lookupsBefore);
     expect(b.getAttribute('src')).toBe('https://cdn.test/two.mp3');
   });
 

@@ -27,6 +27,8 @@ export interface UpNext {
    * ends: a crossfade means both are audible at once, so the incoming one has to be cued early.
    */
   preview?: string | null;
+  /** The song itself, so the lookahead can ask about a full version before cueing a blend. */
+  track?: Track;
 }
 
 interface Props {
@@ -162,17 +164,12 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // song mid-play with an iframe starting from zero.
   const previewOnly = useRef(new Set<string>());
   /**
-   * With the mixer on, a song that has a preview plays as that preview even when a full YouTube
-   * version exists.
-   *
-   * This is the whole feature working or not working. Measured on the real app: every song in the
-   * list had a YouTube match, so all of them played in YouTube's iframe — which Airwave cannot
-   * route, equalise or blend. Left that way the crossfader would be a control that silently does
-   * nothing. Choosing the preview is what the Settings panel already tells the listener happens,
-   * and it is the honest trade: 30 seconds a song, mixed, instead of full songs that cannot be.
+   * The full song always wins. An earlier version preferred the 30-second preview while the
+   * mixer was on, because only a preview can be routed through the mixer; the owner rejected
+   * that trade ("both softwares should play the full song not a 30 second preview"). So the
+   * mixer reaches only the songs that have no full version, and says so.
    */
-  const mixerNeedsPreview = mix > 0 && Boolean(previewSrc);
-  const stayPreview = (key !== null && previewOnly.current.has(key)) || mixerNeedsPreview;
+  const stayPreview = key !== null && previewOnly.current.has(key);
   const needsLookup = Boolean(playing && !knownId && !scEmbed) && !stayPreview;
   const lookedUp = found?.key === key;
   const lookingUp = needsLookup && !lookedUp;
@@ -360,8 +357,14 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // repeat branch cancelled the blend and restarted the current song, so the listener heard the
   // next song fade in and then get yanked. The queue still reports a lookahead in that mode, so
   // the player has to be the one to say there is nothing to blend into.
+  //
+  // And it asks first. A blended-in song keeps playing as the preview it was blended as, so the
+  // mixer must never cue a song that has a full version — that song is owed its full version in
+  // YouTube's player. The lookahead resolves the next song the same way the player would, and
+  // only cues one YouTube knows nothing about.
   const nextKey = upNext[0]?.key ?? null;
   const nextPreview = upNext[0]?.preview ?? null;
+  const nextTrack = upNext[0]?.track ?? null;
   const repeatingOne = repeat === 'one';
   useEffect(() => {
     if (mix <= 0 || mode !== 'preview' || !nextKey || repeatingOne) {
@@ -369,8 +372,27 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       setMixNote(repeatingOne && mix > 0 ? 'Repeating this song — nothing to blend into.' : null);
       return;
     }
-    void mixer.current?.prepare({ key: nextKey, preview: nextPreview });
-  }, [mix, mode, nextKey, nextPreview, repeatingOne]);
+    let live = true;
+    const cue = () => live && void mixer.current?.prepare({ key: nextKey, preview: nextPreview });
+    if (!nextTrack) {
+      cue();
+      return;
+    }
+    setMixNote('Checking the next song for a full version…');
+    api
+      .fullSong(nextTrack)
+      .then((r) => {
+        if (!live) return;
+        if (r.id) {
+          mixer.current?.cancel();
+          setMixNote('Next song has a full version, so it will play whole — no blend.');
+        } else cue();
+      })
+      .catch(() => cue());
+    return () => {
+      live = false;
+    };
+  }, [mix, mode, nextKey, nextPreview, nextTrack, repeatingOne]);
 
   const toggle = () => {
     if (mode === 'full') {
@@ -564,9 +586,13 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
 
   const openLinks = playing && (
     <div className="np__open">
+      {/* Each link shows its service's mark and name with ↗ after it — the arrow reads as "opens
+          elsewhere" without a verb, where an 11px link glyph read as a stray "x". Two full "Open in …" pills did not fit the desktop
+          bar's right column, and a shared "Open in" caption read as an orphaned word. The full
+          label stays as the accessible name. */}
       {(playing.playback.open.length ? playing.playback.open : t?.url ? [{ provider: t.provider, label: `Open in ${PROVIDER_LABEL[t.provider] ?? t.provider}`, url: t.url }] : []).map((o) => (
-        <a key={o.provider} className="openlink" href={o.url} target="_blank" rel="noreferrer noopener">
-          <ProviderMark provider={markKey(o.provider)} size={13} /> {o.label}
+        <a key={o.provider} className="openlink" href={o.url} target="_blank" rel="noreferrer noopener" aria-label={o.label}>
+          <ProviderMark provider={markKey(o.provider)} size={13} /> {o.label.replace(/^Open in\s+/i, '')}<span className="openlink__out" aria-hidden="true">↗</span>
         </a>
       ))}
     </div>
@@ -687,9 +713,14 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
             <>
               {progress}
               {transport}
-              {volume}
-              <PlayerActions key={t!.key} {...actions} />
-              {openLinks}
+              {/* One right-hand cluster, as the dock has one control row: five loose siblings in a
+                  grid with areas for four left like/dislike/download to auto-place into a stray
+                  third row under the art. */}
+              <div className="np__side">
+                {volume}
+                <PlayerActions key={t!.key} {...actions} />
+                {openLinks}
+              </div>
             </>
           )}
         </>

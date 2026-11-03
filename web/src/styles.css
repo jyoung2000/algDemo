@@ -1392,16 +1392,26 @@ a.push {
   display: grid;
   gap: 12px;
 }
-/* Desktop panel: one horizontal strip, never taller than half the viewport. The art and title sit left, the transport
-   and progress centre, the volume right. The click wheel and Up next are phone-dock controls, so they stay out here. */
+/* Desktop panel: a bar, grouped the way the phone dock is (NP-STRIP-005). Art and title left; the
+   progress bar heading the middle with the transport centred beneath it, as the dock stacks them; one right-hand
+   cluster of the song's actions and the volume, with the open-in links beneath. The old grid had
+   areas for four of its five children, so like/dislike/download auto-placed into an orphan third
+   row — the "tacked on" toolbar the owner saw. The click wheel and Up next are phone-dock controls. */
 .np--panel {
   max-height: 50vh;
   overflow: hidden;
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.4fr) minmax(150px, 0.85fr);
-  grid-template-areas: 'main prog vol' 'main tx links';
+  /* Measured, inside the 872px bar (800px after padding and gaps): the side cluster needs 258px
+     for three 44px actions, the mute button and a 72px channel on one row, so 264; the progress
+     column at least 280 (a 204px bar — the owner found 148 small); the rest to the song. Fixed
+     tracks on purpose: an `auto` side track once measured its wrapped-links row and swallowed
+     the title column entirely. */
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 1fr) 264px;
+  grid-template-areas:
+    'main prog side'
+    'main tx side';
   align-items: center;
-  column-gap: 18px;
-  row-gap: 6px;
+  column-gap: 20px;
+  row-gap: 4px;
 }
 .np--panel .np__main {
   grid-area: main;
@@ -1416,13 +1426,17 @@ a.push {
   color: var(--ink);
 }
 .np--panel .np__main .art {
-  width: 52px;
-  height: 52px;
+  /* As tall as the title, artist and note beside it; 52px sat small against a 72px text block. */
+  width: 64px;
+  height: 64px;
   flex: none;
+  border-radius: 6px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 .np--panel .np__embed {
-  width: 128px;
+  /* The dock's 96px, not 128: with a full song playing, the player stands where the art was,
+     and at 128px it left the title 58px in an 872px bar — "GOYARD" was ellipsised. */
+  width: 96px;
   flex: none;
   aspect-ratio: 16 / 9;
 }
@@ -1436,6 +1450,15 @@ a.push {
 .np--panel .np__title,
 .np--panel .np__artist {
   display: block;
+}
+/* The owner's rule: a title is never cut off. Up to three lines; the bar grows for them. A
+   second line is rare and a third rarer ("Hell At Night (feat. Ella Langley)" beside the player). */
+.np--panel .np__title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: normal;
+  line-height: 1.25;
 }
 .np--panel .np__note {
   display: -webkit-box;
@@ -1525,35 +1548,76 @@ a.push {
   grid-area: tx;
   justify-content: center;
 }
-.np--panel .vol {
-  grid-area: vol;
+/* The right-hand cluster: actions and volume on one row, right-aligned, links on the row beneath.
+   Everything here is auto-sized so the cluster can never push past the panel's edge. */
+.np--panel .np__side {
+  grid-area: side;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: end;
+  gap: 8px 16px;
+  min-width: 0;
+}
+.np--panel .np__side .vol {
+  order: 2;
+  width: auto;
+  flex: none;
+}
+.np--panel .np__side .vol__bar {
+  width: 72px;
+  min-width: 0;
+  flex: none;
+}
+/* The channel is 4px; the 8px of padding each side is the hit area, not paint. `.np .prog__bar`'s
+   background shorthand resets background-clip to border-box, which painted the whole 20px box —
+   the fat bar the owner saw. The dock already guards this; the panel has to as well. */
+.np--panel .np__side .vol__bar {
+  background-clip: content-box;
+}
+/* The number is the dock's rule too: a channel with a knob says the level; "55" beside it is noise. */
+.np--panel .np__side .vol__n {
+  display: none;
+}
+.np--panel .np__side .np__track-actions {
+  order: 1;
 }
 .np--panel .np__open {
-  /* Open-in links wrap onto a second line inside the panel, so no platform is cut off at the edge or hidden behind a scroll. */
-  grid-area: links;
-  justify-self: stretch;
-  align-self: center;
+  /* A full row of the cluster, under the controls; links wrap rather than clip. */
+  order: 3;
+  flex: 1 1 100%;
   flex-wrap: wrap;
+  align-items: center;
   overflow: hidden;
-  justify-content: flex-start;
+  justify-content: end;
   gap: 6px;
   margin: 0;
   min-width: 0;
 }
 .np--panel .np__open .openlink {
-  padding: 2px 9px;
+  /* Flat and quiet, like every other control on this player; the Aqua gloss pill was the one
+     glossy thing left on a flat surface. */
+  padding: 3px 10px;
   font-size: 11px;
   white-space: nowrap;
   flex: none;
-  border: 1px solid #8c8c8c;
+  border: 1px solid rgb(0 0 0 / 14%);
   border-radius: 11px;
-  background: linear-gradient(to bottom, #fff, #ececec 50%, #dcdcdc);
-  box-shadow: inset 0 1px rgb(255 255 255 / 90%), 0 1px 1px rgb(0 0 0 / 15%);
-  color: var(--ink);
+  background: #fff;
+  box-shadow: none;
+  color: var(--ink-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.np--panel .np__open .openlink .openlink__out {
+  margin-left: 1px;
+  font-size: 10px;
+  opacity: 0.6;
 }
 .np--panel .np__open .openlink:hover {
-  background: linear-gradient(to bottom, #fff, #e4f3fd 50%, #cbe6f8);
-  border-color: var(--aqua-rim);
+  border-color: rgb(0 0 0 / 28%);
+  color: var(--ink);
 }
 .np--panel .wheel,
 .np--panel .upnext {

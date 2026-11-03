@@ -9,8 +9,32 @@ const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'styles.c
 
 describe('the player strip (NP-STRIP-001)', () => {
   it('keeps the desktop title column from reaching the progress column', () => {
-    expect(css).toMatch(/\.np--panel \{[^}]*grid-template-areas: 'main prog vol' 'main tx links';/);
+    expect(css).toMatch(/\.np--panel \{[^}]*grid-template-areas:\s*'main prog side'\s*'main tx side';/);
     expect(css).toMatch(/\.np--panel \.np__text \{[^}]*min-width: 0;[^}]*overflow: hidden;/);
+  });
+
+  it('is a bar on the desktop, grouped the way the phone dock is (NP-STRIP-005)', () => {
+    // Owner, on seeing the Windows app beside the phone: "looks so much worse". Measured cause:
+    // the panel put five siblings into a grid with areas for four, so like/dislike/download
+    // auto-placed into an orphan third row, the volume floated alone top-right with the open-in
+    // pills stacked under it, and 52px art sat against a 72px text block. The phone dock reads
+    // well because it is a bar: art · text, then one row of controls. The desktop is the same bar
+    // laid sideways — art · text | transport over progress | actions · volume, links beneath.
+    const player = readFileSync(new URL('./Player.tsx', import.meta.url), 'utf8');
+    // Every right-hand control lives in one cluster, so nothing can auto-place into a stray row.
+    expect(player).toMatch(/<div className="np__side">\s*\{volume\}\s*<PlayerActions[^>]*\/>\s*\{openLinks\}\s*<\/div>/);
+    // The art matches the height of the text beside it instead of sitting small against it.
+    expect(css).toMatch(/\.np--panel \.np__main \.art \{[^}]*width: 64px;[^}]*height: 64px;/);
+    // The cluster is right-aligned and its two rows never push past the panel edge.
+    expect(css).toMatch(/\.np--panel \.np__side \{[^}]*justify-content: end;[^}]*min-width: 0;/);
+    // Open-in links are flat and quiet, like every other control on the flat player — not glossy pills.
+    expect(css).not.toMatch(/\.np--panel \.np__open \.openlink \{[^}]*linear-gradient/);
+    expect(css).toMatch(/\.np--panel \.np__open \.openlink \{[^}]*border: 1px solid rgb\(0 0 0 \/ 14%\);/);
+    // Progress heads the middle column with the transport beneath, as the dock stacks them; the
+    // volume paints only its 4px channel, never its hit-area padding (the owner: "too tall again").
+    expect(css).toMatch(/\.np--panel \.np__side \.vol__bar \{\s*background-clip: content-box;/);
+    expect(css).toMatch(/\.np--panel \.transport \{[^}]*grid-area: tx;/);
+    expect(css).toMatch(/\.np--panel \.prog \{[^}]*grid-area: prog;/);
   });
 
   it('gives the phone dock title real width under the 96px preview', () => {
