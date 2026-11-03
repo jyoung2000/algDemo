@@ -2451,6 +2451,18 @@ a.push {
 .dl__lbl .field {
   min-width: 0;
   width: 100%;
+  /* The search field already reserves 44px; these controls are tapped on a phone too, so they match.
+     Without this a native <select> renders 22px tall, half the minimum touch target. */
+  min-height: 44px;
+  padding: 6px 10px;
+}
+.dl__note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  /* The chosen format's tradeoff in full. It wraps here, which a closed <select> cannot do. */
+  max-width: 62ch;
 }
 .dl__tools {
   list-style: none;

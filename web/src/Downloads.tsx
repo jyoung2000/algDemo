@@ -8,16 +8,28 @@ const FORMAT_KEY = 'airwave.dl.format';
 /**
  * Measured on a real download (2026-11-02): YouTube Music serves Opus at about 163 kbps, and asking
  * for MP3 re-encodes it to 153 kbps — 6% smaller, but everything above 16.6 kHz is gone where the
- * source reached 20.1 kHz. "Original" keeps the source bytes, so it is the default and the labels
- * say which choice costs quality.
+ * source reached 20.1 kHz. "Original" keeps the source bytes, so it is the default.
+ *
+ * The option text stays short because a closed <select> cannot wrap or ellipsise gracefully: at
+ * 390px only two of the long labels fit. The tradeoff is spelled out in FORMAT_NOTE underneath,
+ * where the text can wrap.
  */
 const FORMAT_LABEL: Record<DlFormat, string> = {
-  original: 'Original — keeps the source audio, no quality lost',
-  opus: 'Opus — re-encodes unless the source is already Opus',
-  m4a: 'M4A (AAC) — re-encodes unless the source is already AAC',
-  mp3: 'MP3 — plays anywhere, re-encodes and loses the top treble',
-  flac: 'FLAC — lossless container, but cannot restore what the source dropped',
-  wav: 'WAV — uncompressed, very large, restores nothing',
+  original: 'Original',
+  opus: 'Opus',
+  m4a: 'M4A (AAC)',
+  mp3: 'MP3',
+  flac: 'FLAC',
+  wav: 'WAV',
+};
+
+const FORMAT_NOTE: Record<DlFormat, string> = {
+  original: 'Keeps the source audio exactly as it arrives. Nothing is re-encoded, so no quality is lost.',
+  opus: 'Re-encodes unless the source is already Opus, which it usually is on YouTube Music.',
+  m4a: 'Re-encodes unless the source is already AAC.',
+  mp3: 'Plays on anything, but re-encodes the audio and loses the top treble.',
+  flac: 'A lossless container. It cannot restore detail the source already dropped, and the file is much larger.',
+  wav: 'Uncompressed and very large. It restores nothing the source dropped.',
 };
 
 const loadFormat = (): DlFormat => {
@@ -217,7 +229,7 @@ export function DownloadsView({ d }: { d: Downloads }) {
         </label>
         <label className="dl__lbl">
           Format
-          <select className="field" value={d.format} onChange={(e) => d.setFormat(e.target.value as DlFormat)}>
+          <select className="field" value={d.format} onChange={(e) => d.setFormat(e.target.value as DlFormat)} aria-describedby="dl-format-note">
             {DL_FORMATS.filter((f) => !(tool === 'spotdl' && f === 'original')).map((f) => (
               <option key={f} value={f}>
                 {FORMAT_LABEL[f]}
@@ -233,6 +245,7 @@ export function DownloadsView({ d }: { d: Downloads }) {
           Download
         </button>
       </form>
+      <p className="dl__note" id="dl-format-note">{FORMAT_NOTE[d.format]}</p>
       {link.trim() !== '' && !linkOk && <p className="state state--bad">{tool === 'spotdl' ? 'spotDL needs a Spotify track link (open.spotify.com/track/…).' : 'yt-dlp needs a YouTube, YouTube Music or SoundCloud link.'}</p>}
 
       {err && <p className="state state--bad">{err}</p>}
