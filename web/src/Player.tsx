@@ -366,7 +366,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   useEffect(() => {
     if (mix <= 0 || mode !== 'preview' || !nextKey || repeatingOne) {
       mixer.current?.cancel();
-      setMixNote(repeatingOne && mix > 0 ? 'Repeating this song, so there is nothing to blend into.' : null);
+      setMixNote(repeatingOne && mix > 0 ? 'Repeating this song — nothing to blend into.' : null);
       return;
     }
     void mixer.current?.prepare({ key: nextKey, preview: nextPreview });
@@ -537,10 +537,12 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
 
   // What the mixer is doing, in the listener's words. Only shown when they turned it on and the
   // current song is one it can actually reach, so it never contradicts the line above it.
+  // No glyph: the 12px shuffle mark read as a stray "x" beside the sentence, and `.np__note` is
+  // clamped to two lines in the panel, so the words need the whole width.
   const mixLine =
     playing && mix > 0 && mode === 'preview' && mixNote ? (
       <p className="np__note np__note--mix" aria-live="polite">
-        <Glyph name="shuffle" size={12} /> {mixNote}
+        {mixNote}
       </p>
     ) : null;
 

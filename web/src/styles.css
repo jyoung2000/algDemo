@@ -1593,6 +1593,18 @@ a.push {
   color: var(--danger);
   opacity: 1;
 }
+/*
+  The blend line is the crossfader's only live feedback, so it has to be read at a glance. The
+  surrounding notes use --ink-3 (#96999C), which measures 2.86:1 on this white panel at 11px —
+  below the 4.5:1 bar for normal text. --ink-2 is the same token the Audio settings copy uses and
+  measures 6.86:1. The sibling note is left as it was: that colour is a pre-existing choice across
+  the app, not this feature's to change.
+*/
+.np__note--mix,
+.np--panel .np__note--mix {
+  color: var(--ink-2);
+  opacity: 1;
+}
 .np__idle {
   display: grid;
   justify-items: center;
