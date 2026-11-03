@@ -2626,6 +2626,20 @@ a.push {
   letter-spacing: -0.01em;
   line-height: 1.15;
   overflow-wrap: anywhere;
+  /* The dot sits on the first line of the name, and stays there when the name wraps. */
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+/* The genre's colour as the map paints it. A ring keeps a pale hue visible on the white panel. */
+.tpick__swatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.22);
+  /* Baseline alignment would hang a bare circle too low against the cap height. */
+  transform: translateY(1px);
 }
 .tpick__readout {
   font-size: 13px;

@@ -14,8 +14,9 @@ import {
   type MapSub,
 } from './taste-map';
 
-import { AUTO_FIT_DELAY, AUTO_FIT_DURATION, FULL_VIEW, fitTaste, pointAt, projectPoint, revealPoint, selectionInView, tweenView, validPoint, viewportBackground, zoomTaste, type TasteViewport } from './taste-viewport';
+import { AUTO_FIT_DELAY, AUTO_FIT_DURATION, FULL_VIEW, WHEEL_STEP, fitTaste, panTaste, pointAt, projectPoint, revealPoint, selectionInView, tweenView, validPoint, viewportBackground, zoomAt, zoomTaste, type TasteViewport } from './taste-viewport';
 import { spreadMarkers } from './taste-spread';
+import { genreInk, genreSwatch } from './genre-color';
 import './taste-picker-zoom.css';
 
 const pct = (x: number) => `${Math.round(x)}%`;
@@ -140,14 +141,73 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
     const p = pointAt(currentView.current, (clientX - r.left) / r.width, 1 - (clientY - r.top) / r.height);
     select({ hue: Math.min(359.9, p.hue), bpm: p.bpm });
   };
+  /**
+   * Mouse-1 drags the map; a click still picks a genre.
+   *
+   * Touch keeps its existing behaviour, where a drag picks: a finger has no hover, so dragging to
+   * read the map is how the field is explored on a phone, and that is the behaviour already
+   * verified on the device. Only a mouse gets pan, which is what the owner asked for.
+   */
+  const drag = useRef<{ id: number; x: number; y: number; panning: boolean } | null>(null);
+  /** A mouse moves a few pixels during an ordinary click; beyond this it is a drag. */
+  const PAN_THRESHOLD_PX = 4;
   const onDown = (e: PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || e.isPrimary === false) return;
     e.currentTarget.setPointerCapture(e.pointerId);
+    if (e.pointerType === 'mouse') {
+      // Defer: this is only a selection if the mouse does not travel.
+      drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, panning: false };
+      cancelAuto();
+      return;
+    }
     setFrom(e.clientX, e.clientY);
   };
   const onMove = (e: PointerEvent<HTMLDivElement>) => {
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) setFrom(e.clientX, e.clientY);
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    const d = drag.current;
+    if (e.pointerType === 'mouse') {
+      if (!d || d.id !== e.pointerId) return;
+      const dx = e.clientX - d.x;
+      const dy = e.clientY - d.y;
+      if (!d.panning && Math.hypot(dx, dy) < PAN_THRESHOLD_PX) return;
+      d.panning = true;
+      const r = e.currentTarget.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      // y is measured upward on the map but downward on the screen.
+      updateView(panTaste(currentView.current, dx / r.width, -dy / r.height));
+      d.x = e.clientX;
+      d.y = e.clientY;
+      return;
+    }
+    setFrom(e.clientX, e.clientY);
   };
+  const onUp = (e: PointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    drag.current = null;
+    if (e.pointerType !== 'mouse' || !d || d.id !== e.pointerId) return;
+    // A press that never became a drag is a click, and a click picks a genre.
+    if (!d.panning) setFrom(e.clientX, e.clientY);
+  };
+  // The wheel zooms about the cursor. It has to be a NATIVE listener registered with
+  // { passive: false }: React attaches wheel at the root as passive, so preventDefault() on a
+  // synthetic event is ignored and the page scrolls away underneath the zoom.
+  useEffect(() => {
+    const el = field.current;
+    if (!el) return;
+    const onWheel = (e: globalThis.WheelEvent) => {
+      if (!e.deltaY) return;
+      e.preventDefault();
+      cancelAuto();
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) return;
+      const v = currentView.current;
+      const next = 1 / v.size + (e.deltaY < 0 ? WHEEL_STEP : -WHEEL_STEP);
+      updateView(zoomAt(v, next, (e.clientX - r.left) / r.width, 1 - (e.clientY - r.top) / r.height));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     const step: Record<string, [number, number]> = {
       ArrowLeft: [-BAND / 10, 0],
@@ -172,7 +232,13 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
   return (
     <div className="tpick" onPointerDownCapture={cancelAuto} onKeyDownCapture={cancelAuto} onWheelCapture={cancelAuto}>
       <div className="tpick__head">
-        <div className="tpick__title">{sub.name}</div>
+        {/* The colour IS the genre on this map, so the name carries it: a dot in the map's own
+            fill, and the name in a readable version of the same hue (see genre-color.ts for why
+            the fill itself cannot be used as text). */}
+        <div className="tpick__title" style={{ color: genreInk(hue) }}>
+          <span className="tpick__swatch" aria-hidden="true" style={{ background: genreSwatch(hue) }} />
+          {sub.name}
+        </div>
         <div className="tpick__readout">
           {familyName(fam)} · {Math.round(bpm)} BPM · {sub.years}
         </div>
@@ -197,6 +263,8 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
         aria-label={`Taste maker field. Visible genre spectrum ${Math.round(view.x * 360)} to ${Math.round((view.x + view.size) * 360)} degrees; bottom to top is ${Math.round(pointAt(view, 0, 0).bpm)} to ${Math.round(pointAt(view, 0, 1).bpm)} BPM. Selected ${sub.name}, ${Math.round(bpm)} BPM. Drag, tap, or use the arrow keys.`}
         onPointerDown={onDown}
         onPointerMove={onMove}
+        onPointerUp={onUp}
+        onPointerCancel={onUp}
         onKeyDown={onKey}
         style={{ ['--tp-h' as string]: BAND, ...viewportBackground(view) }}
       >
