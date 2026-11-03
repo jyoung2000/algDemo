@@ -21,7 +21,10 @@ export type EngineReason =
   | 'cross-origin-without-cors';
 
 export const REASON_TEXT: Record<EngineReason, string> = {
-  ready: 'Processing this preview.',
+  // True whether or not a song happens to be playing right now: the graph exists and previews go
+  // through it. Saying "processing this preview" while nothing plays was a claim about work the
+  // engine was not doing.
+  ready: 'Previews played by this app go through the equaliser and mixer.',
   'not-started': 'Starts with the first song you play.',
   'no-web-audio': 'This browser cannot process audio.',
   'iframe-playback':

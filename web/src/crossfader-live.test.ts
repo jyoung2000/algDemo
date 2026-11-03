@@ -159,6 +159,18 @@ describe('the crossfader, rendered', () => {
     expect(sourced.size).toBe(0);
   });
 
+  it('reports that the graph is really carrying the audio, not just that controls exist', async () => {
+    // Without this the panel cannot be told apart from a broken one: if `attach` were refused
+    // (a preview server without CORS), both songs would still play — at full level, unfaded —
+    // and every control would look fine. The engine's reason is the only outside signal.
+    const { reason } = await import('./audio-engine');
+    expect(reason()).toBe('not-started');
+    setMixSlider(80);
+    render(createElement(Player, { ...props, playing: playing('one'), upNext: upNext('two') }));
+    await settle();
+    expect(reason()).toBe('ready');
+  });
+
   it('overlaps the two songs and fades between them at the planned point', async () => {
     setMixSlider(100);
     render(createElement(Player, { ...props, playing: playing('one'), upNext: upNext('two') }));

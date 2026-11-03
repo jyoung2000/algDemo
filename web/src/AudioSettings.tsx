@@ -1,5 +1,6 @@
-import { useId, type CSSProperties } from 'react';
+import { useEffect, useId, useState, type CSSProperties } from 'react';
 import type { Settings } from './api';
+import { REASON_TEXT, reason as engineReason, subscribeEngine } from './audio-engine';
 import { MIX_LABELS, MIX_MAX, MIX_MIN, clampSlider, mixLabel } from './engine/crossfade';
 import {
   EQ_BANDS_HZ, EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB, EQ_PREAMP_MIN_DB, EQ_PREAMP_MAX_DB,
@@ -24,10 +25,24 @@ export function AudioSettings({ settings, onSettings }: Props) {
   const eq = parseEq(settings?.eq);
   const updateEq = (patch: Partial<EqConfig>) => onSettings({ eq: { ...eq, ...patch } });
   const preset = matchesPreset(eq) ? eq.presetId : 'custom';
+  /**
+   * What the engine is actually doing right now.
+   *
+   * `REASON_TEXT` was written so unprocessable audio could be explained instead of leaving a
+   * dead-looking control, but nothing displayed it — so a listener whose preview server refused
+   * processing, or who is on a browser without Web Audio, saw a full panel of controls that
+   * silently did nothing. It is also the only way to tell from outside that the graph really is
+   * carrying the audio.
+   */
+  const [reason, setReason] = useState(engineReason);
+  useEffect(() => subscribeEngine(() => setReason(engineReason())), []);
 
   return (
     <section className="audio-settings" aria-labelledby={`${id}-audio`}>
       <h3 id={`${id}-audio`}>Audio</h3>
+      <p className="note audio-settings__state" data-engine-reason={reason} aria-live="polite">
+        {REASON_TEXT[reason]}
+      </p>
       <section className="audio-settings__section" aria-labelledby={`${id}-mix-heading`}>
         <h4 id={`${id}-mix-heading`}>Crossfader</h4>
         <div className="audio-settings__heading">
