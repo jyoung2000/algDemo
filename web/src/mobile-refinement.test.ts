@@ -94,7 +94,29 @@ describe('the controls are flat and reachable', () => {
   });
 
   it('keeps the phone action buttons inside the dock row', () => {
-    expect(css).toMatch(/@media \(max-width: 899px\) \{[\s\S]*?\.np--docked \.np__track-actions \{[^}]*flex: none;/);
+    expect(css).toMatch(/@media \(max-width: 899px\) \{[\s\S]*?\.np--docked \.np__track-actions \{[^}]*flex: 0 0 auto;/);
+  });
+
+  /**
+   * Measured on the device at 412px: with the actions on their own third grid row the dock stood
+   * 200px tall and read as a separate toolbar. They now sit in .np__controls beside the transport
+   * and the volume, which brought the dock to 154px.
+   */
+  it('puts the song actions in the controls row, not a row of their own', () => {
+    const player = readFileSync(new URL('./Player.tsx', import.meta.url), 'utf8');
+    const docked = /<div className="np__dockctl">([\s\S]*?)\n            <\/div>/.exec(player);
+    expect(docked, 'docked dock markup not found').toBeTruthy();
+    const controls = /<div className="np__controls">([\s\S]*?)<\/div>/.exec(docked![1]!);
+    expect(controls, 'np__controls not found in the docked layout').toBeTruthy();
+    expect(controls![1]).toContain('<PlayerActions');
+  });
+
+  it('gives the phone row room by hiding shuffle and repeat, which the expanded player keeps', () => {
+    expect(css).toMatch(/@media \(max-width: 899px\) \{[\s\S]*?\.np--docked \.transport \.tbtn--mode \{[^}]*display: none;/);
+  });
+
+  it('shrinks the volume channel before the actions on a very narrow phone', () => {
+    expect(css).toMatch(/@media \(max-width: 379px\) \{[\s\S]*?\.np--docked \.np__controls \.vol \{[^}]*min-width: 62px;/);
   });
 
   it('drops the panel around the search sliders on a phone only', () => {

@@ -508,11 +508,13 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
           {docked ? (
             <div className="np__dockctl">
               {progress}
+              {/* One control row: transport, volume, then the song's own actions. They were a third
+                  row, which made the dock 200px tall and read as a separate toolbar. */}
               <div className="np__controls">
                 {transport}
                 {volume}
+                <PlayerActions key={t!.key} {...actions} />
               </div>
-              <PlayerActions key={t!.key} {...actions} />
             </div>
           ) : (
             <>

@@ -102,14 +102,33 @@
 @media (max-width: 899px) {
   .np--docked .np__track-actions {
     justify-content: flex-end;
-    flex: none;
+    /* Never stretch and never wrap: the transport keeps its size, the volume channel yields. */
+    flex: 0 0 auto;
+    gap: 2px;
+    margin-left: auto;
   }
   .np--docked .np__track-actions .quiet-control {
-    min-width: 38px;
-    min-height: 40px;
+    min-width: 36px;
+    min-height: 44px;
   }
   .np--docked .np__action-error {
     display: none;
+  }
+  /* Nine controls cannot share 360-412px: shuffle and repeat are the least used on a phone, and the
+     expanded player still offers both. Dropping them buys the room for like, dislike and download. */
+  .np--docked .transport .tbtn--mode {
+    display: none;
+  }
+}
+
+/* Below 380px the row cannot hold a 96px volume channel plus three actions: the channel shrinks
+   first, because the mute button next to it still toggles sound with a full-height target. */
+@media (max-width: 379px) {
+  .np--docked .np__controls .vol {
+    min-width: 62px;
+  }
+  .np--docked .vol__bar {
+    max-width: 40px;
   }
 }
 

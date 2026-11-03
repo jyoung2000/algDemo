@@ -941,6 +941,7 @@ a.push {
   cursor: pointer;
 }
 .dial input::-webkit-slider-thumb,
+.vol__bar::-webkit-slider-thumb,
 .prog__bar::-webkit-slider-thumb {
   appearance: none;
   width: 18px;
@@ -950,6 +951,7 @@ a.push {
   box-shadow: 0 0 0 1px #9c9c9c, 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 .dial input::-moz-range-thumb,
+.vol__bar::-moz-range-thumb,
 .prog__bar::-moz-range-thumb {
   width: 18px;
   height: 18px;
@@ -2207,10 +2209,12 @@ a.push {
     width: 40px;
     height: 44px;
   }
-  /* A slim channel: the bar is 4px tall, with the 44px touch area held by the padding so it is easy to hit. */
+  /* A slim channel: the bar is 4px tall, with the touch area held by the padding so it is easy to hit.
+     The actions share this row, so the volume gets what is left after the transport and the actions,
+     and the mute button keeps its own 40px. */
   .np__controls .vol {
-    flex: 1 1 0;
-    min-width: 0;
+    flex: 1 1 auto;
+    min-width: 96px;
     width: auto;
     gap: 2px;
   }
@@ -2219,13 +2223,23 @@ a.push {
     min-width: 0;
     flex: 1 1 auto;
     width: auto;
-    max-width: 112px;
-    padding: 20px 0;
+    max-width: 72px;
+    /* 10px each side gives a 24px hit box. The old 20px made a 44px-tall slider that visually
+       dominated a 4px channel; the volume button beside it still carries a full 44px target. */
+    padding: 10px 0;
     border: 0;
     box-shadow: none;
     background:
       linear-gradient(#0071e3, #0071e3) 0 50% / var(--pct, 0%) 4px no-repeat,
       linear-gradient(rgb(0 0 0 / 14%), rgb(0 0 0 / 14%)) 0 50% / 100% 4px no-repeat;
+  }
+  .np--docked .vol__bar::-webkit-slider-thumb {
+    width: 12px;
+    height: 12px;
+  }
+  .np--docked .vol__bar::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
   }
   .np--docked .prog {
     width: 100%;

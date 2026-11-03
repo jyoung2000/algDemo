@@ -57,9 +57,13 @@ describe('the player strip (NP-STRIP-001)', () => {
   it('keeps the phone dock inside the viewport: slim volume, always-visible playhead on touch (NP-STRIP-004)', () => {
     // The dock is one column: progress on a full row, then transport and volume that may shrink, never push past the edge.
     expect(css).toMatch(/\.np--docked \.np__dockctl \{[^}]*grid-template-columns: minmax\(0, 1fr\);/);
-    expect(css).toMatch(/\.np__controls \.vol \{[^}]*flex: 1 1 0;[^}]*min-width: 0;/);
-    // The volume channel is 4px; the touch area is padding, not a fat bar.
-    expect(css).toMatch(/\.np--docked \.vol__bar \{[^}]*height: 4px;[^}]*max-width: 112px;/);
+    expect(css).toMatch(/\.np__controls \.vol \{[^}]*flex: 1 1 auto;[^}]*min-width: 96px;/);
+    // The volume channel is 4px; the touch area is padding, not a fat bar. 10px each side gives a
+    // 24px hit box — the old 20px made a 44px-tall slider that dwarfed its own 4px channel.
+    expect(css).toMatch(/\.np--docked \.vol__bar \{[^}]*height: 4px;[^}]*max-width: 72px;[^}]*padding: 10px 0;/);
+    // Both sliders carry the Aqua gel thumb, so the volume has a draggable head like the progress bar.
+    expect(css).toMatch(/\.vol__bar::-webkit-slider-thumb,\s*\.prog__bar::-webkit-slider-thumb \{/);
+    expect(css).toMatch(/\.np--docked \.vol__bar::-webkit-slider-thumb \{\s*width: 12px;\s*height: 12px;/);
     // A touch screen has no hover: the playhead is drawn always, 18px, on a tall touch area.
     expect(css).toMatch(/@media \(hover: none\), \(pointer: coarse\) \{\s*\.np \.prog__bar \{[^}]*padding: 12px 0;/);
     expect(css).toMatch(/\.np \.prog__bar::-webkit-slider-thumb \{\s*width: 18px;\s*height: 18px;\s*opacity: 1;/);
