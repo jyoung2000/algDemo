@@ -354,16 +354,23 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   }, [mode]);
 
   // Cue the next song while this one still plays: an overlap needs both loaded and decoded.
+  //
+  // Repeating one song is not a next song. Observed on the real app with repeat set to "this
+  // song": the mixer cued the next preview and blended twelve audible seconds of it before the
+  // repeat branch cancelled the blend and restarted the current song, so the listener heard the
+  // next song fade in and then get yanked. The queue still reports a lookahead in that mode, so
+  // the player has to be the one to say there is nothing to blend into.
   const nextKey = upNext[0]?.key ?? null;
   const nextPreview = upNext[0]?.preview ?? null;
+  const repeatingOne = repeat === 'one';
   useEffect(() => {
-    if (mix <= 0 || mode !== 'preview' || !nextKey) {
+    if (mix <= 0 || mode !== 'preview' || !nextKey || repeatingOne) {
       mixer.current?.cancel();
-      setMixNote(null);
+      setMixNote(repeatingOne && mix > 0 ? 'Repeating this song, so there is nothing to blend into.' : null);
       return;
     }
     void mixer.current?.prepare({ key: nextKey, preview: nextPreview });
-  }, [mix, mode, nextKey, nextPreview]);
+  }, [mix, mode, nextKey, nextPreview, repeatingOne]);
 
   const toggle = () => {
     if (mode === 'full') {

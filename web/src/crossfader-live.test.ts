@@ -292,4 +292,44 @@ describe('the crossfader, rendered', () => {
     expect(b.paused).toBe(true);
     expect(a.paused).toBe(false);
   });
+
+  it('blends nothing while repeating one song, because there is no next song', async () => {
+    // Observed on the real app with repeat set to "this song": the mixer cued the next preview and
+    // blended twelve audible seconds of it, then the repeat branch cancelled the blend and
+    // restarted the current song — so the listener heard the next song fade in and get yanked.
+    setMixSlider(100);
+    const { rerender } = render(createElement(Player, { ...props, repeat: 'one', playing: playing('one'), upNext: upNext('two') }));
+    await settle();
+    const [a, b] = decks() as [HTMLAudioElement, HTMLAudioElement];
+    expect(b.getAttribute('src')).toBeNull(); // never even cued
+    setPaused(a, false);
+    a.currentTime = 19;
+    await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
+    await settle();
+    expect(b.paused).toBe(true);
+    expect(ramps.filter((r) => r.param.includes('curve'))).toHaveLength(0);
+
+    // Turning repeat back off re-arms the lookahead.
+    rerender(createElement(Player, { ...props, repeat: 'off', playing: playing('one'), upNext: upNext('two') }));
+    await settle();
+    expect(b.getAttribute('src')).toBe('https://cdn.test/two.mp3');
+  });
+
+  it('cancels a prepared blend when the listener switches to repeat-one mid-song', async () => {
+    setMixSlider(100);
+    const { rerender } = render(createElement(Player, { ...props, repeat: 'off', playing: playing('one'), upNext: upNext('two') }));
+    await settle();
+    const [a, b] = decks() as [HTMLAudioElement, HTMLAudioElement];
+    expect(b.getAttribute('src')).toBe('https://cdn.test/two.mp3');
+
+    rerender(createElement(Player, { ...props, repeat: 'one', playing: playing('one'), upNext: upNext('two') }));
+    await settle();
+    setPaused(a, false);
+    a.currentTime = 19;
+    await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
+    await settle();
+    expect(b.paused).toBe(true);
+    expect(ramps.filter((r) => r.param.includes('curve'))).toHaveLength(0);
+  });
+
 });
