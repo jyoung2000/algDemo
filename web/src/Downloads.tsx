@@ -5,7 +5,20 @@ import { DL_FORMATS, dl, downloadsAvailable, matchTarget, targetFor, urlAllowedF
 import { classNames, fmtBytes } from './util';
 
 const FORMAT_KEY = 'airwave.dl.format';
-const FORMAT_LABEL: Record<DlFormat, string> = { mp3: 'MP3', m4a: 'M4A (AAC)', opus: 'Opus', flac: 'FLAC', wav: 'WAV', original: 'Original (as the source has it)' };
+/**
+ * Measured on a real download (2026-11-02): YouTube Music serves Opus at about 163 kbps, and asking
+ * for MP3 re-encodes it to 153 kbps — 6% smaller, but everything above 16.6 kHz is gone where the
+ * source reached 20.1 kHz. "Original" keeps the source bytes, so it is the default and the labels
+ * say which choice costs quality.
+ */
+const FORMAT_LABEL: Record<DlFormat, string> = {
+  original: 'Original — keeps the source audio, no quality lost',
+  opus: 'Opus — re-encodes unless the source is already Opus',
+  m4a: 'M4A (AAC) — re-encodes unless the source is already AAC',
+  mp3: 'MP3 — plays anywhere, re-encodes and loses the top treble',
+  flac: 'FLAC — lossless container, but cannot restore what the source dropped',
+  wav: 'WAV — uncompressed, very large, restores nothing',
+};
 
 const loadFormat = (): DlFormat => {
   try {
@@ -14,7 +27,7 @@ const loadFormat = (): DlFormat => {
   } catch {
     /* storage can be unavailable */
   }
-  return 'mp3';
+  return 'original';
 };
 
 const active = (j: DlJob): boolean => j.state === 'queued' || j.state === 'running';

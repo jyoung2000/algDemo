@@ -10,7 +10,9 @@
 export type DlTool = 'yt-dlp' | 'spotdl';
 export type DlFormat = 'mp3' | 'm4a' | 'opus' | 'flac' | 'wav' | 'original';
 
-export const DL_FORMATS: readonly DlFormat[] = ['mp3', 'm4a', 'opus', 'flac', 'wav', 'original'];
+// "original" first: it is the default and the only choice that cannot lose quality. The rest follow
+// in descending fidelity-per-byte. Downloads.tsx renders this order and Downloads.kt accepts all six.
+export const DL_FORMATS: readonly DlFormat[] = ['original', 'opus', 'm4a', 'mp3', 'flac', 'wav'];
 
 /** Hosts yt-dlp may be pointed at. */
 export const YTDLP_HOSTS: readonly string[] = [
