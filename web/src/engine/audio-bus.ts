@@ -2,7 +2,7 @@
  * The app's audio bus: one AudioContext, two decks, an EQ on each, and one crossfade between them.
  *
  *   deck A element → sourceA → EQ A → gainA ─┐
- *                                            ├→ master → destination
+ *                                            ├→ master → limiter → destination
  *   deck B element → sourceB → EQ B → gainB ─┘
  *
  * Why two decks: a crossfade needs both songs audible at once, so the player keeps two <audio>
@@ -20,6 +20,7 @@
 
 import {
   EQ_DEFAULTS,
+  LIMITER,
   createEqGraph,
   type EqConfig,
   type EqContext,
@@ -89,7 +90,11 @@ export interface AudioBus {
    * handoff, a filter sweep). Returns the deck now becoming live.
    */
   transitionTo(deck: DeckId, seconds: number, style: TransitionStyle): DeckId;
-  /** Put a deck at full level and the other at silence immediately, with no fade. */
+  /**
+   * Put a deck at full level and the other at silence, with only a click-avoiding ramp. Doubles as
+   * the cancel for a transition in flight: `cut(live())` stops the fade and keeps the live deck,
+   * continuing from the level the fade had actually reached. Ignored if `deck` is not attached.
+   */
   cut(deck: DeckId): void;
   masterGain(): number;
   setMasterGain(v: number): void;
@@ -101,6 +106,8 @@ export interface AudioBus {
 const CURVE_STEPS = 48;
 /** Even an "instant" change gets this long, or the jump itself clicks. */
 const CUT_SECONDS = 0.012;
+/** Filter corners get a slightly longer glide than a gain: coefficients audibly thump otherwise. */
+const FILTER_REST_SECONDS = 0.04;
 
 /**
  * True when routing this element through Web Audio would silence it.
@@ -122,75 +129,127 @@ export function wouldBeSilent(element: HTMLMediaElement, pageOrigin: string): bo
   return !element.crossOrigin;
 }
 
-function rampCurve(param: AudioParam, from: number, to: number, start: number, seconds: number): void {
-  // setValueCurveAtTime is the honest way to draw a cosine: a linear ramp between the same two
-  // endpoints would sag in the middle, which is the exact artefact equalPower exists to avoid.
-  const span = Math.max(seconds, CUT_SECONDS);
-  const values = new Float32Array(CURVE_STEPS + 1);
-  for (let i = 0; i <= CURVE_STEPS; i += 1) {
-    const g = equalPower(i / CURVE_STEPS);
-    // `from`/`to` tell us which side of the curve this deck is on.
-    values[i] = from > to ? g.out : g.in;
-  }
-  try {
-    param.cancelScheduledValues(start);
-    param.setValueAtTime(from, start);
-    param.setValueCurveAtTime(values, start, span);
-  } catch {
-    try {
-      param.cancelScheduledValues(start);
-      param.setValueAtTime(from, start);
-      param.linearRampToValueAtTime(to, start + span);
-    } catch {
-      param.value = to;
-    }
-  }
+/** Mirror only bus-owned automation, not EQ. Also works when cancelAndHoldAtTime is absent.
+ * AudioParam.value is not an automation target, and cancelling first can restore an OLD value.
+ * Keep the actual Float32 curve so interruptions interpolate exactly what was scheduled.
+ */
+interface Automation {
+  start: number;
+  seconds: number;
+  values: readonly number[] | Float32Array;
+  exponential?: boolean;
+}
+const automation = new WeakMap<AudioParam, Automation>();
+const duration = (seconds: number): number => Number.isFinite(seconds) ? Math.max(CUT_SECONDS, Math.min(60, seconds)) : CUT_SECONDS;
+
+function valueAt(param: AudioParam, at: number): number {
+  const event = automation.get(param);
+  if (!event) return param.value;
+  const progress = event.seconds > 0 ? Math.max(0, Math.min(1, (at - event.start) / event.seconds)) : 1;
+  const position = progress * (event.values.length - 1);
+  const i = Math.floor(position);
+  const from = event.values[i]!;
+  const to = event.values[Math.min(i + 1, event.values.length - 1)]!;
+  return event.exponential ? from * (to / from) ** (position - i) : from + (to - from) * (position - i);
+}
+
+function hold(param: AudioParam, at: number): number {
+  const value = valueAt(param, at);
+  if (typeof param.cancelAndHoldAtTime === 'function') param.cancelAndHoldAtTime(at);
+  else param.cancelScheduledValues(at);
+  param.setValueAtTime(value, at);
+  automation.set(param, { start: at, seconds: 0, values: [value] });
+  return value;
 }
 
 function setParam(param: AudioParam, value: number, at: number): void {
-  try {
-    param.cancelScheduledValues(at);
-    param.setValueAtTime(value, at);
-  } catch {
-    param.value = value;
-  }
+  param.cancelScheduledValues(at);
+  param.setValueAtTime(value, at);
+  automation.set(param, { start: at, seconds: 0, values: [value] });
 }
 
 /**
- * Ramp a param to `value`, finishing at `end`.
+ * Start a new automation at `at`: hold whatever is there, then ramp to `value` by `end`.
  *
- * `exponential` is for frequencies, which are heard logarithmically. An exponential ramp cannot
- * pass through or start at zero, so the start value is floored at a hair above it.
+ * `exponential` is for frequencies, heard logarithmically — a linear sweep spends most of its time
+ * in the top octave. It cannot touch zero, so a non-positive endpoint falls back to linear.
  */
-function rampParam(param: AudioParam, value: number, end: number, _span: number, exponential = false): void {
-  try {
-    if (exponential) {
-      if (param.value <= 0) param.setValueAtTime(0.0001, Math.max(0, end - _span));
-      param.exponentialRampToValueAtTime(Math.max(value, 0.0001), end);
-    } else {
-      param.linearRampToValueAtTime(value, end);
-    }
-  } catch {
-    param.value = value;
-  }
+function rampParam(param: AudioParam, value: number, at: number, end: number, exponential = false): void {
+  const from = hold(param, at);
+  const exp = exponential && from > 0 && value > 0;
+  if (exp) param.exponentialRampToValueAtTime(value, end);
+  else param.linearRampToValueAtTime(value, end);
+  automation.set(param, { start: at, seconds: Math.max(0, end - at), values: [from, value], exponential: exp });
 }
 
-/** Put a deck's transition filters back to no-ops. */
+/**
+ * Append a second leg to automation already scheduled, WITHOUT cancelling: a planned pair (duck
+ * now, give the lows back at the halfway point) is one gesture, and holding at its own start would
+ * wipe the first leg before it ran.
+ */
+function chainParam(param: AudioParam, from: number, value: number, start: number, end: number): void {
+  param.linearRampToValueAtTime(value, end);
+  automation.set(param, { start, seconds: Math.max(0, end - start), values: [from, value] });
+}
+
+function rampCurve(param: AudioParam, to: number, start: number, seconds: number): void {
+  const from = hold(param, start);
+  const span = duration(seconds);
+  const values = new Float32Array(CURVE_STEPS + 1);
+  for (let i = 0; i <= CURVE_STEPS; i += 1) {
+    const g = equalPower(i / CURVE_STEPS);
+    // Interpolate POWER from the held level. Both legs still sum to <= 1 after a reversal,
+    // unlike restarting either leg from 0/1 or independently offsetting sine/cosine curves.
+    values[i] = Math.sqrt(from * from * g.out * g.out + to * to * g.in * g.in);
+  }
+  values[0] = from;
+  values[CURVE_STEPS] = to;
+  param.setValueCurveAtTime(values, start, span);
+  automation.set(param, { start, seconds: span, values });
+}
+
+/** Silent decks can reset immediately; audible decks glide without a coefficient jump. */
+function resetFilter(param: AudioParam, value: number, at: number, silent: boolean, exponential = false): void {
+  const event = automation.get(param);
+  if (valueAt(param, at) === value && (!event || at >= event.start + event.seconds)) return;
+  if (silent) setParam(param, value, at);
+  else rampParam(param, value, at, at + FILTER_REST_SECONDS, exponential);
+}
+
 function restFilters(deck: Deck, at: number): void {
-  setParam(deck.bass.gain, 0, at);
-  setParam(deck.sweep.frequency, SWEEP_PARKED_HZ, at);
+  const silent = valueAt(deck.gain.gain, at) === 0;
+  resetFilter(deck.bass.gain, 0, at, silent);
+  // Exponential: a 900 Hz → 20 Hz corner heard linearly spends the whole glide in the top octave.
+  resetFilter(deck.sweep.frequency, SWEEP_PARKED_HZ, at, silent, true);
 }
 
 export function createAudioBus(ctx: BusContext, initialEq: EqConfig = EQ_DEFAULTS, pageOrigin = ''): AudioBus {
   const master = ctx.createGain();
   master.gain.value = 1;
-  master.connect(ctx.destination);
+  // Each deck's own limiter only sees that deck, and the EQ's can be switched off entirely; two
+  // decks at equal power still sum above either one. One ceiling on the mix is the only thing that
+  // can catch that, so it is not optional and sits after the master fader.
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = LIMITER.thresholdDb;
+  limiter.knee.value = LIMITER.knee;
+  limiter.ratio.value = LIMITER.ratio;
+  limiter.attack.value = LIMITER.attackSeconds;
+  limiter.release.value = LIMITER.releaseSeconds;
+  master.connect(limiter);
+  limiter.connect(ctx.destination);
 
   const decks = new Map<DeckId, Deck>();
   const sources = new WeakMap<HTMLMediaElement, MediaElementAudioSourceNode>();
   let liveDeck: DeckId = 'a';
   let eqConfig = initialEq;
   let disposed = false;
+
+  const releaseDeck = (deck: Deck): void => {
+    // EQ owns its source connections too: dispose BEFORE reconnecting a cached source.
+    deck.eq.dispose();
+    for (const node of [deck.bass, deck.sweep, deck.gain]) node.disconnect();
+    decks.delete(deck.id);
+  };
 
   const attach = (element: HTMLMediaElement, id: DeckId): Deck | null => {
     if (disposed) return null;
@@ -206,6 +265,12 @@ export function createAudioBus(ctx: BusContext, initialEq: EqConfig = EQ_DEFAULT
         return null;
       }
       sources.set(element, source);
+    }
+    if (existing) releaseDeck(existing);
+    const previous = [...decks.values()].find(deck => deck.element === element);
+    if (previous) {
+      if (previous.id === liveDeck) liveDeck = id;
+      releaseDeck(previous);
     }
     const gain = ctx.createGain();
     gain.gain.value = id === liveDeck ? 1 : 0;
@@ -231,20 +296,18 @@ export function createAudioBus(ctx: BusContext, initialEq: EqConfig = EQ_DEFAULT
 
   /** Hand over immediately, ending any running transition. Shared by `cut` and a 'cut' style. */
   const cutTo = (target: DeckId): void => {
-    if (disposed) return;
+    // Cutting to a deck that is not attached would silence everything; the parent calls this on
+    // pause and seek, when the other slot may hold nothing yet.
+    if (disposed || !decks.has(target)) return;
     const at = ctx.currentTime;
     for (const deck of decks.values()) {
       const want = deck.id === target ? 1 : 0;
       // A cut ends any transition, so the filters go back to flat — otherwise a track that was
       // mid-sweep when the listener pressed Next stays thin for its whole play.
       restFilters(deck, at);
-      try {
-        deck.gain.gain.cancelScheduledValues(at);
-        deck.gain.gain.setValueAtTime(deck.gain.gain.value, at);
-        deck.gain.gain.linearRampToValueAtTime(want, at + CUT_SECONDS);
-      } catch {
-        deck.gain.gain.value = want;
-      }
+      // From wherever a fade in flight had actually reached, so cancelling mid-crossfade (pause,
+      // seek, or a cancelled transition) does not jump the level.
+      rampParam(deck.gain.gain, want, at, at + CUT_SECONDS);
     }
     liveDeck = target;
   };
@@ -258,21 +321,26 @@ export function createAudioBus(ctx: BusContext, initialEq: EqConfig = EQ_DEFAULT
     },
     live: () => liveDeck,
     crossfadeTo(target, seconds) {
-      if (disposed || target === liveDeck) return liveDeck;
+      if (disposed || target === liveDeck || !decks.has(target)) return liveDeck;
       const from = decks.get(liveDeck);
       const to = decks.get(target);
       const at = ctx.currentTime;
-      if (to) rampCurve(to.gain.gain, 0, 1, at, seconds);
-      if (from) rampCurve(from.gain.gain, 1, 0, at, seconds);
+      // A plain fade leaves no filtering behind, so an earlier styled transition's filters have to
+      // be cleared here too or the incoming deck arrives thin for the rest of its play.
+      if (to) {
+        restFilters(to, at);
+        rampCurve(to.gain.gain, 1, at, seconds);
+      }
+      if (from) rampCurve(from.gain.gain, 0, at, seconds);
       liveDeck = target;
       return liveDeck;
     },
     transitionTo(target, seconds, style) {
-      if (disposed || target === liveDeck) return liveDeck;
+      if (disposed || target === liveDeck || !decks.has(target)) return liveDeck;
       const from = decks.get(liveDeck);
       const to = decks.get(target);
       const at = ctx.currentTime;
-      const span = Math.max(seconds, CUT_SECONDS);
+      const span = duration(seconds);
 
       // A cut is not a fade: hand over in one step rather than pretending to blend.
       if (style === 'cut') {
@@ -280,29 +348,29 @@ export function createAudioBus(ctx: BusContext, initialEq: EqConfig = EQ_DEFAULT
         return liveDeck;
       }
 
-      if (to) rampCurve(to.gain.gain, 0, 1, at, seconds);
-      if (from) rampCurve(from.gain.gain, 1, 0, at, seconds);
+      // The incoming deck may still be carrying filters from the transition that took it out.
+      if (to) restFilters(to, at);
+      if (to) rampCurve(to.gain.gain, 1, at, span);
+      if (from) rampCurve(from.gain.gain, 0, at, span);
 
       if (style === 'bass-swap' || style === 'filter') {
         // The incoming track arrives with its lows held down and takes them at the halfway point,
         // so the two basslines never both sit at full level.
         if (to) {
-          setParam(to.bass.gain, BASS_DUCK_DB, at);
-          rampParam(to.bass.gain, 0, at + span / 2, span / 2);
+          // Reached over a few ms rather than set: on a reversal the incoming deck is already
+          // audible, and dropping an 18 dB shelf in one sample is a click.
+          rampParam(to.bass.gain, BASS_DUCK_DB, at, at + CUT_SECONDS);
+          chainParam(to.bass.gain, BASS_DUCK_DB, 0, at + CUT_SECONDS, at + span / 2);
         }
         if (from) {
-          setParam(from.bass.gain, 0, at);
-          rampParam(from.bass.gain, BASS_DUCK_DB, at + span / 2, span / 2);
+          rampParam(from.bass.gain, BASS_DUCK_DB, at, at + span / 2);
         }
       }
 
       if (style === 'filter') {
         // The outgoing track thins out as it leaves — the move a DJ makes with a highpass.
         if (from) {
-          setParam(from.sweep.frequency, SWEEP_PARKED_HZ, at);
-          // Exponential, because pitch and filter corners are heard logarithmically; a linear
-          // sweep spends most of its time in the top octave where little is left to remove.
-          rampParam(from.sweep.frequency, SWEEP_TOP_HZ, at + span, span, true);
+          rampParam(from.sweep.frequency, SWEEP_TOP_HZ, at, at + span, true);
         }
       }
 
@@ -313,33 +381,18 @@ export function createAudioBus(ctx: BusContext, initialEq: EqConfig = EQ_DEFAULT
     masterGain: () => master.gain.value,
     setMasterGain(v) {
       const want = Math.max(0, Math.min(1, Number.isFinite(v) ? v : 1));
-      const at = ctx.currentTime;
-      try {
-        master.gain.cancelScheduledValues(at);
-        master.gain.setValueAtTime(master.gain.value, at);
-        master.gain.linearRampToValueAtTime(want, at + CUT_SECONDS);
-      } catch {
-        master.gain.value = want;
-      }
+      if (disposed) return;
+      const now = ctx.currentTime;
+      rampParam(master.gain, want, now, now + CUT_SECONDS);
     },
     trimDb: () => decks.get(liveDeck)?.eq.trimDb() ?? 0,
     dispose() {
       if (disposed) return;
       disposed = true;
-      for (const deck of decks.values()) {
-        deck.eq.dispose();
-        try {
-          deck.gain.disconnect();
-        } catch {
-          /* already gone */
-        }
-      }
+      for (const deck of [...decks.values()]) releaseDeck(deck);
       decks.clear();
-      try {
-        master.disconnect();
-      } catch {
-        /* already gone */
-      }
+      master.disconnect();
+      limiter.disconnect();
     },
   };
 }

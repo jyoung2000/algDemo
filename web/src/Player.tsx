@@ -7,9 +7,9 @@ import { Volume } from './Volume';
 import { PlayerActions, type TrackActionProps } from './PlayerActions';
 import { Wheel } from './Wheel';
 import { loadYouTube, youtubeEmbedUrl, type YTPlayer } from './youtube';
-import { attachElement, bus as audioBus, mixSlider, resumeEngine, setUnprocessable, startEngine } from './audio-engine';
-import { otherDeck, type DeckId } from './engine/audio-bus';
-import { mixPlan } from './engine/crossfade';
+import { attachElement, bus as audioBus, mixSlider, resumeEngine, setUnprocessable, subscribeEngine } from './audio-engine';
+import { type DeckId } from './engine/audio-bus';
+import { PreviewMixer } from './engine/preview-mixer';
 import { ListenMeter, PROVIDER_LABEL, artistOf, classNames, fmtDuration, isSilent, markKey, qualifiesCompletion, toggleMuteState, type RepeatMode } from './util';
 
 export interface Playing {
@@ -99,15 +99,17 @@ type Mode = 'full' | 'preview' | 'embed' | 'none';
  * element. SoundCloud songs play in SoundCloud's widget, whose progress and volume Airwave cannot reach.
  */
 export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, repeat, actions, onShuffle, onRepeat, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext }: Props) {
-  // Two decks, because a crossfade needs both songs audible at once. Songs alternate between them,
-  // so the outgoing one keeps playing on its own element while the incoming one starts on the other.
+  // Two decks, because a crossfade needs both songs audible at once: the outgoing song keeps
+  // playing on its own element while the incoming one starts on the other. Both elements live for
+  // the player's lifetime — a MediaElementAudioSourceNode can be made only once per element.
   const deckA = useRef<HTMLAudioElement>(null);
   const deckB = useRef<HTMLAudioElement>(null);
-  const deckByKey = useRef(new Map<string, DeckId>());
-  const deckOrder = useRef(0);
-  /** The song the mixer has already cued on the other deck, so the load effect leaves it alone. */
-  const cued = useRef<{ key: string; url: string } | null>(null);
-  const fading = useRef<string | null>(null);
+  const [deck, setDeck] = useState<DeckId>('a');
+  /** Set when the mixer promotes a song that is ALREADY playing, so the load effect leaves it. */
+  const promoted = useRef<string | null>(null);
+  const [mixNote, setMixNote] = useState<string | null>(null);
+  const [mix, setMix] = useState(mixSlider);
+  useEffect(() => subscribeEngine(() => setMix(mixSlider())), []);
   const meter = useRef(new ListenMeter());
   const [paused, setPaused] = useState(true);
   const [cur, setCur] = useState(0);
@@ -128,36 +130,54 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const onEndRef = useRef<() => void>(() => undefined);
   const key = playing?.track.key ?? null;
 
-  // Which deck this song owns. Alternating means the outgoing song keeps its own element, so the
-  // two can overlap. Keyed by song so a re-render never reassigns a deck mid-play.
-  let myDeck: DeckId = 'a';
-  if (key !== null) {
-    const held = deckByKey.current.get(key);
-    if (held) myDeck = held;
-    else {
-      myDeck = deckOrder.current % 2 === 0 ? 'a' : 'b';
-      deckByKey.current.set(key, myDeck);
-      deckOrder.current += 1;
-      // Only the last few matter; this is a memo, not a history.
-      if (deckByKey.current.size > 6) deckByKey.current.delete(deckByKey.current.keys().next().value as string);
-    }
-  }
-  // `audio` points at the deck this song owns, so every existing use of it still means
-  // "the element playing now".
-  const audio = myDeck === 'a' ? deckA : deckB;
-  const spare = myDeck === 'a' ? deckB : deckA;
+  // `audio` is the deck playing now, so every existing use of it still means "the current element".
+  // The mixer owns which deck that is: after a blend the incoming deck becomes the current one.
+  const audio = deck === 'a' ? deckA : deckB;
+  const mixer = useRef<PreviewMixer | null>(null);
+  if (!mixer.current)
+    mixer.current = new PreviewMixer(
+      // Getters, because the elements do not exist on the first render but the mixer does.
+      {
+        get a() {
+          return deckA.current as HTMLAudioElement;
+        },
+        get b() {
+          return deckB.current as HTMLAudioElement;
+        },
+      },
+      audioBus,
+      (route) => (route.startsWith(PREVIEW_ROUTE) ? api.previewUrl(route).then((r) => r.url) : Promise.resolve(route)),
+      setMixNote,
+    );
 
   // Which source plays. A song with no YouTube video yet is looked up once; only a confident match is used.
   const knownId = knownVideoId(playing);
   const scEmbed = playing?.playback.embed?.provider === 'soundcloud' ? playing.playback.embed : null;
   const [found, setFound] = useState<{ key: string; id: string | null } | null>(null);
   const [badVideo, setBadVideo] = useState<string | null>(null);
-  const needsLookup = Boolean(playing && !knownId && !scEmbed);
+  const previewSrc = playing?.playback.preview ?? null;
+  // Songs the mixer blended into. They are already playing, as the preview they were blended as,
+  // so they must not be looked up on YouTube: the lookup leaves `src` null while it runs, which
+  // tore down the very deck the blend had just handed over, and a late video id would replace a
+  // song mid-play with an iframe starting from zero.
+  const previewOnly = useRef(new Set<string>());
+  /**
+   * With the mixer on, a song that has a preview plays as that preview even when a full YouTube
+   * version exists.
+   *
+   * This is the whole feature working or not working. Measured on the real app: every song in the
+   * list had a YouTube match, so all of them played in YouTube's iframe — which Airwave cannot
+   * route, equalise or blend. Left that way the crossfader would be a control that silently does
+   * nothing. Choosing the preview is what the Settings panel already tells the listener happens,
+   * and it is the honest trade: 30 seconds a song, mixed, instead of full songs that cannot be.
+   */
+  const mixerNeedsPreview = mix > 0 && Boolean(previewSrc);
+  const stayPreview = (key !== null && previewOnly.current.has(key)) || mixerNeedsPreview;
+  const needsLookup = Boolean(playing && !knownId && !scEmbed) && !stayPreview;
   const lookedUp = found?.key === key;
   const lookingUp = needsLookup && !lookedUp;
-  const candidate = knownId ?? (lookedUp ? found.id : null);
+  const candidate = stayPreview ? null : knownId ?? (lookedUp ? found.id : null);
   const videoId = candidate && candidate !== badVideo ? candidate : null;
-  const previewSrc = playing?.playback.preview ?? null;
   const src = !videoId && !lookingUp ? previewSrc : null;
   const embed = !videoId && !src && !lookingUp ? scEmbed : null;
   const mode: Mode = videoId ? 'full' : src ? 'preview' : embed ? 'embed' : 'none';
@@ -189,10 +209,12 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     }
     if (vol.value > 0) lastLevel.current = vol.value;
     const silent = isSilent(vol);
-    const a = audio.current;
-    if (a) {
-      a.volume = vol.value;
-      a.muted = silent;
+    // Both decks, not just the current one: during a blend the incoming song is already audible,
+    // and leaving it at full level would make every transition jump in loudness.
+    for (const el of [deckA.current, deckB.current]) {
+      if (!el) continue;
+      el.volume = vol.value;
+      el.muted = silent;
     }
     const p = yt.current;
     if (p && ytReady) {
@@ -268,12 +290,15 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     const a = audio.current;
     if (!a) return;
     if (src) {
-      // The mixer may already have cued and started this song on this deck for a crossfade.
-      // Reassigning src would restart it from zero and cut the blend in half.
-      if (cued.current?.key === key && a.src === cued.current.url) {
-        cued.current = null;
+      // The mixer already blended into this song on this deck, and it is playing. Reassigning src
+      // would restart it from zero and throw away the overlap the listener just heard.
+      if (promoted.current === key) {
+        promoted.current = null;
         setLoading(false);
         setPaused(a.paused);
+        setDur(a.duration || 0);
+        setCur(a.currentTime);
+        meter.current.seeked(a.currentTime);
         return;
       }
       setLoading(true);
@@ -312,6 +337,34 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     }
   }, [key, src]);
 
+  // The mixing graph is built only once the listener asks for it. Routing an element through Web
+  // Audio lasts for that element's life, so an unwanted graph is not worth creating; and both
+  // decks must be routed, not just the current one, or the incoming song arrives unprocessed.
+  useEffect(() => {
+    if (mix <= 0) return;
+    attachElement(deckA.current, 'a');
+    attachElement(deckB.current, 'b');
+    resumeEngine();
+  }, [mix]);
+
+  // A song playing inside YouTube's or SoundCloud's own player cannot be processed or blended.
+  // Saying so is the difference between an honest control and one that looks broken.
+  useEffect(() => {
+    setUnprocessable(mode === 'full' || mode === 'embed' ? 'iframe-playback' : null);
+  }, [mode]);
+
+  // Cue the next song while this one still plays: an overlap needs both loaded and decoded.
+  const nextKey = upNext[0]?.key ?? null;
+  const nextPreview = upNext[0]?.preview ?? null;
+  useEffect(() => {
+    if (mix <= 0 || mode !== 'preview' || !nextKey) {
+      mixer.current?.cancel();
+      setMixNote(null);
+      return;
+    }
+    void mixer.current?.prepare({ key: nextKey, preview: nextPreview });
+  }, [mix, mode, nextKey, nextPreview]);
+
   const toggle = () => {
     if (mode === 'full') {
       const p = yt.current;
@@ -322,11 +375,16 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     }
     const a = audio.current;
     if (!a || !src) return;
+    // A browser only lets an AudioContext run from a gesture, and this is one.
+    resumeEngine();
     if (a.paused) void a.play().catch(() => setErr('This preview could not start.'));
     else a.pause();
   };
 
   const seek = (s: number) => {
+    // A blend in flight is tied to the outgoing playhead; moving it would leave the two songs
+    // overlapping on the wrong beats, so the blend is dropped and this song continues alone.
+    mixer.current?.cancel();
     if (mode === 'full') yt.current?.seekTo(s, true);
     else if (audio.current) audio.current.currentTime = s;
     meter.current.seeked(s);
@@ -352,6 +410,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       else if (n === 2) onListen('replay', playing.track, l, meta);
     }
     if (repeatRef.current === 'one') {
+      // Repeating this song means there is no next song to blend into.
+      mixer.current?.cancel();
       // Play this song again. The next end of the same playback counts as a replay (see above), not a new listen.
       meter.current.seeked(0);
       ended.current = false;
@@ -365,10 +425,25 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       }
       return;
     }
+    // If a blend ran, the next song is already playing on the other deck. Hand the deck over so
+    // the load effect leaves it running instead of restarting it from zero.
+    const blended = mixer.current?.finish() ?? null;
+    if (blended) {
+      promoted.current = blended.key;
+      // Remember before onNext: the re-render that makes this song current happens immediately,
+      // and it must already know not to look the song up or reload it.
+      previewOnly.current.add(blended.key);
+      if (previewOnly.current.size > 8) previewOnly.current.delete(previewOnly.current.values().next().value as string);
+      ended.current = false;
+      setDeck(blended.deck);
+    }
     if (canNext) onNext();
+    else if (blended) mixer.current?.cancel();
   };
 
   const next = () => {
+    // The listener chose to move on: whatever was cued or blending is no longer what comes next.
+    mixer.current?.cancel();
     const l = meter.current.listened;
     if (playing && hasSound && !ended.current && l >= SKIP_MIN_S && l < SKIP_MAX_S)
       onListen('skip', playing.track, l, {
@@ -453,6 +528,15 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     />
   ) : null;
 
+  // What the mixer is doing, in the listener's words. Only shown when they turned it on and the
+  // current song is one it can actually reach, so it never contradicts the line above it.
+  const mixLine =
+    playing && mix > 0 && mode === 'preview' && mixNote ? (
+      <p className="np__note np__note--mix" aria-live="polite">
+        <Glyph name="shuffle" size={12} /> {mixNote}
+      </p>
+    ) : null;
+
   const status = !playing ? null : err ? (
     <p className="np__note np__note--bad">
       <Glyph name="warning" size={12} /> {err}
@@ -483,32 +567,53 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
 
   return (
     <section className={classNames('np', docked ? 'np--docked' : 'np--panel', !playing && 'is-empty')} aria-label="Now playing">
-      <audio
-        ref={audio}
-        preload="none"
-        onPlay={() => setPaused(false)}
-        onPlaying={() => setLoading(false)}
-        onPause={() => setPaused(true)}
-        onWaiting={() => setLoading(true)}
-        onLoadedMetadata={(e) => setDur(e.currentTarget.duration || 0)}
-        onTimeUpdate={(e) => {
-          const a = e.currentTarget;
-          meter.current.tick(a.currentTime, !a.paused && !a.seeking);
-          setCur(a.currentTime);
-        }}
-        onSeeked={(e) => meter.current.seeked(e.currentTarget.currentTime)}
-        onEnded={() => {
-          ended.current = true;
-          setPaused(true);
-          onEndRef.current();
-        }}
-        onError={() => {
-          if (src) {
-            setLoading(false);
-            setErr('This preview could not play. Deezer may no longer offer it.');
-          }
-        }}
-      />
+      {/*
+        Two permanent decks. They are never keyed or conditionally rendered, because a
+        MediaElementAudioSourceNode can be created once per element for the page's lifetime: a
+        remounted element would lose its place in the mixing graph and go silent.
+
+        crossOrigin must be set here, in the markup, before any src is assigned. Routing a
+        cross-origin element that did not opt in through Web Audio produces permanent silence, not
+        an error. Deezer's preview CDN answers with Access-Control-Allow-Origin: *.
+
+        Only the current deck drives the UI. The other one is either idle or mid-blend, and its
+        time updates must not move the progress bar or the listen meter.
+      */}
+      {(['a', 'b'] as const).map((id) => (
+        <audio
+          key={id}
+          ref={id === 'a' ? deckA : deckB}
+          preload="none"
+          crossOrigin="anonymous"
+          data-deck={id}
+          onPlay={() => id === deck && setPaused(false)}
+          onPlaying={() => id === deck && setLoading(false)}
+          onPause={() => id === deck && setPaused(true)}
+          onWaiting={() => id === deck && setLoading(true)}
+          onLoadedMetadata={(e) => id === deck && setDur(e.currentTarget.duration || 0)}
+          onTimeUpdate={(e) => {
+            const a = e.currentTarget;
+            if (id !== deck) return;
+            meter.current.tick(a.currentTime, !a.paused && !a.seeking);
+            setCur(a.currentTime);
+            // The blend has to begin before this song ends, so it is driven from the playhead.
+            void mixer.current?.tick(mix);
+          }}
+          onSeeked={(e) => id === deck && meter.current.seeked(e.currentTarget.currentTime)}
+          onEnded={() => {
+            if (id !== deck) return;
+            ended.current = true;
+            setPaused(true);
+            onEndRef.current();
+          }}
+          onError={() => {
+            if (id === deck && src) {
+              setLoading(false);
+              setErr('This preview could not play. Deezer may no longer offer it.');
+            }
+          }}
+        />
+      ))}
       {!playing ? (
         <div className="np__idle">
           <span className="np__idleart" aria-hidden="true">
@@ -546,6 +651,19 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
               <span className="np__title">{t!.title}</span>
               <span className="np__artist">{artistOf(t!)}</span>
               {!docked && status}
+              {!docked && mixLine}
+              {/*
+                The docked strip is deliberately compact, so it carries no note lines — the same
+                reason `status` is hidden here. A blend still has to be announced, though, or a
+                screen-reader listener gets two songs at once with no explanation. Measured on the
+                phone-width app: a blend runs there with no visible sign of it at all, so the
+                visible indicator for the strip is still an open design question.
+              */}
+              {docked && mixLine && (
+                <span className="vh" aria-live="polite">
+                  {mixNote}
+                </span>
+              )}
             </div>
           </div>
           {docked ? (

@@ -88,3 +88,20 @@ someone else's player does not. The mixer reports this rather than appearing bro
 `REASON_TEXT` in `web/src/audio-engine.ts`.
 
 A crossfade needs *both* songs under Web Audio control, so only preview→preview pairs can blend.
+
+### What that forced, measured rather than assumed
+
+With the crossfader at maximum on the real Windows app, **all ten songs tried played in YouTube's
+iframe** — every one had a confident YouTube match, so the preview path was never chosen and the
+mixer had nothing to work with. A correctly wired crossfader would still have done nothing.
+
+So `mixerNeedsPreview` in `web/src/Player.tsx` makes the mixer's own choice explicit: while the
+crossfader is on, a song that has a preview plays as that preview, and the YouTube lookup is
+skipped entirely. This is the opposite of the default preference, and it is deliberate — the
+alternative is a control that silently does nothing. The listener is told plainly in Settings, and
+the trade is 30 seconds a song, mixed, instead of full songs that cannot be.
+
+This is also why the lookup is skipped rather than merely ignored: while it ran, the song's source
+counted as unresolved, and the player's load effect tore down the deck the blend had just handed
+over.
+

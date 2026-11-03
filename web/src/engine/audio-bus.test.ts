@@ -17,7 +17,7 @@ import {
  */
 
 interface Curve {
-  kind: 'curve' | 'linear' | 'exp' | 'set' | 'cancel';
+  kind: 'curve' | 'linear' | 'exp' | 'set' | 'cancel' | 'hold';
   values?: number[];
   value?: number;
   at: number;
@@ -67,6 +67,15 @@ class Param {
   lastCurve(): Curve | null {
     for (let i = this.log.length - 1; i >= 0; i -= 1) if (this.log[i]!.kind === 'curve') return this.log[i]!;
     return null;
+  }
+  /** Where the param comes to rest, counting an instant set as well as a ramp. */
+  resting(): number {
+    for (let i = this.log.length - 1; i >= 0; i -= 1) {
+      const e = this.log[i]!;
+      if (e.kind === 'curve') return e.values![e.values!.length - 1]!;
+      if (e.kind === 'linear' || e.kind === 'exp' || e.kind === 'set') return e.value!;
+    }
+    return this.value;
   }
 }
 
@@ -127,6 +136,157 @@ function reaches(from: Node, to: Node, seen = new Set<Node>()): boolean {
   seen.add(from);
   return from.outputs.some((n) => reaches(n, to, seen));
 }
+
+describe('production scheduling', () => {
+  const setup = () => {
+    const result = makeCtx();
+    const bus = createAudioBus(result.ctx);
+    const a = bus.attach(el(), 'a')!;
+    const b = bus.attach(el(), 'b')!;
+    const advance = (time: number) => { (result.ctx as { currentTime: number }).currentTime = time; };
+    return { ...result, bus, a, b, advance };
+  };
+
+  it('does not silence the current deck or change ownership for an unattached target', () => {
+    const { ctx } = makeCtx();
+    const bus = createAudioBus(ctx);
+    const a = bus.attach(el(), 'a')!;
+    bus.cut('b');
+    bus.crossfadeTo('b', 4);
+    bus.transitionTo('b', 4, 'filter');
+    expect(bus.live()).toBe('a');
+    expect((a.gain.gain as unknown as Param).log).toHaveLength(0);
+  });
+
+  it.each([NaN, Infinity, -Infinity, -2])('sanitizes duration %s before any scheduling', seconds => {
+    const { bus, a, b } = setup();
+    bus.transitionTo('b', seconds, 'filter');
+    for (const p of [a.gain.gain, b.gain.gain, a.bass.gain, b.bass.gain, a.sweep.frequency]) {
+      for (const event of (p as unknown as Param).log) {
+        expect(Number.isFinite(event.at)).toBe(true);
+        if (event.seconds !== undefined) expect(Number.isFinite(event.seconds)).toBe(true);
+      }
+    }
+  });
+
+  it.each(['blend', 'bass-swap', 'filter'] as const)('resets reused incoming filters for %s after A→B→A', style => {
+    const { bus, a, advance } = setup();
+    bus.transitionTo('b', 8, 'filter');
+    advance(19);
+    bus.transitionTo('a', 8, style);
+    expect((a.sweep.frequency as unknown as Param).resting()).toBe(SWEEP_PARKED_HZ);
+    expect((a.bass.gain as unknown as Param).resting()).toBe(0);
+  });
+
+  it('crossfadeTo also resets reused filters', () => {
+    const { bus, a, advance } = setup();
+    bus.transitionTo('b', 8, 'filter');
+    advance(19);
+    bus.crossfadeTo('a', 8);
+    expect((a.sweep.frequency as unknown as Param).resting()).toBe(SWEEP_PARKED_HZ);
+    expect((a.bass.gain as unknown as Param).resting()).toBe(0);
+  });
+
+  it.each([true, false])('preserves intermediate gain on reversal and cut (native hold=%s)', native => {
+    const { bus, a, b, advance } = setup();
+    const params = [a.gain.gain, b.gain.gain] as unknown as Param[];
+    if (native) for (const param of params) Object.assign(param, {
+      cancelAndHoldAtTime: (at: number) => param.log.push({ kind: 'hold', at }),
+    });
+    bus.crossfadeTo('b', 8);
+    advance(12);
+    const before = params.map(p => p.lastCurve()!.values![12]!);
+    bus.crossfadeTo('a', 8);
+    params.forEach((p, i) => expect(p.lastCurve()!.values![0]).toBeCloseTo(before[i]!, 5));
+    const expected = params.map(p => p.lastCurve()!.values![12]!);
+    advance(14);
+    bus.cut('b');
+    params.forEach((p, i) => {
+      expect(p.log.filter(e => e.kind === 'set').at(-1)?.value).toBeCloseTo(expected[i]!, 5);
+      if (native) expect(p.log.some(e => e.kind === 'hold')).toBe(true);
+    });
+    expect(params[0]!.settled()).toBe(0);
+    expect(params[1]!.settled()).toBe(1);
+  });
+
+  it('does not wipe the duck when scheduling the second half of a bass handoff', () => {
+    const { bus, b } = setup();
+    bus.transitionTo('b', 8, 'bass-swap');
+    const log = (b.bass.gain as unknown as Param).log;
+    const duck = log.findIndex(e => e.kind === 'linear' && e.value === BASS_DUCK_DB);
+    expect(duck).toBeGreaterThanOrEqual(0);
+    // Nothing may cancel or re-anchor after the duck is scheduled: the handoff leg is appended.
+    expect(log.slice(duck + 1).map(e => e.kind)).toEqual(['linear']);
+    expect(log.slice(duck + 1)[0]!.value).toBe(0);
+  });
+
+  it('re-anchors an interrupted bass handoff where the ramp had actually reached', () => {
+    const { bus, b, advance } = setup();
+    bus.transitionTo('b', 8, 'filter'); // b ducks by 10.012, then rides back to 0 dB by t=14.
+    advance(12);
+    bus.transitionTo('a', 8, 'bass-swap'); // Reversal while that handoff is still in flight.
+    const expected = BASS_DUCK_DB * (1 - (12 - 10.012) / (14 - 10.012));
+    const anchor = (b.bass.gain as unknown as Param).log.filter(e => e.kind === 'set' && e.at === 12).at(-1);
+    expect(anchor?.value).toBeCloseTo(expected, 5);
+    expect(expected).toBeGreaterThan(BASS_DUCK_DB);
+    expect(expected).toBeLessThan(0);
+  });
+
+  it('holds filter values before smoothly clearing an interrupted sweep', () => {
+    const { bus, a, advance } = setup();
+    bus.transitionTo('b', 8, 'filter');
+    advance(12);
+    bus.cut('a');
+    const sweep = a.sweep.frequency as unknown as Param;
+    expect(sweep.log.filter(e => e.kind === 'set').at(-1)?.value).toBeCloseTo(20 * (900 / 20) ** 0.25, 5);
+    expect(sweep.settled()).toBe(SWEEP_PARKED_HZ);
+  });
+
+  it('protects the summed mix even when per-deck EQ/limiting is bypassed', () => {
+    const { ctx, created, destination } = makeCtx();
+    const bus = createAudioBus(ctx, { ...EQ_DEFAULTS, on: false, limiter: false });
+    const a = bus.attach(el(), 'a')!;
+    const b = bus.attach(el(), 'b')!;
+    const shared = created.filter(n => n.label === 'comp' && reaches(a.gain as unknown as Node, n) && reaches(b.gain as unknown as Node, n));
+    expect(shared).toHaveLength(1);
+    expect(shared[0]!.threshold.value).toBeLessThan(0);
+    expect(shared[0]!.ratio.value).toBeGreaterThanOrEqual(20);
+    expect(reaches(shared[0]!, destination)).toBe(true);
+    bus.dispose();
+    expect(shared[0]!.outputs).toHaveLength(0);
+  });
+});
+
+describe('graph ownership', () => {
+  it('disconnects replaced graphs and never routes one source into both decks', () => {
+    const { ctx, created, destination } = makeCtx();
+    const bus = createAudioBus(ctx);
+    const one = el();
+    const old = bus.attach(one, 'a')!;
+    const oldNodes = created.filter(n => reaches(n, old.gain as unknown as Node));
+    bus.attach(el(), 'a');
+    for (const node of oldNodes) expect(reaches(node, destination)).toBe(false);
+    bus.attach(one, 'b');
+    const source = created.find(n => (n as unknown as { mediaElement: HTMLMediaElement }).mediaElement === one)!;
+    expect(source.outputs).toHaveLength(2); // EQ wet + dry only, never an old graph too.
+    expect(reaches(source, old.gain as unknown as Node)).toBe(false);
+    bus.dispose();
+    for (const node of created) expect(node.outputs, node.label).toHaveLength(0);
+  });
+
+  it('moves an element between slots without leaving a stale deck or losing live ownership', () => {
+    const { ctx, created } = makeCtx();
+    const bus = createAudioBus(ctx);
+    const one = el();
+    const old = bus.attach(one, 'a')!;
+    const moved = bus.attach(one, 'b')!;
+    expect(bus.live()).toBe('b');
+    expect((old.gain as unknown as Node).outputs).toHaveLength(0);
+    expect(bus.crossfadeTo('a', 2)).toBe('b'); // A no longer exists.
+    expect(moved.gain.gain.value).toBe(1);
+    expect(created.filter(n => n.label === 'source')).toHaveLength(1);
+  });
+});
 
 describe('the audio bus', () => {
   it('routes each deck through its own EQ into its own fader, then one master', () => {
@@ -366,9 +526,11 @@ describe('styled transitions', () => {
     const inBass = (b.bass.gain as unknown as Param);
     const outBass = (a.bass.gain as unknown as Param);
     // Incoming starts ducked — strictly below flat, whatever the constant says — and ends flat.
-    const inStart = inBass.log.find((e) => e.kind === 'set')!.value!;
-    expect(inStart).toBeLessThan(0);
-    expect(inStart).toBe(BASS_DUCK_DB);
+    // The duck is reached by a short ramp rather than a step, so a reversal cannot click.
+    const inStart = inBass.log.find((e) => e.kind === 'linear')!;
+    expect(inStart.value).toBeLessThan(0);
+    expect(inStart.value).toBe(BASS_DUCK_DB);
+    expect(inStart.at).toBeLessThan(10.05);
     expect(inBass.settled()).toBe(0);
     // Outgoing starts flat and gives the lows up.
     expect(outBass.log.find((e) => e.kind === 'set')?.value).toBe(0);
@@ -379,7 +541,7 @@ describe('styled transitions', () => {
   it('the bass handoff happens at the halfway point, not at the end', () => {
     const { bus, b } = setup();
     bus.transitionTo('b', 8, 'bass-swap');
-    const ramp = (b.bass.gain as unknown as Param).log.find((e) => e.kind === 'linear')!;
+    const ramp = (b.bass.gain as unknown as Param).log.find((e) => e.kind === 'linear' && e.value === 0)!;
     // ctx.currentTime is 10 in the double; half of 8s is 4s.
     expect(ramp.at).toBeCloseTo(14, 5);
   });

@@ -10,6 +10,7 @@ import { SoundCard } from './SoundCard';
 import { ProfileView } from './Profile';
 import { SavedView } from './SavedView';
 import { SettingsView } from './Settings';
+import { setEqConfig, setMixSlider } from './audio-engine';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, classNames, describeTaste, fmtBytes, keepFocus, historyBack, mergeRerank, nextRepeat, playbackOfTrack, stepQueue, type RepeatMode } from './util';
 
 type Tab = 'discover' | 'saved' | 'profile' | 'downloads' | 'settings';
@@ -149,6 +150,15 @@ export function App() {
       .then(setSettings)
       .catch((e: Error) => flash(e.message));
   };
+
+  // The audio engine is a page-level singleton, not React state, because a browser allows one
+  // AudioContext per page. Mirroring the stored settings into it here means the equaliser and the
+  // mixer are live wherever the listener changed them, and survive a reload.
+  useEffect(() => {
+    if (!settings) return;
+    setEqConfig(settings.eq);
+    setMixSlider(settings.mix ?? 0);
+  }, [settings?.eq, settings?.mix]);
 
   // ---------------------------------------------------------------- recommendations
   const items = useMemo(() => (result?.items ?? []).filter((x) => !hidden.has(x.track.key)), [result, hidden]);

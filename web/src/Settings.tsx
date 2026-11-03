@@ -3,6 +3,7 @@ import { ProviderMark } from '@now-playing/aqua-ui/icons';
 import { api, type Health, type Settings as S, type Status } from './api';
 import { parseHistoryFile, type ImportSummary } from './engine/import';
 import { MicSettings } from './MicSettings';
+import { AudioSettings } from './AudioSettings';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, classNames, fmtBytes, markKey } from './util';
 import './discovery-settings.css';
 
@@ -147,6 +148,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
             left. Pausing, seeking, skipping or replaying never starts a search on its own.
           </p>
         </section>
+        <AudioSettings settings={settings} onSettings={onSettings} />
         <div className="pref">
           <span className="k">Ranking engine</span>
           <label className="chk">
