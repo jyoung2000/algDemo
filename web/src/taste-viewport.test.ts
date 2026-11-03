@@ -83,9 +83,33 @@ describe('TastePicker behavior', () => {
     advance(AUTO_FIT_DURATION);
     const v = fitTaste([...taste, { hue: 144, bpm: 130 }]);
     expect(backgroundZoom()).toBeCloseTo(1 / v.size);
-    expect(parseFloat(field().querySelector<HTMLElement>('.tpick__placed')!.style.left)).toBeCloseTo(projectPoint(v, taste[0]!).left);
     expect(parseFloat(field().querySelector<HTMLElement>('.tpick__step')!.style.bottom)).toBeCloseTo(projectPoint(v, { hue: 144, bpm: 130 }).bottom);
     dotInside();
+  });
+
+  it('plots cover art only: no genre dots and no trail lines (TASTE-MAP-ART-ONLY)', () => {
+    // The owner asked for "cover art only" on the field: the coloured per-genre dots read as
+    // "random dots" because nothing on the field said what they were, and the dashed line joining
+    // the played songs added another mark competing with the artwork.
+    render(createElement(TastePicker, { placed: taste, trail: [
+      { hue: 144, bpm: 130, label: 'played one' },
+      { hue: 200, bpm: 150, label: 'played two' },
+    ] }));
+    advance(AUTO_FIT_DELAY + AUTO_FIT_DURATION + 100);
+    expect(field().querySelectorAll('.tpick__placed'), 'no genre dots').toHaveLength(0);
+    expect(field().querySelectorAll('.tpick__trail'), 'no trail svg').toHaveLength(0);
+    expect(field().querySelectorAll('polyline'), 'no connecting line').toHaveLength(0);
+    // The cover art itself stays, one marker per played song.
+    expect(field().querySelectorAll('.tpick__step')).toHaveLength(2);
+  });
+
+  it('still frames the listener’s genres even though they are no longer drawn', () => {
+    // Dropping the dots must not drop the genres from the viewport fit, or the field would frame
+    // only the handful of recently played songs.
+    render(createElement(TastePicker, { placed: taste }));
+    advance(AUTO_FIT_DELAY + AUTO_FIT_DURATION + 100);
+    expect(backgroundZoom()).toBeCloseTo(1 / fitTaste(taste).size);
+    expect((screen.getByRole('button', { name: 'My taste' }) as HTMLButtonElement).disabled).toBe(false);
   });
   it('keeps empty profiles full and disables My taste', () => {
     render(createElement(TastePicker)); advance(5000);

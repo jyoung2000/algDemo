@@ -936,8 +936,9 @@ a.push {
   appearance: none;
   height: 6px;
   border-radius: 3px;
-  background: linear-gradient(to right, var(--aqua-mid) var(--pct, 50%), #dcdcd8 var(--pct, 50%));
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+  /* Flat, like the player's own progress track: the old inset shadow read as a box drawn around the slider. */
+  background: linear-gradient(to right, #0071e3 var(--pct, 50%), #dcdcd8 var(--pct, 50%));
+  box-shadow: none;
   cursor: pointer;
 }
 .dial input::-webkit-slider-thumb,
@@ -947,8 +948,9 @@ a.push {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: radial-gradient(circle at 50% 35%, #fff, #e3e3e0 60%, #c9c9c5);
-  box-shadow: 0 0 0 1px #9c9c9c, 0 1px 2px rgba(0, 0, 0, 0.3);
+  /* A flat head with one hairline ring, to match the flat track. */
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.22), 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 .dial input::-moz-range-thumb,
 .vol__bar::-moz-range-thumb,
@@ -957,8 +959,8 @@ a.push {
   height: 18px;
   border-radius: 50%;
   border: 0;
-  background: radial-gradient(circle at 50% 35%, #fff, #e3e3e0 60%, #c9c9c5);
-  box-shadow: 0 0 0 1px #9c9c9c, 0 1px 2px rgba(0, 0, 0, 0.3);
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.22), 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 .dial__num {
   min-width: 2ch;
@@ -971,8 +973,10 @@ a.push {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 5px 6px;
-  margin-top: 5px;
+  /* These chips wrap onto two lines on a phone, so the row gap is the one that decides how tall
+     the band gets; keep it tighter than the gap between chips on a line. */
+  gap: 4px 6px;
+  margin-top: 2px;
 }
 
 .fact {
@@ -985,19 +989,19 @@ a.push {
   border: 1px solid var(--hair);
   white-space: nowrap;
 }
-/* The song's Taste Picker colour: a dot and a tinted edge, so the family reads at a glance. */
+/* SONG-CARD-001: slightly larger, borderless pills retain the song's Taste Picker colour. */
 .genre {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 0 7px;
+  padding: 1px 8px;
   border-radius: 8px;
-  font-size: 10px;
-  line-height: 15px;
+  font-size: 11px;
+  line-height: 18px;
   font-weight: 600;
   color: var(--ink);
   white-space: nowrap;
-  border: 1px solid color-mix(in srgb, var(--tone, var(--accent)) 60%, var(--hair));
+  border: 0;
   background: color-mix(in srgb, var(--tone, var(--accent)) 20%, var(--pearl-2));
 }
 .genre::before {
@@ -1092,19 +1096,24 @@ a.push {
   margin: 0;
   padding: 0;
   border: 1px solid var(--hair);
-  border-radius: 10px;
+  border-radius: 14px;
   overflow: hidden;
 }
 .rec {
-  /* UX: every child has a named cell, so nothing wraps into the rank or art column. Actions sit under the text. */
+  /* SONG-CARD-001. Three bands, after Fable's .card/.card__top:
+     1. the rank and artwork, with the title and artist levelled against them;
+     2. the reason line and tags, indented under the title;
+     3. one unbroken row of controls, using the row's full width.
+     Every child has a named cell, so nothing wraps into the rank or art column. */
   display: grid;
-  grid-template-columns: 26px 52px minmax(0, 1fr) auto auto;
+  grid-template-columns: 26px 56px minmax(0, 1fr) auto auto;
   grid-template-areas:
     'rank art text tier dur'
-    'rank art actions actions actions';
-  gap: 4px 12px;
+    '. . sub sub sub'
+    '. . actions actions actions';
+  gap: 6px 12px;
   align-items: center;
-  padding: 8px 12px 8px 8px;
+  padding: 10px 12px 10px 8px;
   border-bottom: 1px solid var(--hair-2);
   background: var(--panel);
   outline: none;
@@ -1135,6 +1144,8 @@ a.push {
 }
 .rec__rank {
   grid-area: rank;
+  /* Levelled with the cover and the title beside it, never with the whole multi-line row. */
+  align-self: center;
   color: var(--ink-3);
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -1143,19 +1154,26 @@ a.push {
 .rec__art {
   grid-area: art;
   position: relative;
+  /* Levelled with the title and artist beside it, not with the whole row. */
+  align-self: center;
   appearance: none;
   border: 0;
   padding: 0;
   background: none;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
+}
+.rec__art .art {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
 }
 .rec__playover {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
-  border-radius: 6px;
+  border-radius: 8px;
   color: #fff;
   background: rgba(0, 0, 0, 0.35);
   opacity: 0;
@@ -1170,20 +1188,39 @@ a.push {
   grid-area: text;
   min-width: 0;
   display: grid;
+  align-self: center;
+  gap: 1px;
 }
-.rec__title,
-.rec__artist,
+/* The reason line and the tags, indented under the title. */
+.rec__sub {
+  grid-area: sub;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
 .rec__why1 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The song's identity is never cut: the full title and the full artist/features list wrap onto
+   as many lines as they need, at every width. anywhere breaks a single long unspaced token
+   (a run-on remix title) rather than letting it widen the row. */
+.rec__title,
+.rec__artist {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .rec__title {
   font-weight: 700;
-  font-size: 13px;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
 }
 .rec__artist {
   color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 500;
 }
 .rec__why1 {
   color: var(--ink-3);
@@ -1207,10 +1244,46 @@ a.push {
 .rec__actions {
   grid-area: actions;
   display: flex;
-  gap: 5px;
+  gap: 6px;
   align-items: center;
   justify-content: flex-start;
-  flex-wrap: wrap;
+  /* All six controls stay on one line. The why pill is the only flexible child, so a squeeze
+     ellipsises its label instead of dropping it to a second row. */
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+/* Fable paints a round 36px icon button; Astra wants a 44px target. The button is therefore a
+   36px CIRCLE inside a box that is a full 44px TALL: the extra 8px is carried by transparent
+   top and bottom borders over an explicit content box, so the border area still takes the tap
+   while every painted thing — the fill (background-clip) and the ring (an inset shadow, drawn
+   inside the padding box) — stays in the 36 x 36 content box, where the 999px radius clamps to
+   a true circle. The ring cannot be a real border: that would be drawn round the 36 x 44 box
+   and read as a capsule, which is also why hover and pressed recolour the shadow, not the
+   border. An ::after overlay was tried first and does not work: neighbouring buttons' inflated
+   areas overlap and steal each other's hits, measuring 41px at best and 36px once the gap
+   narrows.
+   Six 44px-wide targets plus a label cannot fit a 320px row (6 x 44 = 264 > 252), so width
+   is the axis that gives; height, where a mis-tap is likeliest, keeps the full 44px. */
+.rec__actions .iconbtn {
+  box-sizing: content-box;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  padding: 0;
+  border: 4px solid transparent;
+  border-left-width: 0;
+  border-right-width: 0;
+  background-clip: content-box;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+.rec__actions .iconbtn:hover {
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px #c6c3bb;
+}
+.rec__actions .iconbtn[aria-pressed='true'] {
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px #b8cff0;
 }
 .whybtn {
   appearance: none;
@@ -1222,11 +1295,29 @@ a.push {
   color: var(--ink-2);
   cursor: pointer;
   white-space: nowrap;
+  /* The one child that may shrink, so the row never pushes the page sideways. */
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .whybtn[aria-expanded='true'] {
   color: var(--accent);
   border-color: #b8cff0;
   background: var(--accent-soft);
+}
+/* The full phrase on a desktop row; "Why?" once the row is narrow enough that five icons
+   would otherwise ellipsise it away. aria-label carries the whole question either way. */
+.whybtn__short {
+  display: none;
+}
+@media (max-width: 480px) {
+  .whybtn__full {
+    display: none;
+  }
+  .whybtn__short {
+    display: inline;
+  }
 }
 .openlink {
   display: inline-flex;
@@ -1254,6 +1345,11 @@ a.push {
   border: 1px solid var(--hair-2);
   display: grid;
   gap: 6px;
+}
+/* The save menu drops under the row that opened it, in the same column as the why panel. */
+.rec__savemenu {
+  grid-column: 3 / -1;
+  margin: 2px 0 4px;
 }
 .why__reasons {
   margin: 0;
@@ -1993,9 +2089,10 @@ a.push {
 .plog__what {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* A title and its features must never be cut off (SONG-CARD-001). On the emulator
+     "Mamacita (feat. Rich Homie Quan & Young Thug) — Travis Scott" wanted 367px in a 363px box and
+     lost its artist to an ellipsis. It wraps now; `anywhere` keeps one long unbroken word in. */
+  overflow-wrap: anywhere;
 }
 .plog__len {
   color: var(--ink-3);
@@ -2265,33 +2362,35 @@ a.push {
     padding: 14px 12px;
   }
   .rec {
-    grid-template-columns: 44px minmax(0, 1fr) auto;
+    grid-template-columns: 20px 56px minmax(0, 1fr) auto;
     grid-template-areas:
-      'art text dur'
-      'art text tier'
-      'actions actions actions';
-    padding: 10px 8px;
-  }
-  .rec__rank {
-    display: none;
+      'rank art text dur'
+      'sub sub sub tier'
+      'actions actions actions actions';
+    column-gap: 8px;
+    row-gap: 4px;
+    padding: 8px 8px 6px;
   }
   .rec__tier {
     text-align: right;
     align-self: start;
   }
   .rec__dur {
-    align-self: end;
+    align-self: center;
   }
-  .rec__art .art {
-    width: 44px;
-    height: 44px;
-  }
-  .why {
+  .why,
+  .rec__savemenu {
     grid-column: 1 / -1;
   }
   .iconbtn {
     width: 40px;
     height: 40px;
+  }
+  /* The card's own controls stay a 36px circle so all six fit one line, in a box a full 44px
+     tall so the vertical target is real. See the base rule for why width gives. */
+  .rec__actions .iconbtn {
+    width: 36px;
+    height: 36px;
   }
   .whybtn,
   .openlink {
@@ -2299,6 +2398,19 @@ a.push {
     padding: 0 12px;
     display: inline-flex;
     align-items: center;
+  }
+  .rec__actions .whybtn {
+    min-height: 44px;
+    padding: 0 10px;
+  }
+  /* At the narrowest phone widths the six controls need the gap back. */
+  @media (max-width: 360px) {
+    .rec__actions {
+      gap: 4px;
+    }
+    .rec__actions .whybtn {
+      padding: 0 8px;
+    }
   }
   .track {
     flex-wrap: wrap;
@@ -2335,15 +2447,6 @@ a.push {
     /* The thumb needs a 44px touch target, but the track is painted 6px tall, centred in it. */
     height: 44px;
     background: linear-gradient(to right, var(--aqua-mid) var(--pct, 50%), #dcdcd8 var(--pct, 50%)) center / 100% 6px no-repeat;
-  }
-}
-@media (max-width: 480px) {
-  /* UX: a phone has no hover, so a long title wraps to two lines instead of being cut off. */
-  .rec__title {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    white-space: normal;
   }
 }
 @media (max-width: 480px) {
@@ -2570,16 +2673,6 @@ a.push {
   pointer-events: none;
   transform: translate(0, 0);
 }
-.tpick__placed {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  margin: -5px 0 0 -5px;
-  border-radius: 50%;
-  border: 2px solid #fff;
-  pointer-events: none;
-  opacity: 0.9;
-}
 .tpick__fams {
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr));
@@ -2735,27 +2828,14 @@ a.push {
     letter-spacing: 0;
   }
 }
-.tpick__trail {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-.tpick__trail polyline {
-  fill: none;
-  stroke: #fff;
-  stroke-width: 2;
-  stroke-opacity: 0.85;
-  stroke-linejoin: round;
-  stroke-dasharray: 4 3;
-}
 .tpick__step {
   position: absolute;
-  width: 22px;
-  height: 22px;
-  margin: -11px 0 0 -11px;
-  border-radius: 50%;
+  /* The cover art has to be readable: at 22px the owner could not tell what the picture was.
+     A square with a soft radius shows more of the artwork than a circle crops away. */
+  width: 42px;
+  height: 42px;
+  margin: -21px 0 0 -21px;
+  border-radius: 10px;
   background: rgba(11, 11, 16, 0.85);
   border: 2px solid #fff;
   color: #fff;
@@ -2774,23 +2854,24 @@ a.push {
   position: absolute;
   right: -2px;
   bottom: -2px;
-  min-width: 11px;
-  height: 11px;
-  padding: 0 2px;
-  border-radius: 7px 0 0 0;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 9px 0 0 0;
   background: rgba(11, 11, 16, 0.92);
   color: #fff;
-  font-size: 8px;
+  font-size: 10px;
   font-style: normal;
   font-weight: 800;
-  line-height: 11px;
+  line-height: 15px;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 .tpick__step--now {
-  width: 28px;
-  height: 28px;
-  margin: -14px 0 0 -14px;
+  width: 56px;
+  height: 56px;
+  margin: -28px 0 0 -28px;
+  border-radius: 12px;
   border-color: #fff;
   box-shadow:
     0 0 0 3px rgba(255, 255, 255, 0.28),

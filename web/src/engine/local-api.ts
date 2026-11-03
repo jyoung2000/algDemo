@@ -5,7 +5,22 @@
  */
 import * as A from './audio';
 import { DEFAULT_ENGINE, TRANSFER, engineWithWeights } from './config';
+import { EQ_DEFAULTS, parseEq } from './eq';
+import { clampSlider } from './crossfade';
 import { appendDiscovery, needsListeningDiscovery, newDiscoveryTracks } from './discovery';
+import {
+  PlaylistError,
+  addToPlaylists,
+  createPlaylist,
+  deletePlaylist,
+  parsePlaylists,
+  playlistFullyPlayed,
+  playlistsHolding,
+  removeFromPlaylists,
+  renamePlaylist,
+  unplayedCount,
+  type Playlist,
+} from './playlists';
 import { Deezer, NeedsChoice, ProviderError, type Ctx } from './deezer';
 import * as E from './engine';
 import { buildTaste, tasteSummary, tasteFit, type TasteProfile } from './taste';
@@ -79,7 +94,9 @@ export function characteristicsOf(c: Dict, taste: TasteProfile | null): Dict {
   };
 }
 
-const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, discover_while_listening: true, rank_v2: true };
+// `settings()` returns { ...DEFAULT_SETTINGS, ...stored }, so a new key defaults cleanly for an
+// install that predates it — no migration needed.
+const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, discover_while_listening: true, rank_v2: true, eq: EQ_DEFAULTS, mix: 0 };
 /** How many songs one discovery run adds to the list: the user's choice in Settings. */
 export const QUEUE_SIZE_MIN = 5;
 export const QUEUE_SIZE_MAX = 60;
@@ -195,6 +212,8 @@ export class LocalApi {
       if (m === 'POST' && path === '/api/impressions') return await this.impressions(body ?? {});
       if (m === 'POST' && path === '/api/full-song') return await this.fullSong(body ?? {});
       if (m === 'GET' && path === '/api/saved') return ok(this.saved());
+      if (m === 'GET' && path === '/api/playlists') return ok(this.playlists());
+      if (m === 'POST' && path === '/api/playlists') return await this.playlistAction(body ?? {});
       if (m === 'GET' && path === '/api/status') return ok(await this.status());
       if (m === 'POST' && path === '/api/reset') return this.reset(Boolean(body?.['clear_cache']));
       if (m === 'POST' && path === '/api/reset/taste') return this.resetTaste();
@@ -477,6 +496,10 @@ export class LocalApi {
       }
       cur['weights'] = body['weights'];
     }
+    // The EQ and the mixer are stored through their own parsers, so a hand-edited or stale value
+    // cannot put an out-of-range gain or a NaN slider into the audio graph.
+    if ('eq' in body) cur['eq'] = parseEq(body['eq']);
+    if ('mix' in body) cur['mix'] = clampSlider(Number(body['mix']));
     await this.store.put('settings', cur);
     return ok(cur);
   }
@@ -515,6 +538,19 @@ export class LocalApi {
     const eventId = String(body['event_id'] ?? '');
     const event = this.store.feedback().find((f) => (f as unknown as Dict)['event_id'] === eventId) as unknown as Dict | undefined;
     if (!event) return { skip: true, reason: 'That listen is not on record yet.' };
+    // A saved list is not a discovery queue: it is topped up only once the listener has heard
+    // everything already in it, rather than at the queue's low-water mark.
+    const listId = String(body['list_id'] ?? event['list_id'] ?? '');
+    if (listId) {
+      const list = this.storedPlaylists().find((l) => l.id === listId);
+      if (!list) return { skip: true, reason: 'That list is gone.' };
+      const played = this.playedKeys();
+      played.add(String(event['key']));
+      if (!playlistFullyPlayed(list, played)) {
+        const left = unplayedCount(list, played);
+        return { skip: true, reason: `${left} ${left === 1 ? 'song' : 'songs'} in “${list.name}” still to play.` };
+      }
+    }
     const items = (this.store.get<Dict>('last_result')?.['items'] ?? []) as { track: Dict }[];
     const played = new Set<string>((Array.isArray(body['exclude']) ? body['exclude'] : []).map(String));
     played.add(String(event['key']));
@@ -980,6 +1016,86 @@ export class LocalApi {
       }
     }
     return { items };
+  }
+
+  // ---- saved lists ---------------------------------------------------------------------
+
+  private storedPlaylists(): Playlist[] {
+    return parsePlaylists(this.store.get('playlists'));
+  }
+
+  /** Every song the listener has actually finished, which is what gates a list's own discovery. */
+  private playedKeys(): Set<string> {
+    return new Set(this.store.feedback().filter((r) => r.kind === 'complete').map((r) => r.key));
+  }
+
+  /**
+   * The lists, each with the songs it holds resolved back to tracks. A song whose track was never
+   * recorded still counts towards the list's length, so the discovery gate cannot be fooled by it.
+   */
+  private playlists(): Dict {
+    const lists = this.storedPlaylists();
+    const played = this.playedKeys();
+    const byKey = new Map<string, Dict>();
+    for (const r of this.store.feedback()) if (r.track) byKey.set(r.key, r.track as Dict);
+    for (const it of (this.store.get<Dict>('last_result')?.['items'] ?? []) as { track: Dict }[]) {
+      if (it.track) byKey.set(String(it.track['key']), it.track);
+    }
+    for (const s of this.store.seeds() as Dict[]) byKey.set(String(s['key']), s);
+    return {
+      lists: lists.map((l) => ({
+        id: l.id,
+        name: l.name,
+        created: l.created,
+        count: l.entries.length,
+        unplayed: unplayedCount(l, played),
+        discovery_ready: playlistFullyPlayed(l, played),
+        items: l.entries.map((e) => ({ key: e.key, added: e.added, track: byKey.get(e.key) ?? null, played: played.has(e.key) })),
+      })),
+    };
+  }
+
+  private async savePlaylists(lists: Playlist[]): Promise<void> {
+    await this.store.put('playlists', lists);
+  }
+
+  /** One POST for every list edit, so the engine keeps its flat exact-path routing. */
+  private async playlistAction(body: Dict): Promise<LocalResponse> {
+    const action = String(body['action'] ?? '');
+    const ids = (Array.isArray(body['ids']) ? body['ids'] : body['id'] ? [body['id']] : []).map(String);
+    const key = String(body['key'] ?? '');
+    let lists = this.storedPlaylists();
+    try {
+      if (action === 'create') {
+        lists = createPlaylist(lists, body['name'], unixNow(), newId());
+        // Creating a list straight from the like menu puts the song in it in the same step.
+        if (key) lists = addToPlaylists(lists, [lists[lists.length - 1]!.id], key, unixNow());
+      } else if (action === 'rename') {
+        lists = renamePlaylist(lists, ids[0] ?? '', body['name']);
+      } else if (action === 'delete') {
+        lists = deletePlaylist(lists, ids[0] ?? '');
+      } else if (action === 'add') {
+        if (!key) return fail(400, 'Which song?');
+        lists = addToPlaylists(lists, ids, key, unixNow());
+      } else if (action === 'remove') {
+        if (!key) return fail(400, 'Which song?');
+        lists = removeFromPlaylists(lists, ids, key);
+      } else if (action === 'set') {
+        // The like menu sends the whole ticked set, so unticking removes in the same call.
+        if (!key) return fail(400, 'Which song?');
+        const wanted = new Set(ids);
+        const holding = playlistsHolding(lists, key);
+        lists = addToPlaylists(lists, [...wanted], key, unixNow());
+        lists = removeFromPlaylists(lists, holding.filter((id) => !wanted.has(id)), key);
+      } else {
+        return fail(400, `Unknown list action “${action}”.`);
+      }
+    } catch (e) {
+      if (e instanceof PlaylistError) return fail(400, e.message);
+      throw e;
+    }
+    await this.savePlaylists(lists);
+    return ok(this.playlists());
   }
 
   // ---- playback ------------------------------------------------------------------------

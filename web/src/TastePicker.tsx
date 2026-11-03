@@ -15,9 +15,12 @@ import {
 } from './taste-map';
 
 import { AUTO_FIT_DELAY, AUTO_FIT_DURATION, FULL_VIEW, fitTaste, pointAt, projectPoint, revealPoint, selectionInView, tweenView, validPoint, viewportBackground, zoomTaste, type TasteViewport } from './taste-viewport';
+import { spreadMarkers } from './taste-spread';
 import './taste-picker-zoom.css';
 
 const pct = (x: number) => `${Math.round(x)}%`;
+/** The widest cover-art marker (the ringed current song), used to keep artwork from overlapping. */
+const MARKER_PX = 56;
 
 /** Interactive field: drag, tap or arrow keys. Colour band = family, height = tempo. */
 // The strip under the field is decorative (aria-hidden), so it uses short labels that fit eight columns at phone width.
@@ -34,9 +37,17 @@ export interface TrailPoint {
   title?: string;
 }
 
-export function TastePicker({ placed, trail }: { placed?: { hue: number; bpm: number; label: string }[]; trail?: TrailPoint[] }) {
-  const [hue, setHue] = useState(246);
-  const [bpm, setBpm] = useState(126);
+/**
+ * @param focus Where the cursor should start: the listener's strongest kept genre.
+ *
+ * TASTE-ACCURACY-001: this used to open at a hardcoded (246, 126) — the Electronic band — so the
+ * reading under the field named a genre picked by nothing but that constant. A hip-hop listener
+ * opened their own Profile and was told "Selected Garage / psych rock", or dance and EDM pop.
+ * Starting on their strongest genre means the first thing the field says about them is true.
+ */
+export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; bpm: number; label: string }[]; trail?: TrailPoint[]; focus?: { hue: number; bpm: number } | null }) {
+  const [hue, setHue] = useState(focus?.hue ?? 246);
+  const [bpm, setBpm] = useState(focus?.bpm ?? 126);
   const field = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<TasteViewport>(FULL_VIEW);
   const currentView = useRef(view);
@@ -58,7 +69,8 @@ export function TastePicker({ placed, trail }: { placed?: { hue: number; bpm: nu
   const fit = () => {
     cancelAuto();
     const target = fitTaste(latestPoints.current);
-    select(selectionInView(target, { hue, bpm }));
+    // Keep the listener's own genre under the cursor when it is inside the fitted view.
+    select(selectionInView(target, focus ?? { hue, bpm }));
     updateView(target);
   };
   useEffect(() => {
@@ -69,7 +81,7 @@ export function TastePicker({ placed, trail }: { placed?: { hue: number; bpm: nu
       timer.current = setTimeout(() => {
         autoStarted.current = true;
         const target = fitTaste(latestPoints.current);
-        select(selectionInView(target, { hue, bpm }));
+        select(selectionInView(target, focus ?? { hue, bpm }));
         const from = currentView.current;
         const start = performance.now();
         const tick = (now: number) => {
@@ -87,6 +99,30 @@ export function TastePicker({ placed, trail }: { placed?: { hue: number; bpm: nu
     const p = projectPoint(view, { hue: h, bpm: b });
     return { left: `${p.left}%`, bottom: `${p.bottom}%` };
   };
+  // The cover art must not cover other cover art, and two plays of one song land on the same
+  // point, so collisions are resolved in screen space. That needs the field's real size, because
+  // a marker's footprint as a PERCENTAGE of the field differs on each axis and at each width.
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = field.current;
+    if (!el) return;
+    const measure = () => setBox({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const trailKey = JSON.stringify((trail ?? []).map((p) => [p.hue, p.bpm]));
+  const trailPos = useMemo(() => {
+    const t = trail ?? [];
+    const raw = t.map((p) => projectPoint(view, p));
+    if (!box.w || !box.h) return raw;
+    // Newest first, so the ringed current song keeps its true position and older plays give way.
+    const spread = spreadMarkers([...raw].reverse(), { w: (MARKER_PX / box.w) * 100, h: (MARKER_PX / box.h) * 100 });
+    return spread.reverse();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trailKey, view.x, view.y, view.size, box.w, box.h]);
   const zoom = (delta: number) => {
     cancelAuto();
     updateView(zoomTaste(currentView.current, 1 / currentView.current.size + delta, { hue, bpm }));
@@ -164,33 +200,20 @@ export function TastePicker({ placed, trail }: { placed?: { hue: number; bpm: nu
         onKeyDown={onKey}
         style={{ ['--tp-h' as string]: BAND, ...viewportBackground(view) }}
       >
-        {trail && trail.length > 1 && (
-          <svg className="tpick__trail" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-            <polyline
-              points={trail.map((p) => `${projectPoint(view, p).left},${100 - projectPoint(view, p).bottom}`).join(' ')}
-              vectorEffect="non-scaling-stroke"
-            />
-          </svg>
-        )}
         {trail?.map((p, i) => (
           <span
             key={`trail-${i}`}
             className={i === trail.length - 1 ? 'tpick__step tpick__step--now' : 'tpick__step'}
             title={`${i + 1}. ${p.label}`}
-            style={{ ...pos(p.hue, p.bpm) }}
+            style={{ left: `${(trailPos[i] ?? projectPoint(view, p)).left}%`, bottom: `${(trailPos[i] ?? projectPoint(view, p)).bottom}%` }}
           >
             {p.art ? <img src={p.art} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /> : null}
             <i aria-hidden="true">{i + 1}</i>
           </span>
         ))}
-        {placed?.map((p, i) => (
-          <span
-            key={i}
-            className="tpick__placed"
-            title={p.label}
-            style={{ ...pos(p.hue, p.bpm), background: `hsl(${p.hue} 90% 62%)` }}
-          />
-        ))}
+        {/* The field plots cover art only. The listener's genres are NOT drawn as dots: with
+            nothing on the field to name them they read as random marks. They still drive the
+            viewport fit through `points`, so the field is framed on the listener's taste. */}
         <span className="tpick__dot" style={{ ...pos(hue, bpm), background: `hsl(${hue} 90% 66%)` }} />
       </div>
       <div className="tpick__axes">

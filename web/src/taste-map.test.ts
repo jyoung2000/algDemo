@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { MAP_SUBS, fitsAt, placeGenre, placeSong, pointFor, subAt, familyAt, BAND } from './taste-map';
+import { SUBS } from './engine/genre-table';
 
 describe('taste map', () => {
-  it('has the 83 picker subgenres in 8 families', () => {
-    expect(MAP_SUBS).toHaveLength(83);
+  it('has every subgenre the classifier can name, in 8 families', () => {
+    // TASTE-ACCURACY-001: the map was built from the picker's 83 and so could not place the six
+    // extra hip-hop subgenres the classifier knows — which silently dropped a hip-hop listener's
+    // own genres from their taste map. It now covers all of SUBS.
+    expect(MAP_SUBS).toHaveLength(SUBS.length);
+    expect(new Set(MAP_SUBS.map((s) => s.key)).size, 'no duplicate keys').toBe(SUBS.length);
     expect(new Set(MAP_SUBS.map((s) => s.family)).size).toBe(8);
   });
 

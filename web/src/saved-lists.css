@@ -1,0 +1,221 @@
+/* PLAYLISTS-001 — the Saved page's list switcher and per-song list controls.
+   Scoped to .lists / .track__* so it cannot reach the rest of the app.
+   Fable for the pill shapes and surfaces, Astra for 44px targets and the single accent. */
+
+.lists {
+  margin: 0 0 10px;
+  /* The fade hinting at lists off the right edge sits on this wrapper, so it never clips the
+     scroller's focus rings. */
+  position: relative;
+}
+.lists__scroll {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.lists__tab,
+.lists__add {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Astra: a real 44px target, whatever the pointer reports. */
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 100%;
+  min-width: 0;
+}
+.lists__tab {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lists__tab:hover,
+.lists__add:hover {
+  background: var(--accent-soft);
+}
+.lists__tab.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.lists__tab:focus-visible,
+.lists__add:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.lists__count {
+  flex: none;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.lists__tab.is-on .lists__count {
+  color: var(--accent);
+}
+.lists__add {
+  border-style: dashed;
+  color: var(--accent);
+}
+/* Naming a new list gets its own row: a text field inside a sideways scroller is unusable. */
+.lists__create {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+}
+.lists__create .field {
+  min-height: 44px;
+  min-width: 0;
+  /* Capped, or on a wide window the field eats the whole row and pushes Create and Cancel
+     onto a second line. */
+  flex: 0 1 320px;
+}
+/* Measured at 22px and 24px tall before this: the app's base .push and .linkbtn are sized for a
+   mouse, and these two sit next to a 44px field on a phone. */
+.lists__create .push,
+.lists__create .linkbtn,
+.lists__bar .push,
+.lists__bar .linkbtn {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+.lists__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--hair-2);
+  border-radius: 12px;
+  background: var(--pearl);
+}
+.lists__bar .field {
+  min-height: 44px;
+  min-width: 0;
+  flex: 1 1 160px;
+}
+.lists__state {
+  margin: 0;
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.linkbtn--bad {
+  color: var(--bad, #c22f2f);
+}
+
+/* Whether a song in a list has been heard yet, which is what gates the list's own discovery. */
+.track__played {
+  flex: none;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+}
+.track__played.is-on {
+  color: var(--accent);
+}
+
+/* A long title used to widen the text block until the controls wrapped to a second line, so one
+   row's buttons sat lower than its neighbours'. A zero flex-basis makes the text take only the
+   space that is left, and ellipsise instead of pushing. */
+.tracks--saved .track__text {
+  flex: 1 1 0;
+}
+.tracks--saved .track__title,
+.tracks--saved .track__artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tracks--saved .track__actions {
+  flex: none;
+  margin-left: auto;
+}
+@media (max-width: 480px) {
+  /* The per-song badge is the first thing to go when the row is tight; the list's own summary
+     above still says how many are left to play. */
+  .tracks--saved .track__played {
+    display: none;
+  }
+}
+/* The save menu drops below the song it belongs to, across the whole row. */
+.track__savemenu {
+  flex-basis: 100%;
+  margin: 8px 0 2px;
+}
+
+/* A visually hidden label that screen readers still announce. */
+.vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 480px) {
+  .lists__state {
+    flex-basis: 100%;
+  }
+}
+
+/* On a phone every list stays on one line and the row is swiped sideways to reach the rest,
+   rather than stacking into rows that push the songs off the screen. */
+@media (max-width: 899px) {
+  .lists__scroll {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    /* Room for the focus ring, which would otherwise be clipped by the scroll box. */
+    padding: 3px 0;
+    scrollbar-width: none;
+  }
+  .lists__scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .lists__tab,
+  .lists__add {
+    /* No shrinking: a squeezed pill is unreadable, and swiping is how the rest is reached. */
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    max-width: 60vw;
+  }
+  /* A fade on the trailing edge, so it is visible that the row continues. */
+  .lists::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 24px;
+    pointer-events: none;
+    background: linear-gradient(to right, rgba(255, 255, 255, 0), var(--panel));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lists__scroll {
+    scroll-behavior: auto;
+  }
+}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
-import { api, newEventId, type FeedbackKind, type JobStatus, type Playback, type RecItem, type RecResult, type SavedItem, type Settings, type TasteSummary, type Track } from './api';
+import { api, newEventId, type FeedbackKind, type JobStatus, type Playback, type PlaylistSummary, type RecItem, type RecResult, type SavedItem, type Settings, type TasteSummary, type Track } from './api';
 import { Art } from './Art';
 import { Player, type ListenTelemetry, type Playing } from './Player';
 import { Results, rowId, type FeedbackFlags } from './Results';
@@ -8,6 +8,7 @@ import { DownloadsView, useDownloads } from './Downloads';
 import { Search } from './Search';
 import { SoundCard } from './SoundCard';
 import { ProfileView } from './Profile';
+import { SavedView } from './SavedView';
 import { SettingsView } from './Settings';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, classNames, describeTaste, fmtBytes, keepFocus, historyBack, mergeRerank, nextRepeat, playbackOfTrack, stepQueue, type RepeatMode } from './util';
 
@@ -74,6 +75,13 @@ export function App() {
   const heardRef = useRef<Set<string>>(new Set());
   const historyRef = useRef<string[]>([]);
   const [saved, setSaved] = useState<SavedItem[] | null>(null);
+  /** The listener's saved lists. Loaded with Saved and refreshed by every list edit. */
+  const [lists, setLists] = useState<PlaylistSummary[]>([]);
+  /**
+   * Which saved list the current song was started from, or null for the discovery queue. A list
+   * is topped up only once everything in it has been played, so the engine needs to know which.
+   */
+  const playingListRef = useRef<string | null>(null);
   const [offline, setOffline] = useState(false);
   const docked = useMedia('(max-width: 899px)');
   const jobRef = useRef<string | null>(null);
@@ -232,6 +240,8 @@ export function App() {
 
   // ---------------------------------------------------------------- playback
   const play = (it: RecItem, o?: { newRound?: boolean; back?: boolean }) => {
+    // Playing from the queue leaves any saved list behind, so the queue's own rule applies again.
+    playingListRef.current = null;
     playedRef.current.add(it.track.key);
     if (o?.newRound) heardRef.current = new Set();
     heardRef.current.add(it.track.key);
@@ -276,7 +286,7 @@ export function App() {
     return rest
       .filter(playable)
       .slice(0, 4)
-      .map((x) => ({ key: x.track.key, title: x.track.title, artist: artistOf(x.track), artwork: x.track.artwork }));
+      .map((x) => ({ key: x.track.key, title: x.track.title, artist: artistOf(x.track), artwork: x.track.artwork, preview: x.playback.preview }));
   }, [items, inQueue, playingKey, shuffle, hidden]);
 
   // A skip or a full listen is recorded, then the songs still to come are ranked again with it.
@@ -319,7 +329,9 @@ export function App() {
         // running low and answers job:null otherwise, so a finished song usually costs nothing.
         if (sample || !result || kind !== 'complete') return;
         return api
-          .recommend({ event_id: eventId, exclude: [...playedRef.current] })
+          // When the song was started from a saved list, the engine applies that list's stricter
+          // rule instead of the queue's: nothing new until everything in the list has been played.
+          .recommend({ event_id: eventId, exclude: [...playedRef.current], list_id: playingListRef.current ?? undefined })
           .then(({ job: id }) => (id ? follow(id) : undefined))
           .catch(() => undefined);
       })
@@ -362,6 +374,8 @@ export function App() {
 
   useEffect(() => {
     if (tab === 'saved') api.saved().then((r) => setSaved(r.items), () => setSaved([]));
+    // The lists are needed on Discover too, for the menu the like button opens.
+    if (tab === 'saved' || tab === 'discover') api.playlists().then((r) => setLists(r.lists), () => setLists([]));
   }, [tab, flags]);
 
   /** Take a song off Saved: the like is removed on the engine and the row goes at once. */
@@ -596,6 +610,8 @@ export function App() {
                       onPlayTrack={previewTrack}
                       onFeedback={onFeedback}
                       onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
+                      lists={lists}
+                      onLists={setLists}
                     />
                   ) : (
                     <p className="empty">No songs to show. Move the slider or add another starting song.</p>
@@ -650,50 +666,19 @@ export function App() {
         )}
 
         {tab === 'saved' && (
-          <section className="card" aria-labelledby="saved-h">
-            <h2 id="saved-h">Saved</h2>
-            {saved == null ? (
-              <p className="state">
-                <span className="sdot sdot--busy" aria-hidden="true" /> Loading…
-              </p>
-            ) : saved.length === 0 ? (
-              <p className="empty">Songs you like appear here.</p>
-            ) : (
-              <ul className="well tracks">
-                {saved.map((s) => (
-                  <li key={s.track.key} className="track">
-                    <Art src={s.track.artwork} size={44} />
-                    <div className="track__text">
-                      <span className="track__title">{s.track.title}</span>
-                      <span className="track__artist">{artistOf(s.track)}</span>
-                    </div>
-                    <span className="track__actions">
-                      <button className="iconbtn" type="button" aria-label={`Play ${s.track.title}`} onClick={() => previewTrack(s.track)}>
-                        <Glyph name="play" size={14} />
-                      </button>
-                      {dls.on && (
-                        <button className="iconbtn" type="button" aria-label={`Download ${s.track.title}`} title="Download" onClick={() => void dls.downloadTrack(s.track)}>
-                          <Glyph name="download" size={14} />
-                        </button>
-                      )}
-                      <button className="push addbtn" type="button" disabled={seeds.some((x) => x.key === s.track.key)} onClick={() => onAdd(s.track)}>
-                        Add
-                      </button>
-                      <button
-                        className="iconbtn"
-                        type="button"
-                        aria-label={`Remove ${s.track.title} from Saved`}
-                        title="Remove from Saved"
-                        onClick={() => removeSaved(s.track)}
-                      >
-                        <Glyph name="close" size={14} />
-                      </button>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          <SavedView
+            saved={saved}
+            lists={lists}
+            onLists={setLists}
+            onPreview={(t, listId) => {
+              // Remember which list this play came from, so a finished song is judged by that
+              // list's rule rather than the discovery queue's.
+              playingListRef.current = listId ?? null;
+              previewTrack(t);
+            }}
+            onRemoveSaved={removeSaved}
+            onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
+          />
         )}
 
         {tab === 'profile' && <ProfileView />}

@@ -1,6 +1,6 @@
 /* More specific than the shared stylesheet regardless of import order. */
 .tpick .tpick__field { touch-action: pinch-zoom; background-repeat: no-repeat; }
-.tpick .tpick__dot, .tpick .tpick__placed, .tpick .tpick__step {
+.tpick .tpick__dot, .tpick .tpick__step {
   margin: 0;
   transform: translate(-50%, 50%);
 }

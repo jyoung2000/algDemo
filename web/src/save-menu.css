@@ -1,0 +1,137 @@
+/* PLAYLISTS-001 — the save menu that opens from a liked song, and the Saved page's list controls.
+   Scoped to .savemenu / .lists so it cannot reach the rest of the app.
+   Follows Fable (surface, 12-16px radii, 36px icon buttons) and Astra (44px targets, one accent,
+   opaque surfaces for predictable contrast, no fixed heights). */
+
+.savemenu {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--hair);
+  border-radius: 14px;
+  background: var(--panel);
+  /* Fable's --shadow-md: the menu reads as sitting above the row that opened it. */
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.08),
+    0 8px 24px rgba(0, 0, 0, 0.06);
+  max-width: 380px;
+}
+.savemenu__head {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.savemenu__song {
+  font-weight: 700;
+  color: var(--ink);
+}
+.savemenu__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  /* Long enough to scroll rather than push the page, per Astra's no-fixed-heights rule. */
+  max-height: 232px;
+  overflow-y: auto;
+}
+.savemenu__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* A full 44px row: the whole label is the target, not just the box. */
+  min-height: 44px;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.savemenu__row:hover {
+  background: var(--accent-soft);
+}
+.savemenu__row:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.savemenu__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.savemenu__count {
+  flex: none;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.savemenu__add {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px dashed var(--hair);
+  border-radius: 12px;
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.savemenu__add:hover {
+  background: var(--accent-soft);
+  border-style: solid;
+}
+.savemenu__new {
+  display: grid;
+  gap: 6px;
+}
+.savemenu__newlabel {
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.savemenu__newrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.savemenu__err {
+  margin: 0;
+  font-size: 12px;
+  color: var(--bad, #c22f2f);
+}
+.savemenu__note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.savemenu__done {
+  appearance: none;
+  justify-self: end;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.savemenu__done:hover {
+  filter: brightness(1.06);
+}
+.savemenu .field {
+  min-height: 44px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .savemenu,
+  .savemenu * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

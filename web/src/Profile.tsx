@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, type Profile } from './api';
 import { PROVIDER_LABEL, classNames, fmtBytes } from './util';
 import { TastePicker, type TrailPoint } from './TastePicker';
-import { placeGenre, placeSong } from './taste-map';
+import { familyName, placeGenre, placeSong } from './taste-map';
 import { Art } from './Art';
 
 /** What each scoring factor means, in the words the rest of the app uses. */
@@ -123,12 +123,38 @@ export function ProfileView() {
 
   const t = p.tracked;
   const gMax = Math.max(0.01, ...p.taste.genres.map((g) => Math.abs(g.score)));
-  // Your liked and avoided genres, placed on the picker's field where the name is a known subgenre.
-  const placedAll = p.taste.genres.map((g) => ({ g, at: placeGenre(g.name) }));
+  // TASTE-ACCURACY-001: only the genres the listener actually KEPT are drawn as their taste.
+  // `taste.genres` filters on Math.abs(score), so it carries avoided genres too; plotting those
+  // alongside the kept ones put genres the listener had only ever skipped on their own taste map.
+  const keptGenres = p.taste.genres.filter((g) => g.score > 0);
+  const placedAll = keptGenres.map((g) => ({ g, at: placeGenre(g.name) }));
   const placed = placedAll.flatMap(({ g, at }) =>
-    at ? [{ hue: at.hue, bpm: at.bpm, label: `${g.label} (${at.sub.name}): score ${g.score}` }] : [],
+    at
+      ? [
+          {
+            hue: at.hue,
+            bpm: at.bpm,
+            // A family word places at its band centre; say so rather than naming a subgenre the
+            // listener may never have played.
+            label: at.broad
+              ? `${g.label} (anywhere in ${familyName(at.family)}): score ${g.score}`
+              : `${g.label} (${at.sub.name}): score ${g.score}`,
+          },
+        ]
+      : [],
   );
   const unplaced = placedAll.length - placed.length;
+  // Where the field should open, so the reading under it describes the listener from the first
+  // frame instead of a hardcoded point in the Electronic band. A genre they actually named wins
+  // over a bare family word: opening on the middle of the hip-hop band reads out whichever
+  // subgenre happens to sit there, which is the same mistake in a smaller form. Only if they have
+  // no named subgenre at all does the strongest family placement stand in.
+  const strongestBy = (pick: (broad: boolean) => boolean) =>
+    placedAll.reduce<{ hue: number; bpm: number; score: number } | null>((best, { g, at }) => {
+      if (!at || !pick(at.broad)) return best;
+      return !best || g.score > best.score ? { hue: at.hue, bpm: at.bpm, score: g.score } : best;
+    }, null);
+  const focus = strongestBy((broad) => !broad) ?? strongestBy(() => true);
   // The last ten songs played, oldest first, on the same field. A song with no known genre or tempo cannot be placed.
   const playedOldestFirst = [...p.played].reverse();
   const trail: TrailPoint[] = [];
@@ -283,10 +309,11 @@ export function ProfileView() {
       <section className="card" aria-labelledby="pf-map">
         <h2 id="pf-map">Taste map</h2>
         <p className="note">
-          Every genre and subgenre on the picker's field, tempo up the side. Dots are your liked and avoided genres
-          that name a subgenre; {unplaced} stay at family level.
+          Every genre and subgenre on the picker's field, tempo up the side. The field plots the cover art of what
+          you played, newest ringed. The genres you keep playing decide where it is framed — tap "My taste" to go
+          back to them{unplaced > 0 ? `; ${unplaced} could not be placed on the field` : ''}.
         </p>
-        <TastePicker placed={placed} trail={trail} />
+        <TastePicker placed={placed} trail={trail} focus={focus} />
         <div className="card__head">
           <h3>Last {p.played.length} played</h3>
           <span className="note">oldest 1 → newest {p.played.length}</span>

@@ -92,22 +92,18 @@ export function classify(tags: Tag[] | null | undefined, bpm: number | null | un
   const tg = (tags ?? []).filter((t) => t && typeof t.name === 'string');
   const b = typeof bpm === 'number' && bpm > 30 && bpm < 300 ? bpm : null;
   let sub = subFromTags(tg);
-  let familySlug = sub?.family ?? familyFromTags(tg);
-  if (!familySlug && b === null) return null;
-
-  if (!sub && familySlug && b !== null) {
-    // A family word alone ('alternative', 'electronic') does not name a subgenre, however the tempo
-    // falls: the family stays and the subgenre is left null. Tempo still places a song that carries
-    // no genre tag at all (below).
-    sub = null;
-  } else if (!sub && b !== null) {
-    // No genre at all: tempo alone, across the whole catalog. Weak evidence: the family is inferred.
-    sub = bestByTempo(SUBS, b);
-    familySlug = sub?.family ?? null;
-  }
-  if (!familySlug || !sub) {
-    if (!familySlug) return null;
-  }
+  const familySlug = sub?.family ?? familyFromTags(tg);
+  // A family word alone ('alternative', 'electronic') does not name a subgenre, however the tempo
+  // falls: the family stays and the subgenre is left null.
+  //
+  // TASTE-ACCURACY-001: tempo alone names NOTHING. It used to pick the best tempo match across the
+  // whole catalog, which put every untagged song between 87 and 125 BPM into Rock / 'Nu-metal
+  // revival' — so a hip-hop listener's own history came back labelled as rock, and the taste map
+  // read their taste off it. The rule the family branch already followed ("art rock at 164 BPM is
+  // not metalcore just because its tempo falls in that range") applies with more force when there
+  // is no genre evidence at all: a song with no genre tag is simply not placed, and the Profile
+  // lists it as "not on the map".
+  if (!familySlug) return null;
   const family = FAMILIES.find((f) => f.slug === familySlug)!;
   const cat = sub ? CATALOG_BY_NAME.get(sub.name) : undefined;
   const hue = familyHue(familySlug);

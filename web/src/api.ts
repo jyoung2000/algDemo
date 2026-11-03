@@ -297,6 +297,13 @@ export interface Settings {
   queue_size?: number;
   /** Replenish a nearly played-through list after a completed song. */
   discover_while_listening?: boolean;
+  /**
+   * The ten-band equaliser (EQ-001), stored as the engine's own config shape. Previews only: see
+   * `engine/audio-bus.ts` for why iframe playback can never be filtered.
+   */
+  eq?: { on: boolean; presetId: string; gains: number[]; preampDb: number; limiter: boolean };
+  /** The single mixing slider, 0 (off) to 100 (long and creative). MIXER-001. */
+  mix?: number;
   /** The improved (v2) ranking engine; false falls back to the original scorer. */
   rank_v2?: boolean;
 }
@@ -347,6 +354,27 @@ export interface SavedItem {
   kind: 'like' | 'save';
   ts: number;
 }
+
+/** One song inside a saved list. `track` is null when the engine never recorded it. */
+export interface PlaylistItem {
+  key: string;
+  added: number;
+  track: Track | null;
+  played: boolean;
+}
+
+/** A list the listener made. `discovery_ready` is false until every song in it has been played. */
+export interface PlaylistSummary {
+  id: string;
+  name: string;
+  created: number;
+  count: number;
+  unplayed: number;
+  discovery_ready: boolean;
+  items: PlaylistItem[];
+}
+
+export type PlaylistAction = 'create' | 'rename' | 'delete' | 'add' | 'remove' | 'set';
 
 export type FeedbackKind = 'like' | 'dislike' | 'hide' | 'save' | 'replay' | 'complete' | 'skip' | 'unlike' | 'unsave' | 'undislike' | 'unhide';
 
@@ -421,7 +449,7 @@ export const api = {
   putSeeds: (seeds: Track[]) => call<{ seeds: Track[] }>('/api/seeds', { method: 'PUT', body: json({ seeds }) }),
   settings: () => call<Settings>('/api/settings'),
   putSettings: (patch: Partial<Settings>) => call<Settings>('/api/settings', { method: 'PUT', body: json(patch) }),
-  recommend: (listening?: { event_id: string; exclude: string[] }) =>
+  recommend: (listening?: { event_id: string; exclude: string[]; list_id?: string }) =>
     call<{ job: string | null; reason?: string }>('/api/recommend', { method: 'POST', body: json(listening ? { trigger: 'listening', ...listening } : {}) }),
   job: (id: string, signal?: AbortSignal) => call<JobStatus>(`/api/jobs/${id}`, signal ? { signal } : {}),
   cancelJob: (id: string) => call<{ ok: boolean }>(`/api/jobs/${id}`, { method: 'DELETE' }),
@@ -438,6 +466,10 @@ export const api = {
    */
   previewUrl: (route: string) => call<{ url: string }>(route.replace('/api/preview/', '/api/preview-url/')),
   saved: () => call<{ items: SavedItem[] }>('/api/saved'),
+  playlists: () => call<{ lists: PlaylistSummary[] }>('/api/playlists'),
+  /** Every list edit goes through one call and answers with the lists as they now stand. */
+  playlistEdit: (action: PlaylistAction, opts: { ids?: string[]; id?: string; name?: string; key?: string } = {}) =>
+    call<{ lists: PlaylistSummary[] }>('/api/playlists', { method: 'POST', body: json({ action, ...opts }) }),
   health: (refresh = false) => call<Health>(`/api/health${refresh ? '?refresh=1' : ''}`),
   status: () => call<Status>('/api/status'),
   reset: (clearCache: boolean) => call<{ ok: boolean }>('/api/reset', { method: 'POST', body: json({ clear_cache: clearCache }) }),

@@ -25,11 +25,13 @@ describe('classify', () => {
     expect(c.color).toMatch(/^hsl\(/);
   });
 
-  it('tempo alone places a song when there is no genre tag', () => {
-    const c = classify([], 126)!;
-    expect(c).not.toBeNull();
-    expect(c.subgenre).not.toBeNull();
-    expect(c.tempoFit).toBeGreaterThan(0.5);
+  it('tempo alone places NOTHING when there is no genre tag', () => {
+    // TASTE-ACCURACY-001. This used to pick the best tempo match across the whole catalog, so every
+    // untagged song from 87 to 125 BPM came back as Rock / 'Nu-metal revival'. A hip-hop listener's
+    // own history was then read back to them as rock. The same principle the family-only case
+    // already applied ("art rock at 164 BPM is not metalcore") holds with no genre evidence at all.
+    expect(classify([], 126)).toBeNull();
+    expect(classify([], 101)).toBeNull();
   });
 
   it('a family-only tag keeps the family and no subgenre, whatever the tempo', () => {
@@ -39,9 +41,13 @@ describe('classify', () => {
     expect(c!.subgenre).toBeNull();
   });
 
-  it('a song with no genre tag is still placed by tempo', () => {
-    const c = classify([], 126);
-    expect(c!.subgenre).not.toBeNull();
+  it('a song with a family tag and a tempo is still placed, by its tag', () => {
+    // Tempo is not thrown away: it still sharpens a song whose tag names a family, and it still
+    // gives the map its vertical position. It just never invents the family itself.
+    const c = classify([tag('hip-hop')], 101);
+    expect(c).not.toBeNull();
+    expect(c!.family).toBe('Hip-hop');
+    expect(c!.subgenre).toBeNull();
   });
 
 

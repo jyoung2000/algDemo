@@ -7,6 +7,9 @@ import { Volume } from './Volume';
 import { PlayerActions, type TrackActionProps } from './PlayerActions';
 import { Wheel } from './Wheel';
 import { loadYouTube, youtubeEmbedUrl, type YTPlayer } from './youtube';
+import { attachElement, bus as audioBus, mixSlider, resumeEngine, setUnprocessable, startEngine } from './audio-engine';
+import { otherDeck, type DeckId } from './engine/audio-bus';
+import { mixPlan } from './engine/crossfade';
 import { ListenMeter, PROVIDER_LABEL, artistOf, classNames, fmtDuration, isSilent, markKey, qualifiesCompletion, toggleMuteState, type RepeatMode } from './util';
 
 export interface Playing {
@@ -19,6 +22,11 @@ export interface UpNext {
   title: string;
   artist: string;
   artwork?: string | null;
+  /**
+   * The next song's preview route, when it has one. The mixer needs it before the current song
+   * ends: a crossfade means both are audible at once, so the incoming one has to be cued early.
+   */
+  preview?: string | null;
 }
 
 interface Props {
@@ -91,7 +99,15 @@ type Mode = 'full' | 'preview' | 'embed' | 'none';
  * element. SoundCloud songs play in SoundCloud's widget, whose progress and volume Airwave cannot reach.
  */
 export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, repeat, actions, onShuffle, onRepeat, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext }: Props) {
-  const audio = useRef<HTMLAudioElement>(null);
+  // Two decks, because a crossfade needs both songs audible at once. Songs alternate between them,
+  // so the outgoing one keeps playing on its own element while the incoming one starts on the other.
+  const deckA = useRef<HTMLAudioElement>(null);
+  const deckB = useRef<HTMLAudioElement>(null);
+  const deckByKey = useRef(new Map<string, DeckId>());
+  const deckOrder = useRef(0);
+  /** The song the mixer has already cued on the other deck, so the load effect leaves it alone. */
+  const cued = useRef<{ key: string; url: string } | null>(null);
+  const fading = useRef<string | null>(null);
   const meter = useRef(new ListenMeter());
   const [paused, setPaused] = useState(true);
   const [cur, setCur] = useState(0);
@@ -111,6 +127,25 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   repeatRef.current = repeat;
   const onEndRef = useRef<() => void>(() => undefined);
   const key = playing?.track.key ?? null;
+
+  // Which deck this song owns. Alternating means the outgoing song keeps its own element, so the
+  // two can overlap. Keyed by song so a re-render never reassigns a deck mid-play.
+  let myDeck: DeckId = 'a';
+  if (key !== null) {
+    const held = deckByKey.current.get(key);
+    if (held) myDeck = held;
+    else {
+      myDeck = deckOrder.current % 2 === 0 ? 'a' : 'b';
+      deckByKey.current.set(key, myDeck);
+      deckOrder.current += 1;
+      // Only the last few matter; this is a memo, not a history.
+      if (deckByKey.current.size > 6) deckByKey.current.delete(deckByKey.current.keys().next().value as string);
+    }
+  }
+  // `audio` points at the deck this song owns, so every existing use of it still means
+  // "the element playing now".
+  const audio = myDeck === 'a' ? deckA : deckB;
+  const spare = myDeck === 'a' ? deckB : deckA;
 
   // Which source plays. A song with no YouTube video yet is looked up once; only a confident match is used.
   const knownId = knownVideoId(playing);
@@ -233,6 +268,14 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     const a = audio.current;
     if (!a) return;
     if (src) {
+      // The mixer may already have cued and started this song on this deck for a crossfade.
+      // Reassigning src would restart it from zero and cut the blend in half.
+      if (cued.current?.key === key && a.src === cued.current.url) {
+        cued.current = null;
+        setLoading(false);
+        setPaused(a.paused);
+        return;
+      }
       setLoading(true);
       // The catalogue holds a stable route, not a playable address: Deezer signs its preview URLs for
       // about fifteen minutes, so one is fetched now. A late answer for a song the user has already

@@ -1,7 +1,8 @@
 import { useState, type CSSProperties } from 'react';
 import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
-import type { FeedbackKind, RecItem, Track } from './api';
+import type { FeedbackKind, PlaylistSummary, RecItem, Track } from './api';
 import { Art } from './Art';
+import { SaveMenu } from './SaveMenu';
 import { PROVIDER_LABEL, TIER_LABEL, artistOf, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreTags, markKey, pickerColorFor, playbackOfTrack, toneLabel } from './util';
 
 export interface FeedbackFlags {
@@ -26,6 +27,9 @@ interface Props {
   onPlayTrack: (track: Track) => void;
   onFeedback: (item: RecItem, kind: FeedbackKind) => void;
   onDownload?: (track: Track) => void;
+  /** The listener's saved lists, for the menu that opens when a song is liked. */
+  lists?: PlaylistSummary[];
+  onLists?: (lists: PlaylistSummary[]) => void;
 }
 
 /**
@@ -33,8 +37,10 @@ interface Props {
  * diversified order; nothing here re-sorts it.
  * Arrow keys / j k move between rows; Enter plays; the row keeps focus when results refresh.
  */
-export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload }: Props) {
+export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload, lists, onLists }: Props) {
   const [open, setOpen] = useState<string | null>(null);
+  /** Which row's save menu is showing, by song key. Only one opens at a time. */
+  const [saving, setSaving] = useState<string | null>(null);
 
   const move = (from: number, dir: 1 | -1) => {
     const next = items[from + dir];
@@ -62,7 +68,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               aria-label={seedPlayable ? `Play ${s.title}` : `${s.title} has no player here`}
               tabIndex={-1}
             >
-              <Art src={s.artwork} size={52} />
+              <Art src={s.artwork} size={56} />
               {seedPlayable && (
                 <span className="rec__playover" aria-hidden="true">
                   <Glyph name="play" size={16} />
@@ -74,6 +80,8 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                 {s.title}
               </span>
               <span className="rec__artist">{artistOf(s)}</span>
+            </div>
+            <div className="rec__sub">
               <span className="rec__why1">Starting song{strong ? ' · counts double' : ''}</span>
             </div>
             <span className="rec__tier" />
@@ -144,7 +152,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               {playingKey === t.key ? <Glyph name="speaker" size={12} /> : it.rank}
             </span>
             <button className="rec__art" type="button" onClick={() => (playable ? onPlay(it) : undefined)} disabled={!playable} aria-label={playable ? `Play ${t.title}` : `${t.title} has no player here`} tabIndex={-1}>
-              <Art src={t.artwork} size={52} />
+              <Art src={t.artwork} size={56} />
               {playable && (
                 <span className="rec__playover" aria-hidden="true">
                   <Glyph name="play" size={16} />
@@ -162,6 +170,8 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                 {it.new_release && <span className="vtag vtag--new">New</span>}
               </span>
               <span className="rec__artist">{artistOf(t)}</span>
+            </div>
+            <div className="rec__sub">
               <span className="rec__why1">{it.reasons[0]?.text ?? 'Found from your starting songs.'}</span>
               {(genreBubbles.length > 0 || facts.length > 0) && (
                 <span className="rec__facts" aria-label="Song details">
@@ -195,8 +205,19 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                 className={classNames('iconbtn', f.like && 'is-on')}
                 type="button"
                 aria-pressed={Boolean(f.like)}
-                onClick={() => onFeedback(it, f.like ? 'unlike' : 'like')}
-                aria-label={f.like ? `Remove like from ${t.title}` : `Like ${t.title}`}
+                aria-expanded={onLists ? saving === t.key : undefined}
+                onClick={() => {
+                  // Liking opens the save menu so the song can go straight into chosen lists.
+                  // Unliking is immediate: there is nothing to choose.
+                  if (f.like) {
+                    onFeedback(it, 'unlike');
+                    setSaving(null);
+                    return;
+                  }
+                  onFeedback(it, 'like');
+                  if (onLists) setSaving(t.key);
+                }}
+                aria-label={f.like ? `Remove like from ${t.title}` : `Like ${t.title} and choose lists`}
                 title={f.like ? 'Liked' : 'Like'}
               >
                 <Glyph name="thumb-up" size={14} />
@@ -219,10 +240,27 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               <button className="iconbtn" type="button" onClick={() => onFeedback(it, 'hide')} aria-label={`Hide ${t.title}`} title="Hide">
                 <Glyph name="close" size={14} />
               </button>
-              <button className={classNames('linkbtn', 'whybtn')} type="button" aria-expanded={isOpen} aria-controls={`why-${rowId(t.key)}`} onClick={() => setOpen(isOpen ? null : t.key)}>
-                Why this song?
+              <button
+                className={classNames('linkbtn', 'whybtn')}
+                type="button"
+                aria-expanded={isOpen}
+                aria-controls={`why-${rowId(t.key)}`}
+                aria-label={`Why ${t.title}?`}
+                title="Why this song?"
+                onClick={() => setOpen(isOpen ? null : t.key)}
+              >
+                {/* A phone has no room for the full phrase beside five icons; the name stays whole for AT. */}
+                <span className="whybtn__full">Why this song?</span>
+                <span className="whybtn__short" aria-hidden="true">
+                  Why?
+                </span>
               </button>
             </div>
+            {saving === t.key && onLists && (
+              <div className="rec__savemenu">
+                <SaveMenu songKey={t.key} title={t.title} lists={lists ?? []} onLists={onLists} onClose={() => setSaving(null)} />
+              </div>
+            )}
             {isOpen && <Why item={it} id={`why-${rowId(t.key)}`} />}
           </li>
         );
