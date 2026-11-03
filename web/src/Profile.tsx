@@ -471,7 +471,7 @@ export function ProfileView() {
             </div>
           ))}
           <div>
-            <dt>New songs per search</dt>
+            <dt>New songs per discovery</dt>
             <dd>{p.algorithm.settings.queue_size}</dd>
           </div>
           <div>

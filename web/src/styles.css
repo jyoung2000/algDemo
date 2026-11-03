@@ -1384,12 +1384,16 @@ a.push {
 }
 .np .prog:hover .prog__bar::-webkit-slider-thumb,
 .np .prog__bar:focus-visible::-webkit-slider-thumb,
-.np .prog__bar:active::-webkit-slider-thumb {
+.np .prog__bar:active::-webkit-slider-thumb,
+/* The volume shares the .prog__bar class but is not inside .prog, so the hover rule above never
+   reaches it and its head stayed invisible. Volume is a set-and-forget control: show it always. */
+.np .vol__bar::-webkit-slider-thumb {
   opacity: 1;
 }
 .np .prog:hover .prog__bar::-moz-range-thumb,
 .np .prog__bar:focus-visible::-moz-range-thumb,
-.np .prog__bar:active::-moz-range-thumb {
+.np .prog__bar:active::-moz-range-thumb,
+.np .vol__bar::-moz-range-thumb {
   opacity: 1;
 }
 .np .prog__bar:focus-visible {

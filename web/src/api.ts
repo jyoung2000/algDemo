@@ -182,6 +182,8 @@ export interface RecResult {
   sample?: { label: string; recorded: string };
   /** Set on the last finished queue restored from the server after a reload. */
   saved_at?: number;
+  /** The accepted additions in this batch, not the total list length or raw provider candidates. */
+  discovery?: { added: number; limit: number; trigger: 'search' | 'listening' };
 }
 
 /** The live re-rank of the last run's song pool after a skip or a full listen. */
@@ -293,6 +295,8 @@ export interface Settings {
   sample_mode: boolean;
   /** How many new songs one discovery run adds to the list. */
   queue_size?: number;
+  /** Replenish a nearly played-through list after a completed song. */
+  discover_while_listening?: boolean;
   /** The improved (v2) ranking engine; false falls back to the original scorer. */
   rank_v2?: boolean;
 }
@@ -417,7 +421,8 @@ export const api = {
   putSeeds: (seeds: Track[]) => call<{ seeds: Track[] }>('/api/seeds', { method: 'PUT', body: json({ seeds }) }),
   settings: () => call<Settings>('/api/settings'),
   putSettings: (patch: Partial<Settings>) => call<Settings>('/api/settings', { method: 'PUT', body: json(patch) }),
-  recommend: () => call<{ job: string }>('/api/recommend', { method: 'POST', body: '{}' }),
+  recommend: (listening?: { event_id: string; exclude: string[] }) =>
+    call<{ job: string | null; reason?: string }>('/api/recommend', { method: 'POST', body: json(listening ? { trigger: 'listening', ...listening } : {}) }),
   job: (id: string, signal?: AbortSignal) => call<JobStatus>(`/api/jobs/${id}`, signal ? { signal } : {}),
   cancelJob: (id: string) => call<{ ok: boolean }>(`/api/jobs/${id}`, { method: 'DELETE' }),
   feedback: (kind: FeedbackKind, track: Track, extra: { event_id?: string; listened?: number; duration?: number; coverage?: number; medium?: string; session?: string; origin?: string; confidence?: number } = {}) =>

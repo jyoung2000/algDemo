@@ -285,3 +285,34 @@ def test_queue_clear_empties_list_but_keeps_taste_and_settings(client):
     assert client.get("/api/last").status_code == 404
     assert any(e["event_id"] == "qc-1" for e in appmod.st().store.feedback())
     assert client.get("/api/settings").json()["adventurous"] == 0.8
+
+def test_discovery_batch_bounds_and_toggle(client):
+    """Same bounds as QUEUE_SIZE_MIN/MAX in web/src/engine/local-api.ts."""
+    assert client.get("/api/settings").json()["queue_size"] == appmod.DEFAULT_ENGINE.queue_size
+    assert client.get("/api/settings").json()["discover_while_listening"] is True
+    assert client.put("/api/settings", json={"queue_size": 12}).json()["queue_size"] == 12
+    assert client.get("/api/settings").json()["queue_size"] == 12
+    for bad in (appmod.QUEUE_SIZE_MIN - 1, appmod.QUEUE_SIZE_MAX + 1, "many", None):
+        assert client.put("/api/settings", json={"queue_size": bad}).status_code == 400
+    assert client.get("/api/settings").json()["queue_size"] == 12  # a rejected value changes nothing
+    assert client.put("/api/settings", json={"discover_while_listening": False}).json()["discover_while_listening"] is False
+
+
+def test_run_job_ranks_with_the_chosen_batch_size(client, monkeypatch):
+    """The real run_job: the cap reaching the engine is the listener's, not EngineConfig's default."""
+    client.put("/api/seeds", json={"seeds": [seed("a")]})
+    client.put("/api/settings", json={"queue_size": 7})
+    s = appmod.st()
+    got = {}
+    monkeypatch.setattr(s.pipeline, "profile_seed", lambda job, sd: {})
+    monkeypatch.setattr(s.pipeline, "seed_view", lambda sd, pr: dict(sd))
+
+    def gather(job, seed_views, profiles, cfg, fresh, *a, **kw):
+        got["queue_size"] = cfg.queue_size
+        return [], {}
+
+    monkeypatch.setattr(s.pipeline, "gather", gather)
+    job = appmod.Job(id="t1")
+    appmod.run_job(job, s.store.seeds(), s.settings())
+    assert got["queue_size"] == 7
+    assert job.result["asked"] == 7  # and the number the UI reads back agrees

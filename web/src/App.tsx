@@ -153,12 +153,9 @@ export function App() {
     });
   }, []);
 
-  const run = async (force = false) => {
-    if (!force && !seeds.length) return;
-    setRunErr(null);
-    if (jobRef.current) void api.cancelJob(jobRef.current).catch(() => undefined);
-    try {
-      const { job: id } = await api.recommend();
+  /** Watch one discovery batch, showing each phase's list as it arrives. */
+  const follow = useCallback(
+    async (id: string) => {
       jobRef.current = id;
       setJob({ job: id, phase: 'starting', progress: 'Starting…', done: false, error: null, result: null, elapsed_ms: 0, sources: {} });
       let lastPhase = '';
@@ -176,6 +173,17 @@ export function App() {
         }
         await new Promise((r) => setTimeout(r, POLL_MS));
       }
+    },
+    [applyResult],
+  );
+
+  const run = async (force = false) => {
+    if (!force && !seeds.length) return;
+    setRunErr(null);
+    if (jobRef.current) void api.cancelJob(jobRef.current).catch(() => undefined);
+    try {
+      const { job: id } = await api.recommend();
+      if (id) await follow(id);
     } catch (e) {
       setRunErr((e as Error).message);
       setJob(null);
@@ -280,9 +288,10 @@ export function App() {
   const onListen = (kind: 'complete' | 'skip' | 'replay', t: Track, listened: number, meta: ListenTelemetry) => {
     const sample = Boolean(result?.sample);
     const seq = ++rerankSeq.current;
+    const eventId = `${kind}:${t.key.slice(0, 40)}:${meta.instance}`.slice(0, 80);
     void api
       .feedback(kind, t, {
-        event_id: `${kind}:${t.key.slice(0, 40)}:${meta.instance}`.slice(0, 80),
+        event_id: eventId,
         listened: Math.round(listened * 10) / 10,
         duration: meta.duration ?? undefined,
         medium: meta.medium,
@@ -304,6 +313,15 @@ export function App() {
           setFocusKey((f) => keepFocus(prev.items.map((x) => x.track.key), f, merged.map((x) => x.track.key)));
           return { ...prev, items: merged, count: merged.length };
         });
+      })
+      .then(() => {
+        // Listening is the other way to discover. The engine decides whether the list is actually
+        // running low and answers job:null otherwise, so a finished song usually costs nothing.
+        if (sample || !result || kind !== 'complete') return;
+        return api
+          .recommend({ event_id: eventId, exclude: [...playedRef.current] })
+          .then(({ job: id }) => (id ? follow(id) : undefined))
+          .catch(() => undefined);
       })
       .catch(() => undefined);
   };
@@ -470,23 +488,10 @@ export function App() {
                   <span className="dial__end">Adventurous</span>
                 </label>
                 <p className="go__hint go__level" aria-live="polite">{adventureLabel(adventurous)}</p>
-                <label className="dial dial--count">
-                  <span className="dial__end">New songs per search</span>
-                  <input
-                    type="range"
-                    min={QUEUE_SIZE_MIN}
-                    max={QUEUE_SIZE_MAX}
-                    step={1}
-                    value={queueSize}
-                    aria-label="How many new songs to add"
-                    aria-valuetext={`${queueSize} new songs`}
-                    style={{ ['--pct' as string]: `${((queueSize - QUEUE_SIZE_MIN) / (QUEUE_SIZE_MAX - QUEUE_SIZE_MIN)) * 100}%` }}
-                    onChange={(e) => setSettings((s) => (s ? { ...s, queue_size: Number(e.target.value) } : s))}
-                    onPointerUp={(e) => patchSettings({ queue_size: Number((e.target as HTMLInputElement).value) })}
-                    onKeyUp={(e) => patchSettings({ queue_size: Number((e.target as HTMLInputElement).value) })}
-                  />
-                  <output className="dial__end dial__num">{queueSize}</output>
-                </label>
+                {/* The limit itself lives in Settings, where it also governs listening top-ups. */}
+                <p className="go__hint">
+                  Up to {queueSize} new {queueSize === 1 ? 'song' : 'songs'} per discovery — change it in Settings
+                </p>
                 <label className="go__fresh">
                   <input type="checkbox" checked={fresh} onChange={(e) => patchSettings({ fresh: e.target.checked })} />
                   <span>Favour new releases</span>

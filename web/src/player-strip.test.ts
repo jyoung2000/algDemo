@@ -64,6 +64,9 @@ describe('the player strip (NP-STRIP-001)', () => {
     // Both sliders carry the Aqua gel thumb, so the volume has a draggable head like the progress bar.
     expect(css).toMatch(/\.vol__bar::-webkit-slider-thumb,\s*\.prog__bar::-webkit-slider-thumb \{/);
     expect(css).toMatch(/\.np--docked \.vol__bar::-webkit-slider-thumb \{\s*width: 12px;\s*height: 12px;/);
+    // The volume carries .prog__bar too, so the "hidden until you hover .prog" rule used to hide its
+    // head as well. Measured on the desktop app: no knob was drawn. It is now always shown.
+    expect(css).toMatch(/\.np \.vol__bar::-webkit-slider-thumb \{\s*opacity: 1;/);
     // A touch screen has no hover: the playhead is drawn always, 18px, on a tall touch area.
     expect(css).toMatch(/@media \(hover: none\), \(pointer: coarse\) \{\s*\.np \.prog__bar \{[^}]*padding: 12px 0;/);
     expect(css).toMatch(/\.np \.prog__bar::-webkit-slider-thumb \{\s*width: 18px;\s*height: 18px;\s*opacity: 1;/);

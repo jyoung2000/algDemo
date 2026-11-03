@@ -4,7 +4,8 @@
  * would have answered, status code included. Jobs run as async tasks; the browser polls them as before.
  */
 import * as A from './audio';
-import { DEFAULT_ENGINE, TRANSFER, engineWithWeights, type EngineConfig } from './config';
+import { DEFAULT_ENGINE, TRANSFER, engineWithWeights } from './config';
+import { appendDiscovery, needsListeningDiscovery, newDiscoveryTracks } from './discovery';
 import { Deezer, NeedsChoice, ProviderError, type Ctx } from './deezer';
 import * as E from './engine';
 import { buildTaste, tasteSummary, tasteFit, type TasteProfile } from './taste';
@@ -78,7 +79,7 @@ export function characteristicsOf(c: Dict, taste: TasteProfile | null): Dict {
   };
 }
 
-const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, rank_v2: true };
+const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, discover_while_listening: true, rank_v2: true };
 /** How many songs one discovery run adds to the list: the user's choice in Settings. */
 export const QUEUE_SIZE_MIN = 5;
 export const QUEUE_SIZE_MAX = 60;
@@ -185,7 +186,7 @@ export class LocalApi {
       if (m === 'POST' && path === '/api/complete-spotify') return ok(await this.completeSpotify(String(body?.['title'] ?? ''), String(body?.['artist'] ?? '')));
       if (path === '/api/seeds') return m === 'PUT' ? await this.putSeeds(body ?? {}) : ok({ seeds: this.store.seeds() });
       if (path === '/api/settings') return m === 'PUT' ? await this.putSettings(body ?? {}) : ok(this.settings());
-      if (m === 'POST' && path === '/api/recommend') return this.recommend();
+      if (m === 'POST' && path === '/api/recommend') return this.recommend(body ?? {});
       const job = /^\/api\/jobs\/([A-Za-z0-9]+)$/.exec(path);
       if (job) return m === 'DELETE' ? this.cancelJob(job[1]!) : this.jobStatus(job[1]!);
       if (m === 'POST' && path === '/api/feedback') return await this.feedback(body ?? {});
@@ -460,7 +461,7 @@ export class LocalApi {
     const cur = this.settings();
     if ('fresh' in body) cur['fresh'] = Boolean(body['fresh']);
     if ('adventurous' in body) cur['adventurous'] = Math.min(1, Math.max(0, Number(body['adventurous'])));
-    for (const k of ['audio', 'sample_mode', 'rank_v2']) if (k in body) cur[k] = Boolean(body[k]);
+    for (const k of ['audio', 'sample_mode', 'rank_v2', 'discover_while_listening']) if (k in body) cur[k] = Boolean(body[k]);
     if ('daily_mb' in body) cur['daily_mb'] = Math.min(2000, Math.max(5, Number(body['daily_mb'])));
     if ('request_mb' in body) cur['request_mb'] = Math.min(200, Math.max(2, Number(body['request_mb'])));
     if ('queue_size' in body) {
@@ -481,17 +482,59 @@ export class LocalApi {
   }
 
   // ---- recommend -----------------------------------------------------------------------
-  private recommend(): LocalResponse {
-    const seeds = this.store.seeds() as Dict[];
-    if (!seeds.length) return fail(400, 'Add at least one starting song first.');
+  /**
+   * Starts one discovery batch. Searching is one way in; finishing a song from a list that has
+   * nearly run out is the other, and both add at most `queue_size` songs the list does not hold.
+   */
+  private recommend(body: Dict = {}): LocalResponse {
+    let seeds = this.store.seeds() as Dict[];
     const settings = this.settings();
+    const listening = body['trigger'] === 'listening';
+    if (listening) {
+      const guard = this.listeningGuard(body, settings);
+      if (guard.skip) return ok({ job: null, reason: guard.reason });
+      seeds = guard.seeds;
+    }
+    if (!seeds.length) return fail(400, 'Add at least one starting song first.');
     if (this.currentJob) this.jobs.get(this.currentJob)?.token.cancel('superseded by a newer request');
     const job = new Job(newId());
     this.jobs.set(job.id, job);
     this.currentJob = job.id;
     for (const [k, j] of this.jobs) if (j.done && unixNow() - j.started > 900) this.jobs.delete(k);
-    void this.runJob(job, seeds, settings);
+    void this.runJob(job, seeds, settings, listening ? 'listening' : 'search');
     return ok({ job: job.id });
+  }
+
+  /**
+   * Decides whether a finished song should spend anything on providers. Only a completed song that
+   * came from the list counts, and only while the unplayed remainder is nearly gone; a skip, a
+   * replay, a pause or a preview from search never starts a search. One listen starts one batch.
+   */
+  private listeningGuard(body: Dict, settings: Dict): { skip: true; reason: string } | { skip: false; seeds: Dict[] } {
+    const seeds = this.store.seeds() as Dict[];
+    const eventId = String(body['event_id'] ?? '');
+    const event = this.store.feedback().find((f) => (f as unknown as Dict)['event_id'] === eventId) as unknown as Dict | undefined;
+    if (!event) return { skip: true, reason: 'That listen is not on record yet.' };
+    const items = (this.store.get<Dict>('last_result')?.['items'] ?? []) as { track: Dict }[];
+    const played = new Set<string>((Array.isArray(body['exclude']) ? body['exclude'] : []).map(String));
+    played.add(String(event['key']));
+    // Played FROM the list, not merely present in it: a preview started from the search box carries
+    // origin 'search' and must not spend anything on providers.
+    const origin = String(event['origin'] ?? 'queue');
+    const known = items.some((x) => x.track['key'] === event['key']) || seeds.some((s) => s['key'] === event['key']);
+    const inList = known && origin === 'queue';
+    const remaining = items.filter((x) => !played.has(String(x.track['key']))).length;
+    if (!needsListeningDiscovery(settings['discover_while_listening'] !== false, String(event['kind'] ?? ''), inList, remaining))
+      return { skip: true, reason: 'The list does not need more songs yet.' };
+    const active = this.currentJob ? this.jobs.get(this.currentJob) : null;
+    if (active && !active.done) return { skip: true, reason: 'Discovery is already running.' };
+    const handled = (this.store.get<string[]>('discovery_events') ?? []) as string[];
+    if (handled.includes(eventId)) return { skip: true, reason: 'Already discovered for this listen.' };
+    void this.store.put('discovery_events', [...handled.slice(-99), eventId]);
+    // Follow what was actually heard as well as the original starting songs, without editing them:
+    // the listener owns that list.
+    const heard = (event['track'] ?? null) as Dict | null;
+    return { skip: false, seeds: heard ? [heard, ...seeds.filter((s) => s['key'] !== event['key'])] : seeds };
   }
 
   private jobStatus(id: string): LocalResponse {
@@ -530,10 +573,18 @@ export class LocalApi {
     };
   }
 
-  private async runJob(job: Job, seeds: Dict[], settings: Dict): Promise<void> {
+  private async runJob(job: Job, seeds: Dict[], settings: Dict, trigger: 'search' | 'listening' = 'search'): Promise<void> {
     const p = this.pipeline;
     const t0 = performance.now();
     const since = () => Math.round(performance.now() - t0);
+    // The list as it stands. A batch adds to it; lowering the limit never shortens it.
+    const previous = (this.store.get<Dict>('last_result')?.['items'] ?? []) as { track: Dict }[];
+    const held = [...(this.store.seeds() as Dict[]), ...previous.map((x) => x.track)];
+    const limit = Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize);
+    const merge = (batch: Dict): Dict => {
+      const items = appendDiscovery(previous, (batch['items'] ?? []) as { track: Dict }[], limit);
+      return { ...batch, items, count: items.length, discovery: { added: items.length - previous.length, limit, trigger } };
+    };
     try {
       const cfg = { ...engineWithWeights(settings['weights']), queueSize: Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize) };
       const es = E.normaliseSettings({ fresh: Boolean(settings['fresh']), adventurous: settings['adventurous'] });
@@ -564,23 +615,27 @@ export class LocalApi {
             seeds: seedViews as never, vectors: new Map(), relatedArtists: relMapQ, feedback: fb, impressions: imps,
             settings: es2, now: new Date(), cfg, taste, rankV2: v2, taste2,
           };
-          const quickChosen = E.select(E.scoreAll(quick as never, ctxQ), ctxQ);
+          const quickChosen = E.select(E.scoreAll(newDiscoveryTracks(quick, held) as never, ctxQ), ctxQ);
           if (quickChosen.length) {
-            job.result = this.serialise(quickChosen, ctxQ, 'gathering', job);
+            job.result = merge(this.serialise(quickChosen, ctxQ, 'gathering', job));
             job.progress = `First ${quickChosen.length} songs found; still asking the other services`;
           }
         } catch {
           /* a failed provisional wave never fails the request */
         }
       };
-      const { cands, related } = await p.gather(job, seedViews, profiles, cfg, es.fresh, onPartial);
+      const gathered = await p.gather(job, seedViews, profiles, cfg, es.fresh, onPartial);
+      const related = gathered.related;
+      // Only songs the list does not already hold can take a slot in this batch.
+      const cands = newDiscoveryTracks(gathered.cands, held);
       job.timings['gather_ms'] = since() - job.timings['profile_ms'];
       job.timings['candidates'] = cands.length;
       if (!cands.length) {
-        job.result = {
+        job.result = merge({
           phase: 'final', items: [], count: 0, asked: cfg.queueSize, sources: job.sources, audio: job.audio, timings: job.timings,
-          transfer: { ...job.meter.counts }, empty_reason: 'No service returned related songs for these starting songs.',
-        };
+          transfer: { ...job.meter.counts },
+          empty_reason: previous.length ? 'No new songs this time. Your list is unchanged.' : 'No service returned related songs for these starting songs.',
+        });
         return;
       }
       const vectors = new Map<string, Float64Array>();
@@ -595,7 +650,7 @@ export class LocalApi {
       let scored = E.scoreAll(cands as never, ctx);
       let chosen = E.select(scored, ctx);
       job.timings['metadata_ms'] = since();
-      job.result = this.serialise(chosen, ctx, 'metadata', job);
+      job.result = merge(this.serialise(chosen, ctx, 'metadata', job));
 
       job.token.check();
       job.phase = 'enriching';
@@ -703,10 +758,12 @@ export class LocalApi {
       scored = E.scoreAll(cands as never, ctx);
       chosen = E.select(scored, ctx);
       job.timings['total_ms'] = since();
-      job.result = this.serialise(chosen, ctx, 'final', job);
-      this.pool = { cands, ctx, job };
+      job.result = merge(this.serialise(chosen, ctx, 'final', job));
+      // The pool keeps every song the list holds, so a later re-rank can reorder all of them.
+      const poolCands = [...previous.map((x) => x.track), ...cands];
+      this.pool = { cands: poolCands, ctx, job };
       await this.store.put('last_pool', {
-        cands, seeds: seedViews, related: [...relMap].map(([k, v]) => [k, [...v]]), settings: es, weights: settings['weights'] ?? null,
+        cands: poolCands, seeds: seedViews, related: [...relMap].map(([k, v]) => [k, [...v]]), settings: es, weights: settings['weights'] ?? null,
       });
       await this.store.put('last_result', { ...job.result, saved_at: unixNow() });
     } catch (e) {
@@ -731,9 +788,11 @@ export class LocalApi {
     const settings = this.settings();
     const exclude = new Set(((body['exclude'] as unknown[]) ?? []).map((k) => String(k)).slice(0, 500));
     const v2 = settings['rank_v2'] !== false;
+    // Re-ranking reorders the songs the list already holds and adds nothing, so the discovery limit
+    // must not trim it here: a smaller limit would otherwise drop songs the listener still has.
     const ctx: E.Context = {
       ...pool.ctx,
-      cfg: { ...cfg, queueSize: Number(settings['queue_size'] ?? cfg.queueSize) },
+      cfg: { ...cfg, queueSize: Math.max(pool.cands.length, 1) },
       feedback: v2 ? E.buildFeedback2(this.store.feedback() as never, unixNow(), cfg) : E.buildFeedback(this.store.feedback() as never, unixNow(), cfg),
       impressions: this.store.impressions(unixNow() - cfg.exposureWindowDays * 86400),
       taste: this.taste(),
@@ -741,39 +800,12 @@ export class LocalApi {
       taste2: v2 ? this.taste2() : null,
       now: new Date(),
     };
-    // Learning must also widen what is worth playing next, not only reorder what was found before. When the
-    // unplayed part of the list runs low, the same starting songs are asked again and only songs the pool
-    // does not hold are added.
-    const unplayed = pool.cands.filter((c) => !exclude.has(String(c['key'])));
-    if (unplayed.length < cfg.queueSize * 2) await this.topUpPool(pool, settings, cfg);
     const cands = pool.cands.filter((c) => !exclude.has(String(c['key'])));
     const chosen = E.select(E.scoreAll(cands as never, ctx), ctx);
     const out = this.serialise(chosen, ctx, 'live', pool.job) as Dict;
     out['taste'] = tasteSummary(ctx.taste);
     out['pool'] = pool.cands.length;
     return ok(out);
-  }
-
-  /**
-   * Adds songs the services name for the starting songs that the pool does not hold yet. A failed or empty
-   * answer leaves the pool as it was, so the list keeps playing. New songs take the same shape as the first
-   * run's candidates, so the same scorer ranks them.
-   */
-  private async topUpPool(pool: { cands: Dict[]; ctx: E.Context; job: Job }, settings: Dict, cfg: EngineConfig): Promise<void> {
-    const seeds = this.store.seeds() as Dict[];
-    if (!seeds.length) return;
-    const job = new Job('topup');
-    try {
-      job.meter = this.pipeline.meter(settings);
-      const profiles: Record<string, Dict> = {};
-      const profs = await pmap(seeds, 3, (sd) => this.pipeline.profileSeed(job, sd));
-      seeds.forEach((sd, i) => (profiles[String(sd['key'])] = profs[i] as Dict));
-      const seedViews = seeds.map((sd) => this.pipeline.seedView(sd, profiles[String(sd['key'])] as Dict));
-      const { cands } = await this.pipeline.gather(job, seedViews, profiles, cfg, Boolean(settings['fresh']));
-      pool.cands.push(...addNewCandidates(pool.cands, cands));
-    } catch {
-      /* a failed top-up leaves the current pool in place; the list keeps playing */
-    }
   }
 
   /** Songs the catalogue gave no tempo for get the one measured from their preview, when there is one. */
@@ -1023,6 +1055,11 @@ export class LocalApi {
     for (const j of this.jobs.values()) j.token.cancel('the list was cleared');
     await this.store.setSeeds([]);
     this.store.drop('last_result');
+    // Forget the pool too, or the next batch would compare against a list that no longer exists
+    // and a re-rank could bring the cleared songs back.
+    this.pool = null;
+    this.store.drop('last_pool');
+    this.store.drop('discovery_events');
     return ok({ ok: true });
   }
 

@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -41,7 +42,10 @@ if not log.handlers:
     log.addHandler(h)
     log.setLevel(logging.INFO)
 
-DEFAULT_SETTINGS = {"fresh": False, "adventurous": 0.5, "audio": True, "daily_mb": TRANSFER.daily / 1e6, "request_mb": TRANSFER.per_request / 1e6, "sample_mode": False, "rank_v2": True}
+DEFAULT_SETTINGS = {"fresh": False, "adventurous": 0.5, "audio": True, "daily_mb": TRANSFER.daily / 1e6, "request_mb": TRANSFER.per_request / 1e6, "sample_mode": False, "queue_size": DEFAULT_ENGINE.queue_size, "discover_while_listening": True, "rank_v2": True}
+# How many new songs one discovery batch may add. Mirrors QUEUE_SIZE_MIN/MAX in web/src/engine/local-api.ts.
+QUEUE_SIZE_MIN = 5
+QUEUE_SIZE_MAX = 60
 TRACK_FIELDS = ("id", "provider", "platform_id", "key", "title", "artists", "artist", "album", "version", "versions", "duration", "artwork", "url",
                 "isrc", "release", "tags", "preview", "explicit", "bpm", "kind", "warning", "incomplete", "embed_url", "artist_ids", "album_id")
 
@@ -339,9 +343,17 @@ def put_settings(body: dict):
         cur["fresh"] = bool(body["fresh"])
     if "adventurous" in body:
         cur["adventurous"] = min(1.0, max(0.0, float(body["adventurous"])))
-    for k in ("audio", "sample_mode", "rank_v2"):
+    for k in ("audio", "sample_mode", "rank_v2", "discover_while_listening"):
         if k in body:
             cur[k] = bool(body[k])
+    if "queue_size" in body:
+        try:
+            n = round(float(body["queue_size"]))
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"queue_size must be between {QUEUE_SIZE_MIN} and {QUEUE_SIZE_MAX}") from None
+        if not QUEUE_SIZE_MIN <= n <= QUEUE_SIZE_MAX:
+            raise HTTPException(400, f"queue_size must be between {QUEUE_SIZE_MIN} and {QUEUE_SIZE_MAX}")
+        cur["queue_size"] = int(n)
     if "daily_mb" in body:
         cur["daily_mb"] = min(2000.0, max(5.0, float(body["daily_mb"])))
     if "request_mb" in body:
@@ -402,7 +414,9 @@ def run_job(job: Job, seeds: list[dict], settings: dict) -> None:
     p = s.pipeline
     t0 = time.perf_counter()
     try:
-        cfg = engine_with_weights(settings.get("weights"))
+        # The listener's "New songs per discovery" choice, not the built-in default.
+        cfg = replace(engine_with_weights(settings.get("weights")),
+                      queue_size=int(settings.get("queue_size", DEFAULT_ENGINE.queue_size)))
         es = E.Settings(fresh=bool(settings.get("fresh")), adventurous=settings["adventurous"]).normalised()
         job.meter = p._meter(settings)
         job.phase, job.progress = "profiling", "Looking up your starting songs"

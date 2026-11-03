@@ -3,7 +3,8 @@ import { ProviderMark } from '@now-playing/aqua-ui/icons';
 import { api, type Health, type Settings as S, type Status } from './api';
 import { parseHistoryFile, type ImportSummary } from './engine/import';
 import { MicSettings } from './MicSettings';
-import { PROVIDER_LABEL, classNames, fmtBytes, markKey } from './util';
+import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, classNames, fmtBytes, markKey } from './util';
+import './discovery-settings.css';
 
 const CAPS: [string, string][] = [
   ['search', 'Search'],
@@ -98,20 +99,75 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
 
   const tr = status?.transfer_today ?? {};
   const trTotal = Object.values(tr).reduce((a, b) => a + (b || 0), 0);
+  const discoverySize = settings?.queue_size ?? 30;
+  const discoveryPct = ((discoverySize - QUEUE_SIZE_MIN) / (QUEUE_SIZE_MAX - QUEUE_SIZE_MIN)) * 100;
 
   return (
     <div className="settings">
       <section className="card" aria-labelledby="set-h">
         <h2 id="set-h">Settings</h2>
+        <section className="discovery-settings" aria-labelledby="discovery-h">
+          <h3 id="discovery-h">Discovery</h3>
+          <div className="discovery-settings__heading">
+            <label htmlFor="discovery-size">New songs per discovery</label>
+            <output id="discovery-size-output" htmlFor="discovery-size">
+              Up to {discoverySize} new songs per discovery
+            </output>
+          </div>
+          <div className="dial discovery-settings__range">
+            <input
+              id="discovery-size"
+              type="range"
+              min={QUEUE_SIZE_MIN}
+              max={QUEUE_SIZE_MAX}
+              step={1}
+              value={discoverySize}
+              aria-describedby="discovery-size-output discovery-size-help"
+              style={{ '--pct': `${discoveryPct}%` } as React.CSSProperties}
+              onChange={(e) => onSettings({ queue_size: Number(e.target.value) })}
+            />
+          </div>
+          <p className="note" id="discovery-size-help">
+            The most new songs one discovery may add, whether you searched or the list ran low while
+            you listened. Songs you already have are never removed, and a discovery may find fewer
+            than this.
+          </p>
+          <label className="chk discovery-settings__toggle">
+            <input
+              type="checkbox"
+              checked={settings?.discover_while_listening ?? true}
+              aria-describedby="discovery-listening-help"
+              onChange={(e) => onSettings({ discover_while_listening: e.target.checked })}
+            />
+            <span className="box" aria-hidden="true" />
+            <span>Discover while listening</span>
+          </label>
+          <p className="note" id="discovery-listening-help">
+            Look for more songs once you finish one from your list and 3 or fewer unplayed ones are
+            left. Pausing, seeking, skipping or replaying never starts a search on its own.
+          </p>
+        </section>
         <div className="pref">
           <span className="k">Ranking engine</span>
           <label className="chk">
-            <input type="checkbox" checked={settings?.rank_v2 ?? true} onChange={(e) => onSettings({ rank_v2: e.target.checked })} />
-            Improved ranking (v2): corroboration across services, bounded repeat feedback and fairer evidence. In-app ranking also blends long, recent and session taste. Turn off to use the original engine.
+            <input
+              type="checkbox"
+              checked={settings?.rank_v2 ?? true}
+              onChange={(e) => onSettings({ rank_v2: e.target.checked })}
+            />
+            <span className="box" aria-hidden="true" />
+            Improved ranking (v2): corroboration across services, bounded repeat feedback and fairer
+            evidence. In-app ranking also blends long, recent and session taste. Turn off to use the
+            original engine.
           </label>
           <span className="k">Audio matching</span>
           <label className="chk">
-            <input type="checkbox" checked={settings?.audio ?? true} onChange={(e) => onSettings({ audio: e.target.checked })} />
+            <input
+              type="checkbox"
+              checked={settings?.audio ?? true}
+              onChange={(e) => onSettings({ audio: e.target.checked })}
+            />
+            <span className="box" aria-hidden="true" />
             Compare how songs sound, using 30-second Deezer previews
           </label>
           <span className="k">Daily download allowance</span>
@@ -127,7 +183,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
             />{' '}
             MB per day, for metadata, artwork checks and previews the app downloads itself
           </label>
-          <span className="k">Per request</span>
+          <span className="k">Discovery allowance</span>
           <label className="numrow">
             <input
               className="field field--num"
@@ -138,22 +194,61 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
               value={settings?.request_mb ?? 20}
               onChange={(e) => onSettings({ request_mb: Number(e.target.value) })}
             />{' '}
-            MB for each “Find my next favorite”
+            MB for each discovery batch
           </label>
           <span className="k">Sample data</span>
           <label className="chk">
-            <input type="checkbox" checked={settings?.sample_mode ?? false} onChange={(e) => onSettings({ sample_mode: e.target.checked })} />
+            <input
+              type="checkbox"
+              checked={settings?.sample_mode ?? false}
+              onChange={(e) => onSettings({ sample_mode: e.target.checked })}
+            />
+            <span className="box" aria-hidden="true" />
             Offer a labelled, recorded sample queue for looking at the interface offline
           </label>
         </div>
-        <p className="note">Songs you play in the embedded players stream straight to your browser. That is your own listening and is not counted in these allowances.</p>
+        <p className="note">
+          Songs you play in the embedded players stream straight to your browser. That is your own
+          listening and is not counted in these allowances.
+        </p>
         <div className="pref" aria-label="Listening history import">
           <span className="k">Import listening history (optional)</span>
-          <p className="note">Select Spotify extended streaming history JSON or an extracted ListenBrainz .jsonl month. This file is read on your device; no account connection or cloud upload. A submitted ListenBrainz play is not treated as a finished track.</p>
-          <input aria-label="Choose history file" type="file" accept=".json,.jsonl,application/json" onChange={(e) => { void loadHistory(e.target.files?.[0]); e.target.value = ''; }} />
-          {history && <p className="note" role="status">{history.source}: {history.usable} usable of {history.total} rows; {history.dropped.map((d) => `${d.count} ${d.reason}`).join(', ') || 'none dropped'}. Nothing is saved until you confirm.</p>}
-          {history && history.usable > 0 && <button className="push" type="button" disabled={historyBusy} onClick={() => void saveHistory()}>{historyBusy ? 'Importing…' : `Import ${history.usable} plays`}</button>}
-          {historyMessage && <p className="note" role="status">{historyMessage}</p>}
+          <p className="note">
+            Select Spotify extended streaming history JSON or an extracted ListenBrainz .jsonl
+            month. This file is read on your device; no account connection or cloud upload. A
+            submitted ListenBrainz play is not treated as a finished track.
+          </p>
+          <input
+            aria-label="Choose history file"
+            type="file"
+            accept=".json,.jsonl,application/json"
+            onChange={(e) => {
+              void loadHistory(e.target.files?.[0]);
+              e.target.value = '';
+            }}
+          />
+          {history && (
+            <p className="note" role="status">
+              {history.source}: {history.usable} usable of {history.total} rows;{' '}
+              {history.dropped.map((d) => `${d.count} ${d.reason}`).join(', ') || 'none dropped'}.
+              Nothing is saved until you confirm.
+            </p>
+          )}
+          {history && history.usable > 0 && (
+            <button
+              className="push"
+              type="button"
+              disabled={historyBusy}
+              onClick={() => void saveHistory()}
+            >
+              {historyBusy ? 'Importing…' : `Import ${history.usable} plays`}
+            </button>
+          )}
+          {historyMessage && (
+            <p className="note" role="status">
+              {historyMessage}
+            </p>
+          )}
         </div>
         <MicSettings />
         <div className="panefoot">
@@ -162,8 +257,14 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
           </a>
           {confirmTaste ? (
             <>
-              <span className="note">Forget learned taste (plays, likes, skips)? Starting songs and settings stay.</span>
-              <button className="push push--danger" type="button" onClick={() => (setConfirmTaste(false), onResetTaste())}>
+              <span className="note">
+                Forget learned taste (plays, likes, skips)? Starting songs and settings stay.
+              </span>
+              <button
+                className="push push--danger"
+                type="button"
+                onClick={() => (setConfirmTaste(false), onResetTaste())}
+              >
                 Reset taste
               </button>
               <button className="push" type="button" onClick={() => setConfirmTaste(false)}>
@@ -171,14 +272,22 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
               </button>
             </>
           ) : (
-            <button className="push" type="button" onClick={() => (setConfirm(false), setConfirmTaste(true))}>
+            <button
+              className="push"
+              type="button"
+              onClick={() => (setConfirm(false), setConfirmTaste(true))}
+            >
               Reset what the ranking learned…
             </button>
           )}
           {confirm ? (
             <>
               <span className="note">Remove starting songs, likes, dislikes and settings?</span>
-              <button className="push push--danger" type="button" onClick={() => (setConfirm(false), onReset())}>
+              <button
+                className="push push--danger"
+                type="button"
+                onClick={() => (setConfirm(false), onReset())}
+              >
                 Reset
               </button>
               <button className="push" type="button" onClick={() => setConfirm(false)}>
@@ -186,7 +295,11 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
               </button>
             </>
           ) : (
-            <button className="push" type="button" onClick={() => (setConfirmTaste(false), setConfirm(true))}>
+            <button
+              className="push"
+              type="button"
+              onClick={() => (setConfirmTaste(false), setConfirm(true))}
+            >
               Reset…
             </button>
           )}
@@ -224,7 +337,13 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
                   const s = caps[c];
                   const st = s?.state ?? 'unsupported';
                   return (
-                    <span role="cell" key={c} data-label={CAPS.find(([k]) => k === c)?.[1]} className={classNames('cap', `cap--${st}`)} title={s?.detail ?? ''}>
+                    <span
+                      role="cell"
+                      key={c}
+                      data-label={CAPS.find(([k]) => k === c)?.[1]}
+                      className={classNames('cap', `cap--${st}`)}
+                      title={s?.detail ?? ''}
+                    >
                       {STATE_LABEL[st] ?? st}
                     </span>
                   );
@@ -235,19 +354,35 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
         )}
         {health && (
           <p className="note">
-            Audio model: {health.audio.installed ? `DCLAP (${health.audio.dim}-d), ${STATE_LABEL[health.audio.check.state] ?? health.audio.check.state}` : 'not installed'}
-            {health.audio.check.detail ? ` — ${health.audio.check.detail}` : ''}. {health.audio.vectors} songs analysed and kept. License: {health.audio.license}.
+            Audio model:{' '}
+            {health.audio.installed
+              ? `DCLAP (${health.audio.dim}-d), ${STATE_LABEL[health.audio.check.state] ?? health.audio.check.state}`
+              : 'not installed'}
+            {health.audio.check.detail ? ` — ${health.audio.check.detail}` : ''}.{' '}
+            {health.audio.vectors} songs analysed and kept. License: {health.audio.license}.
           </p>
         )}
         {health && (
           <div className="panefoot">
             {health.audio.installed ? (
-              <button className="push" type="button" disabled={modelBusy !== null} onClick={() => modelAction('test')}>
+              <button
+                className="push"
+                type="button"
+                disabled={modelBusy !== null}
+                onClick={() => modelAction('test')}
+              >
                 {modelBusy === 'test' ? 'Testing…' : 'Test audio model'}
               </button>
             ) : (
-              <button className="push" type="button" disabled={modelBusy !== null} onClick={() => modelAction('install')}>
-                {modelBusy === 'install' ? 'Downloading…' : `Install audio model (${fmtBytes(health.audio.download_bytes)} download)`}
+              <button
+                className="push"
+                type="button"
+                disabled={modelBusy !== null}
+                onClick={() => modelAction('install')}
+              >
+                {modelBusy === 'install'
+                  ? 'Downloading…'
+                  : `Install audio model (${fmtBytes(health.audio.download_bytes)} download)`}
               </button>
             )}
           </div>
@@ -257,11 +392,19 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
       {status && (
         <section className="card" aria-labelledby="st-h">
           <h2 id="st-h">Storage and downloads</h2>
-          <div className="meter" aria-label={`App storage ${fmtBytes(status.storage.total)} of ${fmtBytes(status.storage.hard_cap)}`}>
-            <span style={{ width: `${Math.min(100, (status.storage.total / status.storage.hard_cap) * 100)}%` }} />
+          <div
+            className="meter"
+            aria-label={`App storage ${fmtBytes(status.storage.total)} of ${fmtBytes(status.storage.hard_cap)}`}
+          >
+            <span
+              style={{
+                width: `${Math.min(100, (status.storage.total / status.storage.hard_cap) * 100)}%`,
+              }}
+            />
           </div>
           <p className="note">
-            {fmtBytes(status.storage.total)} of {fmtBytes(status.storage.hard_cap)} used by the app. {status.storage.not_counted}
+            {fmtBytes(status.storage.total)} of {fmtBytes(status.storage.hard_cap)} used by the app.{' '}
+            {status.storage.not_counted}
           </p>
           <dl className="kv">
             {Object.entries(status.storage.areas).map(([k, v]) => (
@@ -285,7 +428,8 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
             <div>
               <dt>cache</dt>
               <dd>
-                {fmtBytes(status.cache.bytes)} · {status.cache.hits} hits / {status.cache.misses} misses
+                {fmtBytes(status.cache.bytes)} · {status.cache.hits} hits / {status.cache.misses}{' '}
+                misses
               </dd>
             </div>
             <div>
