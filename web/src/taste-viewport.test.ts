@@ -103,6 +103,29 @@ describe('TastePicker behavior', () => {
     expect(field().querySelectorAll('.tpick__step')).toHaveLength(2);
   });
 
+  it('scales the cover art with the zoom, because each marker is a fixed dot on the field (TASTE-MAP-SCALE)', () => {
+    // The owner, zoomed to 4x: the ten tiles formed the same cross they formed at 1x. Markers were
+    // a fixed 42px and a pixel-space spreader fanned ten plays of one song around one point, so
+    // zooming changed nothing. A marker stands for a fixed point on the field: zoom in and it
+    // grows and the points move apart; zoom out and it shrinks.
+    render(createElement(TastePicker, { placed: taste, trail: [{ hue: 144, bpm: 130, label: 'played' }] }));
+    advance(AUTO_FIT_DELAY + AUTO_FIT_DURATION + 100);
+    const scaleAt = () => parseFloat(field().style.getPropertyValue('--tp-marker'));
+    // At every zoom the marker is 42px x zoom, held between 28px and 96px.
+    const expected = () => Math.min(96, Math.max(28, 42 * backgroundZoom()));
+    expect(scaleAt()).toBeCloseTo(expected(), 0);
+    // Zoom out until it is below the cap, then one step in must grow it and one step out shrink it.
+    for (let i = 0; i < 4; i++) fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }));
+    const out = scaleAt();
+    expect(out).toBeCloseTo(expected(), 0);
+    expect(out).toBeLessThan(96);
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }));
+    expect(scaleAt()).toBeGreaterThan(out);
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }));
+    expect(scaleAt()).toBeLessThan(out);
+  });
+
   it('still frames the listener’s genres even though they are no longer drawn', () => {
     // Dropping the dots must not drop the genres from the viewport fit, or the field would frame
     // only the handful of recently played songs.

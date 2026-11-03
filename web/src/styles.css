@@ -187,12 +187,17 @@ body {
 }
 .card__head,
 .shelf__head,
+/* Heading and status sit together on the left; the one action is pinned to the right edge. A
+   space-between row with three children stranded the button a third of the way across. */
 .queue__head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px 14px;
   flex-wrap: wrap;
+}
+.queue__head > .push {
+  margin-left: auto;
 }
 .count {
   color: var(--ink-3);
@@ -2914,9 +2919,9 @@ a.push {
   position: absolute;
   /* The cover art has to be readable: at 22px the owner could not tell what the picture was.
      A square with a soft radius shows more of the artwork than a circle crops away. */
-  width: 42px;
-  height: 42px;
-  margin: -21px 0 0 -21px;
+  width: var(--tp-marker, 42px);
+  height: var(--tp-marker, 42px);
+  margin: calc(var(--tp-marker, 42px) / -2) 0 0 calc(var(--tp-marker, 42px) / -2);
   border-radius: 10px;
   background: rgba(11, 11, 16, 0.85);
   border: 2px solid #fff;
@@ -2950,9 +2955,9 @@ a.push {
   font-variant-numeric: tabular-nums;
 }
 .tpick__step--now {
-  width: 56px;
-  height: 56px;
-  margin: -28px 0 0 -28px;
+  width: calc(var(--tp-marker, 42px) * 4 / 3);
+  height: calc(var(--tp-marker, 42px) * 4 / 3);
+  margin: calc(var(--tp-marker, 42px) * -2 / 3) 0 0 calc(var(--tp-marker, 42px) * -2 / 3);
   border-radius: 12px;
   border-color: #fff;
   box-shadow:

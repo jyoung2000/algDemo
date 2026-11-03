@@ -566,11 +566,6 @@ export function App() {
                     <h2 id="queue-h">
                       Songs <span className="count">{seeds.length + items.length}</span>
                     </h2>
-                    {!sample && (
-                      <button className="push push--small" type="button" title="Empty the song list. Your listening history and settings are kept." onClick={clearList}>
-                        <Glyph name="clear" size={12} /> Clear list
-                      </button>
-                    )}
                     <span className="queue__meta">
                       {running && result.phase === 'gathering' ? (
                         <>
@@ -590,6 +585,11 @@ export function App() {
                         'Matched by metadata.'
                       )}
                     </span>
+                    {!sample && (
+                      <button className="push push--small" type="button" title="Empty the song list. Your listening history and settings are kept." onClick={clearList}>
+                        <Glyph name="clear" size={12} /> Clear list
+                      </button>
+                    )}
                   </div>
                   {tasteLine && (
                     <p className="note note--taste" role="status" aria-live="polite">

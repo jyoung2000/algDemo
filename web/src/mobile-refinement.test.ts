@@ -56,14 +56,62 @@ describe('the Your sound header shows one genre at a time, strongest first', () 
     expect(ticker).toMatch(/\(i \+ 1\) % entries\.length/);
   });
 
-  it('holds still for reduced motion, a hidden tab, hover, focus or a pause press', () => {
+  it('holds still for reduced motion, a hidden tab, hover or focus', () => {
     expect(ticker).toMatch(/prefers-reduced-motion: reduce/);
-    expect(ticker).toMatch(/const still = paused \|\| focused \|\| hovered \|\| hidden \|\| reduced;/);
+    expect(ticker).toMatch(/const still = focused \|\| hovered \|\| hidden \|\| reduced;/);
     expect(ticker).toMatch(/if \(still \|\| entries\.length < 2\) return;/);
   });
 
   it('restarts at the strongest genre when the mix itself changes', () => {
     expect(ticker).toMatch(/useEffect\(\(\) => setIndex\(0\), \[signature\]\)/);
+  });
+});
+
+describe('the Songs header keeps Clear list cleanly on the right (QUEUE-HEAD-001)', () => {
+  it('orders the row heading, status, then the action, and pins the action to the right edge', () => {
+    // The owner, on the desktop: the button sat a third of the way across the row with 200px of
+    // nothing on either side — a three-item space-between row with the action stranded in the
+    // middle. The row is heading · status (left, together), action (right, always).
+    const app = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
+    const main = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+    // In both headers (results, and seeds only) the button comes after everything else.
+    for (const m of app.matchAll(/<div className="queue__head">([\s\S]*?)<\/div>\s*(?:<Results|\{running)/g)) {
+      const head = m[1]!;
+      const button = head.indexOf('Clear list');
+      const meta = head.indexOf('queue__meta');
+      expect(button).toBeGreaterThan(-1);
+      if (meta > -1) expect(button).toBeGreaterThan(meta);
+    }
+    expect(main).toMatch(/\.queue__head \{[^}]*justify-content: flex-start;/);
+    expect(main).toMatch(/\.queue__head > \.push \{[^}]*margin-left: auto;/);
+  });
+});
+
+describe('the taste map trail shows distinct songs (TASTE-MAP-DISTINCT)', () => {
+  it('plots each song once, at its latest play, so one song on repeat is one tile', () => {
+    // The owner: "not show the same cover art over and over". Ten plays of one song (repeat-one)
+    // were ten tiles of one cover. The trail is the last ten DISTINCT songs played.
+    const profile = readFileSync(new URL('./Profile.tsx', import.meta.url), 'utf8');
+    expect(profile).toMatch(/const seenKeys = new Set<string>\(\);/);
+    expect(profile).toMatch(/if \(seenKeys\.has\(s\.key\)\) return false;/);
+    expect(profile).toMatch(/\.slice\(0, 10\)/);
+  });
+
+  it('draws every marker from the zoom-scaled size, the ringed current song a third larger (TASTE-MAP-SCALE)', () => {
+    const main = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+    expect(main).toMatch(/\.tpick__step \{[^}]*width: var\(--tp-marker, 42px\);[^}]*height: var\(--tp-marker, 42px\);/);
+    expect(main).toMatch(/\.tpick__step--now \{[^}]*calc\(var\(--tp-marker, 42px\) \* 4 \/ 3\)/);
+  });
+});
+
+describe('the Your sound ticker has no play/pause button', () => {
+  it('still pauses on hover, focus, a hidden tab and reduced motion, with only a next button', () => {
+    // The owner asked for the play/pause button to go. The a11y intent stays — the ticker holds
+    // still under the pointer, under focus, in a hidden tab and under reduced motion — but there
+    // is no control for it; the one button advances.
+    expect(ticker).not.toMatch(/Pause genre rotation/);
+    expect(ticker).not.toMatch(/name=\{paused \? 'play' : 'pause'\}/);
+    expect(ticker).toMatch(/Next genre/);
   });
 });
 

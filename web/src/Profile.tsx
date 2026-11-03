@@ -155,8 +155,16 @@ export function ProfileView() {
       return !best || g.score > best.score ? { hue: at.hue, bpm: at.bpm, score: g.score } : best;
     }, null);
   const focus = strongestBy((broad) => !broad) ?? strongestBy(() => true);
-  // The last ten songs played, oldest first, on the same field. A song with no known genre or tempo cannot be placed.
-  const playedOldestFirst = [...p.played].reverse();
+  // The last ten DISTINCT songs played, oldest first, on the same field. One song on repeat was
+  // ten tiles of one cover (the owner: "the same cover art over and over"); now it is one tile, at
+  // its latest play. A song with no known genre or tempo cannot be placed.
+  const seenKeys = new Set<string>();
+  const distinctNewestFirst = p.played.filter((s) => {
+    if (seenKeys.has(s.key)) return false;
+    seenKeys.add(s.key);
+    return true;
+  });
+  const playedOldestFirst = distinctNewestFirst.slice(0, 10).reverse();
   const trail: TrailPoint[] = [];
   const notPlaced: string[] = [];
   for (const s of playedOldestFirst) {

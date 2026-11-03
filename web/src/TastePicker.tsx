@@ -20,8 +20,22 @@ import { genreInk, genreSwatch } from './genre-color';
 import './taste-picker-zoom.css';
 
 const pct = (x: number) => `${Math.round(x)}%`;
-/** The widest cover-art marker (the ringed current song), used to keep artwork from overlapping. */
-const MARKER_PX = 56;
+/** Cover-art marker at 1x zoom. The ringed current song is a third larger. */
+const MARKER_BASE_PX = 42;
+/**
+ * A marker stands for a fixed point on the field, so it scales with the zoom: zoom in and the
+ * art grows while the points move apart; zoom out and it shrinks. Bounded so it stays readable
+ * at the smallest view and never swallows the field at the largest. The owner, at 4x: the ten
+ * tiles formed the same cross as at 1x, because they were a fixed 42px and a pixel-space spreader
+ * fanned ten plays of one song around one point — zoom changed nothing.
+ */
+const markerPx = (zoom: number, fieldWidth = 0) =>
+  // The cap knows the field it is in: 96px is right on an 830px desktop field and, with the ringed
+  // current song a third larger, 35% of a 362px phone field — it dominated the map. One fifth of
+  // the width keeps the ringed marker under about 30% anywhere.
+  Math.min(fieldWidth > 0 ? Math.min(96, fieldWidth * 0.2) : 96, Math.max(28, MARKER_BASE_PX * zoom));
+/** The widest marker (the ringed current song) at 1x, used by the viewport fit. */
+const MARKER_PX = Math.round(MARKER_BASE_PX * 4 / 3);
 
 /** Interactive field: drag, tap or arrow keys. Colour band = family, height = tempo. */
 // The strip under the field is decorative (aria-hidden), so it uses short labels that fit eight columns at phone width.
@@ -120,7 +134,8 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
     const raw = t.map((p) => projectPoint(view, p));
     if (!box.w || !box.h) return raw;
     // Newest first, so the ringed current song keeps its true position and older plays give way.
-    const spread = spreadMarkers([...raw].reverse(), { w: (MARKER_PX / box.w) * 100, h: (MARKER_PX / box.h) * 100 });
+    const px = markerPx(1 / view.size, box.w) * 4 / 3;
+    const spread = spreadMarkers([...raw].reverse(), { w: (px / box.w) * 100, h: (px / box.h) * 100 });
     return spread.reverse();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trailKey, view.x, view.y, view.size, box.w, box.h]);
@@ -266,7 +281,7 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
         onPointerUp={onUp}
         onPointerCancel={onUp}
         onKeyDown={onKey}
-        style={{ ['--tp-h' as string]: BAND, ...viewportBackground(view) }}
+        style={{ ['--tp-h' as string]: BAND, ['--tp-marker' as string]: `${markerPx(1 / view.size, box.w)}px`, ...viewportBackground(view) }}
       >
         {trail?.map((p, i) => (
           <span

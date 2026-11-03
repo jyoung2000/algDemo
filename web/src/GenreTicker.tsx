@@ -2,10 +2,9 @@ import { useEffect, useState } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import type { LeafView } from './taste-view';
 
-/** A readable, pausable one-at-a-time marquee, never an endlessly moving line of text. */
+/** A readable one-at-a-time marquee, never an endlessly moving line of text; it rests under the pointer. */
 export function GenreTicker({ entries }: { entries: LeafView[] }) {
   const [index, setIndex] = useState(0);
-  const [paused, setPaused] = useState(false);
   const [focused, setFocused] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [hidden, setHidden] = useState(document.hidden);
@@ -23,7 +22,9 @@ export function GenreTicker({ entries }: { entries: LeafView[] }) {
       document.removeEventListener('visibilitychange', visibility);
     };
   }, []);
-  const still = paused || focused || hovered || hidden || reduced;
+  // No play/pause control (the owner asked for it to go). The ticker still holds still under the
+  // pointer, under focus, in a hidden tab and under reduced motion; the one button advances it.
+  const still = focused || hovered || hidden || reduced;
   useEffect(() => {
     if (still || entries.length < 2) return;
     const timer = window.setInterval(() => setIndex((i) => (i + 1) % entries.length), 4800);
@@ -40,14 +41,11 @@ export function GenreTicker({ entries }: { entries: LeafView[] }) {
           <span>{entry.label}</span><b>{entry.pct}%</b>
         </span>
       </span>
-      {entries.length > 1 && <>
-        {!reduced && <button type="button" className="quiet-control" aria-label={paused ? 'Resume genre rotation' : 'Pause genre rotation'} aria-pressed={paused} onClick={() => setPaused((p) => !p)}>
-          <Glyph name={paused ? 'play' : 'pause'} size={12} />
-        </button>}
-        <button type="button" className="quiet-control" aria-label={`Next genre (${index % entries.length + 1} of ${entries.length})`} onClick={() => { setPaused(true); setIndex((i) => (i + 1) % entries.length); }}>
+      {entries.length > 1 && (
+        <button type="button" className="quiet-control" aria-label={`Next genre (${index % entries.length + 1} of ${entries.length})`} onClick={() => setIndex((i) => (i + 1) % entries.length)}>
           <Glyph name="chevron-right" size={14} />
         </button>
-      </>}
+      )}
     </div>
   );
 }
