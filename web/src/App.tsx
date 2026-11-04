@@ -14,7 +14,7 @@ import { setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-
 import { PLAY_THROUGH_DEFAULT } from './engine/crossfade';
 import { downloadsAvailable } from './engine/downloads';
 import { readResume } from './engine/resume';
-import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, classNames, describeTaste, fmtBytes, keepFocus, historyBack, mergeRerank, nextRepeat, playbackOfTrack, stepQueue, type RepeatMode } from './util';
+import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, canPlayHere, classNames, describeTaste, fmtBytes, keepFocus, historyBack, mergeRerank, nextRepeat, playbackOfTrack, stepQueue, type RepeatMode } from './util';
 
 type Tab = 'discover' | 'saved' | 'profile' | 'downloads' | 'settings';
 
@@ -304,7 +304,11 @@ export function App() {
   const nextKey = nextStep && !nextStep.wrapped ? nextStep.item.track.key : null;
   const upNext = useMemo(() => {
     const i = inQueue ? items.findIndex((x) => x.track.key === playingKey) : -1;
-    const playable = (x: RecItem) => x.playback.preview || x.playback.embed;
+    // A song belongs in the deck queue when this build can play it at all. Inside the apps that is
+    // every song in the list, because the player downloads the full track (QUEUE-PLAY-001); asking
+    // for a streaming preview here silently dropped preview-less songs out of the queue, so they
+    // were never cued and never blended into.
+    const playable = (x: RecItem) => canPlayHere(x.playback);
     const rest = shuffle ? items.filter((x) => x.track.key !== playingKey && !heardRef.current.has(x.track.key) && !hidden.has(x.track.key)) : items.slice(i + 1);
     const ordered = nextKey ? [...rest.filter((x) => x.track.key === nextKey), ...rest.filter((x) => x.track.key !== nextKey)] : rest;
     return ordered
@@ -373,7 +377,7 @@ export function App() {
   };
   const wheelSelect = () => {
     const it = items.find((x) => x.track.key === focusKey) ?? items[0];
-    if (it && (it.playback.preview || it.playback.embed)) play(it);
+    if (it && canPlayHere(it.playback)) play(it);
   };
 
   // ---------------------------------------------------------------- feedback

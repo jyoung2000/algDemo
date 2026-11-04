@@ -1,4 +1,5 @@
 import { classify } from './engine/classify';
+import { downloadsAvailable } from './engine/downloads';
 import { FAMILY_TAGS } from './engine/genre-table';
 import type { Tag } from './engine/genres';
 import type { Characteristics, Playback, ProviderId, RecItem, Release, TasteSummary, Track } from './api';
@@ -10,6 +11,22 @@ export const PROVIDER_LABEL: Record<string, string> = {
   spotify: 'Spotify',
   apple: 'Apple Music',
 };
+
+/**
+ * Whether the list can start this song here.
+ *
+ * Inside the Windows and Android apps the player does not stream: it looks the song up and
+ * downloads the full track onto its own deck (Player.tsx mode 'local'), which needs nothing but the
+ * track itself. So every song in the list can be played, and a missing streaming preview says
+ * nothing about it — asking for one hid Play on whole queue rows and told the listener a song they
+ * were being recommended "has no player here" (QUEUE-PLAY-001).
+ *
+ * A plain browser has no downloader, so there a preview or an embed really is the whole story and
+ * offering Play would be offering a dead button.
+ */
+export function canPlayHere(p: Pick<Playback, 'preview' | 'embed'>): boolean {
+  return downloadsAvailable() || Boolean(p.preview || p.embed);
+}
 
 /** How a song that is not a recommendation (a search hit or a starting song) plays: preview first, else the provider's own player. */
 export function playbackOfTrack(t: Track): Playback {

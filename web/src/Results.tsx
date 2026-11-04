@@ -3,7 +3,7 @@ import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
 import type { FeedbackKind, PlaylistSummary, RecItem, Track } from './api';
 import { Art } from './Art';
 import { SaveMenu } from './SaveMenu';
-import { PROVIDER_LABEL, TIER_LABEL, artistOf, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreTags, markKey, pickerColorFor, playbackOfTrack, toneLabel } from './util';
+import { PROVIDER_LABEL, TIER_LABEL, artistOf, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreTags, markKey, pickerColorFor, playbackOfTrack, toneLabel } from './util';
 
 export interface FeedbackFlags {
   like?: boolean;
@@ -54,7 +54,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
       {seeds.map((s) => {
         const strong = (s.emphasis ?? 1) > 1;
         const pb = playbackOfTrack(s);
-        const seedPlayable = Boolean(pb.preview || pb.embed);
+        const seedPlayable = canPlayHere(pb);
         return (
           <li key={`seed:${s.key}`} className={classNames('rec', 'rec--seed', strong && 'is-strong', playingKey === s.key && 'is-playing')}>
             <span className="rec__rank" aria-hidden="true">
@@ -117,7 +117,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
       {items.map((it, i) => {
         const t = it.track;
         const f = flags[t.key] ?? {};
-        const playable = Boolean(it.playback.preview || it.playback.embed);
+        const playable = canPlayHere(it.playback);
         const isOpen = open === t.key;
         const facts = describeCharacteristics(it.characteristics);
         // One coloured bubble per genre or subgenre, no separators. The Taste Picker colour sits on the family/subgenre bubble.
