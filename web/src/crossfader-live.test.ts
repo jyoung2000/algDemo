@@ -209,7 +209,7 @@ describe('the crossfader, rendered', () => {
     expect(b.paused).toBe(true);
 
     // 30s preview, 40% ceiling -> a 12s blend begins at 18s.
-    a.currentTime = 19;
+    a.currentTime = 28.6; // the 95% point of a 30s deck has passed (MIXER-PLAY-THROUGH-001)
     await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
     await settle();
     expect(b.src).toBe('https://cdn.test/two.mp3');
@@ -278,7 +278,7 @@ describe('the crossfader, rendered', () => {
     await settle();
     const [a, b] = decks() as [HTMLAudioElement, HTMLAudioElement];
     setPaused(a, false);
-    a.currentTime = 19;
+    a.currentTime = 28.6; // the 95% point of a 30s deck has passed (MIXER-PLAY-THROUGH-001)
     await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
     await settle();
     b.currentTime = 11;
@@ -309,7 +309,7 @@ describe('the crossfader, rendered', () => {
     await settle();
     const [a, b] = decks() as [HTMLAudioElement, HTMLAudioElement];
     setPaused(a, false);
-    a.currentTime = 19;
+    a.currentTime = 28.6; // the 95% point of a 30s deck has passed (MIXER-PLAY-THROUGH-001)
     await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
     await settle();
     expect(b.paused).toBe(false);
@@ -335,7 +335,7 @@ describe('the crossfader, rendered', () => {
     const [a, b] = decks() as [HTMLAudioElement, HTMLAudioElement];
     expect(b.getAttribute('src')).toBeNull(); // never even cued
     setPaused(a, false);
-    a.currentTime = 19;
+    a.currentTime = 28.6; // the 95% point of a 30s deck has passed (MIXER-PLAY-THROUGH-001)
     await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
     await settle();
     expect(b.paused).toBe(true);
@@ -357,7 +357,7 @@ describe('the crossfader, rendered', () => {
     rerender(createElement(Player, { ...props, repeat: 'one', playing: playing('one'), upNext: upNext('two') }));
     await settle();
     setPaused(a, false);
-    a.currentTime = 19;
+    a.currentTime = 28.6; // the 95% point of a 30s deck has passed (MIXER-PLAY-THROUGH-001)
     await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
     await settle();
     expect(b.paused).toBe(true);
@@ -459,7 +459,7 @@ describe('full songs through the decks (LOCAL-AUDIO-001)', () => {
     const [a, b] = decks() as [HTMLAudioElement, HTMLAudioElement];
     expect(b.getAttribute('src')).toBe(LOCAL);
     setPaused(a, false);
-    a.currentTime = 19;
+    a.currentTime = 28.6; // the 95% point of a 30s deck has passed (MIXER-PLAY-THROUGH-001)
     await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
     await settle();
     expect(b.paused).toBe(false);
@@ -481,7 +481,7 @@ describe('full songs through the decks (LOCAL-AUDIO-001)', () => {
     const [a, b] = decks() as [HTMLAudioElement, HTMLAudioElement];
     expect(b.getAttribute('src')).toBe(LOCAL);
     setPaused(a, false);
-    a.currentTime = 19;
+    a.currentTime = 28.6; // the 95% point of a 30s deck has passed (MIXER-PLAY-THROUGH-001)
     await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
     await settle();
     expect(b.paused).toBe(false);

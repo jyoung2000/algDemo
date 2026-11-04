@@ -25,22 +25,22 @@ describe('preview crossfader lifecycle', () => {
     const { m, a, b, bus } = setup();
     await m.prepare(next);
     expect(b.src).toBe('b.wav'); expect(b.play).not.toHaveBeenCalled();
-    a.currentTime = 10; await m.tick(100);
+    a.currentTime = 28; await m.tick(100);
     expect(b.play).not.toHaveBeenCalled();
-    a.currentTime = 18; await m.tick(100);
+    a.currentTime = 28.6; await m.tick(100);
     expect(b.play).toHaveBeenCalledTimes(1);
-    expect(bus.transitionTo).toHaveBeenCalledWith('b', 12, 'filter');
+    expect(bus.transitionTo).toHaveBeenCalledWith('b', expect.closeTo(1.4, 5), 'filter'); // the 5% tail of a 30s deck
     expect(a.paused).toBe(false); expect(b.paused).toBe(false);
   });
   it('does nothing at Off, during repeat/pause/seek, or with an unready next song', async () => {
-    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 28;
+    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 29;
     await m.tick(0); a.paused = true; await m.tick(100);
     a.paused = false; a.seeking = true; await m.tick(100);
     a.seeking = false; b.readyState = 1; await m.tick(100);
     expect(bus.transitionTo).not.toHaveBeenCalled();
   });
   it('promotes exactly the preloaded song without restarting it', async () => {
-    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 18; await m.tick(100);
+    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 28.6; await m.tick(100);
     b.currentTime = 12;
     expect(m.finish()).toEqual({ key: 'b', deck: 'b' });
     expect(m.active).toBe('b'); expect(a.paused).toBe(true);
@@ -49,10 +49,10 @@ describe('preview crossfader lifecycle', () => {
     expect(m.finish()).toBeNull();
   });
   it('works A→B→A, not just for the first pair', async () => {
-    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 18; await m.tick(100); m.finish();
+    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 28.6; await m.tick(100); m.finish();
     await m.prepare({ key: 'c', preview: 'c.wav' });
-    expect(a.src).toBe('c.wav'); b.currentTime = 20; await m.tick(100);
-    expect(bus.transitionTo).toHaveBeenLastCalledWith('a', 10, 'filter');
+    expect(a.src).toBe('c.wav'); b.currentTime = 28.6; await m.tick(100);
+    expect(bus.transitionTo).toHaveBeenLastCalledWith('a', expect.closeTo(1.4, 5), 'filter');
     expect(m.finish()).toEqual({ key: 'c', deck: 'a' });
   });
   it('ignores a late URL from an obsolete queue item', async () => {
@@ -63,30 +63,30 @@ describe('preview crossfader lifecycle', () => {
     expect(b.src).toBe('c.wav');
   });
   it('cancels safely while play() is pending; a late success cannot fade the new song', async () => {
-    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 18;
+    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 28.6;
     let finish!: () => void; b.play.mockImplementationOnce(() => new Promise(r => { finish = r; }));
     const pending = m.tick(100); m.cancel(); finish(); await pending;
     expect(bus.transitionTo).not.toHaveBeenCalled(); expect(b.paused).toBe(true);
   });
   it('cancels an overlap on seek/skip/Off and restores only the current track', async () => {
-    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 18; await m.tick(100);
+    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 28.6; await m.tick(100);
     m.cancel(); expect(b.paused).toBe(true); expect(bus.cut).toHaveBeenLastCalledWith('a');
     expect(m.finish()).toBeNull();
   });
   it('never advances early when the incoming play promise rejects', async () => {
-    const { m, a, b, bus, status } = setup(); await m.prepare(next); a.currentTime = 18;
+    const { m, a, b, bus, status } = setup(); await m.prepare(next); a.currentTime = 28.6;
     b.play.mockRejectedValueOnce(new Error('not allowed')); await m.tick(100); await m.tick(100);
     expect(bus.transitionTo).not.toHaveBeenCalled(); expect(m.finish()).toBeNull();
     expect(a.paused).toBe(false); expect(status).toHaveBeenLastCalledWith(expect.stringContaining('could not start'));
   });
   it('does not promote a stalled or failed incoming deck', async () => {
-    const { m, a, b } = setup(); await m.prepare(next); a.currentTime = 18; await m.tick(100);
+    const { m, a, b } = setup(); await m.prepare(next); a.currentTime = 28.6; await m.tick(100);
     b.paused = true; expect(m.finish()).toBeNull(); expect(m.active).toBe('a');
   });
   it('uses actual remaining time after a slow play promise, not a fade past EOF', async () => {
-    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 18;
+    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 28.6;
     b.play.mockImplementationOnce(async () => { a.currentTime = 25; b.paused = false; });
-    await m.tick(100); expect(bus.transitionTo).toHaveBeenCalledWith('b', 5, 'filter');
+    await m.tick(100); expect(bus.transitionTo).toHaveBeenCalledWith('b', expect.closeTo(1.5, 5), 'filter'); // the plan's 1.5s, not the 5s now left
   });
   it('does not re-fetch a stable lookahead on a volume render', async () => {
     const { m, resolve } = setup(); await m.prepare(next); await m.prepare({ ...next });

@@ -66,6 +66,8 @@ describe('Audio settings — MIXER-001 and EQ-001', () => {
     expect(text).not.toMatch(/selects 30-second previews/);
     expect(text).toMatch(/full song/i);
     expect(text).toMatch(/download/i);
+    // MIXER-PLAY-THROUGH-001: the panel tells the listener the blend is a tail, never a cut.
+    expect(text).toMatch(/95%/);
     expect(text).toMatch(/bass handoff/);
     expect(text).toMatch(/filter/);
     expect(text).toMatch(/without reliable beat grids/i);

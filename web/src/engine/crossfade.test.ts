@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MAX_TRACK_FRACTION,
+  MIN_PLAYED_FRACTION,
   MAX_TEMPO_NUDGE,
   MIX_LABELS,
   barSeconds,
@@ -62,14 +63,32 @@ describe('the mixing slider', () => {
     expect(p.startAt).toBe(30);
   });
 
-  it('never spends more than 40% of the shorter song on the blend', () => {
-    // A 30s preview at the top of the slider wants 64s; it may only have 12s.
-    const p = mixPlan(100, 30, 30);
+  it('lets every song play at least 95% of the way through before the next one is blended in (MIXER-PLAY-THROUGH-001)', () => {
+    // The owner's rule: the blend is a tail, never a cut. A 180s song at the top of the slider
+    // wants 64s of overlap; it gets 9s, starting at 171s.
+    const p = mixPlan(100, 180, 200);
     expect(p.requested).toBeCloseTo(64, 1);
-    expect(p.seconds).toBeCloseTo(30 * MAX_TRACK_FRACTION, 5);
-    expect(p.seconds).toBe(12);
+    expect(p.seconds).toBeCloseTo(180 * (1 - MIN_PLAYED_FRACTION), 5);
+    expect(p.startAt).toBeCloseTo(171, 5);
+    expect(p.startAt / 180).toBeGreaterThanOrEqual(MIN_PLAYED_FRACTION);
+    expect(p.reason).toBe('kept-for-song');
+    expect(p.description).toBe('Long & Creative • about 9 seconds, kept so the song plays through');
+    // Every slider position and every length obeys it.
+    for (const slider of [10, 30, 50, 75, 100]) {
+      for (const out of [30, 111, 180, 300, 600]) {
+        const q = mixPlan(slider, out, 400);
+        expect(q.startAt / out, `slider=${slider} out=${out}`).toBeGreaterThanOrEqual(MIN_PLAYED_FRACTION - 1e-9);
+      }
+    }
+  });
+
+  it('never spends more than 40% of the incoming song on the blend', () => {
+    // A long song blending into a 30s preview: the song's own 5% would allow 12s, the preview's
+    // 40% allows 12s too; a 10s preview allows 4s.
+    const p = mixPlan(100, 240, 10);
+    expect(p.seconds).toBeCloseTo(10 * MAX_TRACK_FRACTION, 5);
     expect(p.reason).toBe('shortened-for-pair');
-    expect(p.description).toBe('Long & Creative • about 12 seconds, shortened for this pair');
+    expect(p.description).toBe('Long & Creative • about 4 seconds, shortened for this pair');
   });
 
   it('is limited by the SHORTER of the two songs', () => {
@@ -112,10 +131,13 @@ describe('the mixing slider', () => {
   });
 
   it('raising the slider only lengthens the blend, never changes level', () => {
-    // The whole point of one slider: it buys time, not loudness.
+    // The whole point of one slider: it buys time, not loudness — up to the song's 5% tail, where
+    // it holds (a 300s song tops out at 15s however far the slider goes).
     const lengths = [10, 30, 60, 90].map((s) => mixPlan(s, 300, 300).seconds);
     expect(lengths).toEqual([...lengths].sort((a, b) => a - b));
-    expect(new Set(lengths).size).toBe(lengths.length);
+    const belowCeiling = lengths.filter((l) => l < 300 * (1 - MIN_PLAYED_FRACTION) - 1e-9);
+    expect(new Set(belowCeiling).size).toBe(belowCeiling.length);
+    expect(lengths[3]).toBeCloseTo(15, 5);
   });
 });
 
@@ -222,24 +244,24 @@ describe('beat matching', () => {
 
 describe('the plan with tempos', () => {
   it('lands on whole bars and says so', () => {
-    // 30s previews at slider 100 → 12s ceiling; 120 BPM → 6 bars exactly.
-    const p = mixPlan(100, 30, 30, { outBpm: 120, inBpm: 120 });
+    // A 240s song at slider 100 → 12s tail (5%); 120 BPM → 6 bars exactly.
+    const p = mixPlan(100, 240, 240, { outBpm: 120, inBpm: 120 });
     expect(p.bars).toBe(6);
-    expect(p.seconds).toBe(12);
+    expect(p.seconds).toBeCloseTo(12, 5);
     expect(p.tempo).toBe('same');
     expect(p.description).toContain('6 bars on the beat');
   });
 
   it('quantises to the outgoing song’s groove, not the incoming one', () => {
     // 90 BPM out (2.667s bars) with 12s of room → 4 bars = 10.667s.
-    const p = mixPlan(100, 30, 30, { outBpm: 90, inBpm: 92 });
+    const p = mixPlan(100, 240, 240, { outBpm: 90, inBpm: 92 });
     expect(p.bars).toBe(4);
     expect(p.seconds).toBeCloseTo(32 / 3, 5);
-    expect(p.startAt + p.seconds).toBeCloseTo(30, 5);
+    expect(p.startAt + p.seconds).toBeCloseTo(240, 5);
   });
 
   it('beat-matches a half-time pair without stretching it', () => {
-    const p = mixPlan(100, 30, 30, { outBpm: 70, inBpm: 140 });
+    const p = mixPlan(100, 240, 240, { outBpm: 70, inBpm: 140 });
     expect(p.tempo).toBe('half-or-double');
     expect(p.rate).toBe(1);
     expect(p.bars).toBeGreaterThan(0);
@@ -247,11 +269,11 @@ describe('the plan with tempos', () => {
 
   it('falls back to a plain crossfade when the tempos are too far apart', () => {
     // BitChord's documented fallback: an equal-power crossfade, honestly described.
-    const p = mixPlan(100, 30, 30, { outBpm: 85, inBpm: 150 });
+    const p = mixPlan(100, 240, 240, { outBpm: 85, inBpm: 150 });
     expect(p.tempo).toBe('unrelated');
     expect(p.bars).toBe(0);
     expect(p.rate).toBe(1);
-    expect(p.seconds).toBe(12);
+    expect(p.seconds).toBeCloseTo(12, 5);
     expect(p.description).toContain('too far apart to beat-match');
   });
 
@@ -265,7 +287,7 @@ describe('the plan with tempos', () => {
   });
 
   it('does not blame the pair for musical rounding', () => {
-    // The 40% ceiling IS the pair's fault; snapping to a bar is a choice.
+    // The ceilings are real limits; snapping to a bar is a choice.
     const long = mixPlan(10, 300, 300, { outBpm: 120, inBpm: 120 });
     expect(long.reason).toBe('as-requested');
     expect(long.bars).toBeGreaterThan(0);

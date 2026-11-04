@@ -94,9 +94,10 @@ export function AudioSettings({ settings, onSettings }: Props) {
           {MIX_LABELS.map((label) => <span key={label}>{label}</span>)}
         </div>
         <p className="note" id={`${id}-mix-help`}>
-          The full song always plays. The mixer blends songs this app plays itself — downloaded full songs
-          and 30-second previews. A song in YouTube’s or SoundCloud’s own player plays whole, with no blend.
-          Set to Off for normal playback.
+          The full song always plays: every song runs at least 95% of the way through before the next one is
+          blended into its last few seconds, however long a blend you ask for. The mixer blends songs this app
+          plays itself — downloaded full songs and 30-second previews. A song in YouTube’s or SoundCloud’s own
+          player plays whole, with no blend. Set to Off for normal playback.
         </p>
         <p className="note" id={`${id}-mix-style`}>
           Higher settings ask for longer blends, with bass handoff and filter transitions at the maximum.

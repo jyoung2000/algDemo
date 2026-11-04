@@ -32,8 +32,14 @@ const BANDS: readonly { upTo: number; label: MixLabel; lo: number; hi: number }[
 ];
 
 /**
- * No blend may eat more than this share of the shorter track. A 30s preview therefore tops out at
- * 12s of overlap, which still leaves each song 18s of its own.
+ * Every song plays at least this much of its length before the next one is blended in
+ * (MIXER-PLAY-THROUGH-001). The owner's rule: the blend is a tail on a song heard whole, never a
+ * cut into it — so at most 5% of the outgoing song overlaps, whatever the slider asks.
+ */
+export const MIN_PLAYED_FRACTION = 0.95;
+/**
+ * No blend may eat more than this share of the INCOMING track. It starts from its beginning under
+ * the fade, so this keeps a short preview from being mostly fade-in.
  */
 export const MAX_TRACK_FRACTION = 0.4;
 /** Below this there is nothing to fade; hand over cleanly instead. */
@@ -151,7 +157,7 @@ export function requestedSeconds(slider: number): number {
   return band.lo + (band.hi - band.lo) * t;
 }
 
-export type MixReason = 'off' | 'as-requested' | 'shortened-for-pair' | 'too-short-to-blend';
+export type MixReason = 'off' | 'as-requested' | 'kept-for-song' | 'shortened-for-pair' | 'too-short-to-blend';
 
 /** What the planner knows about the two songs beyond their length. */
 export interface MixInputs {
@@ -185,7 +191,7 @@ function describe(label: MixLabel, seconds: number, reason: MixReason, bars = 0,
   if (reason === 'off') return 'Off • songs play one after another';
   if (reason === 'too-short-to-blend') return `${label} • too short to blend, clean handoff`;
   const about = seconds >= 10 ? `${Math.round(seconds)}` : `${round1(seconds)}`;
-  const tail = reason === 'shortened-for-pair' ? ', shortened for this pair' : '';
+  const tail = reason === 'kept-for-song' ? ', kept so the song plays through' : reason === 'shortened-for-pair' ? ', shortened for this pair' : '';
   // A bar-quantised blend is worth saying so: it is the difference between a volume ramp and a mix.
   const beat = bars > 0 ? `, ${bars} ${bars === 1 ? 'bar' : 'bars'} on the beat` : tempo === 'unrelated' ? ', tempos too far apart to beat-match' : '';
   return `${label} • about ${about} seconds${tail}${beat}`;
@@ -224,17 +230,19 @@ export function mixPlan(slider: number, outSeconds: number, inSeconds: number, i
     return { ...flat, seconds: 0, startAt: known(outSeconds) ? outSeconds : 0, reason: 'too-short-to-blend', description: describe(label, 0, 'too-short-to-blend') };
   }
 
-  const ceiling = Math.min(outSeconds, inSeconds) * MAX_TRACK_FRACTION;
-  const capped = Math.min(requested, ceiling);
+  // The outgoing song's tail (95% played first) and the incoming song's share, whichever is tighter.
+  const songCeiling = outSeconds * (1 - MIN_PLAYED_FRACTION);
+  const pairCeiling = inSeconds * MAX_TRACK_FRACTION;
+  const capped = Math.min(requested, songCeiling, pairCeiling);
   // Snap to whole bars of the OUTGOING song: that is the groove the listener is already in.
   const quantised = tempo === 'unrelated' || tempo === 'unknown' ? { seconds: capped, bars: 0 } : quantizeToBars(capped, inputs.outBpm);
   const seconds = quantised.seconds;
   if (seconds < MIN_USEFUL_SECONDS) {
     return { ...flat, seconds: 0, startAt: outSeconds, reason: 'too-short-to-blend', description: describe(label, 0, 'too-short-to-blend') };
   }
-  // Bar rounding is a musical choice, not a limitation of the pair, so it does not count as
-  // "shortened for this pair" — only the track-length ceiling does.
-  const reason: MixReason = capped < requested - 0.05 ? 'shortened-for-pair' : 'as-requested';
+  // Bar rounding is a musical choice, not a limitation, so it does not count as a shortening —
+  // only the two ceilings do, and the song's own play-through rule is named first.
+  const reason: MixReason = capped >= requested - 0.05 ? 'as-requested' : songCeiling <= pairCeiling ? 'kept-for-song' : 'shortened-for-pair';
   return {
     ...flat,
     seconds,
