@@ -100,7 +100,7 @@ export function characteristicsOf(c: Dict, taste: TasteProfile | null): Dict {
 
 // `settings()` returns { ...DEFAULT_SETTINGS, ...stored }, so a new key defaults cleanly for an
 // install that predates it — no migration needed.
-const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, discover_while_listening: true, rank_v2: true, eq: EQ_DEFAULTS, mix: 0, local_mix: true, play_through: PLAY_THROUGH_DEFAULT };
+const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, cache_gb: 1, discover_while_listening: true, rank_v2: true, eq: EQ_DEFAULTS, mix: 0, local_mix: true, play_through: PLAY_THROUGH_DEFAULT };
 /** How many songs one discovery run adds to the list: the user's choice in Settings. */
 export const QUEUE_SIZE_MIN = 5;
 export const QUEUE_SIZE_MAX = 60;
@@ -491,6 +491,11 @@ export class LocalApi {
       const n = Math.round(Number(body['queue_size']));
       if (!Number.isFinite(n) || n < QUEUE_SIZE_MIN || n > QUEUE_SIZE_MAX) return fail(400, `queue_size must be between ${QUEUE_SIZE_MIN} and ${QUEUE_SIZE_MAX}`);
       cur['queue_size'] = n;
+    }
+    if ('cache_gb' in body) {
+      const gb = Number(body['cache_gb']);
+      if (!Number.isFinite(gb) || gb < 0.25 || gb > 20) return fail(400, 'cache_gb must be between 0.25 and 20');
+      cur['cache_gb'] = gb;
     }
     if ('weights' in body) {
       try {

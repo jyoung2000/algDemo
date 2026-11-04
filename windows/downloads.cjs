@@ -115,7 +115,61 @@ function createLibrary(saveDir) {
 }
 
 function createDownloads(cfg) {
-  const library = createLibrary(cfg.saveDir);
+  // The queue cache is private and evictable. A deliberate Download is copied to the user's Music
+  // folder and never counted against, or removed by, this limit.
+  const cacheDir = cfg.cacheDir || path.join(cfg.tempRoot, 'audio-cache');
+  fs.mkdirSync(cacheDir, { recursive: true });
+  let saveDir = cfg.saveDir;
+  const library = createLibrary(cfg.libraryDir || saveDir);
+  const cacheIndex = path.join(cacheDir, 'index.json');
+  const cached = new Map();
+  try {
+    for (const [url, entry] of Object.entries(JSON.parse(fs.readFileSync(cacheIndex, 'utf8')))) {
+      if (urlAllowedFor('yt-dlp', url) && entry && typeof entry.name === 'string' && /^[a-f0-9-]{36}\.[a-z0-9]{2,5}$/.test(entry.name)) {
+        const file = path.join(cacheDir, entry.name);
+        if (fs.existsSync(file) && fs.statSync(file).isFile()) cached.set(url, { name: entry.name, display: safeName(entry.display || entry.name), at: Number(entry.at) || 0 });
+      }
+    }
+  } catch { /* first run or invalid index */ }
+  // A crash after moving an audio file but before writing the index must not leave an invisible,
+  // unmetered file behind. This folder is app-private; never scan or remove the user's Music folder.
+  const indexedNames = new Set([...cached.values()].map((e) => e.name));
+  for (const name of fs.readdirSync(cacheDir)) {
+    if (/^[a-f0-9-]{36}\.[a-z0-9]{2,5}$/.test(name) && !indexedNames.has(name)) {
+      const orphan = path.join(cacheDir, name);
+      if (fs.statSync(orphan).isFile()) fs.unlinkSync(orphan);
+    }
+  }
+  let limitBytes = 1024 ** 3;
+  let protectedUrls = new Set();
+  const cacheBytes = () => [...cached.values()].reduce((n, e) => n + fs.statSync(path.join(cacheDir, e.name)).size, 0);
+  function persistCache() {
+    const file = `${cacheIndex}.tmp`;
+    fs.writeFileSync(file, JSON.stringify(Object.fromEntries(cached)), 'utf8');
+    fs.renameSync(file, cacheIndex);
+  }
+  function prune(extra = 0) {
+    let bytes = cacheBytes();
+    for (const [url, e] of [...cached].sort((a, b) => a[1].at - b[1].at)) {
+      if (bytes + extra <= limitBytes) break;
+      if (protectedUrls.has(url)) continue;
+      const file = path.join(cacheDir, e.name);
+      const size = fs.statSync(file).size;
+      fs.unlinkSync(file);
+      cached.delete(url);
+      bytes -= size;
+    }
+    persistCache();
+    if (bytes + extra > limitBytes) throw new Error('The protected songs and this download exceed the queue cache limit. Increase it in Settings.');
+  }
+  function cachedFile(url) {
+    const entry = cached.get(url);
+    if (!entry) return null;
+    const file = path.join(cacheDir, entry.name);
+    if (!fs.existsSync(file)) { cached.delete(url); persistCache(); return null; }
+    if (Date.now() - entry.at > 30_000) { entry.at = Date.now(); persistCache(); }
+    return file;
+  }
   const exe = (n) => path.join(cfg.toolsDir, `${n}.exe`);
   const run = cfg.spawnImpl || spawn;
   /** @type {Map<string, any>} */
@@ -142,7 +196,26 @@ function createDownloads(cfg) {
 
   function health() {
     const tools = probe();
-    return { ready: tools.every((t) => t.present), runs_spotdl: true, tools, saves_to: cfg.saveDir };
+    return { ready: tools.every((t) => t.present), runs_spotdl: true, tools, saves_to: saveDir };
+  }
+
+  function keep(url) {
+    if (!urlAllowedFor('yt-dlp', url)) throw new Error('Not a link this app downloads from.');
+    const ongoing = [...jobs.values()].find((j) => j.url === url && (j.state === 'queued' || j.state === 'running'));
+    if (ongoing) { ongoing.keep = true; return { job: view(ongoing) }; }
+    const source = library.get(url) || cachedFile(url);
+    if (!source) return { job: null };
+    let dest = library.get(url);
+    if (!dest || path.dirname(dest) !== saveDir) {
+      fs.mkdirSync(saveDir, { recursive: true });
+      dest = uniqueIn(saveDir, cached.has(url) ? cached.get(url).display : safeName(path.basename(source)));
+      // Copy first and index only after success: playback stays on its original file/blob.
+      fs.copyFileSync(source, dest);
+      library.set(url, dest);
+    }
+    const j = { id: crypto.randomUUID(), url, tool: 'yt-dlp', format: 'original', label: path.basename(dest), state: 'done', stage: 'done', percent: 100, message: null, error: null, files: [{ name: path.basename(dest), path: dest, bytes: fs.statSync(dest).size }], saved_to: saveDir };
+    jobs.set(j.id, j);
+    return { job: view(j) };
   }
 
   function fail(j, reason) {
@@ -159,6 +232,7 @@ function createDownloads(cfg) {
     j.state = 'running';
     j.stage = 'fetching';
     const args = buildArgs(tool, j.url, j.format, j.dir, exe('ffmpeg'));
+    if (j.cache) args.splice(args.indexOf('--'), 0, '--max-filesize', String(limitBytes));
     const env = { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', NO_COLOR: '1' };
     const code = await new Promise((resolve) => {
       let child;
@@ -207,31 +281,53 @@ function createDownloads(cfg) {
     };
     walk(j.dir, 0);
     if (found.length === 0) return fail(j, `${tool} finished without producing an audio file.`);
-    fs.mkdirSync(cfg.saveDir, { recursive: true });
-    for (const src of found.sort()) {
-      const dest = uniqueIn(cfg.saveDir, safeName(path.basename(src)));
-      try {
-        fs.renameSync(src, dest);
-      } catch {
-        fs.copyFileSync(src, dest); // a different drive: rename cannot cross it
+    if (j.cache) {
+      if (found.length !== 1) return fail(j, 'A song must produce exactly one audio file to enter the queue cache.');
+      const src = found[0];
+      const bytes = fs.statSync(src).size;
+      if (bytes > limitBytes) return fail(j, 'This song is larger than the queue cache limit. Increase it in Settings.');
+      try { prune(bytes); } catch (e) { return fail(j, e.message); }
+      const name = `${j.id}${path.extname(src).toLowerCase()}`;
+      const dest = path.join(cacheDir, name);
+      try { fs.renameSync(src, dest); } catch { fs.copyFileSync(src, dest); }
+      cached.set(j.url, { name, display: safeName(path.basename(src)), at: Date.now() });
+      persistCache();
+      j.files.push({ name: path.basename(src), path: dest, bytes });
+      j.saved_to = 'Queue cache (temporary)';
+      if (j.keep) {
+        const permanent = uniqueIn(saveDir, safeName(path.basename(src)));
+        fs.mkdirSync(saveDir, { recursive: true });
+        fs.copyFileSync(dest, permanent);
+        library.set(j.url, permanent);
+        j.files = [{ name: path.basename(permanent), path: permanent, bytes }];
+        j.saved_to = saveDir;
       }
-      j.files.push({ name: path.basename(dest), path: dest, bytes: fs.statSync(dest).size });
+    } else {
+      fs.mkdirSync(saveDir, { recursive: true });
+      for (const src of found.sort()) {
+        const dest = uniqueIn(saveDir, safeName(path.basename(src)));
+        try { fs.renameSync(src, dest); } catch { fs.copyFileSync(src, dest); }
+        j.files.push({ name: path.basename(dest), path: dest, bytes: fs.statSync(dest).size });
+      }
+      j.saved_to = saveDir;
+      if (j.tool === 'yt-dlp' && j.files.length === 1) library.set(j.url, j.files[0].path);
     }
-    j.saved_to = cfg.saveDir;
-    if (j.tool === 'yt-dlp' && j.files.length === 1) library.set(j.url, j.files[0].path);
     j.state = 'done';
     j.stage = 'done';
     j.percent = 100;
   }
 
-  function start({ url, tool, format, label }) {
+  function start({ url, tool, format, label, cache = false }) {
     if (tool !== 'yt-dlp' && tool !== 'spotdl') throw new Error('Unknown tool.');
+    if (cache && (tool !== 'yt-dlp' || format !== 'original')) throw new Error('The playback cache accepts only original full songs.');
     if (!FORMATS.includes(format)) throw new Error('Unsupported format.');
     if (!urlAllowedFor(tool, url)) throw new Error(tool === 'spotdl' ? 'spotDL takes a Spotify track link (open.spotify.com/track/…).' : 'yt-dlp downloads from YouTube, YouTube Music and SoundCloud links.');
+    const existing = [...jobs.values()].find((x) => x.url === url && (x.state === 'queued' || x.state === 'running'));
+    if (existing) return view(existing);
     const running = [...jobs.values()].filter((x) => x.state === 'queued' || x.state === 'running').length;
     if (running >= 20) throw new Error('Too many downloads are waiting. Let some finish first.');
     const id = crypto.randomUUID();
-    const j = { id, url, tool, format, label: String(label || '').slice(0, 200), state: 'queued', stage: 'queued', percent: null, message: null, error: null, files: [], saved_to: null, cancelled: false, child: null, errText: '', dir: path.join(cfg.tempRoot, id) };
+    const j = { id, url, tool, format, cache: Boolean(cache), label: String(label || '').slice(0, 200), state: 'queued', stage: 'queued', percent: null, message: null, error: null, files: [], saved_to: null, cancelled: false, child: null, errText: '', dir: path.join(cfg.tempRoot, id) };
     jobs.set(id, j);
     chain = chain.then(() => execute(j)).catch((e) => fail(j, e.message || String(e))).finally(() => {
       fs.rm(j.dir, { recursive: true, force: true }, () => undefined);
@@ -294,6 +390,27 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
         return { job: start(req) };
       case 'jobs':
         return { jobs: [...jobs.values()].map(view) };
+      case 'cache-config': {
+        const gb = Number(req.limitGb);
+        if (!Number.isFinite(gb) || gb < 0.25 || gb > 20) throw new Error('Queue cache size must be between 0.25 and 20 GB.');
+        const previousLimit = limitBytes;
+        const previousProtected = protectedUrls;
+        limitBytes = Math.floor(gb * 1024 ** 3);
+        protectedUrls = new Set((Array.isArray(req.protected) ? req.protected : []).filter((url) => urlAllowedFor('yt-dlp', url)).slice(0, 3));
+        try { prune(); } catch (e) { limitBytes = previousLimit; protectedUrls = previousProtected; throw e; }
+        for (const j of jobs.values()) if (j.cache && !protectedUrls.has(j.url) && (j.state === 'queued' || j.state === 'running')) cancel(j.id);
+        return { bytes: cacheBytes(), limitBytes };
+      }
+      case 'keep':
+        return keep(String(req.url || ''));
+      case 'choose-folder':
+        if (!cfg.chooseFolder) throw new Error('Folder picker is unavailable.');
+        return Promise.resolve(cfg.chooseFolder(saveDir)).then((dir) => {
+          if (!dir) return { saves_to: saveDir };
+          fs.mkdirSync(dir, { recursive: true });
+          saveDir = dir;
+          return { saves_to: saveDir };
+        });
       case 'cancel':
         return { ok: cancel(String(req.id)) };
       case 'forget': {
@@ -304,9 +421,10 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
         // What the shell holds for a link: the finished file, or whether a job for it is running.
         const url = String(req.url || '');
         if (!urlAllowedFor('yt-dlp', url)) throw new Error('Not a link this app downloads from.');
-        const p = library.get(url);
+        const p = library.get(url) || cachedFile(url);
         const running = [...jobs.values()].some((j) => j.url === url && (j.state === 'queued' || j.state === 'running'));
-        return { file: p ? { name: path.basename(p), bytes: fs.statSync(p).size } : null, running };
+        const failed = [...jobs.values()].reverse().find((j) => j.url === url && j.state === 'failed');
+        return { file: p ? { name: path.basename(p), bytes: fs.statSync(p).size } : null, running, error: !p && !running ? failed?.error || null : null };
       }
       case 'reveal': {
         const j = jobs.get(String(req.id));
@@ -328,7 +446,7 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
   }
 
   /** The file held for a link, for the shell to serve at the app origin; null when there is none. */
-  const localFile = (url) => (urlAllowedFor('yt-dlp', url) ? library.get(url) : null);
+  const localFile = (url) => (urlAllowedFor('yt-dlp', url) ? library.get(url) || cachedFile(url) : null);
 
   return { handle, health, shutdown, localFile };
 }

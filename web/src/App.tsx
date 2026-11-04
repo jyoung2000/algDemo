@@ -759,6 +759,7 @@ export function App() {
           canNext={Boolean(nextStep)}
           shuffle={shuffle}
           repeat={repeat}
+          cacheGb={settings?.cache_gb ?? 1}
           actions={{
             flags: (playing && flags[playing.track.key]) || {},
             downloadState: dls.trackState(playing?.track.key),

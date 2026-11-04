@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld('AirwaveNative', {
     if (!Number.isInteger(n) || typeof json !== 'string') return;
     ipcRenderer.invoke('aw:http', json).then((out) => reply('__awHttp', n, out));
   },
+  playback: (playing) => {
+    if (typeof playing === 'boolean') ipcRenderer.send('aw:playback', playing);
+  },
   downloads: (id, json) => {
     const n = Number(id);
     if (!Number.isInteger(n) || typeof json !== 'string') return;

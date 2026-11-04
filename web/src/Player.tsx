@@ -7,10 +7,10 @@ import { Volume } from './Volume';
 import { PlayerActions, type TrackActionProps } from './PlayerActions';
 import { Wheel } from './Wheel';
 import { loadYouTube, youtubeEmbedUrl, type YTPlayer } from './youtube';
-import { attachElement, bus as audioBus, localMix, mixSlider, playThrough, resumeEngine, setUnprocessable, subscribeEngine, wantsProcessing } from './audio-engine';
+import { attachElement, bus as audioBus, mixSlider, playThrough, resumeEngine, setUnprocessable, subscribeEngine } from './audio-engine';
 import { localLibrary, sourceUrlFor } from './engine/local-audio';
 import { rescueSource } from './engine/rescue';
-import { downloadsAvailable } from './engine/downloads';
+import { dl, downloadsAvailable, playbackActive } from './engine/downloads';
 import { type DeckId } from './engine/audio-bus';
 import { PreviewMixer } from './engine/preview-mixer';
 import { ListenMeter, PROVIDER_LABEL, artistOf, classNames, fmtDuration, isSilent, markKey, qualifiesCompletion, toggleMuteState, type RepeatMode } from './util';
@@ -42,6 +42,8 @@ interface Props {
   canNext: boolean;
   shuffle: boolean;
   repeat: RepeatMode;
+  /** Maximum private queue cache, in GB; downloads explicitly kept by the listener are separate. */
+  cacheGb?: number;
   /** Like, dislike and download for the song now playing. */
   actions: TrackActionProps;
   onShuffle: () => void;
@@ -104,7 +106,7 @@ type Mode = 'full' | 'local' | 'preview' | 'embed' | 'none';
  * A song with no YouTube Music version falls back to its 30-second Deezer preview in an <audio>
  * element. SoundCloud songs play in SoundCloud's widget, whose progress and volume Airwave cannot reach.
  */
-export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, repeat, actions, onShuffle, onRepeat, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext }: Props) {
+export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, repeat, cacheGb = 1, actions, onShuffle, onRepeat, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext }: Props) {
   // Two decks, because a crossfade needs both songs audible at once: the outgoing song keeps
   // playing on its own element while the incoming one starts on the other. Both elements live for
   // the player's lifetime — a MediaElementAudioSourceNode can be made only once per element.
@@ -115,14 +117,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const promoted = useRef<string | null>(null);
   const [mixNote, setMixNote] = useState<string | null>(null);
   const [mix, setMix] = useState(mixSlider);
-  // Whether the engine has anything to do (mixer up or EQ on) and may download full songs to do it.
-  const [wantLocal, setWantLocal] = useState(() => wantsProcessing() && localMix());
   useEffect(
-    () =>
-      subscribeEngine(() => {
-        setMix(mixSlider());
-        setWantLocal(wantsProcessing() && localMix());
-      }),
+    () => subscribeEngine(() => setMix(mixSlider())),
     [],
   );
   // The shell's library of downloaded songs, re-read whenever it changes.
@@ -179,26 +175,23 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // tore down the very deck the blend had just handed over, and a late video id would replace a
   // song mid-play with an iframe starting from zero.
   const previewOnly = useRef(new Set<string>());
+  const cuedSources = useRef(new Map<string, string>());
   /**
    * The full song always wins. An earlier version preferred the 30-second preview while the
    * mixer was on, because only a preview can be routed through the mixer; the owner rejected
    * that trade ("both softwares should play the full song not a 30 second preview"). So the
    * mixer reaches only the songs that have no full version, and says so.
    */
-  const stayPreview = key !== null && previewOnly.current.has(key);
-  const needsLookup = Boolean(playing && !knownId && !scEmbed) && !stayPreview;
+  const stayPreview = !downloadsAvailable() && key !== null && previewOnly.current.has(key);
+  const promotedSource = key ? cuedSources.current.get(key) ?? null : null;
+  const needsLookup = Boolean(playing && !knownId && !promotedSource && (!scEmbed || downloadsAvailable())) && !stayPreview;
   const lookedUp = found?.key === key;
   const lookingUp = needsLookup && !lookedUp;
   const candidate = stayPreview ? null : knownId ?? (lookedUp ? found.id : null);
   const videoId = candidate && candidate !== badVideo ? candidate : null;
-  /**
-   * LOCAL-AUDIO-001. A full song normally plays in YouTube's iframe, which the equaliser and
-   * crossfader cannot reach. When the listener wants them (mixer up or EQ on) and allows it, the
-   * shell downloads the song with the bundled yt-dlp and serves it at the app's own origin, and it
-   * plays here on a deck — the whole song, through the graph. Until the file exists this song
-   * still plays in YouTube's player (never silence), and the download runs for next time.
-   */
-  const canLocal = wantLocal && downloadsAvailable();
+  // In the installed apps, every added/discovered song is a full local file. A search preview
+  // may still be remote, but the Now Playing queue never substitutes it or an iframe for a song.
+  const canLocal = downloadsAvailable();
   const wantSource = canLocal && videoId ? sourceUrlFor(videoId) : null;
   // Once this song has started in YouTube's player it stays there: a download finishing mid-song
   // must not swap players and restart it at 0:00. The file is for next time and for the lookahead.
@@ -214,38 +207,41 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
    * It runs only where the song would otherwise be silent, so listening to a playable song still
    * downloads nothing the listener did not ask for — that is what `local_mix` is for.
    */
-  const previewPick = !videoId && !lookingUp ? previewSrc : null;
-  const embedPick = !videoId && !previewPick && !lookingUp ? scEmbed : null;
+  const previewPick = !canLocal && !videoId && !lookingUp ? previewSrc : null;
+  const embedPick = !canLocal && !videoId && !previewPick && !lookingUp ? scEmbed : null;
   const stranded = !videoId && !previewPick && !embedPick && !lookingUp;
   const rescue = stranded
     ? rescueSource({
         badVideoId: badVideo,
         links: playing?.playback.open.length ? playing.playback.open : playing?.track.url ? [{ url: playing.track.url }] : [],
-        shell: downloadsAvailable(),
+        shell: canLocal,
       })
     : null;
-  const localSource = wantSource ?? rescue;
+  const localSource = promotedSource ?? wantSource ?? rescue;
+  const nextTrackForCache = upNext[0]?.track;
+  const upcomingSource = nextTrackForCache?.provider === 'ytmusic' ? sourceUrlFor(nextTrackForCache.platform_id) : null;
   const localStatus = localSource ? localLibrary.status(localSource) : 'missing';
   const localSrc = localSource && !latched ? localLibrary.src(localSource) : null;
   useEffect(() => {
-    if (!localSource || !playing) return;
+    if (!canLocal) return;
+    const protectedUrls = [localSource, upcomingSource].filter((u): u is string => Boolean(u));
+    localLibrary.protect(protectedUrls);
+    void dl.cacheConfig(cacheGb, protectedUrls).then(() => {
+      if (localSource && playing) void localLibrary.ensure(localSource, `${playing.track.title} — ${playing.track.artist}`);
+    }).catch((e) => setErr(`Queue cache: ${(e as Error).message}`));
+  }, [canLocal, localSource, upcomingSource, cacheGb, key]);
+  useEffect(() => {
+    if (!localSource || !playing || canLocal) return;
     void localLibrary.ensure(localSource, `${playing.track.title} — ${playing.track.artist}`);
-  }, [localSource, playing]);
-  // Hold while the shell is being asked, AND while a held song's bytes are being read into a Blob
-  // (LOCAL-AUDIO-002): both are a round trip of a few milliseconds, and starting YouTube's player
-  // in that gap would strand the song there — the latch below never swaps players mid-song.
+  }, [localSource, playing, canLocal]);
   const askingLocal = localSource !== null && !latched && (localStatus === 'unknown' || (localStatus === 'ready' && localSrc === null));
-  /** A rescue download in flight: seconds to a minute, and the only thing that will make a sound. */
-  const fetchingLocal = rescue !== null && localStatus === 'running';
-  /** Tried and failed: say which part failed, rather than blaming the song. */
-  const rescueError = rescue !== null && localStatus === 'missing' ? localLibrary.error(rescue) : null;
+  const fetchingLocal = canLocal && localSource !== null && localStatus === 'running';
+  const localError = localSource !== null && localStatus === 'missing' ? localLibrary.error(localSource) : null;
   const src = localSrc ?? previewPick;
   const embed = embedPick;
-  const mode: Mode = localSrc ? 'local' : askingLocal || fetchingLocal ? 'none' : videoId ? 'full' : src ? 'preview' : embed ? 'embed' : 'none';
+  const mode: Mode = localSrc ? 'local' : canLocal ? 'none' : askingLocal || fetchingLocal ? 'none' : videoId ? 'full' : src ? 'preview' : embed ? 'embed' : 'none';
   const hasSound = mode === 'full' || mode === 'local' || mode === 'preview';
   const onDeck = mode === 'local' || mode === 'preview';
-  // Looking the song up, or asking the shell whether it holds it: a moment of waiting, shown as
-  // loading with the bar in place — never as "no player here" (NP-STRIP-007).
   const pending = lookingUp || askingLocal || fetchingLocal;
 
   useEffect(() => {
@@ -408,7 +404,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // The mixing graph is built only once the listener asks for it. Routing an element through Web
   // Audio lasts for that element's life, so an unwanted graph is not worth creating; and both
   // decks must be routed, not just the current one, or the incoming song arrives unprocessed.
-  const wantGraph = mix > 0 || wantLocal;
+  const wantGraph = mix > 0 || canLocal;
   useEffect(() => {
     if (!wantGraph) return;
     attachElement(deckA.current, 'a');
@@ -442,6 +438,21 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // song. One the shell does not hold yet is downloaded now, so it is there by the time this song
   // ends — and if it is not, that song plays whole in YouTube's player, with no blend.
   const nextKnownId = nextTrack?.provider === 'ytmusic' && /^[A-Za-z0-9_-]{11}$/.test(nextTrack.platform_id ?? '') ? nextTrack.platform_id : null;
+  // One song of lookahead regardless of the crossfader position. Never fetch the entire discovery
+  // list: the private disk cache is bounded and a changing queue cancels this intent naturally.
+  useEffect(() => {
+    if (!canLocal || !nextTrack || repeatingOne) return;
+    let live = true;
+    void (nextKnownId ? Promise.resolve({ id: nextKnownId }) : api.fullSong(nextTrack)).then((match) => {
+      if (!live) return;
+      const source = sourceUrlFor(match.id) || rescueSource({ links: nextTrack.url ? [{ url: nextTrack.url }] : [], shell: true });
+      if (!source) return;
+      const protectedUrls = [localSource, source].filter((u): u is string => Boolean(u));
+      localLibrary.protect(protectedUrls);
+      void dl.cacheConfig(cacheGb, protectedUrls).then(() => localLibrary.ensure(source, `${nextTrack.title} — ${nextTrack.artist}`)).catch(() => undefined);
+    }).catch(() => undefined);
+    return () => { live = false; };
+  }, [canLocal, nextKey, nextKnownId, repeatingOne, cacheGb, localSource]);
   useEffect(() => {
     if (mix <= 0 || !onDeck || !nextKey || repeatingOne) {
       mixer.current?.cancel();
@@ -449,14 +460,21 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       return;
     }
     let live = true;
-    const cuePreview = () => live && void mixer.current?.prepare({ key: nextKey, preview: nextPreview });
-    const cueFull = (id: string) => {
-      const source = sourceUrlFor(id);
+    const cuePreview = () => {
+      if (!live) return;
+      if (canLocal) {
+        mixer.current?.cancel();
+        setMixNote('Waiting for the next full song to download — no preview blend.');
+      } else void mixer.current?.prepare({ key: nextKey, preview: nextPreview });
+    };
+    const cueFull = (source: string | null) => {
       if (!canLocal || !source) {
         mixer.current?.cancel();
         setMixNote('Next song has a full version, so it will play whole — no blend.');
         return;
       }
+      cuedSources.current.set(nextKey, source);
+      if (cuedSources.current.size > 4) cuedSources.current.delete(cuedSources.current.keys().next().value as string);
       const label = nextTrack ? `${nextTrack.title} — ${nextTrack.artist}` : nextKey;
       void localLibrary.ensure(source, label).then(() => {
         if (!live) return;
@@ -469,7 +487,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       });
     };
     if (nextKnownId) {
-      cueFull(nextKnownId);
+      cueFull(sourceUrlFor(nextKnownId));
       return () => {
         live = false;
       };
@@ -483,7 +501,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       .fullSong(nextTrack)
       .then((r) => {
         if (!live) return;
-        if (r.id) cueFull(r.id);
+        if (r.id) cueFull(sourceUrlFor(r.id));
+        else if (canLocal && nextTrack.url) cueFull(rescueSource({ links: [{ url: nextTrack.url }], shell: true }));
         else cuePreview();
       })
       .catch(() => cuePreview());
@@ -495,6 +514,10 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   }, [mix, onDeck, nextKey, nextPreview, nextTrack, nextKnownId, repeatingOne, canLocal, libraryTick]);
 
   const toggle = () => {
+    if (canLocal && localSource && localStatus === 'missing') {
+      void localLibrary.retry(localSource, `${playing?.track.title ?? 'Song'} — ${playing?.track.artist ?? ''}`);
+      return;
+    }
     if (mode === 'full') {
       const p = yt.current;
       if (!p) return;
@@ -604,9 +627,9 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
         className="tbtn tbtn--main"
         type="button"
         onClick={toggle}
-        disabled={mode === 'full' ? !ytReady : !src}
-        aria-label={paused ? 'Play' : 'Pause'}
-        title={hasSound ? undefined : lookingUp ? 'Finding the full song…' : 'This song plays in its own player'}
+        disabled={mode === 'full' ? !ytReady : !src && !(canLocal && localSource && localStatus === 'missing')}
+        aria-label={canLocal && localSource && localStatus === 'missing' ? 'Retry full-song download' : paused ? 'Play' : 'Pause'}
+        title={hasSound ? undefined : localError ?? (lookingUp ? 'Finding the full song…' : 'Waiting for a local full song')}
       >
         <Glyph name={paused ? 'play' : 'pause'} size={18} />
       </button>
@@ -675,7 +698,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     </p>
   ) : pending ? (
     <p className="np__note">
-      {askingLocal ? 'Loading the full song…' : fetchingLocal ? 'Getting the full song: no player here can play it, so the app is downloading it.' : 'Finding the full song…'}
+      {askingLocal ? 'Loading the full song…' : fetchingLocal ? 'Downloading the full song to the player…' : 'Finding the full song…'}
     </p>
   ) : mode === 'full' ? (
     <p className="np__note">
@@ -691,11 +714,15 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     </p>
   ) : embed ? (
     <p className="np__note">Playing in the {PROVIDER_LABEL[embed.provider]} player. Airwave can’t see its progress or volume, so it records nothing about this listen.</p>
-  ) : rescue === null ? (
+  ) : rescue === null && !canLocal ? (
     <p className="np__note">No player here for this song. Open it in its app.</p>
+  ) : canLocal ? (
+    <p className="np__note np__note--bad">
+      <Glyph name="warning" size={12} /> {localSource ? `Could not load the full song${localError ? `: ${localError}` : '.'} Press play to retry.` : 'No downloadable full recording was found for this song.'}
+    </p>
   ) : (
     <p className="np__note np__note--bad">
-      <Glyph name="warning" size={12} /> {rescueError ? `This song could not be downloaded: ${rescueError}` : 'This song could not be downloaded here. Open it in its app.'}
+      <Glyph name="warning" size={12} /> This song could not be downloaded here. Open it in its app.
     </p>
   );
 
@@ -713,6 +740,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     </div>
   );
 
+  const syncPlayback = () => queueMicrotask(() => playbackActive(Boolean((deckA.current && !deckA.current.paused) || (deckB.current && !deckB.current.paused)), playing?.track.title));
+  useEffect(() => () => playbackActive(false), []);
   return (
     <section className={classNames('np', docked ? 'np--docked' : 'np--panel', !playing && 'is-empty')} aria-label="Now playing">
       {/*
@@ -734,9 +763,9 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
           preload="none"
           crossOrigin="anonymous"
           data-deck={id}
-          onPlay={() => id === deck && setPaused(false)}
+          onPlay={() => { if (id === deck) setPaused(false); syncPlayback(); }}
           onPlaying={() => id === deck && setLoading(false)}
-          onPause={() => id === deck && setPaused(true)}
+          onPause={() => { if (id === deck) setPaused(true); syncPlayback(); }}
           onWaiting={() => id === deck && setLoading(true)}
           onLoadedMetadata={(e) => id === deck && setDur(e.currentTarget.duration || 0)}
           onTimeUpdate={(e) => {
@@ -752,12 +781,13 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
             if (id !== deck) return;
             ended.current = true;
             setPaused(true);
+            syncPlayback();
             onEndRef.current();
           }}
           onError={() => {
             if (id === deck && src) {
               setLoading(false);
-              setErr('This preview could not play. Deezer may no longer offer it.');
+              setErr(mode === 'local' ? 'This local full song could not play. Try another source.' : 'This preview could not play. Deezer may no longer offer it.');
             }
           }}
         />

@@ -205,20 +205,10 @@ describe('Audio settings — MIXER-001 and EQ-001', () => {
     expect(slider('Play before blending').getAttribute('aria-valuetext')).toBe('70% of each song');
   });
 
-  it('offers "Download full songs for the equalizer and mixer", on by default, saved as local_mix (LOCAL-AUDIO-001)', () => {
-    const onSettings = vi.fn();
-    render(panel(saved, onSettings));
-    const box = screen.getByLabelText(/Download full songs/i) as HTMLInputElement;
-    expect(box.type).toBe('checkbox');
-    expect(box.checked).toBe(true); // undefined in saved settings means on
-    const help = document.getElementById(box.getAttribute('aria-describedby')!)!.textContent!;
-    expect(help).toMatch(/yt-dlp|Music folder/i);
-    expect(help).toMatch(/YouTube’s player|YouTube's player/);
-    fireEvent.click(box);
-    expect(onSettings).toHaveBeenCalledWith({ local_mix: false });
-    cleanup();
+  it('explains mandatory local full-song playback and never offers an iframe fallback switch', () => {
     render(panel({ ...saved, local_mix: false }, vi.fn()));
-    expect((screen.getByLabelText(/Download full songs/i) as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByLabelText(/Download full songs/i)).toBeNull();
+    expect(screen.getByText(/Listening waits for the file instead of starting an iframe/i)).toBeTruthy();
   });
 
   it('preserves complete EQ state when toggling on or limiter', () => {

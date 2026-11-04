@@ -218,7 +218,10 @@ class MainActivity : Activity() {
     return try {
       val stream = assets.open("web/$path")
       val enc = if (mime.startsWith("text/") || mime == "application/json") "utf-8" else null
-      WebResourceResponse(mime, enc, 200, "OK", mapOf("Cache-Control" to "no-cache"), stream)
+      // addJavascriptInterface is exposed to every frame. Installed-app playback uses no embeds;
+      // refuse third-party frames so they cannot call the privileged downloader/HTTP bridge.
+      val headers = mapOf("Cache-Control" to "no-cache", "Content-Security-Policy" to "frame-src 'none'; object-src 'none'; base-uri 'none'")
+      WebResourceResponse(mime, enc, 200, "OK", headers, stream)
     } catch (e: java.io.IOException) {
       if (!path.substringAfterLast('/').contains('.')) asset("/index.html")
       else WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(ByteArray(0)))

@@ -66,6 +66,7 @@ object Downloads {
    */
   private const val LIBRARY = "airwave-library"
   private const val CACHE = "airwave-private-audio"
+  private const val CACHE_NAMES = "airwave-private-audio-names"
   private const val CACHE_LIMIT = "limitGb"
   private const val CACHE_PROTECTED = "protectedUrls"
   private const val DEFAULT_LIMIT_GB = 2.0
@@ -75,6 +76,13 @@ object Downloads {
 
   private fun cacheDir(context: Context) = File(context.filesDir, "audio-cache").also { it.mkdirs() }
   private fun cachePrefs(context: Context) = context.getSharedPreferences(CACHE, Context.MODE_PRIVATE)
+  /**
+   * Cache files are named by URL hash, which is useless to a listener. The song's own filename is
+   * remembered separately so an explicit Download lands in Music as "Carefree.opus", not as a hash.
+   */
+  private fun cacheNames(context: Context) = context.getSharedPreferences(CACHE_NAMES, Context.MODE_PRIVATE)
+  private fun cacheDisplayName(context: Context, url: String, fallback: String): String =
+    cacheNames(context).getString(url, null)?.takeIf { it.isNotBlank() }?.let(::safeName) ?: fallback
   private fun cacheFile(context: Context, url: String): File? {
     val name = cachePrefs(context).getString(url, null) ?: return null
     if (!Regex("[a-f0-9]{64}\\.(mp3|m4a|aac|flac|opus|ogg|oga|wav|webm|mka)").matches(name)) return null
@@ -105,11 +113,14 @@ object Downloads {
 
   private fun removeEntries(context: Context, entries: List<Pair<String, File>>) {
     val editor = cachePrefs(context).edit()
+    val names = cacheNames(context).edit()
     for ((url, file) in entries) {
       if (!file.delete()) throw IOException("Could not evict cached audio.")
       editor.remove(url)
+      names.remove(url)
     }
     if (!editor.commit()) throw IOException("Could not update cache index.")
+    names.commit()
   }
 
   private fun configureCache(context: Context, req: JSONObject): JSONObject = synchronized(libraryLock) {
@@ -122,6 +133,9 @@ object Downloads {
     val discard = evictions(context, 0, limit = limit, protected = protected)
     removeEntries(context, discard)
     if (!cachePrefs(context).edit().putFloat(CACHE_LIMIT, gb.toFloat()).putStringSet(CACHE_PROTECTED, protected).commit()) throw IOException("Could not save cache limit.")
+    // Rapid skips should not leave old prefetches ahead of the song the listener now wants.
+    jobs.values.filter { it.cache && it.url !in protected && (it.state == "queued" || it.state == "running") }
+      .forEach { cancel(it.id) }
     JSONObject().put("ok", true).put("limitGb", gb).put("limitBytes", limit).put("bytes", cacheBytes(context))
   }
 
@@ -147,6 +161,7 @@ object Downloads {
         throw IOException("Could not index cached audio.")
       }
       if (previous != null && previous != target) previous.delete()
+      cacheNames(context).edit().putString(job.url, safeName(source.name)).commit()
       target.setLastModified(System.currentTimeMillis())
       target
     } finally {
@@ -159,7 +174,7 @@ object Downloads {
     val saved = libraryGet(context, url)
     if (saved != null) return JSONObject().put("ok", true).put("job", JSONObject.NULL).put("alreadyKept", true)
     val cached = cachedGet(context, url) ?: throw IllegalArgumentException("Song is not in the private cache.")
-    val (name, uri, where) = saveToMusic(context, cached)
+    val (name, uri, where) = saveToMusic(context, cached, cacheDisplayName(context, url, cached.name))
     check(uri != null) { "Could not save song." }
     librarySet(context, url, uri)
     // Keep the cache copy for any open WebView stream; it remains subject to the configured LRU.
@@ -362,8 +377,8 @@ object Downloads {
   }
 
   /** Copies into a chosen SAF tree, otherwise Music/Airwave Discovery. */
-  private fun saveToMusic(context: Context, f: File): Triple<String, Uri?, String> {
-    val name = safeName(f.name)
+  private fun saveToMusic(context: Context, f: File, displayName: String = f.name): Triple<String, Uri?, String> {
+    val name = safeName(displayName)
     val type = mime[f.extension.lowercase()] ?: "application/octet-stream"
     chosenFolder(context)?.let { tree ->
       val resolver = context.contentResolver

@@ -37,14 +37,14 @@ export const POLL_MS = 3000;
 
 export interface LocalApi {
   /** What the shell holds for a link: a finished file, or whether a download for it is in flight. */
-  local: (url: string) => Promise<{ file: DlFile | null; running: boolean }>;
+  local: (url: string) => Promise<{ file: DlFile | null; running: boolean; error?: string | null }>;
   start: (url: string, label: string) => Promise<unknown>;
 }
 
 const shellApi: LocalApi = {
   local: (url) => dl.local(url),
   // 'original' keeps the source bytes (Opus from YouTube Music) — the only format that cannot lose quality.
-  start: (url, label) => dl.start(url, 'yt-dlp', 'original', label),
+  start: (url, label) => dl.start(url, 'yt-dlp', 'original', label, true),
 };
 
 /**
@@ -56,6 +56,8 @@ export class LocalLibrary {
   private readonly entries = new Map<string, { status: LocalStatus; error: string | null }>();
   private readonly listeners = new Set<() => void>();
   private readonly inFlight = new Map<string, Promise<void>>();
+  private readonly starting = new Map<string, Promise<void>>();
+  private protectedUrls = new Set<string>();
   /** Source link to Blob URL, oldest first (a Map keeps insertion order), capped at BLOB_CACHE. */
   private readonly blobs = new Map<string, string>();
   private readonly blobbing = new Set<string>();
@@ -115,7 +117,8 @@ export class LocalLibrary {
       const blobUrl = URL.createObjectURL(await r.blob());
       this.blobs.set(url, blobUrl);
       while (this.blobs.size > BLOB_CACHE) {
-        const oldest = this.blobs.keys().next().value as string;
+        const oldest = [...this.blobs.keys()].find((candidate) => !this.protectedUrls.has(candidate));
+        if (!oldest) break; // both playing decks and the cued song must keep their live URLs
         const gone = this.blobs.get(oldest)!;
         this.blobs.delete(oldest);
         URL.revokeObjectURL(gone);
@@ -139,7 +142,7 @@ export class LocalLibrary {
     if (pending) return pending;
     const p = this.api
       .local(url)
-      .then((r) => this.set(url, r.file ? 'ready' : r.running ? 'running' : 'missing', null))
+      .then((r) => this.set(url, r.file ? 'ready' : r.running ? 'running' : 'missing', r.error || null))
       .catch((e: unknown) => this.set(url, 'missing', e instanceof Error ? e.message : String(e)))
       .finally(() => this.inFlight.delete(url));
     this.inFlight.set(url, p);
@@ -147,18 +150,32 @@ export class LocalLibrary {
   }
 
   /** Make sure a link is held or on its way: ask, and start a download only if the shell has nothing. */
-  async ensure(url: string, label: string): Promise<void> {
-    await this.refresh(url);
-    if (this.status(url) !== 'missing' || this.error(url)) return;
-    try {
-      await this.api.start(url, label);
-      this.set(url, 'running', null);
-    } catch (e) {
-      this.set(url, 'missing', e instanceof Error ? e.message : String(e));
-    }
+  async ensure(url: string, label: string, retry = false): Promise<void> {
+    const current = this.starting.get(url);
+    if (current) return current;
+    const work = (async () => {
+      await this.refresh(url);
+      if (this.status(url) !== 'missing' || (this.error(url) && !retry)) return;
+      try {
+        await this.api.start(url, label);
+        this.set(url, 'running');
+      } catch (e) {
+        this.set(url, 'missing', e instanceof Error ? e.message : String(e));
+      }
+    })().finally(() => this.starting.delete(url));
+    this.starting.set(url, work);
+    return work;
   }
 
-  private set(url: string, status: LocalStatus, error: string | null): void {
+  protect(urls: readonly string[]): void { this.protectedUrls = new Set(urls); }
+
+  /** Explicit retry after an unavailable source/downloader; never silently loop on permanent errors. */
+  async retry(url: string, label: string): Promise<void> {
+    this.set(url, 'unknown');
+    await this.ensure(url, label, true);
+  }
+
+  private set(url: string, status: LocalStatus, error: string | null = null): void {
     const before = this.entries.get(url);
     if (before?.status === status && before.error === error) return;
     this.entries.set(url, { status, error });

@@ -2,9 +2,11 @@
 
 Search for songs, or paste a Spotify, SoundCloud, YouTube, YouTube Music or Deezer link. Pick as many
 starting songs as you like and press **Find my next favorite**. Airwave builds a queue of up to 30 songs from
-live music sources and explains each pick. Each song plays in full in the page through YouTube's own
-embedded player (with a volume slider that is remembered); a song with no YouTube Music version falls back to its
-30-second Deezer preview, and SoundCloud songs play in SoundCloud's widget. There is also an "Open in …" link.
+live music sources and explains each pick. In the installed Windows and Android apps, added and
+discovered songs load as full local audio into a private, size-limited queue cache before playback.
+The player owns their progress, EQ and crossfader; it does not hand them to a YouTube or SoundCloud
+iframe. Search previews may still stream. A song without a downloadable full recording stays
+unavailable rather than silently substituting a 30-second preview.
 
 This folder stands on its own inside the Airwave monorepo. It shares the Airwave window kit,
 the artwork and the icons from `packages/aqua-ui`. No other app in the repo depends on it.
@@ -15,13 +17,14 @@ the artwork and the icons from `packages/aqua-ui`. No other app in the repo depe
 - A 22.4 MB audio model (DCLAP, AGPL-3.0, see `docs/LICENSES.md`) is bundled in both apps and
   re-orders the queue by how songs sound, using 30-second previews.
 - Discovery needs an internet connection. Offline you can still see your last queue, but nothing new is found.
-- **Bundled: music downloaders (yt-dlp, spotDL, ffmpeg).** Songs play through YouTube's own embedded player
-  or SoundCloud's widget, or as a 30-second Deezer preview. The downloaders are a separate, explicit "Download"
-  action: yt-dlp saves YouTube, YouTube Music and SoundCloud links, and spotDL saves Spotify track links, to the
-  user's chosen folder (Windows) or the phone's Music folder (Android). The Windows exe carries yt-dlp, spotDL and
-  ffmpeg; the Android app unpacks yt-dlp, its Python runtime and ffmpeg from the APK on first run. Licences and
-  versions are in `docs/LICENSES.md`. The network allowlist (`web/src/engine/net.ts`) covers search and metadata
-  hosts; the downloader hosts are checked separately in `windows/downloads.cjs` and `Downloads.kt`.
+- **Bundled downloaders (yt-dlp, spotDL, ffmpeg).** The player automatically acquires a full track
+  before playing added/discovered songs locally; it keeps only the current and next song as live
+  Blob URLs and evicts older private queue files when Settings → Queue audio storage limit is reached
+  (1 GB default, configurable from 0.25 to 20 GB). The explicit **Download** action copies a cached
+  song to the chosen permanent folder without interrupting playback or deleting the cache copy.
+  Windows carries yt-dlp, spotDL and ffmpeg; Android unpacks yt-dlp, its Python runtime and ffmpeg
+  from the APK. Licences and versions are in `docs/LICENSES.md`. The downloader hosts are checked
+  separately in `windows/downloads.cjs` and `Downloads.kt`. Only download what you have the right to keep.
 - Spotify has no keyless catalog search, so Spotify songs come in by link, not by typing.
 
 ## Improved ranking (recsys-v2 branch)
@@ -50,7 +53,7 @@ oracle its golden tests are checked against; it is also what `node start.mjs` ru
 | --- | --- | --- |
 | Shell | Electron (`windows/`) | WebView (`android/`) |
 | Network | `windows/bridge.cjs`, allow-listed HTTPS | `MainActivity.Bridge`, same allowlist |
-| Output | `windows/release/Airwave-Discovery-<v>-x64.exe` (portable) | `android/app/build/outputs/apk/debug/app-debug.apk` |
+| Output | `windows/release/Airwave-Discovery-<v>-x64.exe` (portable) | `android/app/build/outputs/apk/release/app-release.apk` (signed when configured) |
 | Setup for the user | none: run the exe | none: install the APK |
 
 `web/src/engine/bridge-allowlist.test.ts` fails if the page guard, the Android bridge and the Windows
@@ -74,9 +77,11 @@ each other, but Windows SmartScreen still warns until the user trusts `airwave-d
 sideloaded APK as from an unknown developer. Keep the keystore: an APK signed with a different key cannot update this one.
 
 Run the Windows app from source with `../../node_modules/electron/dist/electron.exe discovery-demo/windows`
-after building `web`. Both builds are unsigned or debug-signed: Windows SmartScreen warns on the first run of
-the exe, and the APK has no release keystore. The Windows exe is about 107 MB because it carries Electron and
-the 22 MB audio model.
+after building `web`. Signed release APKs and portable Windows builds are produced when the matching
+external signing configurations exist; check their certificates before distributing. On Android,
+keep the signing key so updates install without removing app data. The Android foreground
+notification improves screen-off playback, but the WebView still owns the audio and a destroyed
+Activity will stop it; a service-owned MediaSession player is needed for that guarantee.
 
 ## Development server (optional)
 

@@ -300,6 +300,8 @@ export interface Settings {
   sample_mode: boolean;
   /** How many new songs one discovery run adds to the list. */
   queue_size?: number;
+  /** User-selected private audio queue cache capacity in GiB (0.25–20). Kept downloads are separate. */
+  cache_gb?: number;
   /** Replenish a nearly played-through list after a completed song. */
   discover_while_listening?: boolean;
   /**

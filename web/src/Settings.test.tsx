@@ -40,7 +40,7 @@ describe('Settings discovery controls', () => {
   it('puts Discovery before ranking and provides accessible bounds, output and description', () => {
     const { container } = render(<SettingsView {...props()} />);
     const section = screen.getByRole('region', { name: 'Discovery' });
-    expect(within(section).getByRole('slider')).toBe(slider());
+    expect(within(section).getByRole('slider', { name: 'New songs per discovery' })).toBe(slider());
     expect(container.textContent!.indexOf('Discovery')).toBeLessThan(
       container.textContent!.indexOf('Ranking engine'),
     );
@@ -60,6 +60,18 @@ describe('Settings discovery controls', () => {
     expect(help.textContent).toMatch(/searched|listened/);
     expect(help.textContent).toMatch(/never removed/);
     expect(help.textContent).toMatch(/fewer/);
+  });
+
+  it('sets a bounded private audio cache independently of the number of queued songs', () => {
+    const onSettings = vi.fn();
+    const { rerender } = render(<SettingsView {...props(saved, onSettings)} />);
+    const cache = screen.getByRole('slider', { name: 'Queue audio storage limit' }) as HTMLInputElement;
+    expect([cache.min, cache.max, cache.step, cache.value]).toEqual(['0.25', '20', '0.25', '1']);
+    fireEvent.change(cache, { target: { value: '2.5' } });
+    expect(onSettings).toHaveBeenCalledExactlyOnceWith({ cache_gb: 2.5 });
+    rerender(<SettingsView {...props({ ...saved, cache_gb: 2.5 }, onSettings)} />);
+    expect(screen.getByText('2.5 GB')).toBeTruthy();
+    expect(screen.getByText(/never deleted by this setting/i)).toBeTruthy();
   });
 
   it('draws every checkbox: the Aqua gel box is a sibling span, not the hidden input', () => {

@@ -74,11 +74,21 @@ declare global {
   }
 }
 
-type Native = { downloads?: (id: number, json: string) => void };
+type Native = {
+  downloads?: (id: number, json: string) => void;
+  playback?: (playing: boolean) => void;
+  playbackState?: (json: string) => void;
+};
 const native = (): Native | undefined => (typeof window === 'undefined' ? undefined : (window as unknown as { AirwaveNative?: Native }).AirwaveNative);
 
 /** True inside the Windows and Android apps. A plain browser has no downloader to talk to. */
 export const downloadsAvailable = (): boolean => typeof native()?.downloads === 'function';
+/** Hints native shells to keep the playback process awake; this is not a native media player. */
+export const playbackActive = (playing: boolean, title = 'Airwave Discovery'): void => {
+  const n = native();
+  if (n?.playbackState) n.playbackState(JSON.stringify({ playing, title }));
+  else n?.playback?.(playing);
+};
 
 const waiting = new Map<number, { ok: (v: unknown) => void; no: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
 let seq = 1;
@@ -123,13 +133,16 @@ export const spotifySearchRaw = (query: string, limit: number) =>
 
 export const dl = {
   health: () => call<DlHealth>({ op: 'health' }),
-  start: (url: string, tool: DlTool, format: DlFormat, label: string) => call<{ job: DlJob }>({ op: 'start', url, tool, format, label }),
+  start: (url: string, tool: DlTool, format: DlFormat, label: string, cache = false) => call<{ job: DlJob }>({ op: 'start', url, tool, format, label, cache }),
+  keep: (url: string) => call<{ ok?: boolean; job?: DlJob | null; alreadyKept?: boolean; file?: DlFile | null; saved_to?: string | null }>({ op: 'keep', url }),
+  cacheConfig: (limitGb: number, protectedUrls: string[]) => call<{ bytes: number; limitBytes: number }>({ op: 'cache-config', limitGb, protected: protectedUrls }),
+  chooseFolder: () => call<{ saves_to: string }>({ op: 'choose-folder' }, 120_000),
   jobs: () => call<{ jobs: DlJob[] }>({ op: 'jobs' }),
   cancel: (id: string) => call<{ ok: boolean }>({ op: 'cancel', id }),
   forget: (id: string) => call<{ ok: boolean }>({ op: 'forget', id }),
   reveal: (id: string) => call<{ ok: boolean }>({ op: 'reveal', id }),
   /** Whether the shell holds a finished download for a link (indexed by link, kept across restarts), or is fetching it. */
-  local: (url: string) => call<{ file: DlFile | null; running: boolean }>({ op: 'local', url }),
+  local: (url: string) => call<{ file: DlFile | null; running: boolean; error?: string | null }>({ op: 'local', url }),
 };
 
 /** The same check the native shells make, so the button can say no before asking. */

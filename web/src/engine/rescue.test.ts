@@ -92,7 +92,7 @@ describe('the player never strands a song (NP-ALWAYS-001)', () => {
 
   it('says it is fetching the song while the download runs, not that there is no player', () => {
     expect(player).toMatch(/fetchingLocal/);
-    expect(player).toMatch(/Getting the full song/);
+    expect(player).toMatch(/Downloading the full song to the player/);
   });
 
   it('only admits defeat when there is no link left to try', () => {

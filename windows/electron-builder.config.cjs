@@ -43,7 +43,9 @@ module.exports = {
     icon: '../launcher/airwave-discovery.ico',
     ...(sign ? { signtoolOptions: { certificateFile: sign.pfxFile, certificatePassword: sign.pfxPassword, signingHashAlgorithms: ['sha256'] } } : {}),
     target: [{ target: 'portable', arch: ['x64'] }, { target: 'nsis', arch: ['x64'] }],
-    artifactName: 'Airwave-Discovery-${version}-${arch}.${ext}',
+    // The portable exe and the installer must not share a file name: building both into one folder
+    // made the installer overwrite the portable build, and the user downloaded whichever ran last.
+    artifactName: 'Airwave-Discovery-${version}-${arch}-portable.${ext}',
   },
-  nsis: { oneClick: true, perMachine: false, deleteAppDataOnUninstall: false },
+  nsis: { oneClick: true, perMachine: false, deleteAppDataOnUninstall: false, artifactName: 'Airwave-Discovery-${version}-${arch}-setup.${ext}' },
 };

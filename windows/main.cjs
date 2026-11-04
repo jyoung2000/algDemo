@@ -3,7 +3,7 @@
 // No server, no Python, no uv. The page is served from the app's own files over an https origin (so
 // wasm, ES modules and YouTube's embed behave as in the APK); music-service requests go through the
 // guarded bridge in bridge.cjs; storage is IndexedDB in the app's profile.
-const { app, BrowserWindow, ipcMain, protocol, net, shell, session } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, net, shell, session, dialog, powerSaveBlocker } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -36,24 +36,59 @@ if (!app.requestSingleInstanceLock()) app.quit();
 let win = null;
 
 const TOOLS = app.isPackaged ? path.join(process.resourcesPath, 'tools') : path.join(__dirname, '..', '.data', 'tools');
+const MUSIC_CHOICE = path.join(app.getPath('userData'), 'music-folder.json');
+function savedMusicFolder() {
+  try {
+    const folder = JSON.parse(fs.readFileSync(MUSIC_CHOICE, 'utf8')).folder;
+    if (typeof folder === 'string' && path.isAbsolute(folder) && fs.statSync(folder).isDirectory()) return folder;
+  } catch { /* no chosen folder */ }
+  return path.join(app.getPath('music'), 'Airwave Discovery');
+}
 let downloads = null;
 const dl = () =>
   (downloads ||= createDownloads({
     toolsDir: TOOLS,
-    saveDir: path.join(app.getPath('music'), 'Airwave Discovery'),
+    saveDir: savedMusicFolder(),
+    libraryDir: path.join(app.getPath('music'), 'Airwave Discovery'),
+    cacheDir: path.join(app.getPath('userData'), 'queue-audio'),
     tempRoot: path.join(app.getPath('temp'), 'airwave-discovery-jobs'),
+    chooseFolder: async (current) => {
+      const result = await dialog.showOpenDialog(win, { title: 'Choose where to keep downloaded music', defaultPath: current, properties: ['openDirectory', 'createDirectory'] });
+      if (result.canceled || !result.filePaths[0]) return null;
+      fs.writeFileSync(MUSIC_CHOICE, JSON.stringify({ folder: result.filePaths[0] }), 'utf8');
+      return result.filePaths[0];
+    },
     reveal: (file) => shell.showItemInFolder(file),
   }));
 
-ipcMain.handle('aw:http', (_e, json) => request(json));
-ipcMain.handle('aw:dl', async (_e, json) => {
+const trusted = (event) => event.sender === win?.webContents && event.senderFrame === event.sender.mainFrame && (() => {
+  try { const u = new URL(event.senderFrame.url); return u.protocol === 'https:' && u.host === APP_HOST; } catch { return false; }
+})();
+ipcMain.handle('aw:http', (event, json) => {
+  if (!trusted(event)) return { error: 'Untrusted frame.' };
+  return request(json);
+});
+ipcMain.handle('aw:dl', async (event, json) => {
+  if (!trusted(event)) return { error: 'Untrusted frame.' };
   try {
-    return dl().handle(JSON.parse(json));
+    return await dl().handle(JSON.parse(json));
   } catch (e) {
     return { error: e && e.message ? e.message : String(e) };
   }
 });
-app.on('before-quit', () => downloads && downloads.shutdown());
+let suspensionBlocker = null;
+ipcMain.on('aw:playback', (event, playing) => {
+  if (!trusted(event) || typeof playing !== 'boolean') return;
+  if (playing && suspensionBlocker === null) suspensionBlocker = powerSaveBlocker.start('prevent-app-suspension');
+  else if (!playing && suspensionBlocker !== null) {
+    powerSaveBlocker.stop(suspensionBlocker);
+    suspensionBlocker = null;
+  }
+});
+app.on('before-quit', () => {
+  downloads?.shutdown();
+  if (suspensionBlocker !== null) powerSaveBlocker.stop(suspensionBlocker);
+});
 ipcMain.on('aw:version', (e) => {
   e.returnValue = app.getVersion();
 });
@@ -68,9 +103,16 @@ function createWindow() {
     title: 'Airwave Discovery',
     icon: path.join(__dirname, '..', 'launcher', 'airwave-discovery.ico'),
     autoHideMenuBar: true,
-    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: false },
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false },
   });
   win.removeMenu();
+  win.webContents.on('render-process-gone', () => {
+    if (suspensionBlocker !== null) { powerSaveBlocker.stop(suspensionBlocker); suspensionBlocker = null; }
+  });
+  win.on('closed', () => {
+    if (suspensionBlocker !== null) { powerSaveBlocker.stop(suspensionBlocker); suspensionBlocker = null; }
+    win = null;
+  });
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https:\/\//i.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
@@ -93,10 +135,15 @@ async function serveLocalAudio(req, sourceUrl) {
   let start = 0;
   let end = size - 1;
   if (range) {
-    if (range[1]) start = Number(range[1]);
-    if (range[2]) end = Math.min(Number(range[2]), size - 1);
-    else if (!range[1]) start = Math.max(0, size - Number(range[2]));
-    if (!(start <= end && start < size)) return new Response('', { status: 416, headers: { 'content-range': `bytes */${size}` } });
+    if (!range[1]) {
+      const suffix = Number(range[2]);
+      if (!Number.isSafeInteger(suffix) || suffix <= 0) return new Response('', { status: 416, headers: { 'content-range': `bytes */${size}` } });
+      start = Math.max(0, size - suffix);
+    } else {
+      start = Number(range[1]);
+      if (range[2]) end = Math.min(Number(range[2]), size - 1);
+    }
+    if (!(Number.isSafeInteger(start) && Number.isSafeInteger(end) && start <= end && start < size)) return new Response('', { status: 416, headers: { 'content-range': `bytes */${size}` } });
   }
   const stream = fs.createReadStream(file, { start, end });
   const body = new ReadableStream({

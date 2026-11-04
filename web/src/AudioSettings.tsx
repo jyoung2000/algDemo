@@ -56,9 +56,6 @@ export function AudioSettings({ settings, onSettings }: Props) {
   const eq = parseEq(settings?.eq);
   const updateEq = (patch: Partial<EqConfig>) => onSettings({ eq: { ...eq, ...patch } });
   const preset = matchesPreset(eq) ? eq.presetId : 'custom';
-  // On unless the listener turned it off: without it, full songs stay in YouTube's player and the
-  // equaliser and mixer reach only the rare song with no full version.
-  const local = settings?.local_mix ?? true;
   const playThrough = clampPlayThrough(settings?.play_through ?? PLAY_THROUGH_DEFAULT);
   /**
    * What the engine is actually doing right now.
@@ -131,16 +128,10 @@ export function AudioSettings({ settings, onSettings }: Props) {
 
       <section className="audio-settings__section" aria-labelledby={`${id}-local-heading`}>
         <h4 id={`${id}-local-heading`}>Full songs</h4>
-        <label className="chk audio-settings__toggle">
-          <input type="checkbox" checked={local} aria-describedby={`${id}-local-help`}
-            onChange={(event) => onSettings({ local_mix: event.target.checked })} />
-          <span className="box" aria-hidden="true" />
-          <span>Download full songs for the equalizer and mixer</span>
-        </label>
         <p className="note" id={`${id}-local-help`}>
-          While the equalizer is on or the mixer is up, this app downloads each full song with its bundled yt-dlp
-          into your Music folder and plays the file itself, so the equalizer and mixer reach the whole song. A song
-          not downloaded yet plays in YouTube’s player meanwhile. Off: full songs always play in YouTube’s player.
+          In the installed apps, songs added to the player load as full local audio in a bounded queue cache,
+          whether the equalizer or mixer is on or off. Listening waits for the file instead of starting an iframe.
+          The Download button keeps a separate copy outside the cache.
         </p>
       </section>
 

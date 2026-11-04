@@ -125,6 +125,26 @@ export function useDownloads(flash: (m: string) => void) {
           poll();
           return r2.job;
         }
+        if (tool === 'yt-dlp' && format === 'original') {
+          // The queue cache may already hold this exact song; keeping it costs no second download.
+          // Windows answers with a job, Android with ok/saved_to and no job — both mean "kept".
+          const kept = await dl.keep(url).catch(() => null);
+          if (kept?.job) {
+            flash(kept.job.state === 'done' ? 'This song is kept in your Downloads folder.' : 'This song will be kept when its queue download finishes.');
+            poll();
+            return kept.job;
+          }
+          if (kept?.ok) {
+            flash(kept.alreadyKept ? 'This song is already in your Downloads folder.' : `Kept this song in ${kept.saved_to || 'your Downloads folder'}.`);
+            poll();
+            // Shells that copy the cached file synchronously (Android) report no job. The song IS
+            // kept, so answer with a finished record: returning null would read as a failure.
+            return {
+              id: `kept:${url}`, url, tool, format, label, state: 'done', stage: 'done', percent: 100,
+              message: null, error: null, files: kept.file ? [kept.file] : [], saved_to: kept.saved_to ?? null,
+            } satisfies DlJob;
+          }
+        }
         const r = await dl.start(url, tool, format, label);
         flash(`Downloading “${r.job.label || label}”. Follow it in Downloads.`);
         poll();
@@ -257,7 +277,7 @@ export function DownloadsView({ d }: { d: Downloads }) {
               {t.detail && <span className="dl__why"> {t.detail}</span>}
             </li>
           ))}
-          <li className="dl__tool">Saved to {health.saves_to}</li>
+          <li className="dl__tool">Saved to {health.saves_to} <button className="push" type="button" onClick={() => void dl.chooseFolder().then((r) => setHealth({ ...health, saves_to: r.saves_to })).catch((e: Error) => setErr(e.message))}>Change folder</button></li>
         </ul>
       )}
 

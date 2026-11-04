@@ -133,6 +133,17 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
             you listened. Songs you already have are never removed, and a discovery may find fewer
             than this.
           </p>
+          <div className="discovery-settings__heading">
+            <label htmlFor="cache-gb">Queue audio storage limit</label>
+            <output id="cache-gb-output" htmlFor="cache-gb">{settings?.cache_gb ?? 1} GB</output>
+          </div>
+          <div className="dial discovery-settings__range">
+            <input id="cache-gb" type="range" min={0.25} max={20} step={0.25} value={settings?.cache_gb ?? 1}
+              aria-describedby="cache-gb-output cache-gb-help"
+              style={{ '--pct': `${(((settings?.cache_gb ?? 1) - 0.25) / 19.75) * 100}%` } as React.CSSProperties}
+              onChange={(e) => onSettings({ cache_gb: Number(e.target.value) })} />
+          </div>
+          <p className="note" id="cache-gb-help">Full songs for the player are kept in a private, reusable queue cache up to this limit. One next song loads ahead; older unpinned songs leave first. Songs you explicitly download are kept separately and never deleted by this setting.</p>
           <label className="chk discovery-settings__toggle">
             <input
               type="checkbox"
@@ -210,8 +221,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
           </label>
         </div>
         <p className="note">
-          Songs you play in the embedded players stream straight to your browser. That is your own
-          listening and is not counted in these allowances.
+          In the installed apps, added and discovered full songs load into the local queue cache for playback. These metadata and preview allowances do not cap that separate audio storage limit.
         </p>
         <div className="pref" aria-label="Listening history import">
           <span className="k">Import listening history (optional)</span>

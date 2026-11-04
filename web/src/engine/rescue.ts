@@ -33,7 +33,7 @@ export const downloadableTrack = (url: string): boolean => {
   } catch {
     return false;
   }
-  if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+  if (u.protocol !== 'https:' || u.username || u.password) return false;
   const host = u.hostname.toLowerCase();
   if (!YTDLP_HOSTS.includes(host)) return false;
   if (host === 'youtu.be') return VIDEO_ID.test(u.pathname.replace(/^\//, ''));

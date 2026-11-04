@@ -15,8 +15,9 @@ import { PREVIEW_ROUTE } from './engine/shape';
 import { resetEngineForTests, setEqConfig, setLocalMix, setMixSlider } from './audio-engine';
 import { EQ_DEFAULTS } from './engine/eq';
 
-const { lookedUp, fullVersions, held, started } = vi.hoisted(() => ({
+const { lookedUp, fullVersions, held, started, nativeShell } = vi.hoisted(() => ({
   lookedUp: [] as string[],
+  nativeShell: { value: false },
   /** Songs the fake YouTube lookup reports a full version for. */
   fullVersions: new Set<string>(),
   /** Source links the fake shell holds a finished download for (LOCAL-AUDIO-001). */
@@ -28,9 +29,10 @@ vi.mock('./engine/downloads', async (importOriginal) => {
   const mod = await importOriginal<typeof import('./engine/downloads')>();
   return {
     ...mod,
-    downloadsAvailable: () => true,
+    downloadsAvailable: () => nativeShell.value,
     dl: {
       ...mod.dl,
+      cacheConfig: vi.fn(async () => ({ bytes: 0, limitBytes: 1024 ** 3 })),
       local: (url: string) => Promise.resolve({ file: held.has(url) ? { name: 'song.opus', bytes: 1 } : null, running: started.includes(url) }),
       start: (url: string) => {
         started.push(url);
@@ -150,7 +152,7 @@ const settle = async () => { await act(async () => { await Promise.resolve(); aw
 
 beforeEach(() => {
   ramps.length = 0; sourced.clear();
-  lookedUp.length = 0; fullVersions.clear(); held.clear(); started.length = 0;
+  lookedUp.length = 0; fullVersions.clear(); held.clear(); started.length = 0; nativeShell.value = false;
   stubMedia();
   stubBlobs();
   vi.stubGlobal('AudioContext', FakeContext);
@@ -390,7 +392,7 @@ const withVideo = (key: string): Playing => ({
 });
 
 describe('full songs through the decks (LOCAL-AUDIO-001)', () => {
-  beforeEach(() => setLocalMix(true));
+  beforeEach(() => { nativeShell.value = true; setLocalMix(true); });
 
   it('plays a downloaded full song on a deck, not in YouTube’s player, when the mixer or EQ wants it', async () => {
     held.add(SRC);
@@ -415,47 +417,45 @@ describe('full songs through the decks (LOCAL-AUDIO-001)', () => {
     expect(sourced.size).toBe(2);
   });
 
-  it('starts the download for a song it does not hold yet, and plays THIS one in YouTube’s player meanwhile', async () => {
+  it('waits for a missing full song to load locally without an iframe or preview', async () => {
     setMixSlider(70);
     const { container } = render(createElement(Player, { ...props, playing: withVideo('one'), upNext: [] }));
     await settle();
     expect(started).toEqual([SRC]);
-    expect(container.querySelector('iframe')).not.toBeNull(); // never silence: the full song still plays
+    expect(container.querySelector('iframe')).toBeNull();
     expect(decks()[0]?.getAttribute('src')).toBeNull();
+    expect(container.textContent).toMatch(/Downloading the full song/i);
   });
 
-  it('does not yank a song out of YouTube’s player when its download finishes mid-play', async () => {
-    // The file is for next time and for the lookahead. Swapping players mid-song would restart it at 0:00.
+  it('starts the newly downloaded song on the local deck, not in an iframe', async () => {
     setMixSlider(70);
     const { container } = render(createElement(Player, { ...props, playing: withVideo('one'), upNext: [] }));
     await settle();
-    expect(container.querySelector('iframe')).not.toBeNull();
+    expect(container.querySelector('iframe')).toBeNull();
     held.add(SRC);
     const { localLibrary } = await import('./engine/local-audio');
     await act(async () => { await localLibrary.refresh(SRC); });
     await settle();
     expect(localLibrary.status(SRC)).toBe('ready');
-    expect(container.querySelector('iframe')).not.toBeNull();
-    expect(decks()[0]?.getAttribute('src')).toBeNull();
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(decks()[0]?.getAttribute('src')).toBe(LOCAL);
   });
 
-  it('leaves full songs in YouTube’s player, and downloads nothing, when the engine has nothing to do', async () => {
-    // Mixer off and EQ off: processing would change nothing, so no download is owed.
+  it('plays a held full song locally even with mixer and EQ off', async () => {
     held.add(SRC);
     const { container } = render(createElement(Player, { ...props, playing: withVideo('one'), upNext: [] }));
     await settle();
-    expect(container.querySelector('iframe')).not.toBeNull();
-    expect(started).toEqual([]);
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(decks()[0]?.getAttribute('src')).toBe(LOCAL);
   });
 
-  it('leaves full songs in YouTube’s player when the listener turned local playback off', async () => {
+  it('ignores the legacy local_mix switch in installed apps', async () => {
     setLocalMix(false);
     held.add(SRC);
-    setMixSlider(70);
     const { container } = render(createElement(Player, { ...props, playing: withVideo('one'), upNext: [] }));
     await settle();
-    expect(container.querySelector('iframe')).not.toBeNull();
-    expect(started).toEqual([]);
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(decks()[0]?.getAttribute('src')).toBe(LOCAL);
   });
 
   it('cues a held full song as the next deck and blends into it — a full song, not a preview', async () => {
@@ -463,7 +463,7 @@ describe('full songs through the decks (LOCAL-AUDIO-001)', () => {
     setMixSlider(100);
     const nextFull: UpNext[] = [{ key: 'two', title: 'Song two', artist: 'A', artwork: null, preview: route('two'), track: withVideo('two').track }];
     fullVersions.add('two');
-    render(createElement(Player, { ...props, playing: playing('one'), upNext: nextFull }));
+    render(createElement(Player, { ...props, playing: withVideo('one'), upNext: nextFull }));
     await settle();
     const [a, b] = decks() as [HTMLAudioElement, HTMLAudioElement];
     expect(b.getAttribute('src')).toBe(LOCAL);
@@ -485,7 +485,7 @@ describe('full songs through the decks (LOCAL-AUDIO-001)', () => {
     const nextFull: UpNext[] = [{ key: 'two', title: 'Song two', artist: 'A', artwork: null, preview: null, track: two.track }];
     fullVersions.add('two');
     const onNext = vi.fn();
-    const view = render(createElement(Player, { ...props, onNext, playing: playing('one'), upNext: nextFull }));
+    const view = render(createElement(Player, { ...props, onNext, playing: withVideo('one'), upNext: nextFull }));
     await settle();
     const [a, b] = decks() as [HTMLAudioElement, HTMLAudioElement];
     expect(b.getAttribute('src')).toBe(LOCAL);
@@ -511,7 +511,10 @@ describe('full songs through the decks (LOCAL-AUDIO-001)', () => {
     setMixSlider(100);
     const nextFull: UpNext[] = [{ key: 'two', title: 'Song two', artist: 'A', artwork: null, preview: route('two'), track: withVideo('two').track }];
     fullVersions.add('two');
-    const { container } = render(createElement(Player, { ...props, playing: playing('one'), upNext: nextFull }));
+    const current = withVideo('one');
+    current.track.platform_id = 'aaaaaaaaaaa';
+    held.add('https://music.youtube.com/watch?v=aaaaaaaaaaa');
+    const { container } = render(createElement(Player, { ...props, playing: current, upNext: nextFull }));
     await settle();
     expect(started).toEqual([SRC]);
     expect(container.querySelector('.np__note--mix')?.textContent).toMatch(/Downloading the next song/i);
