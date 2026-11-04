@@ -191,6 +191,8 @@ function fixture(t, bytes = 20) {
   const cfg = {
     toolsDir: dir, saveDir: path.join(dir, 'saved'), cacheDir: path.join(dir, 'cache'),
     tempRoot: path.join(dir, 'tmp'),
+    // Stands in for the native directory dialog: always "picks" dir/MyMusic.
+    chooseFolder: () => path.join(dir, 'MyMusic'),
     spawnImpl(_program, args) {
       const child = new EventEmitter();
       child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
@@ -225,6 +227,37 @@ test('automatic full song stays in private quota cache; Keep copies it without d
   assert.equal(fs.existsSync(path.join(dir, 'saved', 'full-song.opus')), true);
   assert.equal(dl.handle({ op: 'local', url: source }).file.bytes, 20);
   assert.equal(dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [] }).bytes, 20);
+  dl.shutdown();
+});
+
+test('choosing a folder moves where music is kept, and the song is still tracked there', async (t) => {
+  // The settings picker is only meaningful if the NEXT song actually lands in the chosen folder and
+  // the app still knows it holds it (otherwise the duplicate bug returns the moment you move folders).
+  const { dir, dl } = fixture(t);
+  const chosen = path.join(dir, 'MyMusic');
+  const source = url('dQw4w9WgXcQ');
+  const picked = await dl.handle({ op: 'choose-folder' });
+  assert.equal(picked.saves_to, chosen, 'the shell reports the new folder');
+  assert.equal(fs.existsSync(chosen), true, 'the folder is created, not just recorded');
+  // Cache a song, then Keep it: the permanent copy must go to the chosen folder.
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [source] });
+  const { job } = dl.handle({ op: 'start', url: source, tool: 'yt-dlp', format: 'original', label: 'Song', cache: true });
+  assert.equal((await done(dl, job.id)).state, 'done');
+  const kept = dl.handle({ op: 'keep', url: source }).job;
+  assert.equal(kept.state, 'done');
+  assert.deepEqual(fs.readdirSync(chosen).filter((f) => f.endsWith('.opus')), ['full-song.opus'], 'song is in the chosen folder');
+  assert.equal(fs.existsSync(path.join(dir, 'saved', 'full-song.opus')), false, 'and not in the old one');
+  // Still tracked, so a second Download reuses it instead of writing a duplicate.
+  assert.equal(dl.handle({ op: 'local', url: source }).kept, true, 'the moved song is still known to be kept');
+  // Songs kept BEFORE the move must stay known. The index lives at a fixed path for exactly this
+  // reason: rebinding it to each chosen folder would strand every earlier record.
+  const second = url('kJQP7kiw5Fk');
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [second] });
+  const j2 = dl.handle({ op: 'start', url: second, tool: 'yt-dlp', format: 'original', label: 'Two', cache: true }).job;
+  assert.equal((await done(dl, j2.id)).state, 'done');
+  dl.handle({ op: 'keep', url: second });
+  assert.equal(dl.handle({ op: 'local', url: source }).kept, true, 'the first song is still kept after a second');
+  assert.equal(dl.handle({ op: 'local', url: second }).kept, true, 'and so is the second');
   dl.shutdown();
 });
 
