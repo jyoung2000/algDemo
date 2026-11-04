@@ -146,32 +146,27 @@ class MainActivity : Activity() {
   private fun localAudio(sourceUrl: String, rangeHeader: String?): WebResourceResponse {
     val notFound = WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(ByteArray(0)))
     val (uri, size, type) = Downloads.localFile(this, sourceUrl) ?: return notFound
-    var start = 0L
-    var end = size - 1
-    val m = rangeHeader?.let { Regex("^bytes=([0-9]*)-([0-9]*)$").find(it.trim()) }
-    if (m != null) {
-      val (a, b) = m.destructured
-      if (a.isNotEmpty()) start = a.toLong()
-      if (b.isNotEmpty()) end = minOf(b.toLong(), size - 1) else if (a.isEmpty()) start = maxOf(0L, size - b.toLong())
-      if (start > end || start >= size) return WebResourceResponse("text/plain", "utf-8", 416, "Range Not Satisfiable", mapOf("Content-Range" to "bytes */$size"), ByteArrayInputStream(ByteArray(0)))
-    }
+    // WebView's own loader handles Range for an intercepted stream: it reads the Range header from
+    // the request, skips that far into the stream it is given and sizes the answer from the
+    // stream's available(). So the whole file is handed over from byte 0 with an honest
+    // available(), and nothing is skipped or sized here — doing it twice served garbage.
     val stream = contentResolver.openInputStream(uri) ?: return notFound
-    var skipped = 0L
-    while (skipped < start) { val n = stream.skip(start - skipped); if (n <= 0) break; skipped += n }
-    val length = end - start + 1
-    val headers = mutableMapOf("Accept-Ranges" to "bytes", "Content-Length" to length.toString(), "Cache-Control" to "no-cache")
-    if (m != null) headers["Content-Range"] = "bytes $start-$end/$size"
-    return WebResourceResponse(type, null, if (m != null) 206 else 200, if (m != null) "Partial Content" else "OK", headers, BoundedInputStream(stream, length))
+    val headers = mapOf("Accept-Ranges" to "bytes", "Cache-Control" to "no-cache")
+    return WebResourceResponse(type, null, 200, "OK", headers, SizedInputStream(stream, size))
   }
 
-  /** Reads at most `limit` bytes from `inner`, for a Range response. */
-  private class BoundedInputStream(private val inner: java.io.InputStream, private var limit: Long) : java.io.InputStream() {
-    override fun read(): Int { if (limit <= 0) return -1; val b = inner.read(); if (b >= 0) limit--; return b }
-    override fun read(b: ByteArray, off: Int, len: Int): Int {
-      if (limit <= 0) return -1
-      val n = inner.read(b, off, minOf(len.toLong(), limit).toInt())
-      if (n > 0) limit -= n
-      return n
+  /** The file's stream with an available() that tells the truth about its size, which WebView's loader relies on. */
+  private class SizedInputStream(private val inner: java.io.InputStream, private var remaining: Long) : java.io.InputStream() {
+    override fun available(): Int = minOf(remaining, Int.MAX_VALUE.toLong()).toInt()
+    override fun read(): Int { val b = inner.read(); if (b >= 0) remaining-- ; return b }
+    override fun read(b: ByteArray, off: Int, len: Int): Int { val n = inner.read(b, off, len); if (n > 0) remaining -= n; return n }
+    override fun skip(n: Long): Long {
+      // skip() on a MediaStore stream may claim progress it did not make; read instead.
+      var done = 0L
+      val buf = ByteArray(64 * 1024)
+      while (done < n) { val r = inner.read(buf, 0, minOf(buf.size.toLong(), n - done).toInt()); if (r <= 0) break; done += r }
+      remaining -= done
+      return done
     }
     override fun close() = inner.close()
   }
