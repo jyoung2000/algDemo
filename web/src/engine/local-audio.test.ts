@@ -29,7 +29,8 @@ describe('local audio: a downloaded full song the decks can play (LOCAL-AUDIO-00
     expect(lib.status(url)).toBe('unknown');
     await lib.refresh(url);
     expect(lib.status(url)).toBe('ready');
-    expect(lib.src(url)).toBe(localAudioUrl(url));
+    // src() is the Blob URL and arrives a tick later; see LOCAL-AUDIO-002 for why.
+    expect(lib.src(url)).toBeNull();
   });
 
   it('starts one download for a missing song and never a second while it runs', async () => {
@@ -85,6 +86,47 @@ describe('local audio: a downloaded full song the decks can play (LOCAL-AUDIO-00
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('plays the held song from a Blob, so the deck gets a real duration and can seek (LOCAL-AUDIO-002)', async () => {
+    // Measured on Android: WebView answers a Range request with 200 and no Content-Range, so
+    // Chromium treats the stream as non-seekable — duration stayed Infinity, the progress bar
+    // never moved and there was no total time. Fetching the file once and handing the deck a
+    // Blob URL gives it the whole thing at once: duration resolves, seeking works.
+    const fetched: string[] = [];
+    const revoked: string[] = [];
+    const g = globalThis as unknown as Record<string, unknown>;
+    g['fetch'] = vi.fn(async (u: string) => {
+      fetched.push(u);
+      return { ok: true, blob: async () => new Blob([new Uint8Array(8)], { type: 'audio/ogg' }) } as unknown as Response;
+    });
+    let n = 0;
+    (globalThis.URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => `blob:song-${++n}`;
+    (globalThis.URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = (u) => void revoked.push(u);
+    const lib = new LocalLibrary(api({ local: vi.fn(async () => ({ file: { name: 'song.opus', bytes: 8 }, running: false })) }));
+    const url = sourceUrlFor('dQw4w9WgXcQ')!;
+    // Nothing is fetched before the shell says it holds the file.
+    expect(lib.src(url)).toBeNull();
+    expect(fetched).toEqual([]);
+    await lib.ensure(url, 'x');
+    expect(lib.status(url)).toBe('ready');
+    // First ask starts the fetch and returns null; the library notifies when the blob is there.
+    expect(lib.src(url)).toBeNull();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetched).toEqual([localAudioUrl(url)]);
+    expect(lib.src(url)).toBe('blob:song-1');
+    // Asked again, the same blob comes back: one fetch per song, not one per render.
+    expect(lib.src(url)).toBe('blob:song-1');
+    expect(fetched).toHaveLength(1);
+    // Only a few songs are held at a time; the oldest blob is released.
+    for (const id of ['11111111111', '22222222222', '33333333333']) {
+      const u = sourceUrlFor(id)!;
+      await lib.ensure(u, id);
+      lib.src(u);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    expect(revoked).toContain('blob:song-1');
+    expect(lib.src(url)).toBeNull(); // released, and fetched again on demand
   });
 
   it('reports a failed download as missing so the player falls back instead of waiting forever', async () => {

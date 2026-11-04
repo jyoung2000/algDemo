@@ -203,14 +203,17 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // Once this song has started in YouTube's player it stays there: a download finishing mid-song
   // must not swap players and restart it at 0:00. The file is for next time and for the lookahead.
   const inYouTube = useRef<string | null>(null);
-  const localSrc = canLocal && localSource && inYouTube.current !== key ? localLibrary.src(localSource) : null;
+  const latched = inYouTube.current === key;
+  const localSrc = canLocal && localSource && !latched ? localLibrary.src(localSource) : null;
   useEffect(() => {
     if (!canLocal || !localSource || !playing) return;
     void localLibrary.ensure(localSource, `${playing.track.title} — ${playing.track.artist}`);
   }, [canLocal, localSource, playing]);
-  // Hold while the shell is being asked; the answer comes within one round trip and avoids
-  // starting YouTube's player only to yank the song over to a deck.
-  const askingLocal = canLocal && localSource !== null && localStatus === 'unknown';
+  // Hold while the shell is being asked, AND while a held song's bytes are being read into a Blob
+  // (LOCAL-AUDIO-002): both are a round trip of a few milliseconds, and starting YouTube's player
+  // in that gap would strand the song there — the latch below never swaps players mid-song.
+  const askingLocal =
+    canLocal && localSource !== null && !latched && (localStatus === 'unknown' || (localStatus === 'ready' && localSrc === null));
   const src = localSrc ?? (!videoId && !lookingUp ? previewSrc : null);
   const embed = !videoId && !src && !lookingUp ? scEmbed : null;
   const mode: Mode = localSrc ? 'local' : askingLocal ? 'none' : videoId ? 'full' : src ? 'preview' : embed ? 'embed' : 'none';

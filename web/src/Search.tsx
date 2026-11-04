@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
-import { api, ApiError, type Evidence, type IdentifyResponse, type ResolveResponse, type SearchResponse, type SourceState, type Track } from './api';
+import { api, ApiError, type Evidence, type IdentifyResponse, type PlaylistSummary, type ResolveResponse, type SearchResponse, type SourceState, type Track } from './api';
 import { Art } from './Art';
+import { SaveMenu } from './SaveMenu';
 import { PROVIDER_LABEL, artistOf, classNames, fmtDuration, fmtRelease, looksLikeUrl, markKey } from './util';
 
-interface Props {
+/** What a result row's like button needs, shared by every list of results (SEARCH-LIKE-001). */
+interface LikeProps {
+  /** Teach the algorithm. Called with false when the like is taken back. */
+  onLike?: (t: Track, like: boolean) => void;
+  onRemoveSeed?: (t: Track) => void;
+  lists?: PlaylistSummary[];
+  onLists?: (lists: PlaylistSummary[]) => void;
+}
+
+interface Props extends LikeProps {
   seeds: Track[];
   onAdd: (t: Track) => void;
   onPreview: (t: Track) => void;
@@ -90,7 +100,8 @@ function useNarrow(): boolean {
  *  - File / Mic: up to 12 s is fingerprinted on the device; only the fingerprint goes to Shazam.
  * A newer request aborts the older one. Searching or identifying is never a preference signal: only Add makes a starting song.
  */
-export function Search({ seeds, onAdd, onPreview, onDownload }: Props) {
+export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists }: Props) {
+  const likeProps: LikeProps = { onLike, onRemoveSeed, lists, onLists };
   const [q, setQ] = useState('');
   const [view, setView] = useState<View>({ kind: 'idle' });
   const [artistFix, setArtistFix] = useState('');
@@ -552,7 +563,7 @@ export function Search({ seeds, onAdd, onPreview, onDownload }: Props) {
                 </button>
               </form>
             )}
-            {view.res.tracks.length > 0 && <TrackList tracks={view.res.tracks} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} label="Choose a song" />}
+            {view.res.tracks.length > 0 && <TrackList tracks={view.res.tracks} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} label="Choose a song" />}
           </div>
         )}
         {view.kind === 'results' && <ResultsView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} />}
@@ -576,18 +587,22 @@ function ResultsView({
   onAdd,
   onPreview,
   onDownload,
+  onLike,
+  onRemoveSeed,
+  lists,
+  onLists,
 }: {
   view: Extract<View, { kind: 'results' }>;
   seedKeys: Set<string>;
   onAdd: (t: Track) => void;
   onPreview: (t: Track) => void;
   onDownload?: ((t: Track) => void) | undefined;
-}) {
+} & LikeProps) {
   const lyr = view.lyrics;
   const titleKeys = new Set(view.tracks.map((t) => t.key));
   const lyricTracks = lyr?.state === 'ok' ? lyr.tracks.filter((t) => !titleKeys.has(t.key)) : [];
   const lead = lyricsLead(view.query, lyricTracks.length);
-  const common = { seedKeys, onAdd, onPreview, onDownload } as const;
+  const common = { seedKeys, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists } as const;
 
   const titles = view.tracks.length ? (
     <div key="titles">
@@ -643,13 +658,17 @@ function IdentifiedView({
   onAdd,
   onPreview,
   onDownload,
+  onLike,
+  onRemoveSeed,
+  lists,
+  onLists,
 }: {
   view: Extract<View, { kind: 'identified' }>;
   seedKeys: Set<string>;
   onAdd: (t: Track) => void;
   onPreview: (t: Track) => void;
   onDownload?: ((t: Track) => void) | undefined;
-}) {
+} & LikeProps) {
   const n = view.tracks.length;
   if (!n) {
     let text: string;
@@ -791,7 +810,31 @@ function EvidenceLine({ e }: { e: Evidence }) {
   return <span className="track__evidence">Heard in your clip{typeof e.offset === 'number' ? ` · ${fmtClock(e.offset)} into the song` : ''}</span>;
 }
 
-function TrackList({ tracks, seedKeys, onAdd, onPreview, onDownload, label }: { tracks: Track[]; seedKeys: Set<string>; onAdd: (t: Track) => void; onPreview: (t: Track) => void; onDownload?: ((t: Track) => void) | undefined; label: string }) {
+export function TrackList({
+  tracks,
+  seedKeys,
+  onAdd,
+  onPreview,
+  onDownload,
+  onLike,
+  onRemoveSeed,
+  lists,
+  onLists,
+  label,
+}: {
+  tracks: Track[];
+  seedKeys: Set<string>;
+  onAdd: (t: Track) => void;
+  onPreview: (t: Track) => void;
+  onDownload?: ((t: Track) => void) | undefined;
+  /** Teach the algorithm. Called with false when the like is taken back (SEARCH-LIKE-001). */
+  onLike?: ((t: Track, like: boolean) => void) | undefined;
+  onRemoveSeed?: ((t: Track) => void) | undefined;
+  lists?: PlaylistSummary[] | undefined;
+  onLists?: ((lists: PlaylistSummary[]) => void) | undefined;
+  label: string;
+}) {
+  const [saving, setSaving] = useState<string | null>(null);
   return (
     <ul className="well tracks" aria-label={label}>
       {tracks.map((t) => {
@@ -835,19 +878,35 @@ function TrackList({ tracks, seedKeys, onAdd, onPreview, onDownload, label }: { 
                   <Glyph name="share" size={14} />
                 </a>
               )}
-              {/* The same round icon button as the song list (SEARCH-ICONS-001); pressed once added. */}
+              {/* SEARCH-LIKE-001: the song list's like button, in place of the old Add pill. One press
+                  teaches the algorithm, keeps the song as a starting song, and offers the lists. */}
               <button
                 className={classNames('iconbtn', added && 'is-on')}
                 type="button"
-                onClick={() => onAdd(t)}
-                disabled={added}
                 aria-pressed={added}
-                aria-label={added ? `${t.title} is a starting song` : `Add ${t.title} to your starting songs`}
-                title={added ? 'Added to your starting songs' : 'Add to your starting songs'}
+                aria-expanded={onLists ? saving === t.key : undefined}
+                onClick={() => {
+                  if (added) {
+                    onLike?.(t, false);
+                    onRemoveSeed?.(t);
+                    setSaving(null);
+                    return;
+                  }
+                  onLike?.(t, true);
+                  onAdd(t);
+                  if (onLists) setSaving(t.key);
+                }}
+                aria-label={added ? `Remove like from ${t.title}` : `Like ${t.title} and choose lists`}
+                title={added ? 'Liked — a starting song' : 'Like and choose lists'}
               >
-                <Glyph name={added ? 'check' : 'add'} size={14} />
+                <Glyph name="thumb-up" size={14} />
               </button>
             </span>
+            {saving === t.key && onLists && (
+              <div className="track__savemenu">
+                <SaveMenu songKey={t.key} title={t.title} lists={lists ?? []} onLists={onLists} onClose={() => setSaving(null)} />
+              </div>
+            )}
           </li>
         );
       })}

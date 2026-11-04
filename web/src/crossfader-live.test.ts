@@ -152,6 +152,7 @@ beforeEach(() => {
   ramps.length = 0; sourced.clear();
   lookedUp.length = 0; fullVersions.clear(); held.clear(); started.length = 0;
   stubMedia();
+  stubBlobs();
   vi.stubGlobal('AudioContext', FakeContext);
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   resetEngineForTests();
@@ -374,7 +375,15 @@ describe('the crossfader, rendered', () => {
  * itself — downloaded by the bundled yt-dlp and served at the app's own origin.
  */
 const SRC = 'https://music.youtube.com/watch?v=dQw4w9WgXcQ';
-const LOCAL = '/local-audio?u=' + encodeURIComponent(SRC);
+/** The deck plays a Blob of the downloaded file, not the /local-audio address (LOCAL-AUDIO-002). */
+const LOCAL = 'blob:local-song';
+/** Hand the library a fetch and an object URL, as a browser would. */
+const stubBlobs = () => {
+  const g = globalThis as unknown as Record<string, unknown>;
+  g['fetch'] = vi.fn(async () => ({ ok: true, blob: async () => new Blob([new Uint8Array(4)]) }) as unknown as Response);
+  (globalThis.URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => LOCAL;
+  (globalThis.URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
+};
 const withVideo = (key: string): Playing => ({
   track: { ...track(key), provider: 'ytmusic', platform_id: 'dQw4w9WgXcQ', duration: 180 } as Playing['track'],
   playback: { kind: 'full', preview: route(key), open: [], embed: null } as Playing['playback'],

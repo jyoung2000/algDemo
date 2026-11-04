@@ -170,10 +170,12 @@ describe('the controls are flat and reachable', () => {
 
   it('draws the search list’s actions with the song list’s icon buttons: round, flat, no Add pill (SEARCH-ICONS-001)', () => {
     const search = readFileSync(new URL('./Search.tsx', import.meta.url), 'utf8');
-    const row = /<span className="track__actions">([\s\S]*?)<\/span>\s*<\/li>/.exec(search);
+    const row = /<span className="track__actions">([\s\S]*?)<\/span>/.exec(search);
     expect(row, 'track__actions not found').toBeTruthy();
     expect(row![1]).not.toContain('addbtn');
-    expect(row![1]).toMatch(/className=\{classNames\('iconbtn', added && 'is-on'\)\}[\s\S]*?aria-pressed=\{added\}[\s\S]*?<Glyph name=\{added \? 'check' : 'add'\} size=\{14\} \/>/);
+    // The row's own action is the like button now (SEARCH-LIKE-001), drawn as the song list's.
+    expect(row![1]).toMatch(/className=\{classNames\('iconbtn', added && 'is-on'\)\}[\s\S]*?aria-pressed=\{added\}[\s\S]*?<Glyph name="thumb-up" size=\{14\} \/>/);
+    expect(row![1]).not.toMatch(/name=\{added \? 'check' : 'add'\}/);
     // Same paint as .rec__actions: one shared rule set in the main stylesheet.
     const main = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
     expect(main).toMatch(/\.rec__actions \.iconbtn,\s*\.track__actions \.iconbtn \{/);

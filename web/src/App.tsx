@@ -394,6 +394,17 @@ export function App() {
     if (tab === 'saved' || tab === 'discover') api.playlists().then((r) => setLists(r.lists), () => setLists([]));
   }, [tab, flags]);
 
+  /**
+   * Like or unlike a song that is not in a recommendation row — from the search list, say
+   * (SEARCH-LIKE-001). Same engine call as the song list's like, so the algorithm learns the same.
+   */
+  const likeTrack = (track: Track, like: boolean) => {
+    setFlags((f) => ({ ...f, [track.key]: { ...(f[track.key] ?? {}), like, ...(like ? { dislike: false } : {}) } }));
+    api
+      .feedback(like ? 'like' : 'unlike', track, { event_id: newEventId(like ? 'like' : 'unlike', track.key) })
+      .then(() => void refreshTaste(), (e: Error) => flash(`Could not save that: ${e.message}`));
+  };
+
   /** Take a song off Saved: the like is removed on the engine and the row goes at once. */
   const removeSaved = (track: Track) => {
     setSaved((list) => (list ? list.filter((x) => x.track.key !== track.key) : list));
@@ -495,7 +506,16 @@ export function App() {
         {tab === 'discover' && (
           <>
             <div ref={searchRef}>
-              <Search seeds={seeds} onAdd={onAdd} onPreview={previewTrack} onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined} />
+              <Search
+                seeds={seeds}
+                onAdd={onAdd}
+                onPreview={previewTrack}
+                onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
+                onLike={likeTrack}
+                onRemoveSeed={(t) => saveSeeds(seeds.filter((s) => s.key !== t.key))}
+                lists={lists}
+                onLists={setLists}
+              />
             </div>
 
             <section className="go" aria-label="Find recommendations">

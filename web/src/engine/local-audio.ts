@@ -26,6 +26,12 @@ export const localAudioUrl = (sourceUrl: string): string => `${LOCAL_AUDIO_PATH}
 
 export type LocalStatus = 'unknown' | 'ready' | 'running' | 'missing';
 
+/**
+ * How many songs' bytes are kept as Blobs: the one playing, the one cued for a blend, and one
+ * spare for a quick back. A song is a few megabytes, so the ceiling matters on a phone.
+ */
+export const BLOB_CACHE = 3;
+
 /** How often a running download is asked about. A song is a few megabytes; seconds, not minutes. */
 export const POLL_MS = 3000;
 
@@ -50,6 +56,9 @@ export class LocalLibrary {
   private readonly entries = new Map<string, { status: LocalStatus; error: string | null }>();
   private readonly listeners = new Set<() => void>();
   private readonly inFlight = new Map<string, Promise<void>>();
+  /** Source link to Blob URL, oldest first (a Map keeps insertion order), capped at BLOB_CACHE. */
+  private readonly blobs = new Map<string, string>();
+  private readonly blobbing = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly api: LocalApi = shellApi) {}
@@ -73,9 +82,50 @@ export class LocalLibrary {
     return this.entries.get(url)?.error ?? null;
   }
 
-  /** The playable address, once the shell has said it holds the file. */
+  /**
+   * The playable address, once the shell has said it holds the file: a Blob URL (LOCAL-AUDIO-002).
+   *
+   * Not the `/local-audio` address itself. Android's WebView answers a Range request with 200 and
+   * no Content-Range, so Chromium calls the stream non-seekable: duration stays Infinity, the
+   * progress bar never fills and there is no total time. The file is a few megabytes on local
+   * disk, so it is fetched once in full (19ms, measured) and the deck gets the whole thing.
+   *
+   * Returns null on the first call for a song and notifies subscribers when the blob is ready.
+   */
   src(url: string): string | null {
-    return this.status(url) === 'ready' ? localAudioUrl(url) : null;
+    if (this.status(url) !== 'ready') return null;
+    const have = this.blobs.get(url);
+    if (have) {
+      // Freshen its place in the queue: the song being asked for is the one to keep.
+      this.blobs.delete(url);
+      this.blobs.set(url, have);
+      return have;
+    }
+    if (!this.blobbing.has(url)) {
+      this.blobbing.add(url);
+      void this.fetchBlob(url);
+    }
+    return null;
+  }
+
+  private async fetchBlob(url: string): Promise<void> {
+    try {
+      const r = await fetch(localAudioUrl(url));
+      if (!r.ok) throw new Error(`the song could not be read (${r.status})`);
+      const blobUrl = URL.createObjectURL(await r.blob());
+      this.blobs.set(url, blobUrl);
+      while (this.blobs.size > BLOB_CACHE) {
+        const oldest = this.blobs.keys().next().value as string;
+        const gone = this.blobs.get(oldest)!;
+        this.blobs.delete(oldest);
+        URL.revokeObjectURL(gone);
+      }
+      for (const l of [...this.listeners]) l();
+    } catch (e) {
+      this.set(url, 'missing', e instanceof Error ? e.message : String(e));
+    } finally {
+      this.blobbing.delete(url);
+    }
   }
 
   subscribe(fn: () => void): () => void {

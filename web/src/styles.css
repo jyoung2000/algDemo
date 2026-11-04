@@ -1360,6 +1360,11 @@ a.push {
   grid-column: 3 / -1;
   margin: 2px 0 4px;
 }
+/* The same menu under a search row (SEARCH-LIKE-001); the row is a grid, so it spans the lot. */
+.track__savemenu {
+  grid-column: 1 / -1;
+  margin: 2px 0 4px;
+}
 .why__reasons {
   margin: 0;
   padding: 0;
