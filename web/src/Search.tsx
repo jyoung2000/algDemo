@@ -12,6 +12,13 @@ interface LikeProps {
   onRemoveSeed?: (t: Track) => void;
   lists?: PlaylistSummary[];
   onLists?: (lists: PlaylistSummary[]) => void;
+  /**
+   * Which song's list menu is open, held above the rows. Liking a song makes it a starting song,
+   * which changes state in the app above and remounts these rows: a menu kept inside a row closed
+   * itself the moment it opened (observed on the Windows app).
+   */
+  saving?: string | null;
+  onSaving?: (songKey: string | null) => void;
 }
 
 interface Props extends LikeProps {
@@ -101,7 +108,8 @@ function useNarrow(): boolean {
  * A newer request aborts the older one. Searching or identifying is never a preference signal: only Add makes a starting song.
  */
 export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists }: Props) {
-  const likeProps: LikeProps = { onLike, onRemoveSeed, lists, onLists };
+  const [saving, setSaving] = useState<string | null>(null);
+  const likeProps: LikeProps = { onLike, onRemoveSeed, lists, onLists, saving, onSaving: setSaving };
   const [q, setQ] = useState('');
   const [view, setView] = useState<View>({ kind: 'idle' });
   const [artistFix, setArtistFix] = useState('');
@@ -566,8 +574,12 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
             {view.res.tracks.length > 0 && <TrackList tracks={view.res.tracks} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} label="Choose a song" />}
           </div>
         )}
-        {view.kind === 'results' && <ResultsView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} />}
-        {view.kind === 'identified' && <IdentifiedView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} />}
+        {view.kind === 'results' && (
+          <ResultsView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} />
+        )}
+        {view.kind === 'identified' && (
+          <IdentifiedView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} />
+        )}
       </div>
     </section>
   );
@@ -591,6 +603,8 @@ function ResultsView({
   onRemoveSeed,
   lists,
   onLists,
+  saving,
+  onSaving,
 }: {
   view: Extract<View, { kind: 'results' }>;
   seedKeys: Set<string>;
@@ -602,7 +616,7 @@ function ResultsView({
   const titleKeys = new Set(view.tracks.map((t) => t.key));
   const lyricTracks = lyr?.state === 'ok' ? lyr.tracks.filter((t) => !titleKeys.has(t.key)) : [];
   const lead = lyricsLead(view.query, lyricTracks.length);
-  const common = { seedKeys, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists } as const;
+  const common = { seedKeys, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, saving, onSaving } as const;
 
   const titles = view.tracks.length ? (
     <div key="titles">
@@ -662,6 +676,8 @@ function IdentifiedView({
   onRemoveSeed,
   lists,
   onLists,
+  saving,
+  onSaving,
 }: {
   view: Extract<View, { kind: 'identified' }>;
   seedKeys: Set<string>;
@@ -684,7 +700,7 @@ function IdentifiedView({
       <p className="srcline">
         <span className="srcline__item">
           <span className="sdot sdot--ok" aria-hidden="true" />
-          {view.origin === 'lyrics' ? 'Lyrics matched via Genius.' : 'Audio identified via Shazam.'} {n === 1 ? '1 match found.' : `${n} matches found.`} Use Play to preview or Add to choose a starting song.{more}
+          {view.origin === 'lyrics' ? 'Lyrics matched via Genius.' : 'Audio identified via Shazam.'} {n === 1 ? '1 match found.' : `${n} matches found.`} Use Play to hear it, or Like to keep it and teach the algorithm.{more}
         </span>
       </p>
       <TrackList
@@ -693,6 +709,12 @@ function IdentifiedView({
         onAdd={onAdd}
         onPreview={onPreview}
         onDownload={onDownload}
+        onLike={onLike}
+        onRemoveSeed={onRemoveSeed}
+        lists={lists}
+        onLists={onLists}
+        saving={saving}
+        onSaving={onSaving}
         label={view.origin === 'lyrics' ? `Songs with the words ${view.query}` : 'Songs heard in your clip'}
       />
     </>
@@ -820,6 +842,8 @@ export function TrackList({
   onRemoveSeed,
   lists,
   onLists,
+  saving: savingProp,
+  onSaving,
   label,
 }: {
   tracks: Track[];
@@ -832,9 +856,14 @@ export function TrackList({
   onRemoveSeed?: ((t: Track) => void) | undefined;
   lists?: PlaylistSummary[] | undefined;
   onLists?: ((lists: PlaylistSummary[]) => void) | undefined;
+  saving?: string | null | undefined;
+  onSaving?: ((songKey: string | null) => void) | undefined;
   label: string;
 }) {
-  const [saving, setSaving] = useState<string | null>(null);
+  // Controlled by Search when it is in charge; the row's own state only when it stands alone.
+  const [ownSaving, setOwnSaving] = useState<string | null>(null);
+  const saving = onSaving ? (savingProp ?? null) : ownSaving;
+  const setSaving = onSaving ?? setOwnSaving;
   return (
     <ul className="well tracks" aria-label={label}>
       {tracks.map((t) => {

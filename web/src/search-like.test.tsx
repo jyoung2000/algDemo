@@ -71,6 +71,8 @@ describe('the search list (SEARCH-LIKE-001)', () => {
       onLike: (t: Track, like: boolean) => void liked.push([t.title, like]),
       lists: [{ id: 'p1', name: 'Late drives', created: 0, count: 3, unplayed: 1, discovery_ready: true, items: [] }],
       onLists: () => {},
+      saving: 'k1',
+      onSaving: () => {},
     });
     const like = byLabel(/^Like /)!;
     expect(like).toBeTruthy();
@@ -98,6 +100,18 @@ describe('the search list (SEARCH-LIKE-001)', () => {
     await act(async () => like.click());
     expect(liked).toEqual([['gynecologist', false]]);
     expect(removed).toEqual(['gynecologist']);
+  });
+
+  it('keeps the list menu open when liking makes the song a starting song (the rows remount)', async () => {
+    // Observed on the Windows app: the menu opened and closed in the same tick, because the open
+    // row was remounted when the app above added the starting song. Search owns that state now.
+    const opened: Array<string | null> = [];
+    await show({ onLike: () => {}, onSaving: (k: string | null) => void opened.push(k), saving: null, lists: [], onLists: () => {} });
+    await act(async () => byLabel(/^Like /)!.click());
+    expect(opened).toEqual(['k1']);
+    // Told it is the open row, the menu is there — whatever remounted in between.
+    await show({ onLike: () => {}, onSaving: () => {}, saving: 'k1', lists: [], onLists: () => {} });
+    expect(host.querySelector('.track__savemenu')).not.toBeNull();
   });
 
   it('draws every action as the round icon button the song list uses, with no text pill', async () => {
