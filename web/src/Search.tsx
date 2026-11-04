@@ -835,14 +835,17 @@ function TrackList({ tracks, seedKeys, onAdd, onPreview, onDownload, label }: { 
                   <Glyph name="share" size={14} />
                 </a>
               )}
-              <button className={classNames('push', 'addbtn', added && 'is-on')} type="button" onClick={() => onAdd(t)} disabled={added} aria-label={added ? `${t.title} is a starting song` : `Add ${t.title} to your starting songs`}>
-                {added ? (
-                  <>
-                    <Glyph name="check" size={12} /> Added
-                  </>
-                ) : (
-                  'Add'
-                )}
+              {/* The same round icon button as the song list (SEARCH-ICONS-001); pressed once added. */}
+              <button
+                className={classNames('iconbtn', added && 'is-on')}
+                type="button"
+                onClick={() => onAdd(t)}
+                disabled={added}
+                aria-pressed={added}
+                aria-label={added ? `${t.title} is a starting song` : `Add ${t.title} to your starting songs`}
+                title={added ? 'Added to your starting songs' : 'Add to your starting songs'}
+              >
+                <Glyph name={added ? 'check' : 'add'} size={14} />
               </button>
             </span>
           </li>

@@ -114,21 +114,25 @@
   .np--docked .np__action-error {
     display: none;
   }
-  /* Nine controls cannot share 360-412px: shuffle and repeat are the least used on a phone, and the
-     expanded player still offers both. Dropping them buys the room for like, dislike and download. */
-  .np--docked .transport .tbtn--mode {
+}
+
+/* DOCK-SHUFFLE-001: shuffle and repeat stay in the phone dock. Five transport buttons, three
+   actions and a mute button fill a 412px row; a phone sets its level with the hardware rocker,
+   so the slider is what gives way on narrow screens — the mute button stays. */
+@media (max-width: 599px) {
+  .np--docked .np__controls .vol {
+    flex: 0 0 auto;
+    min-width: 0;
+    width: auto;
+  }
+  .np--docked .np__controls .vol__bar {
     display: none;
   }
 }
-
-/* Below 380px the row cannot hold a 96px volume channel plus three actions: the channel shrinks
-   first, because the mute button next to it still toggles sound with a full-height target. */
 @media (max-width: 379px) {
+  /* 335px of row: nothing left for the speaker either; the rocker is the volume. */
   .np--docked .np__controls .vol {
-    min-width: 62px;
-  }
-  .np--docked .vol__bar {
-    max-width: 40px;
+    display: none;
   }
 }
 

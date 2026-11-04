@@ -159,12 +159,30 @@ describe('the controls are flat and reachable', () => {
     expect(controls![1]).toContain('<PlayerActions');
   });
 
-  it('gives the phone row room by hiding shuffle and repeat, which the expanded player keeps', () => {
-    expect(css).toMatch(/@media \(max-width: 899px\) \{[\s\S]*?\.np--docked \.transport \.tbtn--mode \{[^}]*display: none;/);
+  it('keeps shuffle and repeat on the phone dock; the room comes from the volume slider, not the toggles (DOCK-SHUFFLE-001)', () => {
+    // Owner, from a phone screenshot: no shuffle anywhere in the dock. An earlier rule hid both
+    // toggles under 900px to fit the row. The row now fits because a phone sets its level with
+    // the hardware rocker: on narrow phones the dock keeps the mute button and drops the slider.
+    expect(css).not.toMatch(/\.np--docked \.transport \.tbtn--mode \{[^}]*display: none;/);
+    expect(css).toMatch(/@media \(max-width: 599px\) \{[\s\S]*?\.np--docked \.np__controls \.vol__bar \{[^}]*display: none;/);
+    expect(css).toMatch(/@media \(max-width: 599px\) \{[\s\S]*?\.np--docked \.np__controls \.vol \{[^}]*min-width: 0;/);
   });
 
-  it('shrinks the volume channel before the actions on a very narrow phone', () => {
-    expect(css).toMatch(/@media \(max-width: 379px\) \{[\s\S]*?\.np--docked \.np__controls \.vol \{[^}]*min-width: 62px;/);
+  it('draws the search list’s actions with the song list’s icon buttons: round, flat, no Add pill (SEARCH-ICONS-001)', () => {
+    const search = readFileSync(new URL('./Search.tsx', import.meta.url), 'utf8');
+    const row = /<span className="track__actions">([\s\S]*?)<\/span>\s*<\/li>/.exec(search);
+    expect(row, 'track__actions not found').toBeTruthy();
+    expect(row![1]).not.toContain('addbtn');
+    expect(row![1]).toMatch(/className=\{classNames\('iconbtn', added && 'is-on'\)\}[\s\S]*?aria-pressed=\{added\}[\s\S]*?<Glyph name=\{added \? 'check' : 'add'\} size=\{14\} \/>/);
+    // Same paint as .rec__actions: one shared rule set in the main stylesheet.
+    const main = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');
+    expect(main).toMatch(/\.rec__actions \.iconbtn,\s*\.track__actions \.iconbtn \{/);
+    expect(main).toMatch(/\.rec__actions \.iconbtn:hover,\s*\.track__actions \.iconbtn:hover \{/);
+    expect(main).toMatch(/\.rec__actions \.iconbtn\[aria-pressed='true'\],\s*\.track__actions \.iconbtn\[aria-pressed='true'\] \{/);
+  });
+
+  it('drops the dock volume entirely on a very narrow phone, where the rocker is the volume (DOCK-SHUFFLE-001)', () => {
+    expect(css).toMatch(/@media \(max-width: 379px\) \{[\s\S]*?\.np--docked \.np__controls \.vol \{[^}]*display: none;/);
   });
 
   it('drops the panel around the search sliders on a phone only', () => {

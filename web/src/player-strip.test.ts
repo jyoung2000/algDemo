@@ -69,6 +69,16 @@ describe('the player strip (NP-STRIP-001)', () => {
     expect(css).toMatch(/\n\.transport \{[^}]*align-items: center;/);
   });
 
+  it('shows a pending full-song lookup as loading, with the bar, never as "no player here" (NP-STRIP-007)', () => {
+    // Owner, from a Windows screenshot: "No player here for this song. Open it in its app." and
+    // no progress bar, on a song that then played fine a second later. That was the moment the
+    // app asks the shell whether it holds the download: a pending state, not a missing player.
+    const player = readFileSync(new URL('./Player.tsx', import.meta.url), 'utf8');
+    expect(player).toMatch(/const pending = lookingUp \|\| askingLocal;/);
+    expect(player).toMatch(/const progress = hasSound \|\| pending \?/);
+    expect(player).toMatch(/\) : pending \? \(\s*<p className="np__note">\{askingLocal \? 'Loading the full song…' : 'Finding the full song…'\}<\/p>/);
+  });
+
   it('gives the volume slider a finger- and mouse-sized hit area around its thin channel', () => {
     expect(css).toMatch(/\.vol__bar \{[^}]*padding: 8px 0;[^}]*background-clip: content-box;/);
   });

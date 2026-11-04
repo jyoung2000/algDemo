@@ -1268,8 +1268,10 @@ a.push {
    areas overlap and steal each other's hits, measuring 41px at best and 36px once the gap
    narrows.
    Six 44px-wide targets plus a label cannot fit a 320px row (6 x 44 = 264 > 252), so width
-   is the axis that gives; height, where a mis-tap is likeliest, keeps the full 44px. */
-.rec__actions .iconbtn {
+   is the axis that gives; height, where a mis-tap is likeliest, keeps the full 44px.
+   The search list's actions share this paint (SEARCH-ICONS-001): one icon language, two lists. */
+.rec__actions .iconbtn,
+.track__actions .iconbtn {
   box-sizing: content-box;
   width: 36px;
   height: 36px;
@@ -1282,11 +1284,13 @@ a.push {
   border-radius: 999px;
   box-shadow: inset 0 0 0 1px var(--hair);
 }
-.rec__actions .iconbtn:hover {
+.rec__actions .iconbtn:hover,
+.track__actions .iconbtn:hover {
   border-color: transparent;
   box-shadow: inset 0 0 0 1px #c6c3bb;
 }
-.rec__actions .iconbtn[aria-pressed='true'] {
+.rec__actions .iconbtn[aria-pressed='true'],
+.track__actions .iconbtn[aria-pressed='true'] {
   border-color: transparent;
   box-shadow: inset 0 0 0 1px #b8cff0;
 }
@@ -2463,7 +2467,8 @@ a.push {
   }
   /* The card's own controls stay a 36px circle so all six fit one line, in a box a full 44px
      tall so the vertical target is real. See the base rule for why width gives. */
-  .rec__actions .iconbtn {
+  .rec__actions .iconbtn,
+  .track__actions .iconbtn {
     width: 36px;
     height: 36px;
   }

@@ -216,6 +216,9 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const mode: Mode = localSrc ? 'local' : askingLocal ? 'none' : videoId ? 'full' : src ? 'preview' : embed ? 'embed' : 'none';
   const hasSound = mode === 'full' || mode === 'local' || mode === 'preview';
   const onDeck = mode === 'local' || mode === 'preview';
+  // Looking the song up, or asking the shell whether it holds it: a moment of waiting, shown as
+  // loading with the bar in place — never as "no player here" (NP-STRIP-007).
+  const pending = lookingUp || askingLocal;
 
   useEffect(() => {
     if (!playing || !needsLookup) return;
@@ -595,7 +598,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   );
 
   const total = dur || playing?.track.duration || (mode === 'preview' ? 30 : 0);
-  const progress = hasSound ? (
+  const progress = hasSound || pending ? (
     <div className="prog">
       <span className="prog__t">{fmtDuration(cur) || '0:00'}</span>
       <input
@@ -637,8 +640,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     <p className="np__note np__note--bad">
       <Glyph name="warning" size={12} /> {err}
     </p>
-  ) : lookingUp ? (
-    <p className="np__note">Finding the full song…</p>
+  ) : pending ? (
+    <p className="np__note">{askingLocal ? 'Loading the full song…' : 'Finding the full song…'}</p>
   ) : mode === 'full' ? (
     <p className="np__note">
       {loading ? 'Loading the full song…' : localStatus === 'running' ? 'Full song in YouTube’s player while this app downloads it for the equaliser and mixer.' : 'Full song, played by YouTube’s own player.'}

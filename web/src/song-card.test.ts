@@ -57,7 +57,7 @@ describe('the song card (SONG-CARD-001)', () => {
     // the 999px radius clamps to a true circle, while the border area still takes the tap.
     // An ::after overlay was measured and does NOT work: adjacent buttons' inflated areas
     // steal each other's hits (41px at best, 36px at a 4px gap).
-    const rec = /\.rec__actions \.iconbtn \{([^}]+)\}/.exec(css)?.[1] ?? '';
+    const rec = /\.rec__actions \.iconbtn,\s*\.track__actions \.iconbtn \{([^}]+)\}/.exec(css)?.[1] ?? '';
     expect(rec).toMatch(/box-sizing: content-box;/);
     expect(rec).toMatch(/width: 36px;/);
     expect(rec).toMatch(/height: 36px;/);
@@ -75,7 +75,7 @@ describe('the song card (SONG-CARD-001)', () => {
       if (/border-color/.test(rule[1] ?? '')) expect(rule[1]).toMatch(/border-color: transparent;/);
     }
     expect(css).toMatch(/\.rec__actions \.iconbtn:hover[^{]*\{[^}]*border-color: transparent;/);
-    expect(css).toMatch(/\.rec__actions \.iconbtn \{[^}]*box-shadow: inset 0 0 0 1px/);
+    expect(css).toMatch(/\.rec__actions \.iconbtn,\s*\.track__actions \.iconbtn \{[^}]*box-shadow: inset 0 0 0 1px/);
     expect(css).not.toMatch(/\.rec__actions \.iconbtn::after/);
     // The why pill shares the row, so it must be the same height to tap reliably.
     expect(css).toMatch(/\.rec__actions \.whybtn \{\s*min-height: 44px;/);
