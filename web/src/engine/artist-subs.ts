@@ -7,7 +7,7 @@
  */
 import type { Tag } from './genres';
 import { fold } from './identity';
-import { hipHopSubsFromArtist, needsHipHopSub } from './infer';
+import { needsSub, subsFromArtist } from './infer';
 import type { Http, Meter } from './net';
 import type { Dict } from './shape';
 import type { Store } from './store';
@@ -29,7 +29,7 @@ export const artistName = (track: Dict | null | undefined, fallback?: string): s
 /** The track with its artist's remembered subgenres added when its own tags only name the family. */
 export function withArtistSubs<T extends Dict>(track: T, map: ArtistSubsMap | undefined, fallbackArtist?: string): T {
   const tags = (track?.['tags'] as Tag[] | undefined) ?? [];
-  if (!map || !needsHipHopSub(tags)) return track;
+  if (!map || !needsSub(tags)) return track;
   const subs = map[fold(artistName(track, fallbackArtist))]?.tags;
   return subs?.length ? { ...track, tags: [...tags, ...subs] } : track;
 }
@@ -51,7 +51,7 @@ export async function lookupArtistSubs(
   const body = await cache<Dict>(`mb:artist:${k}`, () =>
     http.getJson<Dict>(url, { maxBytes: 100_000, ...(opt.meter ? { meter: opt.meter } : {}), category: 'metadata', headers: { 'user-agent': MUSICBRAINZ_UA, accept: 'application/json' }, ...(opt.token ? { token: opt.token } : {}) }),
   );
-  const tags = hipHopSubsFromArtist(body, artist);
+  const tags = subsFromArtist(body, artist);
   await remember(store, k, tags, now);
   return tags;
 }
@@ -64,12 +64,15 @@ export async function remember(store: Store, k: string, tags: Tag[], now: number
   await store.put(ARTIST_SUBS_KEY, map);
 }
 
-/** Artists in the history that are hip-hop but have no remembered answer yet (or an old empty one), most-played first. */
+/**
+ * Artists in the history whose songs name a family but nothing finer, with no remembered answer yet
+ * (or an old empty one), most-played first. Every family, not only hip-hop (TAGS-MULTI-001).
+ */
 export function artistsToAsk(rows: { artist?: string | null; track: Dict | null }[], map: ArtistSubsMap | undefined, now: number): string[] {
   const count = new Map<string, { name: string; n: number }>();
   for (const r of rows) {
     const t = r.track ?? {};
-    if (!needsHipHopSub((t['tags'] as Tag[] | undefined) ?? [])) continue;
+    if (!needsSub((t['tags'] as Tag[] | undefined) ?? [])) continue;
     const name = artistName(t, r.artist ?? undefined);
     const k = fold(name);
     if (!k || name.length > 80) continue;

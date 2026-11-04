@@ -121,6 +121,32 @@ export function classify(tags: Tag[] | null | undefined, bpm: number | null | un
   };
 }
 
+/**
+ * Every family and subgenre the tags name, strongest tag first (TAGS-MULTI-001).
+ *
+ * A song is not one genre: "CUFF IT" is R&B and pop, a Ken Carson song is rap and rage. The first
+ * entry is what classify() returns, so a song's place on the taste map does not move; the rest are
+ * what the card shows beside it. Only genres the tags actually name appear — nothing is guessed
+ * from tempo, and a family already named by one of its own subgenres is not repeated.
+ */
+export function classifyAll(tags: Tag[] | null | undefined, bpm: number | null | undefined): Classification[] {
+  const tg = (tags ?? []).filter((t) => t && typeof t.name === 'string').sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+  const out: Classification[] = [];
+  const seen = new Set<string>();
+  const familiesWithSub = new Set<string>();
+  for (const t of tg) {
+    const one = classify([t], bpm);
+    if (!one) continue;
+    const key = `${one.familySlug}/${one.key ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (one.subgenre) familiesWithSub.add(one.familySlug);
+    out.push(one);
+  }
+  // A bare family bubble is noise next to its own subgenre ('Hip-hop' beside 'Rage'), so it goes.
+  return out.filter((c) => c.subgenre !== null || !familiesWithSub.has(c.familySlug));
+}
+
 function bestByTempo(list: SubDef[], bpm: number): SubDef | null {
   let best: SubDef | null = null;
   let bestFit = -1;

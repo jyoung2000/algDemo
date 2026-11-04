@@ -8,7 +8,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { AudioSettings } from './AudioSettings';
 import { SettingsView } from './Settings';
 import type { Settings } from './api';
-import { EQ_BANDS_HZ, EQ_DEFAULTS, EQ_PRESETS, applyPreset, headroomTrimDb } from './engine/eq';
+import { EQ_BANDS_HZ, EQ_DEFAULTS, EQ_PRESETS, SOLFEGGIO, applyPreset, headroomTrimDb } from './engine/eq';
 import { MIX_LABELS } from './engine/crossfade';
 
 // The stylesheet is read from disk: a `?raw` import of a CSS file is processed, not returned verbatim.
@@ -21,6 +21,46 @@ const saved: Settings = { fresh: false, adventurous: 0.5, audio: true, daily_mb:
 const slider = (name: string) => screen.getByRole('slider', { name }) as HTMLInputElement;
 const checkbox = (name: string) => screen.getByRole('checkbox', { name }) as HTMLInputElement;
 const panel = (settings: Settings | null = saved, onSettings = vi.fn()) => createElement(AudioSettings, { settings, onSettings });
+
+describe('the solfeggio tones in the Audio panel (SOLFEGGIO-001)', () => {
+  const groupNames = () => [...(screen.getByLabelText('EQ preset') as HTMLSelectElement).querySelectorAll('optgroup')].map((g) => g.label);
+
+  it('keeps the nine tones in a group of their own, apart from the voicings', () => {
+    // A flat list of thirty presets buries them, and a listener looking for 528 Hz is not looking
+    // for a voicing. Two groups, each whole: no preset is dropped from the picker.
+    render(panel());
+    expect(groupNames()).toEqual(['Voicing', 'Solfeggio tones']);
+    const options = [...(screen.getByLabelText('EQ preset') as HTMLSelectElement).options].map((o) => o.value);
+    for (const p of EQ_PRESETS) expect(options, p.id).toContain(p.id);
+    for (const t of SOLFEGGIO) {
+      const option = [...(screen.getByLabelText('EQ preset') as HTMLSelectElement).options].find((o) => o.value === `solfeggio-${t.hz}`)!;
+      expect(option, `${t.hz} Hz`).toBeTruthy();
+      expect(option.text).toContain(`${t.hz} Hz`);
+      expect(option.closest('optgroup')?.label).toBe('Solfeggio tones');
+    }
+  });
+
+  it('chooses a tone by name and saves it as the frequency to lift', () => {
+    const onSettings = vi.fn();
+    render(panel({ ...saved, eq: { ...EQ_DEFAULTS, on: true } }, onSettings));
+    fireEvent.change(screen.getByLabelText('EQ preset'), { target: { value: 'solfeggio-528' } });
+    const patch = onSettings.mock.calls.at(-1)?.[0] as { eq: { toneHz: number | null; presetId: string } };
+    expect(patch.eq.toneHz).toBe(528);
+    expect(patch.eq.presetId).toBe('solfeggio-528');
+  });
+
+  it('says in hertz what is being lifted, and why the faders cannot do it', () => {
+    render(panel({ ...saved, eq: applyPreset({ ...EQ_DEFAULTS, on: true }, 'solfeggio-528') }));
+    const note = screen.getByText(/528 Hz is lifted/);
+    expect(note.textContent).toMatch(/narrow filter at that exact/);
+    expect(note.textContent).toContain('500 Hz'); // the nearest fader, which is not 528
+  });
+
+  it('says nothing about a tone when none is chosen', () => {
+    render(panel({ ...saved, eq: applyPreset({ ...EQ_DEFAULTS, on: true }, 'rock') }));
+    expect(screen.queryByText(/Hz is lifted/)).toBeNull();
+  });
+});
 
 describe('Audio settings — MIXER-001 and EQ-001', () => {
   it('integrates in Settings without changing unrelated preferences', () => {

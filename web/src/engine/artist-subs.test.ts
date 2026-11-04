@@ -19,10 +19,12 @@ describe('artist subgenres', () => {
     const other = { artists: ['Y'], tags: [hip] };
     expect(withArtistSubs(other, {})).toBe(other);
   });
-  it('asks the most-played unknown hip-hop artists first, skipping answered ones and recent empties', () => {
+  it('asks the most-played artists whose songs name a family but nothing finer, skipping answered ones and recent empties', () => {
+    // TAGS-MULTI-001: 'D' is a pop artist and is asked about too. The lookup used to be hip-hop
+    // only, which is how a Beyoncé song stayed hip-hop with no R&B anywhere.
     const rows = [row('A'), row('B'), row('B'), row('C'), row('D', [makeTag('pop', 'x')])];
     const map = { a: { at: 1000, tags: [makeTag('trap', 'x')] }, c: { at: 1000, tags: [] } };
-    expect(artistsToAsk(rows, map, 1500)).toEqual(['B']);
-    expect(artistsToAsk(rows, map, 1000 + 15 * 24 * 3600)).toEqual(['B', 'C']);
+    expect(artistsToAsk(rows, map, 1500)).toEqual(['B', 'D']);
+    expect(artistsToAsk(rows, map, 1000 + 15 * 24 * 3600)).toEqual(['B', 'C', 'D']);
   });
 });

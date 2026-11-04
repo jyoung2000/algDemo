@@ -254,12 +254,14 @@ describe('the EQ graph (EQ-001)', () => {
     const source = new Node('source');
     createEqGraph(ctx, source as unknown as AudioNode, config({ on: true }));
     const filters = made.filter((n): n is BiquadNode => n instanceof BiquadNode);
-    expect(filters).toHaveLength(EQ_BANDS_HZ.length);
-    filters.forEach((f, i) => {
+    // Ten bands, then the solfeggio resonance (SOLFEGGIO-001), which sits silent unless a tone is set.
+    expect(filters).toHaveLength(EQ_BANDS_HZ.length + 1);
+    filters.slice(0, EQ_BANDS_HZ.length).forEach((f, i) => {
       expect(f.type).toBe('peaking');
       expect(f.frequency.value).toBe(EQ_BANDS_HZ[i]);
       expect(f.Q.value).toBe(EQ_Q);
     });
+    expect(filters.at(-1)!.gain.value).toBe(0);
   });
 
   it('never asks for a centre above Nyquist, which would throw on a 22 kHz device', () => {

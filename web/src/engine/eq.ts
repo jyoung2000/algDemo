@@ -27,6 +27,36 @@ export const EQ_BANDS_HZ = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000
 /** Q for every graphic band, as the player uses. */
 export const EQ_Q = 1.1;
 
+/**
+ * The solfeggio tones, in Hz, with their traditional names (SOLFEGGIO-001).
+ *
+ * The names are the ones these tones are known by; Airwave makes no claim about what they do. 432Hz
+ * is deliberately absent: it is a *tuning* reference (A=432), which means pitch-shifting the whole
+ * song, not lifting one frequency — see design/decisions in the repo notes.
+ */
+export const SOLFEGGIO = [
+  { hz: 174, name: 'Foundation' },
+  { hz: 285, name: 'Repair' },
+  { hz: 396, name: 'Release' },
+  { hz: 417, name: 'Change' },
+  { hz: 528, name: 'Transformation' },
+  { hz: 639, name: 'Connection' },
+  { hz: 741, name: 'Expression' },
+  { hz: 852, name: 'Intuition' },
+  { hz: 963, name: 'Clarity' },
+] as const;
+
+/**
+ * How narrow the resonance is. Q 8 is about a sixth of an octave wide — tight enough that the named
+ * frequency is the one lifted (and not its neighbours), wide enough to catch a note that is a few
+ * hertz off, since no recording sits exactly on 528.000Hz.
+ */
+export const SOLFEGGIO_Q = 8;
+/** How much the resonance lifts, in dB. The headroom trim keeps the result below full scale. */
+export const SOLFEGGIO_DB = 6;
+/** Whether this frequency is one of the solfeggio tones. */
+export const isSolfeggio = (hz: number): boolean => SOLFEGGIO.some((s) => s.hz === hz);
+
 export const EQ_GAIN_MIN_DB = -12;
 export const EQ_GAIN_MAX_DB = 12;
 export const EQ_PREAMP_MIN_DB = -12;
@@ -48,6 +78,21 @@ export interface EqPreset {
   /** One gain per entry in EQ_BANDS_HZ. */
   readonly gains: readonly number[];
   readonly preampDb?: number;
+  /** A solfeggio resonance at exactly this frequency, on top of the bands (SOLFEGGIO-001). */
+  readonly toneHz?: number;
+}
+
+/**
+ * The ten fixed bands around a solfeggio tone: a gentle lift on the two centres either side of it,
+ * so the preset has a shape of its own and the resonance is not the only thing doing the work.
+ */
+function solfeggioGains(hz: number): number[] {
+  return EQ_BANDS_HZ.map((centre) => {
+    const octaves = Math.abs(Math.log2(hz / centre));
+    if (octaves <= 0.5) return 2;
+    if (octaves <= 1.2) return 1;
+    return 0;
+  });
 }
 
 /**
@@ -77,6 +122,8 @@ export const EQ_PRESETS: readonly EqPreset[] = [
   { id: 'treble-booster', name: 'Treble booster', gains: [0, 0, 0, 0, 0, 1.5, 3, 4.5, 6, 7] },
   { id: 'treble-reducer', name: 'Treble reducer', gains: [0, 0, 0, 0, 0, -1.5, -3, -4.5, -6, -7] },
   { id: 'vocal-booster', name: 'Vocal booster', gains: [-2, -3, -3, 1.5, 4, 4, 3, 1.5, 0, -1.5] },
+  // One per solfeggio tone (SOLFEGGIO-001): a real resonance at the named frequency.
+  ...SOLFEGGIO.map((t) => ({ id: `solfeggio-${t.hz}`, name: `${t.hz} Hz · ${t.name}`, gains: solfeggioGains(t.hz), toneHz: t.hz })),
 ];
 
 export interface EqConfig {
@@ -88,9 +135,21 @@ export interface EqConfig {
   preampDb: number;
   /** The safety limiter. On by default: a loud boost clips without it. */
   limiter: boolean;
+  /** The solfeggio resonance's frequency, or null for none (SOLFEGGIO-001). */
+  toneHz?: number | null;
+  /** How much that resonance lifts, in dB. */
+  toneDb?: number;
 }
 
-export const EQ_DEFAULTS: EqConfig = { on: false, presetId: 'flat', gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], preampDb: 0, limiter: true };
+export const EQ_DEFAULTS: EqConfig = {
+  on: false,
+  presetId: 'flat',
+  gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  preampDb: 0,
+  limiter: true,
+  toneHz: null,
+  toneDb: SOLFEGGIO_DB,
+};
 
 export const clampGain = (db: number): number => clamp(db, EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB);
 export const clampPreamp = (db: number): number => clamp(db, EQ_PREAMP_MIN_DB, EQ_PREAMP_MAX_DB);
@@ -113,6 +172,9 @@ export function parseEq(raw: unknown): EqConfig {
     gains: EQ_BANDS_HZ.map((_, i) => clampGain(Number(gains[i] ?? 0))),
     preampDb: clampPreamp(Number(o.preampDb ?? 0)),
     limiter: o.limiter !== false,
+    // Only a known tone is kept: a stored number from another build cannot put the filter anywhere.
+    toneHz: typeof o.toneHz === 'number' && isSolfeggio(o.toneHz) ? o.toneHz : null,
+    toneDb: clampGain(Number(o.toneDb ?? SOLFEGGIO_DB)),
   };
 }
 
@@ -124,14 +186,25 @@ export function presetById(id: string): EqPreset | null {
 export function applyPreset(config: EqConfig, id: string): EqConfig {
   const preset = presetById(id);
   if (!preset) return config;
-  return { ...config, presetId: preset.id, gains: preset.gains.map(clampGain), preampDb: clampPreamp(preset.preampDb ?? 0) };
+  return {
+    ...config,
+    presetId: preset.id,
+    gains: preset.gains.map(clampGain),
+    preampDb: clampPreamp(preset.preampDb ?? 0),
+    // A preset owns the resonance too: choosing Rock clears the tone, choosing 528 Hz sets it.
+    toneHz: preset.toneHz ?? null,
+  };
 }
 
 /** Whether these gains still match the named preset. Moving a slider makes the choice 'custom'. */
 export function matchesPreset(config: EqConfig): boolean {
   const preset = presetById(config.presetId);
   if (!preset) return false;
-  return preset.gains.every((g, i) => Math.abs(g - (config.gains[i] ?? 0)) < 0.01) && Math.abs((preset.preampDb ?? 0) - config.preampDb) < 0.01;
+  return (
+    preset.gains.every((g, i) => Math.abs(g - (config.gains[i] ?? 0)) < 0.01) &&
+    Math.abs((preset.preampDb ?? 0) - config.preampDb) < 0.01 &&
+    (preset.toneHz ?? null) === (config.toneHz ?? null)
+  );
 }
 
 /**
@@ -151,6 +224,12 @@ export function responseDbAt(config: EqConfig, hz: number): number {
     const bandwidth = 1 / EQ_Q;
     const weight = 1 / (1 + (octaves / bandwidth) ** 2 * 4);
     db += gain * weight;
+  }
+  if (config.toneHz) {
+    // The same peaking shape, far narrower: this is what makes the named frequency the one lifted.
+    const octaves = Math.log2(hz / config.toneHz);
+    const bandwidth = 1 / SOLFEGGIO_Q;
+    db += (config.toneDb ?? SOLFEGGIO_DB) * (1 / (1 + (octaves / bandwidth) ** 2 * 4));
   }
   return db;
 }
@@ -206,7 +285,8 @@ export interface EqGraph {
    */
   readonly output: AudioNode;
   /** What the graph is doing now: whether the wet path is live and each band's target gain in dB. */
-  peek(): { on: boolean; bands: number[]; preampDb: number; trimDb: number };
+  /** A read-only look at what the graph is doing, for the UI and for gates on the real build. */
+  peek(): { on: boolean; bands: number[]; preampDb: number; trimDb: number; toneHz: number | null; toneDb: number };
   dispose(): void;
 }
 
@@ -250,6 +330,13 @@ export function createEqGraph(ctx: EqContext, source: AudioNode, initial: EqConf
     return f;
   });
 
+  // The solfeggio resonance (SOLFEGGIO-001), after the ten bands: silent (0 dB) unless a tone is set.
+  const tone = ctx.createBiquadFilter();
+  tone.type = 'peaking';
+  tone.frequency.value = SOLFEGGIO[0].hz;
+  tone.Q.value = SOLFEGGIO_Q;
+  tone.gain.value = 0;
+
   // source → { wet → preamp → bands → trim → limiter|bypass → out, dry → out } → destination
   source.connect(wet);
   source.connect(dry);
@@ -259,7 +346,8 @@ export function createEqGraph(ctx: EqContext, source: AudioNode, initial: EqConf
     node.connect(band);
     node = band;
   }
-  node.connect(trim);
+  node.connect(tone);
+  tone.connect(trim);
   trim.connect(limiter);
   trim.connect(limiterBypass);
   limiter.connect(limiterOut);
@@ -292,6 +380,9 @@ export function createEqGraph(ctx: EqContext, source: AudioNode, initial: EqConf
       const band = bands[i]!;
       ramp(band.gain, live ? clampGain(config.gains[i] ?? 0) : 0, t);
     }
+    const toneHz = config.toneHz && isSolfeggio(config.toneHz) ? config.toneHz : null;
+    if (toneHz) tone.frequency.setValueAtTime(Math.min(toneHz, ctx.sampleRate / 2 - 1), t);
+    ramp(tone.gain, live && toneHz ? clampGain(config.toneDb ?? SOLFEGGIO_DB) : 0, t);
     trimNow = live ? headroomTrimDb(config) : 0;
     ramp(trim.gain, dbToGain(trimNow), t);
     // Exactly one of the two paths carries the signal. Leaving both open would pass the audio
@@ -309,13 +400,15 @@ export function createEqGraph(ctx: EqContext, source: AudioNode, initial: EqConf
     peek: () => ({
       on: current.on,
       bands: bands.map((_, i) => (current.on ? clampGain(current.gains[i] ?? 0) : 0)),
+      toneHz: current.on ? (current.toneHz ?? null) : null,
+      toneDb: current.on && current.toneHz ? clampGain(current.toneDb ?? SOLFEGGIO_DB) : 0,
       preampDb: current.on ? current.preampDb : 0,
       trimDb: trimNow,
     }),
     dispose() {
       if (disposed) return;
       disposed = true;
-      for (const n of [source, wet, dry, preamp, ...bands, trim, limiter, limiterOut, limiterBypass, out]) {
+      for (const n of [source, wet, dry, preamp, ...bands, tone, trim, limiter, limiterOut, limiterBypass, out]) {
         try {
           (n as AudioNode).disconnect();
         } catch {

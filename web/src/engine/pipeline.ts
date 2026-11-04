@@ -10,7 +10,7 @@ import { type EngineConfig, TRANSFER } from './config';
 import { decodeToMono48k } from './decode';
 import { type Ctx, type Deezer, ProviderError, cached } from './deezer';
 import { fold, matchRecordings } from './identity';
-import { hipHopSubsFromArtist, needsHipHopSub, tagsFromMusicBrainz } from './infer';
+import { needsSub, tagsFromMusicBrainz } from './infer';
 import { ARTIST_SUBS_KEY, MUSICBRAINZ_UA, artistName, artistsToAsk, lookupArtistSubs, type ArtistSubsMap } from './artist-subs';
 import { BudgetExceeded, CancelToken, Cancelled, type Http, Meter } from './net';
 import type { SoundCloud } from './soundcloud';
@@ -386,7 +386,7 @@ export class Pipeline {
     let asked = 0;
     for (const cand of cands) {
       const tags = (cand['tags'] as Tag[] | undefined) ?? [];
-      if (!needsHipHopSub(tags)) continue;
+      if (!needsSub(tags)) continue;
       const artist = artistName(cand);
       if (!artist || artist.length > 80) continue;
       const k = fold(artist);

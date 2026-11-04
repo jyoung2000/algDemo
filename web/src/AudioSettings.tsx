@@ -4,7 +4,8 @@ import { REASON_TEXT, reason as engineReason, subscribeEngine } from './audio-en
 import { MIX_LABELS, MIX_MAX, MIX_MIN, PLAY_THROUGH_DEFAULT, PLAY_THROUGH_MAX, PLAY_THROUGH_MIN, clampPlayThrough, clampSlider, mixLabel } from './engine/crossfade';
 import {
   EQ_BANDS_HZ, EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB, EQ_PREAMP_MIN_DB, EQ_PREAMP_MAX_DB,
-  EQ_PRESETS, applyPreset, clampGain, clampPreamp, headroomTrimDb, matchesPreset, parseEq,
+  EQ_PRESETS,
+  SOLFEGGIO_DB, applyPreset, clampGain, clampPreamp, headroomTrimDb, matchesPreset, parseEq,
   type EqConfig,
 } from './engine/eq';
 import './audio-settings.css';
@@ -46,6 +47,9 @@ function Fader({ id, label, name, value, min, max, step, onChange, strong }: {
 }
 
 /** MIXER-001 / EQ-001: settings only; App owns applying them to the audio engine. */
+/** The fader centre closest to a tone, for the note that explains why the extra filter exists. */
+const nearestBandHz = (hz: number): number => EQ_BANDS_HZ.reduce((a, b) => (Math.abs(b - hz) < Math.abs(a - hz) ? b : a));
+
 export function AudioSettings({ settings, onSettings }: Props) {
   const id = useId();
   const mix = clampSlider(settings?.mix ?? 0);
@@ -156,8 +160,25 @@ export function AudioSettings({ settings, onSettings }: Props) {
         <select className="field audio-settings__preset" id={`${id}-preset`} value={preset}
           onChange={(event) => onSettings({ eq: applyPreset(eq, event.target.value) })}>
           <option value="custom" disabled>Custom</option>
-          {EQ_PRESETS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          {/* Two groups: the voicings a listener knows from the player, then the solfeggio tones
+              (SOLFEGGIO-001), which are nine of one kind and would otherwise bury the rest. */}
+          <optgroup label="Voicing">
+            {EQ_PRESETS.filter((item) => !item.toneHz).map((item) => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </optgroup>
+          <optgroup label="Solfeggio tones">
+            {EQ_PRESETS.filter((item) => item.toneHz).map((item) => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </optgroup>
         </select>
+        {eq.toneHz ? (
+          <p className="note">
+            {eq.toneHz} Hz is lifted by {(eq.toneDb ?? SOLFEGGIO_DB).toFixed(0)} dB by a narrow filter at that exact
+            frequency — the ten faders cannot reach it, since the nearest one is {nearestBandHz(eq.toneHz)} Hz.
+          </p>
+        ) : null}
         {/*
           A graphic equalizer, in the shape people expect and the suite already draws
           (music-player's Equalizer, after the iTunes window): a dB scale on the left, the preamp

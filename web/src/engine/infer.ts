@@ -10,7 +10,7 @@
  * (Deezer album genre is 0.8): artist 0.45, sound 0.3..0.55 by similarity, seed 0.25.
  */
 import { type Tag, makeTag, tagStrength } from './genres';
-import { SUBS } from './genre-table';
+import { FAMILY_TAGS, SUBS } from './genre-table';
 import { fold } from './identity';
 import type { Store } from './store';
 import type { Dict } from './shape';
@@ -125,6 +125,8 @@ export function tagsFromMusicBrainz(body: Dict): Tag[] {
 }
 
 const HIPHOP_SUB_KEYS = new Set(SUBS.filter((x) => x.family === 'hip-hop').map((x) => x.key));
+/** Every subgenre key, whatever its family: the artist lookup is not a hip-hop lookup (TAGS-MULTI-001). */
+const SUB_KEYS = new Set(SUBS.map((x) => x.key));
 export const MB_ARTIST_SOURCE = 'MusicBrainz artist tags';
 
 /** True when a song is placed in hip-hop but no tag names which kind. */
@@ -134,11 +136,50 @@ export function needsHipHopSub(tags: Tag[] | null | undefined): boolean {
 }
 
 /**
+ * Whether an artist is worth asking about: the song names a family but nothing finer
+ * (TAGS-MULTI-001).
+ *
+ * This used to be hip-hop only, which is how a Beyoncé song stayed "hip-hop" with no R&B anywhere:
+ * her artist tags were fetched for other songs and dropped on the floor. Any family counts now. A
+ * song with no genre at all is still not asked about — an artist's tags are not evidence about a
+ * song that nothing has placed (TASTE-ACCURACY-001).
+ */
+export function needsSub(tags: Tag[] | null | undefined): boolean {
+  const t = (tags ?? []).filter(Boolean);
+  if (!t.length) return false;
+  const hasFamily = t.some((g) => FAMILY_TAGS[g.name]);
+  const hasSub = t.some((g) => SUB_KEYS.has(g.name));
+  return hasFamily && !hasSub;
+}
+
+/**
  * MusicBrainz artist search: the artist's community tags ("drill", "cloud rap", "jazz rap") name the
  * hip-hop subgenres a family-only tag cannot. Only an exact, top-scoring name match is trusted, only
  * hip-hop subgenres are kept, and the best two by vote count are returned, each below album-level
  * metadata in confidence. Pure, so it can be tested without a network.
  */
+export function subsFromArtist(body: Dict, artist: string): Tag[] {
+  const hit = ((body['artists'] as Dict[] | undefined) ?? [])[0];
+  if (!hit || Number(hit['score'] ?? 0) < 95 || fold(String(hit['name'] ?? '')) !== fold(artist)) return [];
+  const votes = new Map<string, number>();
+  const label = new Map<string, string>();
+  for (const t of (hit['tags'] as Dict[] | undefined) ?? []) {
+    const tag = makeTag(String(t['name'] ?? ''), MB_ARTIST_SOURCE, 'artist', 0.5);
+    // Any known subgenre, or a family word that names one of the picker's families: a tag that
+    // means nothing to the catalogue is still ignored, so nothing is invented from noise.
+    if (!tag || !(SUB_KEYS.has(tag.name) || FAMILY_TAGS[tag.name])) continue;
+    votes.set(tag.name, (votes.get(tag.name) ?? 0) + Math.max(1, Number(t['count'] ?? 1)));
+    if (!label.has(tag.name)) label.set(tag.name, tag.label);
+  }
+  return [...votes.entries()]
+    .sort((a, b) => b[1] - a[1])
+    // Three, not two: a song can carry several genres, and an artist usually earns two or three
+    // real ones ('r&b', 'soul', 'dance-pop') before the votes thin out.
+    .slice(0, 3)
+    .map(([name]) => ({ name, label: label.get(name) ?? name, source: MB_ARTIST_SOURCE, scope: 'artist', confidence: 0.5, inferred: false }));
+}
+
+/** @deprecated Use {@link subsFromArtist}; kept so the hip-hop rules keep their own name in tests. */
 export function hipHopSubsFromArtist(body: Dict, artist: string): Tag[] {
   const hit = ((body['artists'] as Dict[] | undefined) ?? [])[0];
   if (!hit || Number(hit['score'] ?? 0) < 95 || fold(String(hit['name'] ?? '')) !== fold(artist)) return [];

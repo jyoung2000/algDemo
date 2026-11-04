@@ -28,7 +28,7 @@ import { buildTasteBlend, type TasteBlend } from './taste2';
 import { ARTIST_SUBS_KEY, withArtistSubs, type ArtistSubsMap } from './artist-subs';
 import { fold, matchRecordings } from './identity';
 import { buildProfile } from './profile';
-import { classify } from './classify';
+import { classify, classifyAll } from './classify';
 import { makeTag } from './genres';
 import { inferFromArtist, inferFromSeed, inferFromSound, recordArtistGenres } from './infer';
 import { BlockedUrl, BudgetExceeded, Cancelled, FetchError, Http, type HttpPort, Meter } from './net';
@@ -76,10 +76,14 @@ export function characteristicsOf(c: Dict, taste: TasteProfile | null): Dict {
   const tf = taste ? tasteFit({ tags: tags as never, bpm: (c['bpm'] as number) ?? null }, taste) : null;
   const bpmIn = typeof c['bpm'] === 'number' ? (c['bpm'] as number) : null;
   const cls = classify(tags as never, bpmIn);
+  // Every genre the tags name, not only the strongest (TAGS-MULTI-001). `family`/`subgenre` stay
+  // as the first of them, so a song's place on the taste map is unchanged.
+  const all = classifyAll(tags as never, bpmIn);
   const lead = [...tags].sort((a, b) => Number(b['confidence'] ?? 0) - Number(a['confidence'] ?? 0))[0];
   return {
     family: cls?.family ?? null,
     subgenre: cls?.subgenre ?? null,
+    families: all.map((c) => ({ family: c.family, subgenre: c.subgenre, color: c.color })),
     tempo_fit: cls?.tempoFit ?? null,
     color: cls?.color ?? null,
     genre_inferred: lead ? Boolean(lead['inferred']) : null,

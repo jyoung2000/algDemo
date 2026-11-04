@@ -107,6 +107,11 @@ export interface Characteristics {
   /** Taste Picker family and subgenre from the song's tags and tempo; null when neither is known. */
   family?: string | null;
   subgenre?: string | null;
+  /**
+   * Every family and subgenre the song's tags name, strongest first (TAGS-MULTI-001). A song is not
+   * one genre: `family`/`subgenre` above are the first of these, and the card shows them all.
+   */
+  families?: { family: string; subgenre: string | null; color: string }[];
   tempo_fit?: number | null;
   color?: string | null;
   /** True when the genre was inferred (artist history, sound, or the seed), not sent by a provider. */

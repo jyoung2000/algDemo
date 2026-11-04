@@ -266,8 +266,15 @@ const tagKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
  * bubble is dropped ("Hip Hop" beside "underground hip hop"), and "Rap" and "Hip Hop" count as one.
  */
 export function genreTags(c?: Characteristics | null): string[] {
-  const family = c?.family ? splitTag(c.family) : [];
-  const sub = c?.subgenre ? splitTag(c.subgenre) : [];
+  // Every family and subgenre the tags name (TAGS-MULTI-001), not only the strongest pair: a song
+  // that is R&B and pop shows both. Older answers without the list fall back to the single pair.
+  const list = c?.families ?? [];
+  const family = list.length ? list.flatMap((f) => splitTag(f.family)) : c?.family ? splitTag(c.family) : [];
+  const sub = list.length
+    ? list.flatMap((f) => (f.subgenre ? splitTag(f.subgenre) : []))
+    : c?.subgenre
+      ? splitTag(c.subgenre)
+      : [];
   const provider = genreNames(c).slice(0, 3);
   const isSub = (n: string) => sub.some((x) => tagKey(x) === tagKey(n));
   // The provider's own main genre ("Rap") is the main bubble; the family ("Hip-hop") only fills in when there is none.
