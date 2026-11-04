@@ -3506,3 +3506,17 @@ a.push {
 /* Saved rows have no rank column to hang a glyph beside, so there the rail plus the
    screen-reader text carries the state and the mark is suppressed. */
 .track .rec__dl-mark { display: none; }
+/* Downloading, but the job has not reported a percent yet. A 0%-wide bar reads as stalled and a
+   smooth fake animation would be inventing progress, so this shows motion WITHOUT a number. */
+.rec__dl[data-indeterminate] .rec__dl-rail {
+  width: 35%;
+  animation: rec-dl-sweep 1.4s ease-in-out infinite;
+}
+@keyframes rec-dl-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(286%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* No motion allowed: fall back to a full, quiet bar that simply means "working". */
+  .rec__dl[data-indeterminate] .rec__dl-rail { width: 100%; animation: none; opacity: 0.45; }
+}

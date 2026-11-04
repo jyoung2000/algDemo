@@ -250,7 +250,7 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
             <li key={track.key} className="track" data-dl={cache?.state}
               style={cache ? ({ '--dl': `${cache.progress}%` } as CSSProperties) : undefined}>
               {cache && (
-                <span className="rec__dl" data-dl={cache.state}>
+                <span className="rec__dl" data-dl={cache.state} data-indeterminate={cache.indeterminate || undefined}>
                   <span className="rec__dl-rail" aria-hidden="true" />
                   <span className="sr">{cache.keptText ? `${cache.text}. ${cache.keptText}.` : `${cache.text}.`}</span>
                 </span>

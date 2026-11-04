@@ -156,7 +156,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
           >
             {cache && (
               // Glyph + text, never colour alone; the rail is decorative and sits on the bottom edge.
-              <span className="rec__dl" data-dl={cache.state}>
+              <span className="rec__dl" data-dl={cache.state} data-indeterminate={cache.indeterminate || undefined}>
                 <span className="rec__dl-rail" aria-hidden="true" />
                 <span className="rec__dl-mark" aria-hidden="true">{cache.glyph}</span>
                 <span className="sr">{cache.keptText ? `${cache.text}. ${cache.keptText}.` : `${cache.text}.`}</span>

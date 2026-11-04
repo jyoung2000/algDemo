@@ -20,6 +20,8 @@ export interface CardCache {
   kept: boolean;
   /** Rail width, 0-100. Real job progress only; an unknown percent reads 0, never a guess. */
   progress: number;
+  /** Downloading, but the job has not reported a percent: show motion, not a fake number. */
+  indeterminate: boolean;
 }
 
 export function cacheStateOf(o: {
@@ -32,12 +34,13 @@ export function cacheStateOf(o: {
   error: string | null;
 }): CardCache {
   const keptText = o.kept ? 'Kept in Music folder' : null;
-  const base = { keptText, kept: o.kept };
+  const base = { keptText, kept: o.kept, indeterminate: false };
   if (o.status === 'ready') return { ...base, state: 'ready', glyph: '✓', text: 'Ready in queue cache', progress: 100 };
   if (o.kept) return { ...base, state: 'ready', glyph: '✓', text: 'Ready from kept copy', progress: 100 };
   if (o.status === 'running') {
     const p = typeof o.percent === 'number' && Number.isFinite(o.percent) ? Math.max(0, Math.min(100, Math.round(o.percent))) : null;
-    return { ...base, state: 'downloading', glyph: '↓', text: p === null ? 'Caching' : `Caching · ${p}%`, progress: p ?? 0 };
+    return { ...base, state: 'downloading', glyph: '↓', text: p === null ? 'Caching' : `Caching · ${p}%`,
+      progress: p ?? 0, indeterminate: p === null };
   }
   if (o.status === 'missing') {
     // The cache being full is not the song's fault, and it clears by raising the limit.

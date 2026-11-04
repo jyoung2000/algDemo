@@ -32,6 +32,15 @@ it('reports the five states with a glyph AND text, never colour alone', () => {
   for (const s of ['ready', 'running', 'unknown', 'missing'] as const) expect(row({ status: s }).glyph).toBeTruthy();
 });
 
+it('marks a percent-less download indeterminate instead of showing a dead 0% bar', () => {
+  // Measured on the real app: yt-dlp emits no [download] NN% line for several seconds, so five
+  // songs sat at a motionless 0%. Showing motion without a number is honest; faking one is not.
+  expect(row({ status: 'running', percent: null })).toMatchObject({ indeterminate: true, progress: 0, text: 'Caching' });
+  expect(row({ status: 'running', percent: 12 })).toMatchObject({ indeterminate: false, progress: 12 });
+  expect(row({ status: 'ready' }).indeterminate).toBe(false);
+  expect(row({ status: 'unknown' }).indeterminate).toBe(false);
+});
+
 it('never invents a progress number: the rail reads 0 or 100 unless the job reports a percent', () => {
   expect(row({ status: 'running', percent: 42 }).progress).toBe(42);
   expect(row({ status: 'running', percent: null }).progress).toBe(0);
