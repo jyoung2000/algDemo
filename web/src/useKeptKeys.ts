@@ -23,8 +23,9 @@ export function useKeptKeys(tracks: Track[]): ReadonlySet<string> {
         if (!target) continue;
         try {
           const r = await dl.local(target.url);
-          // A file the shell still holds for this link, not one merely being fetched.
-          if (live && r.file && !r.running) found.add(t.key);
+          // `kept` only: `file` is also true for an evictable queue-cache entry, and calling that
+          // "Kept in Music folder" would erase the very distinction this badge exists to draw.
+          if (live && r.kept) found.add(t.key);
         } catch {
           // A shell that cannot answer is not evidence the song is kept.
         }

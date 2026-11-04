@@ -146,7 +146,8 @@ export const dl = {
   forget: (id: string) => call<{ ok: boolean }>({ op: 'forget', id }),
   reveal: (id: string) => call<{ ok: boolean }>({ op: 'reveal', id }),
   /** Whether the shell holds a finished download for a link (indexed by link, kept across restarts), or is fetching it. */
-  local: (url: string) => call<{ file: DlFile | null; running: boolean; error?: string | null }>({ op: 'local', url }),
+  /** `kept` is a permanent Music-folder copy; `cached` is the evictable queue cache. `file` is either. */
+  local: (url: string) => call<{ file: DlFile | null; kept?: boolean; cached?: boolean; running: boolean; error?: string | null }>({ op: 'local', url }),
 };
 
 /** The same check the native shells make, so the button can say no before asking. */
