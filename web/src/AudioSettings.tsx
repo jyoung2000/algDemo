@@ -210,6 +210,8 @@ export function AudioSettings({ settings, onSettings }: Props) {
               ))}
             </div>
           </div>
+          {/* EQ-RAIL-002: on a phone the rail is wider than the screen and slides. */}
+          <p className="eqr__hint">Slide the faders sideways for the higher bands.</p>
         </fieldset>
         <label className="chk audio-settings__toggle">
           <input type="checkbox" checked={eq.limiter} aria-describedby={`${id}-limiter-help`}

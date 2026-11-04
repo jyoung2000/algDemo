@@ -22,6 +22,36 @@ const slider = (name: string) => screen.getByRole('slider', { name }) as HTMLInp
 const checkbox = (name: string) => screen.getByRole('checkbox', { name }) as HTMLInputElement;
 const panel = (settings: Settings | null = saved, onSettings = vi.fn()) => createElement(AudioSettings, { settings, onSettings });
 
+describe('the equalizer rail on a phone (EQ-RAIL-002)', () => {
+  // Observed at 412px: the rail holds 507px of faders in a 361px box, so the last band is cut
+  // through the middle. It did scroll (a real swipe on the emulator moved it 146px and brought the
+  // last band into reach), but nothing said so — a cut fader reads as a broken layout.
+  it('shows a scrollbar on the rail instead of an invisible overlay one', () => {
+    expect(css).toMatch(/@media \(max-width: 560px\)[\s\S]*?\.eqr::-webkit-scrollbar \{[^}]*height:/);
+    expect(css).toMatch(/\.eqr::-webkit-scrollbar-thumb \{[^}]*background:/);
+  });
+
+  it('fades the edge the faders run under, so the cut band reads as more to come', () => {
+    expect(css).toMatch(/@media \(max-width: 560px\)[\s\S]*?\.eqr \{[^}]*mask-image: linear-gradient/);
+  });
+
+  it('says in words that the rail slides, and only where it has to', () => {
+    render(panel({ ...saved, eq: { ...EQ_DEFAULTS, on: true } }));
+    const hint = screen.getByText(/slide the faders sideways/i);
+    expect(hint.className).toContain('eqr__hint');
+    // Hidden by default; shown only at the widths where the rail cannot fit — and the base rule has
+    // to come FIRST, or it wins the cascade on equal specificity and the hint never appears (it
+    // did not, at 412px, while both rules were present).
+    const hidden = css.indexOf('.eqr__hint {');
+    const narrow = css.search(/@media \(max-width: 560px\)/);
+    expect(hidden).toBeGreaterThan(-1);
+    expect(narrow).toBeGreaterThan(-1);
+    expect(hidden).toBeLessThan(narrow);
+    expect(css.slice(hidden, hidden + 120)).toMatch(/display: none;/);
+    expect(css).toMatch(/@media \(max-width: 560px\)[\s\S]*?\.eqr__hint \{[^}]*display: block;/);
+  });
+});
+
 describe('the solfeggio tones in the Audio panel (SOLFEGGIO-001)', () => {
   const groupNames = () => [...(screen.getByLabelText('EQ preset') as HTMLSelectElement).querySelectorAll('optgroup')].map((g) => g.label);
 
