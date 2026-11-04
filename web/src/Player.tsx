@@ -241,6 +241,19 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const upcomingSource = nextTrackForCache?.provider === 'ytmusic' ? sourceUrlFor(nextTrackForCache.platform_id) : null;
   const localStatus = localSource ? localLibrary.status(localSource) : 'missing';
   const localSrc = localSource && !latched ? localLibrary.src(localSource) : null;
+
+  // Once the whole song is on disk, let the model hear it (FULL-SONG-EMBED-001). The listener is
+  // already listening, so nothing is waiting on this; it is fire-and-forget, costs no transfer
+  // allowance, and the engine answers "already" rather than re-running for a song played twice.
+  const embeddedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!canLocal || !localSrc || !localSource || !playing) return;
+    const k = playing.track.key;
+    if (!k || embeddedRef.current.has(k)) return;
+    embeddedRef.current.add(k);
+    void api.embedLocal(playing.track, localSource).catch(() => embeddedRef.current.delete(k));
+  }, [canLocal, localSrc, localSource, playing]);
+
   useEffect(() => {
     if (!canLocal) return;
     const protectedUrls = [localSource, upcomingSource].filter((u): u is string => Boolean(u));

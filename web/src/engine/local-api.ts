@@ -33,6 +33,7 @@ import { makeTag } from './genres';
 import { inferFromArtist, inferFromSeed, inferFromSound, recordArtistGenres } from './infer';
 import { BlockedUrl, BudgetExceeded, Cancelled, FetchError, Http, type HttpPort, Meter } from './net';
 import { dl, downloadsAvailable } from './downloads';
+import { localAudioUrl } from './local-audio';
 import { Job, Pipeline, pmap, type Embedder } from './pipeline';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
@@ -107,6 +108,16 @@ export const QUEUE_SIZE_MIN = 5;
 export const QUEUE_SIZE_MAX = 60;
 const FEEDBACK_KINDS = new Set(['like', 'dislike', 'hide', 'save', 'replay', 'complete', 'skip', 'unlike', 'unsave', 'undislike', 'unhide']);
 const CAPS = ['search', 'resolve_link', 'related_candidates', 'artist_candidates', 'recent_candidates', 'playback_link'];
+
+/**
+ * Where a full-song embedding lives (FULL-SONG-EMBED-001).
+ *
+ * Preview vectors are keyed `deezer:<id>`, which a song with no Deezer match can never have — so
+ * those songs were scored with no audio at all while still being shown a fit percentage. A full-song
+ * vector is keyed by the song itself, is looked up first because it describes the song better, and
+ * never overwrites the preview vector it supersedes.
+ */
+export const songVectorKey = (key: string): string => `song:${key}`;
 
 const ok = (body: unknown, status = 200): LocalResponse => ({ status, body });
 const fail = (status: number, message: string, extra: Dict = {}): LocalResponse => ({ status, body: { message, detail: message, ...extra } });
@@ -216,6 +227,7 @@ export class LocalApi {
       if (m === 'GET' && path === '/api/feedback/state') return ok(this.feedbackState());
       if (m === 'POST' && path === '/api/impressions') return await this.impressions(body ?? {});
       if (m === 'POST' && path === '/api/full-song') return await this.fullSong(body ?? {});
+      if (m === 'POST' && path === '/api/embed-local') return await this.embedLocal(body ?? {});
       if (m === 'GET' && path === '/api/saved') return ok(this.saved());
       if (m === 'GET' && path === '/api/playlists') return ok(this.playlists());
       if (m === 'POST' && path === '/api/playlists') return await this.playlistAction(body ?? {});
@@ -292,7 +304,7 @@ export class LocalApi {
   private audioState(): Dict {
     return {
       model: A.MODEL_ID, preprocess: A.PREPROCESS_ID, dim: A.DIM, installed: this.encoder !== null, download_bytes: 0,
-      source: 'Deezer 30-second previews', license: 'AGPL-3.0 (AudioMuse-AI-DCLAP)', check: this.audioCheck, vectors: this.store.vectorCount(),
+      source: 'Full songs from the queue cache, else Deezer 30-second previews', license: 'AGPL-3.0 (AudioMuse-AI-DCLAP)', check: this.audioCheck, vectors: this.store.vectorCount(),
     };
   }
 
@@ -689,7 +701,11 @@ export class LocalApi {
       const dzIdOf = (sv: Dict): string | null => sv['dz_preview_id'] || sv['dz_id'] || (sv['provider'] === 'deezer' ? sv['platform_id'] : null) || null;
       for (const sv of [...seedViews, ...cands]) {
         const did = dzIdOf(sv);
-        const v = did ? this.store.vectorGet(`deezer:${did}`, A.MODEL_ID, A.PREPROCESS_ID) : null;
+        // The full song first: it is the better description, and it is the only one a song with no
+        // Deezer match ever gets.
+        const v =
+          this.store.vectorGet(songVectorKey(String(sv['key'])), A.MODEL_ID, A.PREPROCESS_ID) ??
+          (did ? this.store.vectorGet(`deezer:${did}`, A.MODEL_ID, A.PREPROCESS_ID) : null);
         if (v) vectors.set(sv['key'], Float64Array.from(v));
       }
       const relMap = new Map([...related].filter(([, v]) => v.size));
@@ -884,7 +900,10 @@ export class LocalApi {
     const vectors = new Map<string, Float64Array>();
     for (const sv of [...seeds, ...cands]) {
       const did = sv['dz_preview_id'] || sv['dz_id'] || (sv['provider'] === 'deezer' ? sv['platform_id'] : null);
-      const v = did ? this.store.vectorGet(`deezer:${did}`, A.MODEL_ID, A.PREPROCESS_ID) : null;
+      // Same order as the discovery path: the full song wins over the 30-second preview.
+      const v =
+        this.store.vectorGet(songVectorKey(String(sv['key'])), A.MODEL_ID, A.PREPROCESS_ID) ??
+        (did ? this.store.vectorGet(`deezer:${did}`, A.MODEL_ID, A.PREPROCESS_ID) : null);
       if (v) vectors.set(sv['key'], Float64Array.from(v));
     }
     const related = new Map<string, Set<string>>(((saved['related'] as [string, string[]][]) ?? []).map(([k, v]) => [k, new Set(v)]));
@@ -1118,6 +1137,40 @@ export class LocalApi {
     } catch (e) {
       return fail(502, `Deezer did not answer: ${(e as Error).message}`);
     }
+  }
+
+  /**
+   * Embed the complete song the shell already holds for this track (FULL-SONG-EMBED-001).
+   *
+   * The audio model has only ever analysed Deezer's 30-second preview, so a song with no Deezer
+   * match was scored with no audio at all. The queue cache holds the whole track, which is both a
+   * better description and the only one those songs can have.
+   *
+   * The bytes come off the device's own disk through the shell, so this is deliberately not metered:
+   * the daily allowance is about network transfer and none happens here. Already-embedded songs are
+   * reported rather than re-run, so playing a song twice costs nothing.
+   */
+  private async embedLocal(body: Dict): Promise<LocalResponse> {
+    if (!this.encoder) return fail(409, 'The audio model is not available on this device.');
+    const t = body['track'] as Dict | undefined;
+    const url = String(body['source_url'] ?? '');
+    const key = String(t?.['key'] ?? '');
+    if (!t || !url || !key) return fail(400, 'A track with its key and its local source link are both needed.');
+    const rec = songVectorKey(key);
+    const had = this.store.vectorSource(rec, A.MODEL_ID, A.PREPROCESS_ID);
+    if (had) return ok({ embedded: false, already: true, source: had, segments: null, seconds: null });
+    let data: Uint8Array;
+    try {
+      const res = await fetch(localAudioUrl(url));
+      if (!res.ok) return fail(404, `That song is not in the queue cache yet (HTTP ${res.status}).`);
+      data = new Uint8Array(await res.arrayBuffer());
+    } catch (e) {
+      return fail(502, `The queue cache could not be read: ${(e as Error).message}`);
+    }
+    const job = new Job('embed-local');
+    const r = await this.pipeline.embedFullSong(job, rec, data);
+    if (!r) return fail(422, 'That song could not be analysed.', { audio: job.audio });
+    return ok({ embedded: true, already: false, source: r.source, segments: r.segments, seconds: Math.round(r.seconds), bytes: data.length });
   }
 
   private async fullSong(body: Dict): Promise<LocalResponse> {

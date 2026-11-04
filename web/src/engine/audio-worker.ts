@@ -9,6 +9,8 @@ interface Req {
   id: number;
   y: Float32Array;
   embed: boolean;
+  /** Bound the windows for a full song, spread across it (FULL-SONG-EMBED-001). */
+  maxSegments?: number;
 }
 
 let encoder: Promise<Encoder> | null = null;
@@ -40,7 +42,7 @@ self.onmessage = async (e: MessageEvent<Req | { init: { wasm: string; mjs: strin
   }
   try {
     const enc = await encoder!;
-    const a = await enc.analyse(m.y, m.embed);
+    const a = await enc.analyse(m.y, m.embed, m.maxSegments);
     (self as unknown as Worker).postMessage({ id: m.id, ok: a }, a.vector ? [a.vector.buffer] : []);
   } catch (err) {
     (self as unknown as Worker).postMessage({ id: m.id, error: err instanceof Error ? err.message : String(err) });

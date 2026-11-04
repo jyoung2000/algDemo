@@ -25,12 +25,12 @@ export class WorkerEncoder implements Analyser {
     this.waiting.clear();
   }
 
-  analyse(y: Float32Array, embed: boolean): Promise<Analysis> {
+  analyse(y: Float32Array, embed: boolean, maxSegments?: number): Promise<Analysis> {
     const id = this.next++;
     return new Promise<Analysis>((res, rej) => {
       this.waiting.set(id, { res, rej });
       // The samples move to the worker rather than being copied.
-      this.worker.postMessage({ id, y, embed }, [y.buffer]);
+      this.worker.postMessage({ id, y, embed, maxSegments }, [y.buffer]);
     });
   }
 }

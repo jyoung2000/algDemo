@@ -181,6 +181,41 @@ export function segmentsOf(y: Float32Array): Float32Array[] {
   return segs;
 }
 
+/**
+ * Up to `max` whole segments spread evenly across the signal, for analysing a complete song without
+ * paying for every hop of it.
+ *
+ * `segmentsOf` on a four-minute song is about 47 windows where a 30-second preview is 5, and on a
+ * phone that is the difference between a second of inference and ten. Spreading a bounded number of
+ * windows across the whole track keeps the cost close to the preview's while still hearing the
+ * intro, the middle and the outro — which a contiguous 30 seconds never does.
+ *
+ * Below the budget this is exactly `segmentsOf`, so the ordinary path is unchanged. The first window
+ * always starts at 0 and the last always ends at the final sample, so the ends are never clipped off.
+ * The mel front end, segment length and hop are untouched, so PREPROCESS_ID still describes this
+ * honestly; what differs is how much of the song was fed in, which is recorded as the vector's source.
+ */
+export function segmentsSpread(y: Float32Array, max: number): Float32Array[] {
+  const natural = segmentsOf(y);
+  if (max >= natural.length || natural.length <= 1) return natural;
+  if (max <= 1) return [natural[0]!];
+  const last = y.length - SEGMENT;
+  const step = last / (max - 1);
+  const segs: Float32Array[] = [];
+  let prev = -1;
+  for (let i = 0; i < max; i++) {
+    // Snap to a whole hop so every window lands where the ordinary segmentation would have put one.
+    let start = Math.round((i * step) / HOP) * HOP;
+    if (start > last) start = last;
+    if (i === max - 1) start = last;
+    if (start <= prev) start = Math.min(prev + HOP, last);
+    if (start <= prev) continue; // the tail is already covered
+    segs.push(y.subarray(start, start + SEGMENT));
+    prev = start;
+  }
+  return segs;
+}
+
 /** Remove leading ID3v2 tags (some decoders reject a zero-length tag). */
 export function stripId3v2(data: Uint8Array): Uint8Array {
   let d = data;

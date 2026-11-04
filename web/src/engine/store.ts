@@ -329,6 +329,10 @@ export class Store {
     this.write(() => this.be.put('vectors', k, row));
     this.evict();
   }
+  /** What this vector was made from ('deezer-preview-30s', 'local-full-song-…'), or null if there is none. */
+  vectorSource(rec: string, model: string, pre: string): string | null {
+    return this.vectors.get(vkey(rec, model, pre))?.source ?? null;
+  }
   vectorCount(): number {
     return this.vectors.size;
   }

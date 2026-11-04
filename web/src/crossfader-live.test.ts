@@ -15,8 +15,10 @@ import { PREVIEW_ROUTE } from './engine/shape';
 import { resetEngineForTests, setEqConfig, setLocalMix, setMixSlider } from './audio-engine';
 import { EQ_DEFAULTS } from './engine/eq';
 
-const { lookedUp, fullVersions, held, started, nativeShell } = vi.hoisted(() => ({
+const { lookedUp, fullVersions, held, started, nativeShell, embedded } = vi.hoisted(() => ({
   lookedUp: [] as string[],
+  /** Songs the page asked the model to analyse from the local file (FULL-SONG-EMBED-001). */
+  embedded: [] as string[],
   nativeShell: { value: false },
   /** Songs the fake YouTube lookup reports a full version for. */
   fullVersions: new Set<string>(),
@@ -49,6 +51,12 @@ vi.mock('./api', () => ({
     fullSong: (t: { key: string }) => {
       lookedUp.push(t.key);
       return Promise.resolve({ id: fullVersions.has(t.key) ? 'dQw4w9WgXcQ' : null, confident: fullVersions.has(t.key) });
+    },
+    // Once a full song is on disk the player asks the model to hear it (FULL-SONG-EMBED-001). It is
+    // fire-and-forget and nothing here depends on it, so the fake just records the request.
+    embedLocal: (t: { key: string }, sourceUrl: string) => {
+      embedded.push(`${t.key}|${sourceUrl}`);
+      return Promise.resolve({ embedded: true, already: false, source: 'local-full-song-8seg', segments: 8, seconds: 180 });
     },
   },
 }));
@@ -153,6 +161,7 @@ const settle = async () => { await act(async () => { await Promise.resolve(); aw
 beforeEach(() => {
   ramps.length = 0; sourced.clear();
   lookedUp.length = 0; fullVersions.clear(); held.clear(); started.length = 0; nativeShell.value = false;
+  embedded.length = 0;
   stubMedia();
   stubBlobs();
   vi.stubGlobal('AudioContext', FakeContext);
@@ -447,6 +456,22 @@ describe('full songs through the decks (LOCAL-AUDIO-001)', () => {
     await settle();
     expect(container.querySelector('iframe')).toBeNull();
     expect(decks()[0]?.getAttribute('src')).toBe(LOCAL);
+  });
+
+  it('lets the model hear the whole song once it is on disk, not Deezer\u2019s 30 seconds (FULL-SONG-EMBED-001)', async () => {
+    held.add(SRC);
+    render(createElement(Player, { ...props, playing: withVideo('one'), upNext: [] }));
+    await settle();
+    expect(embedded).toEqual([`one|${SRC}`]);
+  });
+
+  it('asks for that analysis once per song, however often the player re-renders', async () => {
+    held.add(SRC);
+    const { rerender } = render(createElement(Player, { ...props, playing: withVideo('one'), upNext: [] }));
+    await settle();
+    rerender(createElement(Player, { ...props, playing: withVideo('one'), upNext: [] }));
+    await settle();
+    expect(embedded).toEqual([`one|${SRC}`]);
   });
 
   it('ignores the legacy local_mix switch in installed apps', async () => {

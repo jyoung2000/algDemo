@@ -479,6 +479,16 @@ export const api = {
   impressions: (keys: string[]) => call<{ recorded: number }>('/api/impressions', { method: 'POST', body: json({ keys }) }),
   fullSong: (track: Track) => call<{ id: string | null; source: string }>('/api/full-song', { method: 'POST', body: json({ track }) }),
   /**
+   * Analyse the complete song the shell already holds, rather than Deezer's 30-second preview
+   * (FULL-SONG-EMBED-001). Local disk only, so it costs no transfer allowance; a song already
+   * analysed answers `embedded: false, already: true` instead of running again.
+   */
+  embedLocal: (track: Track, sourceUrl: string) =>
+    call<{ embedded: boolean; already: boolean; source: string; segments: number | null; seconds: number | null }>('/api/embed-local', {
+      method: 'POST',
+      body: json({ track, source_url: sourceUrl }),
+    }),
+  /**
    * A signed, playable address for a Deezer preview. The catalogue holds the stable route
    * (/api/preview/deezer/<id>) because Deezer's own URLs are signed for about fifteen minutes;
    * an <audio> element cannot play that route, so it is exchanged for a fresh URL at play time.
