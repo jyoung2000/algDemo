@@ -9,7 +9,7 @@
  *    never be read as an option;
  *  - `--ignore-config` is first for yt-dlp, so a config file cannot add `--exec`;
  *  - files are written to a private temp folder, then moved to the user's Music folder.
- * One job runs at a time; progress is real (parsed from the tool's own output) or absent, never invented.
+ * Two background jobs and one foreground job can run at a time; progress is real (parsed from the tool's own output) or absent, never invented.
  */
 const { spawn, spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
@@ -142,25 +142,29 @@ function createDownloads(cfg) {
   }
   let limitBytes = 1024 ** 3;
   let protectedUrls = new Set();
+  let wantedUrls = new Set();
   const cacheBytes = () => [...cached.values()].reduce((n, e) => n + fs.statSync(path.join(cacheDir, e.name)).size, 0);
   function persistCache() {
     const file = `${cacheIndex}.tmp`;
     fs.writeFileSync(file, JSON.stringify(Object.fromEntries(cached)), 'utf8');
     fs.renameSync(file, cacheIndex);
   }
-  function prune(extra = 0) {
+  // Planning and finalization are synchronous: concurrent processes cannot interleave quota/index writes.
+  function prune(extra = 0, background = false) {
     let bytes = cacheBytes();
+    const discard = [];
     for (const [url, e] of [...cached].sort((a, b) => a[1].at - b[1].at)) {
       if (bytes + extra <= limitBytes) break;
-      if (protectedUrls.has(url)) continue;
-      const file = path.join(cacheDir, e.name);
-      const size = fs.statSync(file).size;
-      fs.unlinkSync(file);
+      if (protectedUrls.has(url) || (background && wantedUrls.has(url))) continue;
+      discard.push([url, e]);
+      bytes -= fs.statSync(path.join(cacheDir, e.name)).size;
+    }
+    if (bytes + extra > limitBytes) throw new Error('The wanted or protected songs and this download exceed the queue cache limit. Increase it in Settings.');
+    for (const [url, e] of discard) {
+      fs.unlinkSync(path.join(cacheDir, e.name));
       cached.delete(url);
-      bytes -= size;
     }
     persistCache();
-    if (bytes + extra > limitBytes) throw new Error('The protected songs and this download exceed the queue cache limit. Increase it in Settings.');
   }
   function cachedFile(url) {
     const entry = cached.get(url);
@@ -174,7 +178,23 @@ function createDownloads(cfg) {
   const run = cfg.spawnImpl || spawn;
   /** @type {Map<string, any>} */
   const jobs = new Map();
-  let chain = Promise.resolve();
+  const active = { background: 0, foreground: 0 };
+  function pump() {
+    for (const lane of ['foreground', 'background']) {
+      const max = lane === 'background' ? 2 : 1;
+      for (const j of jobs.values()) {
+        if (active[lane] >= max) break;
+        if (j.state !== 'queued' || j.cancelled || j.dispatched || (j.background ? 'background' : 'foreground') !== lane) continue;
+        active[lane]++;
+        j.dispatched = true;
+        execute(j).catch(e => fail(j, e.message || String(e))).finally(() => {
+          fs.rm(j.dir, { recursive: true, force: true }, () => undefined);
+          active[lane]--;
+          pump();
+        });
+      }
+    }
+  }
   let versions = null;
 
   function probe() {
@@ -288,7 +308,7 @@ function createDownloads(cfg) {
       const src = found[0];
       const bytes = fs.statSync(src).size;
       if (bytes > limitBytes) return fail(j, 'This song is larger than the queue cache limit. Increase it in Settings.');
-      try { prune(bytes); } catch (e) { return fail(j, e.message); }
+      try { prune(bytes, j.background); } catch (e) { return fail(j, e.message); }
       const name = `${j.id}${path.extname(src).toLowerCase()}`;
       const dest = path.join(cacheDir, name);
       try { fs.renameSync(src, dest); } catch { fs.copyFileSync(src, dest); }
@@ -319,21 +339,23 @@ function createDownloads(cfg) {
     j.percent = 100;
   }
 
-  function start({ url, tool, format, label, cache = false }) {
+  function start({ url, tool, format, label, cache = false, background = false }) {
     if (tool !== 'yt-dlp' && tool !== 'spotdl') throw new Error('Unknown tool.');
     if (cache && (tool !== 'yt-dlp' || format !== 'original')) throw new Error('The playback cache accepts only original full songs.');
     if (!FORMATS.includes(format)) throw new Error('Unsupported format.');
     if (!urlAllowedFor(tool, url)) throw new Error(tool === 'spotdl' ? 'spotDL takes a Spotify track link (open.spotify.com/track/…).' : 'yt-dlp downloads from YouTube, YouTube Music and SoundCloud links.');
     const existing = [...jobs.values()].find((x) => x.url === url && (x.state === 'queued' || x.state === 'running'));
-    if (existing) return view(existing);
+    if (existing) {
+      if (!background) existing.background = false;
+      queueMicrotask(pump);
+      return view(existing);
+    }
     const running = [...jobs.values()].filter((x) => x.state === 'queued' || x.state === 'running').length;
     if (running >= 20) throw new Error('Too many downloads are waiting. Let some finish first.');
     const id = crypto.randomUUID();
-    const j = { id, url, tool, format, cache: Boolean(cache), label: String(label || '').slice(0, 200), state: 'queued', stage: 'queued', percent: null, message: null, error: null, files: [], saved_to: null, cancelled: false, child: null, errText: '', dir: path.join(cfg.tempRoot, id) };
+    const j = { id, url, tool, format, cache: Boolean(cache), background: Boolean(background), label: String(label || '').slice(0, 200), state: 'queued', stage: 'queued', percent: null, message: null, error: null, files: [], saved_to: null, cancelled: false, child: null, errText: '', dir: path.join(cfg.tempRoot, id) };
     jobs.set(id, j);
-    chain = chain.then(() => execute(j)).catch((e) => fail(j, e.message || String(e))).finally(() => {
-      fs.rm(j.dir, { recursive: true, force: true }, () => undefined);
-    });
+    queueMicrotask(pump);
     return view(j);
   }
 
@@ -395,12 +417,20 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
       case 'cache-config': {
         const gb = Number(req.limitGb);
         if (!Number.isFinite(gb) || gb < 0.25 || gb > 20) throw new Error('Queue cache size must be between 0.25 and 20 GB.');
+        const urls = (name, max, fallback) => {
+          const list = req[name] === undefined ? fallback : req[name];
+          if (!Array.isArray(list) || list.length > max || list.some(url => typeof url !== 'string' || !urlAllowedFor('yt-dlp', url))) throw new Error(`${name} must contain at most ${max} valid URLs.`);
+          return new Set(list);
+        };
+        const nextProtected = urls('protected', 3, []);
+        const nextWanted = urls('wanted', 10000, []);
         const previousLimit = limitBytes;
         const previousProtected = protectedUrls;
         limitBytes = Math.floor(gb * 1024 ** 3);
-        protectedUrls = new Set((Array.isArray(req.protected) ? req.protected : []).filter((url) => urlAllowedFor('yt-dlp', url)).slice(0, 3));
+        protectedUrls = nextProtected;
         try { prune(); } catch (e) { limitBytes = previousLimit; protectedUrls = previousProtected; throw e; }
-        for (const j of jobs.values()) if (j.cache && !protectedUrls.has(j.url) && (j.state === 'queued' || j.state === 'running')) cancel(j.id);
+        wantedUrls = nextWanted;
+        for (const j of jobs.values()) if (j.cache && !wantedUrls.has(j.url) && !protectedUrls.has(j.url) && (j.state === 'queued' || j.state === 'running')) cancel(j.id);
         return { bytes: cacheBytes(), limitBytes };
       }
       case 'keep':

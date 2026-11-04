@@ -38,13 +38,13 @@ export const POLL_MS = 3000;
 export interface LocalApi {
   /** What the shell holds for a link: a finished file, or whether a download for it is in flight. */
   local: (url: string) => Promise<{ file: DlFile | null; running: boolean; error?: string | null }>;
-  start: (url: string, label: string) => Promise<unknown>;
+  start: (url: string, label: string, background?: boolean) => Promise<unknown>;
 }
 
 const shellApi: LocalApi = {
   local: (url) => dl.local(url),
   // 'original' keeps the source bytes (Opus from YouTube Music) — the only format that cannot lose quality.
-  start: (url, label) => dl.start(url, 'yt-dlp', 'original', label, true),
+  start: (url, label, background) => dl.start(url, 'yt-dlp', 'original', label, true, background),
 };
 
 /**
@@ -66,6 +66,8 @@ export class LocalLibrary {
   constructor(private readonly api: LocalApi = shellApi) {}
 
   /** While any download runs, ask the shell again every few seconds; stop when nothing is running. */
+  private backgroundJobs = new Set<string>();
+
   private schedule(): void {
     if (this.timer) return;
     const running = [...this.entries].filter(([, e]) => e.status === 'running').map(([url]) => url);
@@ -150,14 +152,24 @@ export class LocalLibrary {
   }
 
   /** Make sure a link is held or on its way: ask, and start a download only if the shell has nothing. */
-  async ensure(url: string, label: string, retry = false): Promise<void> {
+  async ensure(url: string, label: string, retry = false, background = false): Promise<void> {
     const current = this.starting.get(url);
-    if (current) return current;
+    if (current) {
+      await current;
+      if (!background && this.backgroundJobs.has(url)) return this.ensure(url, label, retry, false);
+      return;
+    }
     const work = (async () => {
       await this.refresh(url);
+      if (!background && this.backgroundJobs.delete(url) && this.status(url) === 'running') {
+        // A selected song can promote an already-queued background request. Native dedupes by URL.
+        await this.api.start(url, label, false).catch(() => undefined);
+        return;
+      }
       if (this.status(url) !== 'missing' || (this.error(url) && !retry)) return;
       try {
-        await this.api.start(url, label);
+        if (background) this.backgroundJobs.add(url);
+        await this.api.start(url, label, background);
         this.set(url, 'running');
       } catch (e) {
         this.set(url, 'missing', e instanceof Error ? e.message : String(e));

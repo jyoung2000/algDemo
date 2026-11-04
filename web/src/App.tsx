@@ -9,6 +9,8 @@ import { Search } from './Search';
 import { SoundCard } from './SoundCard';
 import { ProfileView } from './Profile';
 import { SavedView } from './SavedView';
+import { QueuePreparation } from './QueuePreparation';
+import { savedTracks, playbackRows, preparationTracks } from './engine/queue-context';
 import { SettingsView } from './Settings';
 import { setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
 import { PLAY_THROUGH_DEFAULT } from './engine/crossfade';
@@ -86,6 +88,8 @@ export function App() {
    * is topped up only once everything in it has been played, so the engine needs to know which.
    */
   const playingListRef = useRef<string | null>(null);
+  const [playingContext, setPlayingContext] = useState<string | null>(null);
+  const [visibleSavedList, setVisibleSavedList] = useState('all');
   const [offline, setOffline] = useState(false);
   const docked = useMedia('(max-width: 899px)');
   const jobRef = useRef<string | null>(null);
@@ -260,9 +264,9 @@ export function App() {
   }, [items, result]);
 
   // ---------------------------------------------------------------- playback
-  const play = (it: RecItem, o?: { newRound?: boolean; back?: boolean }) => {
+  const play = (it: RecItem, o?: { newRound?: boolean; back?: boolean; keepList?: boolean }) => {
     // Playing from the queue leaves any saved list behind, so the queue's own rule applies again.
-    playingListRef.current = null;
+    if (!o?.keepList) { playingListRef.current = null; setPlayingContext(null); }
     playedRef.current.add(it.track.key);
     if (o?.newRound) heardRef.current = new Set();
     heardRef.current.add(it.track.key);
@@ -271,19 +275,20 @@ export function App() {
     setFocusKey(it.track.key);
   };
   const previewTrack = (t: Track) => setPlaying({ track: t, playback: playbackOfTrack(t) });
+  const activeItems = useMemo(() => playingContext === null ? items : playbackRows(savedTracks(saved, lists, playingContext)), [items, playingContext, saved, lists]);
   const playingKey = playing?.track.key ?? null;
-  const inQueue = playingKey != null && items.some((x) => x.track.key === playingKey);
+  const inQueue = playingKey != null && activeItems.some((x) => x.track.key === playingKey);
   const queueOpts = { shuffle, repeat, heard: heardRef.current };
-  const nextStep = stepQueue(items, inQueue ? playingKey : null, 1, hidden, queueOpts);
-  const back = shuffle ? historyBack(historyRef.current, playingKey, items, hidden) : null;
-  const prevStep = shuffle ? (back ? { item: back.item, wrapped: false } : null) : inQueue ? stepQueue(items, playingKey, -1, hidden, queueOpts) : null;
+  const nextStep = stepQueue(activeItems, inQueue ? playingKey : null, 1, hidden, queueOpts);
+  const back = shuffle ? historyBack(historyRef.current, playingKey, activeItems, hidden) : null;
+  const prevStep = shuffle ? (back ? { item: back.item, wrapped: false } : null) : inQueue ? stepQueue(activeItems, playingKey, -1, hidden, queueOpts) : null;
   const goNext = () => {
-    if (nextStep) play(nextStep.item, { newRound: nextStep.wrapped });
+    if (nextStep) play(nextStep.item, { newRound: nextStep.wrapped, keepList: true });
   };
   const goPrev = () => {
     if (!prevStep) return;
     if (back) historyRef.current = historyRef.current.slice(0, back.keep);
-    play(prevStep.item, { back: Boolean(back) });
+    play(prevStep.item, { back: Boolean(back), keepList: true });
   };
   const toggleShuffle = () =>
     setShuffle((s) => {
@@ -303,19 +308,25 @@ export function App() {
   // it (SHUFFLE-NEXT-001). Shuffled, that is the committed pick; the rest are the songs still to come.
   const nextKey = nextStep && !nextStep.wrapped ? nextStep.item.track.key : null;
   const upNext = useMemo(() => {
-    const i = inQueue ? items.findIndex((x) => x.track.key === playingKey) : -1;
+    const i = inQueue ? activeItems.findIndex((x) => x.track.key === playingKey) : -1;
     // A song belongs in the deck queue when this build can play it at all. Inside the apps that is
     // every song in the list, because the player downloads the full track (QUEUE-PLAY-001); asking
     // for a streaming preview here silently dropped preview-less songs out of the queue, so they
     // were never cued and never blended into.
     const playable = (x: RecItem) => canPlayHere(x.playback);
-    const rest = shuffle ? items.filter((x) => x.track.key !== playingKey && !heardRef.current.has(x.track.key) && !hidden.has(x.track.key)) : items.slice(i + 1);
+    const rest = shuffle ? activeItems.filter((x) => x.track.key !== playingKey && !heardRef.current.has(x.track.key) && !hidden.has(x.track.key)) : activeItems.slice(i + 1).filter(x => !hidden.has(x.track.key));
     const ordered = nextKey ? [...rest.filter((x) => x.track.key === nextKey), ...rest.filter((x) => x.track.key !== nextKey)] : rest;
     return ordered
       .filter(playable)
       .slice(0, 4)
       .map((x) => ({ key: x.track.key, title: x.track.title, artist: artistOf(x.track), artwork: x.track.artwork, preview: x.playback.preview, track: x.track }));
-  }, [items, inQueue, playingKey, shuffle, hidden, nextKey]);
+  }, [activeItems, inQueue, playingKey, shuffle, hidden, nextKey]);
+  // The four visible Up Next rows are NOT the download queue. Prepare every entry, even before Play.
+  const cacheTracks = useMemo(() => preparationTracks(playing?.track ?? null, upNext.flatMap(x => x.track ? [x.track] : []),
+    activeItems.filter(x => !hidden.has(x.track.key)).map(x => x.track),
+    [...seeds, ...items.filter(x => !hidden.has(x.track.key)).map(x => x.track)],
+    tab === 'saved' ? savedTracks(saved, lists, visibleSavedList) : []),
+    [playing, upNext, activeItems, hidden, seeds, items, tab, saved, lists, visibleSavedList]);
 
   // A skip or a full listen is recorded, then the songs still to come are ranked again with it.
   // Only the newest answer is applied, so two quick skips cannot show the older order.
@@ -718,10 +729,14 @@ export function App() {
             saved={saved}
             lists={lists}
             onLists={setLists}
+            onVisibleList={setVisibleSavedList}
             onPreview={(t, listId) => {
               // Remember which list this play came from, so a finished song is judged by that
               // list's rule rather than the discovery queue's.
               playingListRef.current = listId ?? null;
+              setPlayingContext(listId ?? 'all');
+              heardRef.current = new Set([t.key]);
+              historyRef.current = [t.key];
               previewTrack(t);
             }}
             onRemoveSaved={removeSaved}
@@ -763,6 +778,7 @@ export function App() {
       </main>
 
       <aside className="rail" aria-label="Player">
+        <QueuePreparation tracks={cacheTracks} />
         <Player
           playing={playing}
           upNext={upNext}
@@ -811,8 +827,8 @@ export function App() {
             window.setTimeout(() => searchRef.current?.querySelector('input')?.focus(), 0);
           }}
           onPickUpNext={(k) => {
-            const it = items.find((x) => x.track.key === k);
-            if (it) play(it);
+            const it = activeItems.find((x) => x.track.key === k);
+            if (it) play(it, { keepList: true });
           }}
         />
       </aside>

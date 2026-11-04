@@ -6,6 +6,103 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { createDownloads } = require('./downloads.cjs');
 
+
+
+test('wanted retains far playlist jobs; invalid configuration leaves the previous selection intact', async (t) => {
+  const { dl } = fixture(t);
+  const a = url('aaaaaaaaaaa'), far = url('zzzzzzzzzzz');
+  const job = dl.handle({ op: 'start', url: far, tool: 'yt-dlp', format: 'original', cache: true, background: true }).job;
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [a], wanted: [a, far] });
+  assert.notEqual(dl.handle({ op: 'jobs' }).jobs.find(j => j.id === job.id).state, 'cancelled');
+  assert.throws(() => dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [a], wanted: ['https://evil.example/song'] }), /wanted/i);
+  assert.throws(() => dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [a, far, url('3'), url('4')] }), /protected/i);
+  assert.equal((await done(dl, job.id)).state, 'done');
+  const stale = dl.handle({ op: 'start', url: url('stale'), tool: 'yt-dlp', format: 'original', cache: true, background: true }).job;
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [a] });
+  assert.equal(dl.handle({ op: 'jobs' }).jobs.find(j => j.id === stale.id).state, 'cancelled');
+});
+
+
+function controlled(t) {
+  const { dir } = fixture(t);
+  const active = [];
+  const dl = createDownloads({ toolsDir: dir, saveDir: path.join(dir, 'music'), cacheDir: path.join(dir, 'other-cache'), tempRoot: path.join(dir, 'work'),
+    spawnImpl(_exe, args) {
+      const child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+      active.push({ url: args.at(-1), finish(bytes = 20) {
+        const file = path.join(args[args.indexOf('--paths') + 1], 'song.opus');
+        fs.writeFileSync(file, ''); fs.truncateSync(file, bytes); child.emit('close', 0);
+      } });
+      return child;
+    } });
+  return { dl, active, dir };
+}
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const start = (dl, id, background = true) => dl.handle({ op: 'start', url: url(id), tool: 'yt-dlp', format: 'original', cache: true, background }).job;
+
+test('two background slots and independent foreground slot; queued background promotes without duplicates', async t => {
+  const { dl, active } = controlled(t);
+  const a = start(dl, 'a'), b = start(dl, 'b'), c = start(dl, 'c');
+  await tick();
+  assert.deepEqual(active.map(j => j.url), [url('a'), url('b')]);
+  assert.equal(start(dl, 'c', false).id, c.id);
+  assert.equal(start(dl, 'a', false).id, a.id);
+  start(dl, 'd', false);
+  await tick();
+  assert.deepEqual(active.map(j => j.url), [url('a'), url('b'), url('c')]);
+  active[2].finish(); await tick();
+  assert.deepEqual(active.map(j => j.url), [url('a'), url('b'), url('c'), url('d')]);
+  active[0].finish(); active[1].finish(); active[3].finish();
+  assert.equal((await done(dl, b.id)).state, 'done');
+  await tick();
+});
+
+
+test('background quota never churns wanted songs; foreground can evict wanted but not protected', async t => {
+  const { dl } = fixture(t, 170 * 1024 * 1024);
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [], wanted: [url('a'), url('b')] });
+  assert.equal((await done(dl, start(dl, 'a').id)).state, 'done');
+  const failed = await done(dl, start(dl, 'b').id);
+  assert.equal(failed.state, 'failed'); assert.match(failed.error, /cache limit/i);
+  assert.ok(dl.localFile(url('a')));
+  assert.equal((await done(dl, start(dl, 'b', false).id)).state, 'done');
+  assert.equal(dl.localFile(url('a')), null);
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [url('b')], wanted: [url('a'), url('b')] });
+  assert.equal((await done(dl, start(dl, 'a', false).id)).state, 'failed');
+  assert.ok(dl.localFile(url('b')));
+});
+
+test('rejected quota leaves evictable files untouched and simultaneous completions respect quota', async t => {
+  const { dl, active } = controlled(t);
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [], wanted: [url('a'), url('b')] });
+  const a = start(dl, 'a'), b = start(dl, 'b'); await tick();
+  active[0].finish(170 * 1024 * 1024); active[1].finish(170 * 1024 * 1024);
+  assert.equal((await done(dl, a.id)).state, 'done');
+  assert.equal((await done(dl, b.id)).state, 'failed');
+  const config = dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [url('a')], wanted: [] });
+  assert.ok(config.bytes <= config.limitBytes);
+  const c = start(dl, 'c'); await tick(); active[2].finish(20 * 1024 * 1024); await done(dl, c.id);
+  const d = start(dl, 'd', false); await tick(); active[3].finish(100 * 1024 * 1024);
+  assert.equal((await done(dl, d.id)).state, 'failed');
+  assert.ok(dl.localFile(url('c')), 'failed insertion must not partially evict');
+});
+
+
+test('latest configuration cancels obsolete jobs and their late output never enters the cache', async t => {
+  const { dl, active } = controlled(t);
+  const a = start(dl, 'a'), b = start(dl, 'b'), far = start(dl, 'far');
+  await tick();
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [url('a')], wanted: [url('far')] });
+  assert.throws(() => dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [], wanted: Array(10001).fill(url('a')) }), /wanted/i);
+  active[1].finish(); await tick();
+  assert.equal(dl.handle({ op: 'jobs' }).jobs.find(j => j.id === b.id).state, 'cancelled');
+  assert.equal(dl.localFile(url('b')), null);
+  assert.equal(active[2].url, url('far'));
+  active[0].finish(); active[2].finish();
+  assert.equal((await done(dl, a.id)).state, 'done');
+  assert.equal((await done(dl, far.id)).state, 'done');
+});
+
 const scratch = path.join(process.env.LOCALAPPDATA, 'hermes', 'cache', 'scratch');
 const url = (id) => `https://music.youtube.com/watch?v=${id}`;
 const done = async (dl, id) => {

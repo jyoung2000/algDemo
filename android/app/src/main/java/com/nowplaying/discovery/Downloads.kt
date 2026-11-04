@@ -47,6 +47,7 @@ object Downloads {
   private val mime = mapOf("mp3" to "audio/mpeg", "m4a" to "audio/mp4", "aac" to "audio/aac", "flac" to "audio/flac", "opus" to "audio/ogg", "ogg" to "audio/ogg", "oga" to "audio/ogg", "wav" to "audio/wav", "webm" to "audio/webm", "mka" to "audio/x-matroska")
 
   class Job(val id: String, val url: String, val format: String, val label: String, val dir: File, val cache: Boolean = false) {
+    internal var queueTask: DownloadQueue.Task? = null
     @Volatile var state = "queued"
     @Volatile var stage = "queued"
     @Volatile var percent: Double? = null
@@ -73,6 +74,7 @@ object Downloads {
   private const val DESTINATION = "airwave-download-destination"
   private const val TREE = "treeUri"
   private val libraryLock = Any()
+  private var selection = DownloadSelection(emptyList())
 
   private fun cacheDir(context: Context) = File(context.filesDir, "audio-cache").also { it.mkdirs() }
   private fun cachePrefs(context: Context) = context.getSharedPreferences(CACHE, Context.MODE_PRIVATE)
@@ -126,28 +128,42 @@ object Downloads {
   private fun configureCache(context: Context, req: JSONObject): JSONObject = synchronized(libraryLock) {
     val gb = req.optDouble("limitGb", Double.NaN)
     require(gb.isFinite() && gb in 0.25..20.0) { "limitGb must be between 0.25 and 20." }
-    val arr = req.optJSONArray("protected") ?: throw IllegalArgumentException("protected must be an array of URLs.")
-    require(arr.length() <= 200) { "Too many protected URLs." }
-    val protected = (0 until arr.length()).map { arr.getString(it).also { url -> require(urlAllowed(url)) { "Invalid protected URL." } } }.toSet()
+    fun urls(name: String, max: Int, optional: Boolean = false): List<String> {
+      if (optional && !req.has(name)) return emptyList()
+      val arr = req.optJSONArray(name) ?: throw IllegalArgumentException("$name must be an array of URLs.")
+      require(arr.length() <= max) { "Too many $name URLs." }
+      return (0 until arr.length()).map {
+        val value = arr.get(it)
+        require(value is String) { "$name must contain only URL strings." }
+        value
+      }
+    }
+    val next = DownloadSelection(urls("protected", 3), urls("wanted", 10000, optional = true))
+    val protected = next.protected
     val limit = (gb * 1_073_741_824.0).toLong()
     val discard = evictions(context, 0, limit = limit, protected = protected)
     removeEntries(context, discard)
     if (!cachePrefs(context).edit().putFloat(CACHE_LIMIT, gb.toFloat()).putStringSet(CACHE_PROTECTED, protected).commit()) throw IOException("Could not save cache limit.")
-    // Rapid skips should not leave old prefetches ahead of the song the listener now wants.
-    jobs.values.filter { it.cache && it.url !in protected && (it.state == "queued" || it.state == "running") }
+    selection = next
+    // Keep the entire active playlist, not just the currently cued decks.
+    jobs.values.filter { it.cache && !next.retains(it.url) && (it.state == "queued" || it.state == "running") }
       .forEach { cancel(it.id) }
     JSONObject().put("ok", true).put("limitGb", gb).put("limitBytes", limit).put("bytes", cacheBytes(context))
   }
 
-  private fun cacheBytes(context: Context): Long = cachePrefs(context).all.keys.filter { it != CACHE_LIMIT && it != CACHE_PROTECTED }
-    .sumOf { cacheFile(context, it)?.takeIf(File::isFile)?.length() ?: 0L }
+  private fun cacheBytes(context: Context): Long = synchronized(libraryLock) {
+    cachePrefs(context).all.keys.filter { it != CACHE_LIMIT && it != CACHE_PROTECTED }
+      .sumOf { cacheFile(context, it)?.takeIf(File::isFile)?.length() ?: 0L }
+  }
 
   private fun cacheSong(context: Context, job: Job, source: File): File = synchronized(libraryLock) {
+    check(!job.cancelled) { "Download cancelled." }
     val extension = source.extension.lowercase()
     val hash = MessageDigest.getInstance("SHA-256").digest(job.url.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     val target = File(cacheDir(context), "$hash.$extension")
     val size = source.length()
-    val discard = evictions(context, size, keep = job.url)
+    val protection = protectedUrls(context) + if (job.queueTask?.background == true) selection.wanted else emptySet()
+    val discard = evictions(context, size, keep = job.url, protected = protection)
     val temp = File(cacheDir(context), "$hash.$extension.partial")
     try {
       source.inputStream().use { input -> temp.outputStream().use { output -> input.copyTo(output) } }
@@ -219,7 +235,8 @@ object Downloads {
     return Triple(uri, size, type)
   }
   private val order = CopyOnWriteArrayList<String>()
-  private val queue = Executors.newSingleThreadExecutor()
+  private val workers = Executors.newFixedThreadPool(3)
+  private val queue = DownloadQueue { task -> workers.execute(task) }
   private val setup = Executors.newSingleThreadExecutor()
   private val starting = AtomicBoolean(false)
 
@@ -281,7 +298,7 @@ object Downloads {
 
   fun handle(context: Context, req: JSONObject): JSONObject = when (val op = req.optString("op")) {
     "health" -> health(context)
-    "start" -> JSONObject().put("job", view(start(context, req.optString("url"), req.optString("tool"), req.optString("format"), req.optString("label"), req.optBoolean("cache", false))))
+    "start" -> JSONObject().put("job", view(start(context, req.optString("url"), req.optString("tool"), req.optString("format"), req.optString("label"), req.optBoolean("cache", false), req.optBoolean("background", false))))
     "cache-config" -> configureCache(context, req)
     "keep" -> keep(context, req.optString("url"))
     "jobs" -> JSONObject().put("jobs", JSONArray().also { a -> order.mapNotNull { jobs[it] }.forEach { a.put(view(it)) } })
@@ -302,11 +319,15 @@ object Downloads {
     else -> throw IllegalArgumentException("Unknown request: $op")
   }
 
-  private fun start(context: Context, url: String, tool: String, format: String, label: String, cache: Boolean): Job {
+  private fun start(context: Context, url: String, tool: String, format: String, label: String, cache: Boolean, background: Boolean = false): Job = synchronized(libraryLock) {
     // The page maps a Spotify link to a YouTube Music link first, so only yt-dlp is ever run here.
     require(tool == "yt-dlp") { "Only yt-dlp runs on this device." }
     require(format in FORMATS) { "Unsupported format." }
     require(urlAllowed(url)) { "yt-dlp downloads from YouTube, YouTube Music and SoundCloud links." }
+    jobs.values.firstOrNull { it.url == url && (it.state == "queued" || it.state == "running") }?.let {
+      if (!background) queue.submit(it.id, false) {}
+      return it
+    }
     require(jobs.values.count { it.state == "queued" || it.state == "running" } < 20) { "Too many downloads are waiting. Let some finish first." }
     val id = UUID.randomUUID().toString()
     val dir = File(File(context.cacheDir, "dl-jobs"), id).also { it.mkdirs() }
@@ -314,7 +335,7 @@ object Downloads {
     jobs[id] = job
     order.add(id)
     val app = context.applicationContext
-    queue.execute {
+    job.queueTask = queue.submit(job.id, background) {
       try {
         run(app, job)
       } catch (e: Throwable) {
@@ -330,8 +351,11 @@ object Downloads {
   private fun run(context: Context, job: Job) {
     if (job.cancelled) { job.state = "cancelled"; job.stage = "done"; return }
     if (!ready) return fail(job, failure?.let { "yt-dlp could not be set up: $it" } ?: "yt-dlp is still unpacking itself. Try again in a moment.")
-    job.state = "running"
-    job.stage = "fetching"
+    synchronized(libraryLock) {
+      if (job.cancelled) return
+      job.state = "running"
+      job.stage = "fetching"
+    }
     val r = YoutubeDLRequest(job.url)
     r.addOption("--ignore-config")
     r.addOption("--no-colors")
@@ -422,12 +446,13 @@ object Downloads {
     return Triple(name, Uri.fromFile(dest), dir.absolutePath)
   }
 
-  private fun cancel(id: String): Boolean {
+  private fun cancel(id: String): Boolean = synchronized(libraryLock) {
     val j = jobs[id] ?: return false
     if (j.state == "queued" || j.state == "running") {
       j.cancelled = true
+      j.queueTask?.let(queue::cancel)
       runCatching { YoutubeDL.getInstance().destroyProcessById(id) }
-      if (j.state == "queued") { j.state = "cancelled"; j.stage = "done" }
+      if (j.state == "queued") { j.state = "cancelled"; j.stage = "done"; j.dir.deleteRecursively() }
     }
     return true
   }

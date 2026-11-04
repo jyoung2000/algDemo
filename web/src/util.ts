@@ -112,7 +112,7 @@ export function keepFocus(prevKeys: string[], prevFocus: string | null, nextKeys
 
 /** The next/previous playable row from the given one (skipping hidden and unplayable rows). */
 export function stepPlayable(items: RecItem[], fromKey: string | null, dir: 1 | -1, hidden: Set<string>): RecItem | null {
-  const ok = items.filter((x) => !hidden.has(x.track.key) && (x.playback.preview || x.playback.embed));
+  const ok = items.filter((x) => !hidden.has(x.track.key) && canPlayHere(x.playback));
   if (!ok.length) return null;
   const i = fromKey ? ok.findIndex((x) => x.track.key === fromKey) : -1;
   if (i === -1) return dir === 1 ? ok[0]! : ok[ok.length - 1]!;
@@ -168,7 +168,7 @@ export function stepQueue(
   hidden: Set<string>,
   o: { shuffle: boolean; repeat: RepeatMode; heard: ReadonlySet<string>; rand?: () => number },
 ): QueueStep | null {
-  const ok = items.filter((x) => !hidden.has(x.track.key) && (x.playback.preview || x.playback.embed));
+  const ok = items.filter((x) => !hidden.has(x.track.key) && canPlayHere(x.playback));
   if (!ok.length) return null;
   const rand = o.rand ?? Math.random;
   const pick = (from: RecItem[]) => from[Math.min(from.length - 1, Math.floor(rand() * from.length))]!;
@@ -197,7 +197,7 @@ export function historyBack(history: readonly string[], currentKey: string | nul
   let end = history.length;
   if (end && history[end - 1] === currentKey) end -= 1;
   for (let i = end - 1; i >= 0; i--) {
-    const item = items.find((x) => x.track.key === history[i] && !hidden.has(x.track.key) && (x.playback.preview || x.playback.embed));
+    const item = items.find((x) => x.track.key === history[i] && !hidden.has(x.track.key) && canPlayHere(x.playback));
     if (item && item.track.key !== currentKey) return { item, keep: i + 1 };
   }
   return null;

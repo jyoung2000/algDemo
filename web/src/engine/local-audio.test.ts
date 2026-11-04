@@ -129,6 +129,19 @@ describe('local audio: a downloaded full song the decks can play (LOCAL-AUDIO-00
     expect(lib.src(url)).toBeNull(); // released, and fetched again on demand
   });
 
+  it('keeps background work on disk and promotes it once when selected', async () => {
+    let running = false;
+    const a = api({ local: vi.fn(async () => ({ file: null, running })),
+      start: vi.fn(async () => { running = true; }) });
+    const lib = new LocalLibrary(a);
+    await lib.ensure('song', 'title', true, true);
+    expect(a.start).toHaveBeenLastCalledWith('song', 'title', true);
+    await lib.ensure('song', 'title');
+    expect(a.start).toHaveBeenLastCalledWith('song', 'title', false);
+    await lib.ensure('song', 'title');
+    expect(a.start).toHaveBeenCalledTimes(2);
+  });
+
   it('reports a failed download as missing so the player falls back instead of waiting forever', async () => {
     const a = api({ start: vi.fn(async () => { throw new Error('yt-dlp is not installed'); }) });
     const lib = new LocalLibrary(a);

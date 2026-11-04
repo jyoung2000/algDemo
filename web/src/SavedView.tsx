@@ -17,6 +17,7 @@ interface Props {
   onPreview: (track: Track, listId?: string) => void;
   onRemoveSaved: (track: Track) => void;
   onDownload?: (track: Track) => void;
+  onVisibleList?: (id: string) => void;
 }
 
 const ALL = 'all';
@@ -28,7 +29,7 @@ const ALL = 'all';
  * There is deliberately no "Add" button here: a saved song is not a starting song, and the owner
  * asked for that control to go.
  */
-export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onDownload }: Props) {
+export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onDownload, onVisibleList }: Props) {
   const [view, setView] = useState<string>(ALL);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -41,6 +42,7 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
   const renameId = useId();
 
   const current = lists.find((l) => l.id === view) ?? null;
+  useEffect(() => { onVisibleList?.(view); }, [view, onVisibleList]);
 
   // A list deleted elsewhere must not leave the page showing an empty mystery.
   useEffect(() => {

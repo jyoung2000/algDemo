@@ -10,7 +10,8 @@ import { loadYouTube, youtubeEmbedUrl, type YTPlayer } from './youtube';
 import { attachElement, bus as audioBus, mixSlider, playThrough, resumeEngine, setUnprocessable, subscribeEngine } from './audio-engine';
 import { localLibrary, sourceUrlFor } from './engine/local-audio';
 import { rescueSource } from './engine/rescue';
-import { dl, downloadsAvailable, playbackActive } from './engine/downloads';
+import { downloadsAvailable, playbackActive } from './engine/downloads';
+import { queueAudio } from './engine/queue-audio';
 import { clearResume, writeResume } from './engine/resume';
 import { type DeckId } from './engine/audio-bus';
 import { PreviewMixer } from './engine/preview-mixer';
@@ -258,13 +259,13 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     if (!canLocal) return;
     const protectedUrls = [localSource, upcomingSource].filter((u): u is string => Boolean(u));
     localLibrary.protect(protectedUrls);
-    void dl.cacheConfig(cacheGb, protectedUrls).then(() => {
-      if (localSource && playing) void localLibrary.ensure(localSource, `${playing.track.title} — ${playing.track.artist}`);
+    void queueAudio.protect(cacheGb, protectedUrls).then(() => {
+      if (localSource && playing) void localLibrary.ensure(localSource, `${playing.track.title} — ${playing.track.artist}`, true);
     }).catch((e) => setErr(`Queue cache: ${(e as Error).message}`));
   }, [canLocal, localSource, upcomingSource, cacheGb, key]);
   useEffect(() => {
     if (!localSource || !playing || canLocal) return;
-    void localLibrary.ensure(localSource, `${playing.track.title} — ${playing.track.artist}`);
+    void localLibrary.ensure(localSource, `${playing.track.title} — ${playing.track.artist}`, true);
   }, [localSource, playing, canLocal]);
   const askingLocal = localSource !== null && !latched && (localStatus === 'unknown' || (localStatus === 'ready' && localSrc === null));
   const fetchingLocal = canLocal && localSource !== null && localStatus === 'running';
@@ -498,7 +499,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       if (!source) return;
       const protectedUrls = [localSource, source].filter((u): u is string => Boolean(u));
       localLibrary.protect(protectedUrls);
-      void dl.cacheConfig(cacheGb, protectedUrls).then(() => localLibrary.ensure(source, `${nextTrack.title} — ${nextTrack.artist}`)).catch(() => undefined);
+      void queueAudio.protect(cacheGb, protectedUrls).then(() => localLibrary.ensure(source, `${nextTrack.title} — ${nextTrack.artist}`, false, true)).catch(() => undefined);
     }).catch(() => undefined);
     return () => { live = false; };
   }, [canLocal, nextKey, nextKnownId, repeatingOne, cacheGb, localSource]);
@@ -525,7 +526,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       cuedSources.current.set(nextKey, source);
       if (cuedSources.current.size > 4) cuedSources.current.delete(cuedSources.current.keys().next().value as string);
       const label = nextTrack ? `${nextTrack.title} — ${nextTrack.artist}` : nextKey;
-      void localLibrary.ensure(source, label).then(() => {
+      void localLibrary.ensure(source, label, false, true).then(() => {
         if (!live) return;
         const ready = localLibrary.src(source);
         if (ready) void mixer.current?.prepare({ key: nextKey, preview: ready });
