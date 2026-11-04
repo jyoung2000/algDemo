@@ -12,6 +12,8 @@ import { SavedView } from './SavedView';
 import { SettingsView } from './Settings';
 import { setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
 import { PLAY_THROUGH_DEFAULT } from './engine/crossfade';
+import { downloadsAvailable } from './engine/downloads';
+import { readResume } from './engine/resume';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, classNames, describeTaste, fmtBytes, keepFocus, historyBack, mergeRerank, nextRepeat, playbackOfTrack, stepQueue, type RepeatMode } from './util';
 
 type Tab = 'discover' | 'saved' | 'profile' | 'downloads' | 'settings';
@@ -106,6 +108,12 @@ export function App() {
         setFlags(f);
         if (fb.taste) setTaste(fb.taste);
         setLoaded(true);
+        // Where the listener was when the app last stopped (RESUME-001). Restored only in the
+        // installed shells, where the song is a local file: the place is useless without the audio.
+        if (downloadsAvailable()) {
+          const point = readResume();
+          if (point) setPlaying({ track: point.track, playback: point.playback, resumeAt: point.t });
+        }
         // Bring back the last finished queue; it was counted as shown when it was first drawn.
         api.last().then(
           (r) => {

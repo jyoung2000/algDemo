@@ -11,6 +11,7 @@ import { attachElement, bus as audioBus, mixSlider, playThrough, resumeEngine, s
 import { localLibrary, sourceUrlFor } from './engine/local-audio';
 import { rescueSource } from './engine/rescue';
 import { dl, downloadsAvailable, playbackActive } from './engine/downloads';
+import { clearResume, writeResume } from './engine/resume';
 import { type DeckId } from './engine/audio-bus';
 import { PreviewMixer } from './engine/preview-mixer';
 import { ListenMeter, PROVIDER_LABEL, artistOf, classNames, fmtDuration, isSilent, markKey, qualifiesCompletion, toggleMuteState, type RepeatMode } from './util';
@@ -18,6 +19,12 @@ import { ListenMeter, PROVIDER_LABEL, artistOf, classNames, fmtDuration, isSilen
 export interface Playing {
   track: Track;
   playback: Playback;
+  /**
+   * Seconds to start this song at, set only when the app reopens on a song the listener was
+   * part-way through (RESUME-001). Consumed once: the deck seeks here on its first load and
+   * ordinary plays of the same song start from zero.
+   */
+  resumeAt?: number;
 }
 
 export interface UpNext {
@@ -134,6 +141,18 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const yt = useRef<YTPlayer | null>(null);
   const [ytReady, setYtReady] = useState(false);
   const ended = useRef(false);
+  /** Playhead the resume point was last written at, so `timeupdate` does not write four times a second. */
+  const savedAt = useRef(0);
+  /**
+   * The pending resume playhead, held outside React state because the deck load effect consumes it
+   * exactly once: a re-render must not make the song jump back to it a second time.
+   */
+  const resumeAtRef = useRef<number | null>(playing?.resumeAt ?? null);
+  const resumeKey = useRef<string | null>(playing?.resumeAt ? playing.track.key : null);
+  if (playing?.resumeAt && resumeKey.current !== playing.track.key) {
+    resumeKey.current = playing.track.key;
+    resumeAtRef.current = playing.resumeAt;
+  }
   const instance = useRef('');
   const endsThisInstance = useRef(0);
   const volRef = useRef(vol);
@@ -373,6 +392,23 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       const begin = (url: string) => {
         if (!live || audio.current !== a) return;
         a.src = url;
+        // Reopened on a song that was part-way through: pick it up where it stopped (RESUME-001).
+        // Seeking before play() works even before metadata arrives on a local file, and a failed
+        // seek must not stop the song from starting.
+        const at = resumeAtRef.current;
+        if (at && at > 0) {
+          resumeAtRef.current = null;
+          savedAt.current = at;
+          const seekOnce = () => {
+            try {
+              a.currentTime = at;
+            } catch {
+              /* the song just starts from the beginning */
+            }
+          };
+          if (a.readyState >= 1) seekOnce();
+          else a.addEventListener('loadedmetadata', seekOnce, { once: true });
+        }
         a.play().catch(() => {
           // Autoplay can be refused; the user presses play. Not an error and not a skip.
           setLoading(false);
@@ -546,6 +582,9 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // A song that plays to its end counts as listened; then the next one starts. A second end of the
   // same playback instance is one replay; beyond that, loops teach nothing new and record nothing.
   onEndRef.current = () => {
+    // The place is spent: this song finished, so reopening the app must not return to it.
+    clearResume();
+    savedAt.current = 0;
     const l = meter.current.listened;
     const coverage = meter.current.coverage;
     const duration = dur > 0 ? Math.round(dur) : playing?.track.duration ?? null;
@@ -742,6 +781,21 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
 
   const syncPlayback = () => queueMicrotask(() => playbackActive(Boolean((deckA.current && !deckA.current.paused) || (deckB.current && !deckB.current.paused)), playing?.track.title));
   useEffect(() => () => playbackActive(false), []);
+  /**
+   * RESUME-001. The OS can tear this page down without warning (Android recreates the Activity
+   * under memory pressure, and closing the Windows window ends the page), so the listener's place
+   * is written down as they listen rather than on the way out: an `unload` handler is not
+   * guaranteed to run, and on Android it usually does not. Throttled to once every few seconds —
+   * `timeupdate` fires about four times a second and this is only a place marker.
+   *
+   * Only a full local song is worth resuming: a 30-second preview has no place to return to.
+   */
+  const noteResume = (t: number, duration: number) => {
+    if (mode !== 'local' || !playing) return;
+    if (t - savedAt.current < 5 && savedAt.current <= t) return;
+    savedAt.current = t;
+    writeResume(playing.track, playing.playback, t, duration);
+  };
   return (
     <section className={classNames('np', docked ? 'np--docked' : 'np--panel', !playing && 'is-empty')} aria-label="Now playing">
       {/*
@@ -773,6 +827,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
             if (id !== deck) return;
             meter.current.tick(a.currentTime, !a.paused && !a.seeking);
             setCur(a.currentTime);
+            noteResume(a.currentTime, a.duration || 0);
             // The blend has to begin before this song ends, so it is driven from the playhead.
             void mixer.current?.tick(mix, playThrough() / 100);
           }}
