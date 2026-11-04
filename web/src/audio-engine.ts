@@ -11,7 +11,7 @@
 
 import { EQ_DEFAULTS, parseEq, type EqConfig } from './engine/eq';
 import { createAudioBus, type AudioBus, type BusContext, type DeckId } from './engine/audio-bus';
-import { clampSlider } from './engine/crossfade';
+import { PLAY_THROUGH_DEFAULT, clampPlayThrough, clampSlider } from './engine/crossfade';
 
 export type EngineReason =
   | 'ready'
@@ -40,9 +40,11 @@ interface EngineState {
   mix: number;
   /** Download full songs so the decks (and so the equaliser and mixer) can play them. */
   localMix: boolean;
+  /** "Play before blending", percent of each song (MIXER-PLAY-THROUGH-002). */
+  playThrough: number;
 }
 
-const state: EngineState = { ctx: null, bus: null, reason: 'not-started', eq: EQ_DEFAULTS, mix: 0, localMix: false };
+const state: EngineState = { ctx: null, bus: null, reason: 'not-started', eq: EQ_DEFAULTS, mix: 0, localMix: false, playThrough: PLAY_THROUGH_DEFAULT };
 const listeners = new Set<() => void>();
 const notify = () => {
   for (const l of [...listeners]) l();
@@ -114,7 +116,7 @@ export function attachElement(element: HTMLMediaElement | null, deck: DeckId): E
 export const bus = (): AudioBus | null => state.bus;
 
 /** A read-only picture of the live graph for the UI and for checks on a real build (ENGINE-PEEK-001). */
-export const peekEngine = () => ({ reason: state.reason, mix: state.mix, eq: state.eq, localMix: state.localMix, bus: state.bus?.peek() ?? null });
+export const peekEngine = () => ({ reason: state.reason, mix: state.mix, eq: state.eq, localMix: state.localMix, playThrough: state.playThrough, bus: state.bus?.peek() ?? null });
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, '__airwaveEngine', { value: { peek: peekEngine }, configurable: true, enumerable: false, writable: false });
 }
@@ -147,6 +149,17 @@ export function setMixSlider(v: number): number {
 
 export const localMix = (): boolean => state.localMix;
 
+/** "Play before blending", percent of each song (MIXER-PLAY-THROUGH-002). */
+export const playThrough = (): number => state.playThrough;
+export function setPlayThrough(v: unknown): number {
+  const n = clampPlayThrough(v);
+  if (n !== state.playThrough) {
+    state.playThrough = n;
+    notify();
+  }
+  return state.playThrough;
+}
+
 export function setLocalMix(v: boolean): boolean {
   state.localMix = Boolean(v);
   notify();
@@ -173,5 +186,6 @@ export function resetEngineForTests(): void {
   state.eq = EQ_DEFAULTS;
   state.mix = 0;
   state.localMix = false;
+  state.playThrough = PLAY_THROUGH_DEFAULT;
   listeners.clear();
 }

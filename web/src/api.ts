@@ -310,6 +310,8 @@ export interface Settings {
    * YouTube's player, which the engine cannot touch.
    */
   local_mix?: boolean;
+  /** "Play before blending": percent of each song that plays before the crossfader starts, 50..100. Default 95. */
+  play_through?: number;
   /** The improved (v2) ranking engine; false falls back to the original scorer. */
   rank_v2?: boolean;
 }

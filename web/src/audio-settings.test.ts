@@ -53,7 +53,8 @@ describe('Audio settings — MIXER-001 and EQ-001', () => {
   it('provides five plain labels, a linked readout and truthful playback limitations', () => {
     render(panel({ ...saved, mix: 100 }));
     const section = screen.getByRole('region', { name: 'Crossfader' });
-    expect(within(section).getAllByRole('slider')).toHaveLength(1);
+    // Blend length, and (MIXER-PLAY-THROUGH-002) how much of a song plays before it starts.
+    expect(within(section).getAllByRole('slider').map((s) => s.getAttribute('aria-label') ?? s.id.split('-').pop())).toEqual(['mix', 'pt']);
     for (const label of MIX_LABELS) expect(within(section).getByText(label, { exact: true })).toBeTruthy();
     expect(slider('Blend length').getAttribute('aria-valuetext')).toBe('100 — Long & Creative');
     const ids = slider('Blend length').getAttribute('aria-describedby')!.split(' ');
@@ -67,7 +68,7 @@ describe('Audio settings — MIXER-001 and EQ-001', () => {
     expect(text).toMatch(/full song/i);
     expect(text).toMatch(/download/i);
     // MIXER-PLAY-THROUGH-001: the panel tells the listener the blend is a tail, never a cut.
-    expect(text).toMatch(/95%/);
+    expect(text).toMatch(/95%/); // the default, named in the help
     expect(text).toMatch(/bass handoff/);
     expect(text).toMatch(/filter/);
     expect(text).toMatch(/without reliable beat grids/i);
@@ -111,6 +112,27 @@ describe('Audio settings — MIXER-001 and EQ-001', () => {
     expect(css).toMatch(/\.eqr__rail input\s*\{[^}]*height:\s*44px/);
     // A dB scale sits beside the rails so the eye has a reference for 0.
     expect(bank.closest('.eqr')?.querySelector('.eqr__scale')?.textContent).toMatch(/\+12.*0.*[−-]12/s);
+  });
+
+  it('offers a "Play before blending" slider, 95% by default, saved as play_through (MIXER-PLAY-THROUGH-002)', () => {
+    const onSettings = vi.fn();
+    render(panel({ ...saved, mix: 100 }, onSettings));
+    const s = slider('Play before blending');
+    expect(s.min).toBe('50');
+    expect(s.max).toBe('100');
+    expect(s.value).toBe('95');
+    expect(s.getAttribute('aria-valuetext')).toBe('95% of each song');
+    const ids = s.getAttribute('aria-describedby')!.split(' ');
+    expect(document.getElementById(ids[0]!)!.tagName).toBe('OUTPUT');
+    const help = ids.map((i) => document.getElementById(i)?.textContent ?? '').join(' ');
+    expect(help).toMatch(/before the next one/i);
+    expect(help).toMatch(/100%/);
+    fireEvent.change(s, { target: { value: '80' } });
+    expect(onSettings).toHaveBeenCalledWith({ play_through: 80 });
+    cleanup();
+    render(panel({ ...saved, play_through: 70 }, vi.fn()));
+    expect(slider('Play before blending').value).toBe('70');
+    expect(slider('Play before blending').getAttribute('aria-valuetext')).toBe('70% of each song');
   });
 
   it('offers "Download full songs for the equalizer and mixer", on by default, saved as local_mix (LOCAL-AUDIO-001)', () => {

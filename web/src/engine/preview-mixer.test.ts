@@ -32,6 +32,15 @@ describe('preview crossfader lifecycle', () => {
     expect(bus.transitionTo).toHaveBeenCalledWith('b', expect.closeTo(1.4, 5), 'filter'); // the 5% tail of a 30s deck
     expect(a.paused).toBe(false); expect(b.paused).toBe(false);
   });
+  it('starts the blend where the play-through setting says, not at a fixed 95% (MIXER-PLAY-THROUGH-002)', async () => {
+    const { m, a, b, bus } = setup(); await m.prepare(next);
+    a.currentTime = 23; await m.tick(100, 0.8); // 80% of 30 s = 24 s: not yet
+    expect(b.play).not.toHaveBeenCalled();
+    a.currentTime = 24.1; await m.tick(100, 0.8);
+    expect(b.play).toHaveBeenCalledTimes(1);
+    expect(bus.transitionTo).toHaveBeenCalledWith('b', expect.closeTo(5.9, 5), 'filter');
+  });
+
   it('does nothing at Off, during repeat/pause/seek, or with an unready next song', async () => {
     const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 29;
     await m.tick(0); a.paused = true; await m.tick(100);

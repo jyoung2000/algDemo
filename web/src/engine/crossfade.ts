@@ -38,6 +38,21 @@ const BANDS: readonly { upTo: number; label: MixLabel; lo: number; hi: number }[
  */
 export const MIN_PLAYED_FRACTION = 0.95;
 /**
+ * The listener's own setting for that share, as a percentage (MIXER-PLAY-THROUGH-002): the
+ * "Play before blending" slider in Settings. 50% is as early as the slider goes; 100% is no
+ * overlap at all, a clean handoff at the end of the song.
+ */
+export const PLAY_THROUGH_MIN = 50;
+export const PLAY_THROUGH_MAX = 100;
+export const PLAY_THROUGH_DEFAULT = Math.round(MIN_PLAYED_FRACTION * 100);
+export const clampPlayThrough = (v: unknown): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(clamp(n, PLAY_THROUGH_MIN, PLAY_THROUGH_MAX)) : PLAY_THROUGH_DEFAULT;
+};
+/** The fraction the plan uses for a setting, or the default when the value is out of range or missing. */
+const playedFraction = (v: number | undefined): number =>
+  v !== undefined && Number.isFinite(v) && v >= PLAY_THROUGH_MIN / 100 && v <= PLAY_THROUGH_MAX / 100 ? v : MIN_PLAYED_FRACTION;
+/**
  * No blend may eat more than this share of the INCOMING track. It starts from its beginning under
  * the fade, so this keeps a short preview from being mostly fade-in.
  */
@@ -161,6 +176,8 @@ export type MixReason = 'off' | 'as-requested' | 'kept-for-song' | 'shortened-fo
 
 /** What the planner knows about the two songs beyond their length. */
 export interface MixInputs {
+  /** Share of the outgoing song that must play before the blend starts (0.5..1). Default 0.95. */
+  minPlayedFraction?: number;
   outBpm?: number | null;
   inBpm?: number | null;
 }
@@ -231,7 +248,7 @@ export function mixPlan(slider: number, outSeconds: number, inSeconds: number, i
   }
 
   // The outgoing song's tail (95% played first) and the incoming song's share, whichever is tighter.
-  const songCeiling = outSeconds * (1 - MIN_PLAYED_FRACTION);
+  const songCeiling = outSeconds * (1 - playedFraction(inputs.minPlayedFraction));
   const pairCeiling = inSeconds * MAX_TRACK_FRACTION;
   const capped = Math.min(requested, songCeiling, pairCeiling);
   // Snap to whole bars of the OUTGOING song: that is the groove the listener is already in.

@@ -7,7 +7,7 @@ import { Volume } from './Volume';
 import { PlayerActions, type TrackActionProps } from './PlayerActions';
 import { Wheel } from './Wheel';
 import { loadYouTube, youtubeEmbedUrl, type YTPlayer } from './youtube';
-import { attachElement, bus as audioBus, localMix, mixSlider, resumeEngine, setUnprocessable, subscribeEngine, wantsProcessing } from './audio-engine';
+import { attachElement, bus as audioBus, localMix, mixSlider, playThrough, resumeEngine, setUnprocessable, subscribeEngine, wantsProcessing } from './audio-engine';
 import { localLibrary, sourceUrlFor } from './engine/local-audio';
 import { downloadsAvailable } from './engine/downloads';
 import { type DeckId } from './engine/audio-bus';
@@ -703,7 +703,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
             meter.current.tick(a.currentTime, !a.paused && !a.seeking);
             setCur(a.currentTime);
             // The blend has to begin before this song ends, so it is driven from the playhead.
-            void mixer.current?.tick(mix);
+            void mixer.current?.tick(mix, playThrough() / 100);
           }}
           onSeeked={(e) => id === deck && meter.current.seeked(e.currentTarget.currentTime)}
           onEnded={() => {

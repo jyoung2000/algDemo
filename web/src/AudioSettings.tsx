@@ -1,7 +1,7 @@
 import { useEffect, useId, useState, type CSSProperties } from 'react';
 import type { Settings } from './api';
 import { REASON_TEXT, reason as engineReason, subscribeEngine } from './audio-engine';
-import { MIX_LABELS, MIX_MAX, MIX_MIN, clampSlider, mixLabel } from './engine/crossfade';
+import { MIX_LABELS, MIX_MAX, MIX_MIN, PLAY_THROUGH_DEFAULT, PLAY_THROUGH_MAX, PLAY_THROUGH_MIN, clampPlayThrough, clampSlider, mixLabel } from './engine/crossfade';
 import {
   EQ_BANDS_HZ, EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB, EQ_PREAMP_MIN_DB, EQ_PREAMP_MAX_DB,
   EQ_PRESETS, applyPreset, clampGain, clampPreamp, headroomTrimDb, matchesPreset, parseEq,
@@ -55,6 +55,7 @@ export function AudioSettings({ settings, onSettings }: Props) {
   // On unless the listener turned it off: without it, full songs stay in YouTube's player and the
   // equaliser and mixer reach only the rare song with no full version.
   const local = settings?.local_mix ?? true;
+  const playThrough = clampPlayThrough(settings?.play_through ?? PLAY_THROUGH_DEFAULT);
   /**
    * What the engine is actually doing right now.
    *
@@ -94,10 +95,29 @@ export function AudioSettings({ settings, onSettings }: Props) {
           {MIX_LABELS.map((label) => <span key={label}>{label}</span>)}
         </div>
         <p className="note" id={`${id}-mix-help`}>
-          The full song always plays: every song runs at least 95% of the way through before the next one is
-          blended into its last few seconds, however long a blend you ask for. The mixer blends songs this app
-          plays itself — downloaded full songs and 30-second previews. A song in YouTube’s or SoundCloud’s own
-          player plays whole, with no blend. Set to Off for normal playback.
+          The full song always plays: a song runs at least as far as “Play before blending” says (95% by default)
+          before the next one is blended into what is left, however long a blend you ask for. The mixer blends
+          songs this app plays itself — downloaded full songs and 30-second previews. A song in YouTube’s or
+          SoundCloud’s own player plays whole, with no blend. Set to Off for normal playback.
+        </p>
+        <div className="audio-settings__heading">
+          <label htmlFor={`${id}-pt`}>Play before blending</label>
+          <output id={`${id}-pt-output`} htmlFor={`${id}-pt`}>
+            {playThrough}% of each song
+          </output>
+        </div>
+        <div className="dial audio-settings__range">
+          <input
+            id={`${id}-pt`} type="range" min={PLAY_THROUGH_MIN} max={PLAY_THROUGH_MAX} step={1} value={playThrough}
+            aria-valuetext={`${playThrough}% of each song`}
+            aria-describedby={`${id}-pt-output ${id}-pt-help`}
+            style={fill(playThrough, PLAY_THROUGH_MIN, PLAY_THROUGH_MAX)}
+            onChange={(event) => onSettings({ play_through: clampPlayThrough(Number(event.target.value)) })}
+          />
+        </div>
+        <p className="note" id={`${id}-pt-help`}>
+          How much of each song plays before the next one starts blending in. 100% is no overlap: songs hand over
+          cleanly at the end. Lower it for longer, earlier blends; the blend length above is the most it will use.
         </p>
         <p className="note" id={`${id}-mix-style`}>
           Higher settings ask for longer blends, with bass handoff and filter transitions at the maximum.

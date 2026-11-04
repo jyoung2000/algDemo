@@ -59,6 +59,16 @@ describe('the player strip (NP-STRIP-001)', () => {
     expect(css).toMatch(/\.tbtn--mode\.is-on \{[^}]*color: #0071e3;/);
   });
 
+  it('always shows the playhead on the desktop bar and centres the transport buttons on one line (NP-STRIP-006)', () => {
+    // Owner, from a Windows screenshot: no head on the progress bar, and shuffle sat 4–6px above
+    // previous/play/next. The head was hover-only; the transport row let its 32/36/44px buttons
+    // hang from the top edge instead of sharing a centre line.
+    expect(css).toMatch(/\.np \.prog__bar::-webkit-slider-thumb \{[^}]*opacity: 1;/);
+    expect(css).not.toMatch(/\.np \.prog__bar::-webkit-slider-thumb \{[^}]*opacity: 0;/);
+    expect(css).toMatch(/\.np \.prog__bar::-moz-range-thumb \{[^}]*opacity: 1;/);
+    expect(css).toMatch(/\n\.transport \{[^}]*align-items: center;/);
+  });
+
   it('gives the volume slider a finger- and mouse-sized hit area around its thin channel', () => {
     expect(css).toMatch(/\.vol__bar \{[^}]*padding: 8px 0;[^}]*background-clip: content-box;/);
   });

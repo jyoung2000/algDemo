@@ -10,7 +10,8 @@ import { SoundCard } from './SoundCard';
 import { ProfileView } from './Profile';
 import { SavedView } from './SavedView';
 import { SettingsView } from './Settings';
-import { setEqConfig, setLocalMix, setMixSlider } from './audio-engine';
+import { setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
+import { PLAY_THROUGH_DEFAULT } from './engine/crossfade';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, classNames, describeTaste, fmtBytes, keepFocus, historyBack, mergeRerank, nextRepeat, playbackOfTrack, stepQueue, type RepeatMode } from './util';
 
 type Tab = 'discover' | 'saved' | 'profile' | 'downloads' | 'settings';
@@ -159,7 +160,8 @@ export function App() {
     setEqConfig(settings.eq);
     setMixSlider(settings.mix ?? 0);
     setLocalMix(settings.local_mix ?? true);
-  }, [settings?.eq, settings?.mix, settings?.local_mix]);
+    setPlayThrough(settings.play_through ?? PLAY_THROUGH_DEFAULT);
+  }, [settings?.eq, settings?.mix, settings?.local_mix, settings?.play_through]);
 
   // ---------------------------------------------------------------- recommendations
   const items = useMemo(() => (result?.items ?? []).filter((x) => !hidden.has(x.track.key)), [result, hidden]);

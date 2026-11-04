@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_TRACK_FRACTION,
   MIN_PLAYED_FRACTION,
+  PLAY_THROUGH_DEFAULT,
+  PLAY_THROUGH_MIN,
+  clampPlayThrough,
   MAX_TEMPO_NUDGE,
   MIX_LABELS,
   barSeconds,
@@ -80,6 +83,26 @@ describe('the mixing slider', () => {
         expect(q.startAt / out, `slider=${slider} out=${out}`).toBeGreaterThanOrEqual(MIN_PLAYED_FRACTION - 1e-9);
       }
     }
+  });
+
+  it('lets the listener choose how much of a song plays before the blend (MIXER-PLAY-THROUGH-002)', () => {
+    // The owner asked for a slider. The setting is a share of the outgoing song, 95% by default;
+    // the plan takes it as an input and clamps it to the range the slider offers.
+    expect(mixPlan(100, 200, 200, { minPlayedFraction: 0.8 }).startAt).toBeCloseTo(160, 5);
+    expect(mixPlan(100, 200, 200, { minPlayedFraction: 0.8 }).seconds).toBeCloseTo(40, 5);
+    expect(mixPlan(100, 200, 200, { minPlayedFraction: 0.99 }).seconds).toBeCloseTo(2, 5);
+    // 100% means no overlap at all: a clean handoff at the end.
+    const none = mixPlan(100, 200, 200, { minPlayedFraction: 1 });
+    expect(none.seconds).toBe(0);
+    expect(none.startAt).toBe(200);
+    // Out of range, missing or nonsense falls back to the default rather than blending early.
+    for (const bad of [0.2, 1.5, Number.NaN, undefined]) {
+      expect(mixPlan(100, 200, 200, { minPlayedFraction: bad }).startAt, String(bad)).toBeCloseTo(190, 5);
+    }
+    expect(clampPlayThrough(80)).toBe(80);
+    expect(clampPlayThrough(49)).toBe(PLAY_THROUGH_MIN);
+    expect(clampPlayThrough(120)).toBe(100);
+    expect(clampPlayThrough(Number.NaN)).toBe(PLAY_THROUGH_DEFAULT);
   });
 
   it('never spends more than 40% of the incoming song on the blend', () => {

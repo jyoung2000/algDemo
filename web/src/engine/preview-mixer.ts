@@ -64,12 +64,13 @@ export class PreviewMixer {
     }
   }
 
-  async tick(slider: number): Promise<void> {
+  /** @param minPlayed Share of the outgoing song that must play first (the Settings slider, 0.5..1). */
+  async tick(slider: number, minPlayed?: number): Promise<void> {
     if (!slider || this.pending || this.running || this.failed || !this.ready) return;
     const outgoing = this.decks[this.active], incoming = this.decks[this.other];
     const bus = this.bus();
     if (!bus || outgoing.paused || outgoing.seeking || incoming.readyState < 3) return;
-    const plan = mixPlan(slider, outgoing.duration, incoming.duration);
+    const plan = mixPlan(slider, outgoing.duration, incoming.duration, { minPlayedFraction: minPlayed });
     if (!plan.seconds || outgoing.currentTime < plan.startAt || outgoing.ended) return;
     const generation = this.generation;
     const target = this.other;

@@ -6,7 +6,7 @@
 import * as A from './audio';
 import { DEFAULT_ENGINE, TRANSFER, engineWithWeights } from './config';
 import { EQ_DEFAULTS, parseEq } from './eq';
-import { clampSlider } from './crossfade';
+import { PLAY_THROUGH_DEFAULT, clampPlayThrough, clampSlider } from './crossfade';
 import { appendDiscovery, needsListeningDiscovery, newDiscoveryTracks } from './discovery';
 import {
   PlaylistError,
@@ -96,7 +96,7 @@ export function characteristicsOf(c: Dict, taste: TasteProfile | null): Dict {
 
 // `settings()` returns { ...DEFAULT_SETTINGS, ...stored }, so a new key defaults cleanly for an
 // install that predates it — no migration needed.
-const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, discover_while_listening: true, rank_v2: true, eq: EQ_DEFAULTS, mix: 0, local_mix: true };
+const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, discover_while_listening: true, rank_v2: true, eq: EQ_DEFAULTS, mix: 0, local_mix: true, play_through: PLAY_THROUGH_DEFAULT };
 /** How many songs one discovery run adds to the list: the user's choice in Settings. */
 export const QUEUE_SIZE_MIN = 5;
 export const QUEUE_SIZE_MAX = 60;
@@ -500,6 +500,7 @@ export class LocalApi {
     // cannot put an out-of-range gain or a NaN slider into the audio graph.
     if ('eq' in body) cur['eq'] = parseEq(body['eq']);
     if ('mix' in body) cur['mix'] = clampSlider(Number(body['mix']));
+    if ('play_through' in body) cur['play_through'] = clampPlayThrough(body['play_through']);
     await this.store.put('settings', cur);
     return ok(cur);
   }
