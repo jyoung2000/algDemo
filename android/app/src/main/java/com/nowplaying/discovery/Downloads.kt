@@ -55,6 +55,36 @@ object Downloads {
   }
 
   private val jobs = ConcurrentHashMap<String, Job>()
+  /**
+   * Finished downloads indexed by the link they were fetched from, so the player can ask "do you
+   * hold this song?" and play it on a deck through the equaliser and mixer (LOCAL-AUDIO-001). The
+   * value is the saved file's URI (MediaStore on Android 10+, a file on older phones), kept in
+   * SharedPreferences; an entry whose file has gone is dropped when read.
+   */
+  private const val LIBRARY = "airwave-library"
+  private val libraryLock = Any()
+
+  private fun libraryGet(context: Context, url: String): Uri? = synchronized(libraryLock) {
+    val prefs = context.getSharedPreferences(LIBRARY, Context.MODE_PRIVATE)
+    val raw = prefs.getString(url, null) ?: return null
+    val uri = Uri.parse(raw)
+    val present = runCatching { context.contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false }.getOrDefault(false)
+    if (!present) { prefs.edit().remove(url).apply(); return null }
+    uri
+  }
+
+  private fun librarySet(context: Context, url: String, uri: Uri) = synchronized(libraryLock) {
+    context.getSharedPreferences(LIBRARY, Context.MODE_PRIVATE).edit().putString(url, uri.toString()).apply()
+  }
+
+  /** The held file for a link (its URI, size and MIME type), for the activity to serve at the app origin. */
+  fun localFile(context: Context, url: String): Triple<Uri, Long, String>? {
+    if (!urlAllowed(url)) return null
+    val uri = libraryGet(context, url) ?: return null
+    val size = runCatching { context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } }.getOrNull() ?: return null
+    val type = context.contentResolver.getType(uri) ?: mime[uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase() ?: ""] ?: "application/octet-stream"
+    return Triple(uri, size, type)
+  }
   private val order = CopyOnWriteArrayList<String>()
   private val queue = Executors.newSingleThreadExecutor()
   private val setup = Executors.newSingleThreadExecutor()
@@ -120,6 +150,15 @@ object Downloads {
     "cancel" -> JSONObject().put("ok", cancel(req.optString("id")))
     "forget" -> { val id = req.optString("id"); cancel(id); order.remove(id); JSONObject().put("ok", jobs.remove(id) != null) }
     "reveal" -> JSONObject().put("ok", reveal(context, req.optString("id")))
+    "local" -> {
+      val url = req.optString("url")
+      require(urlAllowed(url)) { "Not a link this app downloads from." }
+      val held = localFile(context, url)
+      val running = jobs.values.any { it.url == url && (it.state == "queued" || it.state == "running") }
+      JSONObject()
+        .put("file", held?.let { (uri, size, _) -> JSONObject().put("name", uri.lastPathSegment ?: "song").put("bytes", size) } ?: JSONObject.NULL)
+        .put("running", running)
+    }
     else -> throw IllegalArgumentException("Unknown request: $op")
   }
 
@@ -183,6 +222,7 @@ object Downloads {
       job.files.add(Triple(name, f.length(), uri))
       job.savedTo = where
     }
+    if (found.size == 1) job.files.firstOrNull()?.third?.let { librarySet(context, job.url, it) }
     job.state = "done"
     job.stage = "done"
     job.percent = 100.0

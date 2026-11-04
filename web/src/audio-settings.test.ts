@@ -61,8 +61,11 @@ describe('Audio settings — MIXER-001 and EQ-001', () => {
     expect(readout.tagName).toBe('OUTPUT');
     expect(readout.getAttribute('for')).toBe(slider('Blend length').id);
     const text = section.textContent!;
-    expect(text).toMatch(/30-second previews when available/);
-    expect(text).toMatch(/not full YouTube or SoundCloud audio/);
+    // The owner's rule: the full song always plays. The mixer never trades it for a preview; it
+    // reaches full songs by downloading them (LOCAL-AUDIO-001) and says so.
+    expect(text).not.toMatch(/selects 30-second previews/);
+    expect(text).toMatch(/full song/i);
+    expect(text).toMatch(/download/i);
     expect(text).toMatch(/bass handoff/);
     expect(text).toMatch(/filter/);
     expect(text).toMatch(/without reliable beat grids/i);
@@ -106,6 +109,22 @@ describe('Audio settings — MIXER-001 and EQ-001', () => {
     expect(css).toMatch(/\.eqr__rail input\s*\{[^}]*height:\s*44px/);
     // A dB scale sits beside the rails so the eye has a reference for 0.
     expect(bank.closest('.eqr')?.querySelector('.eqr__scale')?.textContent).toMatch(/\+12.*0.*[−-]12/s);
+  });
+
+  it('offers "Download full songs for the equalizer and mixer", on by default, saved as local_mix (LOCAL-AUDIO-001)', () => {
+    const onSettings = vi.fn();
+    render(panel(saved, onSettings));
+    const box = screen.getByLabelText(/Download full songs/i) as HTMLInputElement;
+    expect(box.type).toBe('checkbox');
+    expect(box.checked).toBe(true); // undefined in saved settings means on
+    const help = document.getElementById(box.getAttribute('aria-describedby')!)!.textContent!;
+    expect(help).toMatch(/yt-dlp|Music folder/i);
+    expect(help).toMatch(/YouTube’s player|YouTube's player/);
+    fireEvent.click(box);
+    expect(onSettings).toHaveBeenCalledWith({ local_mix: false });
+    cleanup();
+    render(panel({ ...saved, local_mix: false }, vi.fn()));
+    expect((screen.getByLabelText(/Download full songs/i) as HTMLInputElement).checked).toBe(false);
   });
 
   it('preserves complete EQ state when toggling on or limiter', () => {

@@ -205,6 +205,8 @@ export interface EqGraph {
    * two decks can be crossfaded after each has been equalised.
    */
   readonly output: AudioNode;
+  /** What the graph is doing now: whether the wet path is live and each band's target gain in dB. */
+  peek(): { on: boolean; bands: number[]; preampDb: number; trimDb: number };
   dispose(): void;
 }
 
@@ -274,9 +276,11 @@ export function createEqGraph(ctx: EqContext, source: AudioNode, initial: EqConf
 
   let trimNow = 0;
   let disposed = false;
+  let current: EqConfig = initial;
 
   const apply = (config: EqConfig): void => {
     if (disposed) return;
+    current = config;
     const t = now();
     const live = config.on;
     // Off hands the signal to the dry path at unity, so turning the EQ off gives back exactly what
@@ -302,6 +306,12 @@ export function createEqGraph(ctx: EqContext, source: AudioNode, initial: EqConf
     apply,
     trimDb: () => trimNow,
     output: out,
+    peek: () => ({
+      on: current.on,
+      bands: bands.map((_, i) => (current.on ? clampGain(current.gains[i] ?? 0) : 0)),
+      preampDb: current.on ? current.preampDb : 0,
+      trimDb: trimNow,
+    }),
     dispose() {
       if (disposed) return;
       disposed = true;

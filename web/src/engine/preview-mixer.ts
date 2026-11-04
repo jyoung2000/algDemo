@@ -7,6 +7,9 @@ export interface MixCandidate { key: string; preview?: string | null }
  * BPM metadata is NOT a measured beat grid. These transitions do not claim beat/phrase alignment.
  * The outgoing song remains the current song until it ends; promotion keeps the incoming playhead.
  */
+/** What a deck source is, for the status line: a downloaded full song at the app origin, or a 30-second preview. */
+const what = (url: string): 'full song' | 'preview' => (url.startsWith('/local-audio') ? 'full song' : 'preview');
+
 export class PreviewMixer {
   active: DeckId = 'a';
   private generation = 0;
@@ -40,11 +43,11 @@ export class PreviewMixer {
   async prepare(next: MixCandidate | null): Promise<void> {
     if (next?.key === this.candidate?.key && next?.preview === this.candidate?.preview) return;
     this.cancel();
-    if (!next?.preview) { this.status('No mixable next preview; normal handoff.'); return; }
+    if (!next?.preview) { this.status('Nothing to blend into; normal handoff.'); return; }
     this.candidate = next;
     const generation = this.generation;
     const incoming = this.decks[this.other];
-    this.status('Preparing the next preview…');
+    this.status(`Preparing the next ${what(next.preview)}…`);
     try {
       const url = await this.resolve(next.preview);
       if (generation !== this.generation) return;
@@ -53,11 +56,11 @@ export class PreviewMixer {
       incoming.preservesPitch = true;
       incoming.load();
       this.ready = true;
-      this.status('Ready to blend the next preview.');
+      this.status(`Ready to blend the next ${what(next.preview)}.`);
     } catch {
       if (generation !== this.generation) return;
       this.failed = true;
-      this.status('Next preview unavailable; normal handoff.');
+      this.status(`Next ${what(next.preview)} unavailable; normal handoff.`);
     }
   }
 
@@ -87,12 +90,12 @@ export class PreviewMixer {
       }
       bus.transitionTo(target, remaining, plan.style);
       this.running = true;
-      this.status(`${plan.label} · ${remaining.toFixed(1)}s ${plan.style.replace('-', ' ')} · previews`);
+      this.status(`${plan.label} · ${remaining.toFixed(1)}s ${plan.style.replace('-', ' ')} · ${what(this.candidate?.preview ?? '') === 'full song' ? 'full songs' : 'previews'}`);
     } catch {
       if (generation === this.generation) {
         incoming.pause(); this.failed = true;
         bus.cut(this.active);
-        this.status('Next preview could not start; normal handoff.');
+        this.status(`Next ${what(this.candidate?.preview ?? '')} could not start; normal handoff.`);
       }
     } finally {
       if (generation === this.generation) this.pending = false;

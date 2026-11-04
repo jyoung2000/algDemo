@@ -14,6 +14,7 @@ const APP_HOST = 'appassets.androidplatform.net';
 const ROOT = app.isPackaged ? path.join(process.resourcesPath, 'web') : path.join(__dirname, '..', 'web', 'dist');
 const MODELS = app.isPackaged ? path.join(process.resourcesPath, 'models') : path.join(__dirname, '..', '.data', 'models');
 
+const AUDIO_MIME = { mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', flac: 'audio/flac', opus: 'audio/ogg', ogg: 'audio/ogg', oga: 'audio/ogg', wav: 'audio/wav', webm: 'audio/webm', mka: 'audio/x-matroska' };
 const MIME = { html: 'text/html', js: 'text/javascript', mjs: 'text/javascript', css: 'text/css', json: 'application/json', wasm: 'application/wasm', svg: 'image/svg+xml', png: 'image/png', ico: 'image/x-icon', woff2: 'font/woff2', md: 'text/plain' };
 
 // A custom https handler needs the scheme registered as standard + secure before ready.
@@ -83,11 +84,52 @@ function createWindow() {
   void win.loadURL(`https://${APP_HOST}/index.html`);
 }
 
+async function serveLocalAudio(req, sourceUrl) {
+  const file = dl().localFile(sourceUrl);
+  if (!file) return new Response('Not Found', { status: 404 });
+  const size = fs.statSync(file).size;
+  const type = AUDIO_MIME[path.extname(file).slice(1).toLowerCase()] || 'application/octet-stream';
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get('range') || '');
+  let start = 0;
+  let end = size - 1;
+  if (range) {
+    if (range[1]) start = Number(range[1]);
+    if (range[2]) end = Math.min(Number(range[2]), size - 1);
+    else if (!range[1]) start = Math.max(0, size - Number(range[2]));
+    if (!(start <= end && start < size)) return new Response('', { status: 416, headers: { 'content-range': `bytes */${size}` } });
+  }
+  const stream = fs.createReadStream(file, { start, end });
+  const body = new ReadableStream({
+    start(controller) {
+      stream.on('data', (chunk) => controller.enqueue(new Uint8Array(chunk)));
+      stream.on('end', () => controller.close());
+      stream.on('error', (e) => controller.error(e));
+    },
+    cancel() {
+      stream.destroy();
+    },
+  });
+  return new Response(body, {
+    status: range ? 206 : 200,
+    headers: {
+      'content-type': type,
+      'accept-ranges': 'bytes',
+      'content-length': String(end - start + 1),
+      ...(range ? { 'content-range': `bytes ${start}-${end}/${size}` } : {}),
+      'cache-control': 'no-cache',
+    },
+  });
+}
+
 app.whenReady().then(() => {
   // Serve the app (and the bundled audio model) for the app origin; every other https request passes through.
   protocol.handle('https', async (req) => {
     const url = new URL(req.url);
     if (url.host !== APP_HOST) return net.fetch(req, { bypassCustomProtocolHandlers: true });
+    // A downloaded full song, served at the app's own origin so the page may route it through Web
+    // Audio (a cross-origin element without CORS is silent there). Range requests, because an
+    // <audio> element seeks with them and will not report a duration without them.
+    if (url.pathname === '/local-audio') return serveLocalAudio(req, url.searchParams.get('u') || '');
     let file = fileFor(url.pathname);
     if (!file) return new Response('Forbidden', { status: 403 });
     if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {

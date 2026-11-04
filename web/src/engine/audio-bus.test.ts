@@ -316,6 +316,22 @@ describe('the audio bus', () => {
     expect((b.gain.gain as unknown as Param).value).toBe(0);
   });
 
+  it('reports what each deck is doing — fader level and EQ band gains — for the UI and for checks on a real build (ENGINE-PEEK-001)', () => {
+    const { ctx } = makeCtx();
+    const bus = createAudioBus(ctx);
+    bus.attach(el(), 'a');
+    bus.attach(el(), 'b');
+    bus.setEq({ ...EQ_DEFAULTS, on: true, gains: [6, 0, 0, 0, 0, 0, -4, 0, 0, 0] });
+    const p = bus.peek();
+    expect(p.live).toBe('a');
+    expect(p.decks.a?.gain).toBe(1);
+    expect(p.decks.b?.gain).toBe(0);
+    expect(p.decks.a?.eq.on).toBe(true);
+    expect(p.decks.a?.eq.bands[0]).toBeCloseTo(6);
+    expect(p.decks.a?.eq.bands[6]).toBeCloseTo(-4);
+    expect(p.decks.b?.eq.bands[0]).toBeCloseTo(6);
+  });
+
   it('creates the source node once per element, however often it is attached', () => {
     const { ctx, created } = makeCtx();
     const bus = createAudioBus(ctx);

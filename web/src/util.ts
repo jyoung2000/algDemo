@@ -135,6 +135,15 @@ export interface QueueStep {
  * song comes twice before every other has played; repeat all then starts a new round, otherwise the
  * round's end is the end of playback. Going back while shuffled uses the play history instead (historyBack).
  */
+/**
+ * The shuffle's committed next pick: from which song, to which. Once a next song has been announced
+ * (cued, downloaded, blended into) the same one must come back until it plays (SHUFFLE-NEXT-001).
+ */
+let shuffleNext: { from: string | null; key: string } | null = null;
+export function resetShuffleNextForTests(): void {
+  shuffleNext = null;
+}
+
 export function stepQueue(
   items: RecItem[],
   fromKey: string | null,
@@ -148,7 +157,12 @@ export function stepQueue(
   const pick = (from: RecItem[]) => from[Math.min(from.length - 1, Math.floor(rand() * from.length))]!;
   if (o.shuffle && dir === 1) {
     const fresh = ok.filter((x) => x.track.key !== fromKey && !o.heard.has(x.track.key));
-    if (fresh.length) return { item: pick(fresh), wrapped: false };
+    if (fresh.length) {
+      const kept = shuffleNext && shuffleNext.from === fromKey ? fresh.find((x) => x.track.key === shuffleNext!.key) : undefined;
+      const item = kept ?? pick(fresh);
+      shuffleNext = { from: fromKey, key: item.track.key };
+      return { item, wrapped: false };
+    }
     if (o.repeat !== 'all') return null;
     const others = ok.filter((x) => x.track.key !== fromKey);
     return { item: pick(others.length ? others : ok), wrapped: true };

@@ -128,6 +128,8 @@ export const dl = {
   cancel: (id: string) => call<{ ok: boolean }>({ op: 'cancel', id }),
   forget: (id: string) => call<{ ok: boolean }>({ op: 'forget', id }),
   reveal: (id: string) => call<{ ok: boolean }>({ op: 'reveal', id }),
+  /** Whether the shell holds a finished download for a link (indexed by link, kept across restarts), or is fetching it. */
+  local: (url: string) => call<{ file: DlFile | null; running: boolean }>({ op: 'local', url }),
 };
 
 /** The same check the native shells make, so the button can say no before asking. */

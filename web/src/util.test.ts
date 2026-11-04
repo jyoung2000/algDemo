@@ -184,6 +184,22 @@ describe('stepQueue (shuffle and repeat)', () => {
     }
   });
 
+  it('shuffled, commits to the announced next song: the same pick is returned until it is played (SHUFFLE-NEXT-001)', () => {
+    // The player cues and downloads "up next" ahead of time and blends into it; a fresh random
+    // pick at the handoff would land the blend on a song that then never plays.
+    const heard = new Set(['a']);
+    let r = 0;
+    const o = { shuffle: true, repeat: 'off' as const, heard, rand: () => [0.1, 0.9, 0.5, 0.7][r++ % 4]! };
+    const first = stepQueue(list, 'a', 1, none, o)?.item.track.key;
+    expect(stepQueue(list, 'a', 1, none, o)?.item.track.key).toBe(first);
+    expect(stepQueue(list, 'a', 1, none, o)?.item.track.key).toBe(first);
+    // The pick holds only while the same song is current and the pick itself is still fresh.
+    heard.add(first!);
+    const second = stepQueue(list, first!, 1, none, o)?.item.track.key;
+    expect(second).not.toBe(first);
+    expect(stepQueue(list, first!, 1, none, o)?.item.track.key).toBe(second);
+  });
+
   it('skips hidden and unplayable songs', () => {
     const l = [song('a'), { ...song('b'), playback: { preview: null, embed: null } } as RecItem, song('c'), song('d')];
     const o = { shuffle: false, repeat: 'off' as const, heard: none };

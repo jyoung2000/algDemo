@@ -24,11 +24,11 @@ export const REASON_TEXT: Record<EngineReason, string> = {
   // True whether or not a song happens to be playing right now: the graph exists and previews go
   // through it. Saying "processing this preview" while nothing plays was a claim about work the
   // engine was not doing.
-  ready: 'Previews played by this app go through the equaliser and mixer.',
+  ready: 'Songs played by this app — downloaded full songs and 30-second previews — go through the equaliser and mixer.',
   'not-started': 'Starts with the first song you play.',
   'no-web-audio': 'This browser cannot process audio.',
   'iframe-playback':
-    'This song plays in YouTube’s or SoundCloud’s own player, which Airwave cannot reach — the equaliser and mixer apply to 30-second previews.',
+    'This song plays in YouTube’s or SoundCloud’s own player, which Airwave cannot reach. Downloaded full songs and 30-second previews go through the equaliser and mixer.',
   'cross-origin-without-cors': 'This preview’s server did not allow processing, so it plays unprocessed.',
 };
 
@@ -38,9 +38,11 @@ interface EngineState {
   reason: EngineReason;
   eq: EqConfig;
   mix: number;
+  /** Download full songs so the decks (and so the equaliser and mixer) can play them. */
+  localMix: boolean;
 }
 
-const state: EngineState = { ctx: null, bus: null, reason: 'not-started', eq: EQ_DEFAULTS, mix: 0 };
+const state: EngineState = { ctx: null, bus: null, reason: 'not-started', eq: EQ_DEFAULTS, mix: 0, localMix: false };
 const listeners = new Set<() => void>();
 const notify = () => {
   for (const l of [...listeners]) l();
@@ -110,6 +112,12 @@ export function attachElement(element: HTMLMediaElement | null, deck: DeckId): E
 }
 
 export const bus = (): AudioBus | null => state.bus;
+
+/** A read-only picture of the live graph for the UI and for checks on a real build (ENGINE-PEEK-001). */
+export const peekEngine = () => ({ reason: state.reason, mix: state.mix, eq: state.eq, localMix: state.localMix, bus: state.bus?.peek() ?? null });
+if (typeof window !== 'undefined') {
+  Object.defineProperty(window, '__airwaveEngine', { value: { peek: peekEngine }, configurable: true, enumerable: false, writable: false });
+}
 export const reason = (): EngineReason => state.reason;
 
 /** Tell the UI that the current song cannot be processed at all (an iframe provider). */
@@ -137,6 +145,17 @@ export function setMixSlider(v: number): number {
   return state.mix;
 }
 
+export const localMix = (): boolean => state.localMix;
+
+export function setLocalMix(v: boolean): boolean {
+  state.localMix = Boolean(v);
+  notify();
+  return state.localMix;
+}
+
+/** Whether anything would be heard through the graph: the crossfader is up, or the equaliser is on. */
+export const wantsProcessing = (): boolean => state.mix > 0 || state.eq.on;
+
 export const trimDb = (): number => state.bus?.trimDb() ?? 0;
 
 /** Subscribe to engine changes; returns an unsubscribe. */
@@ -153,5 +172,6 @@ export function resetEngineForTests(): void {
   state.reason = 'not-started';
   state.eq = EQ_DEFAULTS;
   state.mix = 0;
+  state.localMix = false;
   listeners.clear();
 }

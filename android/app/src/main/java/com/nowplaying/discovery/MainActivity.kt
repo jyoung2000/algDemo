@@ -115,7 +115,13 @@ class MainActivity : Activity() {
       webViewClient = object : WebViewClient() {
         override fun shouldInterceptRequest(v: WebView, request: WebResourceRequest): WebResourceResponse? {
           val u = request.url
-          if (u.scheme == "https" && u.host == APP_HOST) return asset(u.path ?: "/")
+          if (u.scheme == "https" && u.host == APP_HOST) {
+            // A downloaded full song at the app's own origin, so the page may route it through Web
+            // Audio (a cross-origin element without CORS is silent there). Range requests, because an
+            // <audio> element seeks with them and reports no duration without them.
+            if (u.path == "/local-audio") return localAudio(u.getQueryParameter("u") ?: "", request.requestHeaders["Range"])
+            return asset(u.path ?: "/")
+          }
           return null
         }
 
@@ -135,6 +141,39 @@ class MainActivity : Activity() {
     }
     web = view
     root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+  }
+
+  private fun localAudio(sourceUrl: String, rangeHeader: String?): WebResourceResponse {
+    val notFound = WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(ByteArray(0)))
+    val (uri, size, type) = Downloads.localFile(this, sourceUrl) ?: return notFound
+    var start = 0L
+    var end = size - 1
+    val m = rangeHeader?.let { Regex("^bytes=([0-9]*)-([0-9]*)$").find(it.trim()) }
+    if (m != null) {
+      val (a, b) = m.destructured
+      if (a.isNotEmpty()) start = a.toLong()
+      if (b.isNotEmpty()) end = minOf(b.toLong(), size - 1) else if (a.isEmpty()) start = maxOf(0L, size - b.toLong())
+      if (start > end || start >= size) return WebResourceResponse("text/plain", "utf-8", 416, "Range Not Satisfiable", mapOf("Content-Range" to "bytes */$size"), ByteArrayInputStream(ByteArray(0)))
+    }
+    val stream = contentResolver.openInputStream(uri) ?: return notFound
+    var skipped = 0L
+    while (skipped < start) { val n = stream.skip(start - skipped); if (n <= 0) break; skipped += n }
+    val length = end - start + 1
+    val headers = mutableMapOf("Accept-Ranges" to "bytes", "Content-Length" to length.toString(), "Cache-Control" to "no-cache")
+    if (m != null) headers["Content-Range"] = "bytes $start-$end/$size"
+    return WebResourceResponse(type, null, if (m != null) 206 else 200, if (m != null) "Partial Content" else "OK", headers, BoundedInputStream(stream, length))
+  }
+
+  /** Reads at most `limit` bytes from `inner`, for a Range response. */
+  private class BoundedInputStream(private val inner: java.io.InputStream, private var limit: Long) : java.io.InputStream() {
+    override fun read(): Int { if (limit <= 0) return -1; val b = inner.read(); if (b >= 0) limit--; return b }
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+      if (limit <= 0) return -1
+      val n = inner.read(b, off, minOf(len.toLong(), limit).toInt())
+      if (n > 0) limit -= n
+      return n
+    }
+    override fun close() = inner.close()
   }
 
   /** Serve /path from the APK's assets with the right MIME type (wasm and ES modules need them). */

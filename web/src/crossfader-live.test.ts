@@ -12,13 +12,33 @@ import { act, createElement } from 'react';
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { Player, type Playing, type UpNext } from './Player';
 import { PREVIEW_ROUTE } from './engine/shape';
-import { resetEngineForTests, setMixSlider } from './audio-engine';
+import { resetEngineForTests, setEqConfig, setLocalMix, setMixSlider } from './audio-engine';
+import { EQ_DEFAULTS } from './engine/eq';
 
-const { lookedUp, fullVersions } = vi.hoisted(() => ({
+const { lookedUp, fullVersions, held, started } = vi.hoisted(() => ({
   lookedUp: [] as string[],
   /** Songs the fake YouTube lookup reports a full version for. */
   fullVersions: new Set<string>(),
+  /** Source links the fake shell holds a finished download for (LOCAL-AUDIO-001). */
+  held: new Set<string>(),
+  /** Downloads the page asked the fake shell to start. */
+  started: [] as string[],
 }));
+vi.mock('./engine/downloads', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('./engine/downloads')>();
+  return {
+    ...mod,
+    downloadsAvailable: () => true,
+    dl: {
+      ...mod.dl,
+      local: (url: string) => Promise.resolve({ file: held.has(url) ? { name: 'song.opus', bytes: 1 } : null, running: started.includes(url) }),
+      start: (url: string) => {
+        started.push(url);
+        return Promise.resolve({ job: { id: 'j' } });
+      },
+    },
+  };
+});
 vi.mock('./api', () => ({
   api: {
     previewUrl: (route: string) => Promise.resolve({ url: `https://cdn.test/${route.split('/').pop()}.mp3` }),
@@ -130,7 +150,7 @@ const settle = async () => { await act(async () => { await Promise.resolve(); aw
 
 beforeEach(() => {
   ramps.length = 0; sourced.clear();
-  lookedUp.length = 0; fullVersions.clear();
+  lookedUp.length = 0; fullVersions.clear(); held.clear(); started.length = 0;
   stubMedia();
   vi.stubGlobal('AudioContext', FakeContext);
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
@@ -344,4 +364,147 @@ describe('the crossfader, rendered', () => {
     expect(ramps.filter((r) => r.param.includes('curve'))).toHaveLength(0);
   });
 
+});
+
+/**
+ * LOCAL-AUDIO-001: the full song, through the decks.
+ *
+ * The owner's two rules collided: the full song always wins, and the equaliser and crossfader must
+ * work. YouTube's iframe cannot be routed, so the way to satisfy both is a full song the page plays
+ * itself — downloaded by the bundled yt-dlp and served at the app's own origin.
+ */
+const SRC = 'https://music.youtube.com/watch?v=dQw4w9WgXcQ';
+const LOCAL = '/local-audio?u=' + encodeURIComponent(SRC);
+const withVideo = (key: string): Playing => ({
+  track: { ...track(key), provider: 'ytmusic', platform_id: 'dQw4w9WgXcQ', duration: 180 } as Playing['track'],
+  playback: { kind: 'full', preview: route(key), open: [], embed: null } as Playing['playback'],
+});
+
+describe('full songs through the decks (LOCAL-AUDIO-001)', () => {
+  beforeEach(() => setLocalMix(true));
+
+  it('plays a downloaded full song on a deck, not in YouTube’s player, when the mixer or EQ wants it', async () => {
+    held.add(SRC);
+    setMixSlider(70);
+    const { container } = render(createElement(Player, { ...props, playing: withVideo('one'), upNext: [] }));
+    await settle();
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(decks()[0]?.getAttribute('src')).toBe(LOCAL);
+    expect(sourced.size).toBe(2); // both decks in the graph
+    // happy-dom never fires canplay, so the note is still "Loading the full song…" — and that is
+    // the point: it says full song, and never YouTube.
+    expect(container.querySelector('.np__note')?.textContent).toMatch(/full song/i);
+    expect(container.querySelector('.np__note')?.textContent).not.toMatch(/YouTube/);
+  });
+
+  it('builds the graph for the equaliser alone, mixer off', async () => {
+    held.add(SRC);
+    setEqConfig({ ...EQ_DEFAULTS, on: true });
+    render(createElement(Player, { ...props, playing: withVideo('one'), upNext: [] }));
+    await settle();
+    expect(decks()[0]?.getAttribute('src')).toBe(LOCAL);
+    expect(sourced.size).toBe(2);
+  });
+
+  it('starts the download for a song it does not hold yet, and plays THIS one in YouTube’s player meanwhile', async () => {
+    setMixSlider(70);
+    const { container } = render(createElement(Player, { ...props, playing: withVideo('one'), upNext: [] }));
+    await settle();
+    expect(started).toEqual([SRC]);
+    expect(container.querySelector('iframe')).not.toBeNull(); // never silence: the full song still plays
+    expect(decks()[0]?.getAttribute('src')).toBeNull();
+  });
+
+  it('does not yank a song out of YouTube’s player when its download finishes mid-play', async () => {
+    // The file is for next time and for the lookahead. Swapping players mid-song would restart it at 0:00.
+    setMixSlider(70);
+    const { container } = render(createElement(Player, { ...props, playing: withVideo('one'), upNext: [] }));
+    await settle();
+    expect(container.querySelector('iframe')).not.toBeNull();
+    held.add(SRC);
+    const { localLibrary } = await import('./engine/local-audio');
+    await act(async () => { await localLibrary.refresh(SRC); });
+    await settle();
+    expect(localLibrary.status(SRC)).toBe('ready');
+    expect(container.querySelector('iframe')).not.toBeNull();
+    expect(decks()[0]?.getAttribute('src')).toBeNull();
+  });
+
+  it('leaves full songs in YouTube’s player, and downloads nothing, when the engine has nothing to do', async () => {
+    // Mixer off and EQ off: processing would change nothing, so no download is owed.
+    held.add(SRC);
+    const { container } = render(createElement(Player, { ...props, playing: withVideo('one'), upNext: [] }));
+    await settle();
+    expect(container.querySelector('iframe')).not.toBeNull();
+    expect(started).toEqual([]);
+  });
+
+  it('leaves full songs in YouTube’s player when the listener turned local playback off', async () => {
+    setLocalMix(false);
+    held.add(SRC);
+    setMixSlider(70);
+    const { container } = render(createElement(Player, { ...props, playing: withVideo('one'), upNext: [] }));
+    await settle();
+    expect(container.querySelector('iframe')).not.toBeNull();
+    expect(started).toEqual([]);
+  });
+
+  it('cues a held full song as the next deck and blends into it — a full song, not a preview', async () => {
+    held.add(SRC);
+    setMixSlider(100);
+    const nextFull: UpNext[] = [{ key: 'two', title: 'Song two', artist: 'A', artwork: null, preview: route('two'), track: withVideo('two').track }];
+    fullVersions.add('two');
+    render(createElement(Player, { ...props, playing: playing('one'), upNext: nextFull }));
+    await settle();
+    const [a, b] = decks() as [HTMLAudioElement, HTMLAudioElement];
+    expect(b.getAttribute('src')).toBe(LOCAL);
+    setPaused(a, false);
+    a.currentTime = 19;
+    await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
+    await settle();
+    expect(b.paused).toBe(false);
+    expect(a.paused).toBe(false);
+  });
+
+  it('keeps the blended-into full song on its deck after the handoff — no restart, no YouTube', async () => {
+    // Observed on the Windows app: the blend into a downloaded full song ran, then at the handoff
+    // the new song was treated as a preview-only song, had no preview, and jumped to YouTube’s
+    // player from 0:00 — the overlap the listener just heard was thrown away.
+    held.add(SRC);
+    setMixSlider(100);
+    const two = withVideo('two');
+    const nextFull: UpNext[] = [{ key: 'two', title: 'Song two', artist: 'A', artwork: null, preview: null, track: two.track }];
+    fullVersions.add('two');
+    const onNext = vi.fn();
+    const view = render(createElement(Player, { ...props, onNext, playing: playing('one'), upNext: nextFull }));
+    await settle();
+    const [a, b] = decks() as [HTMLAudioElement, HTMLAudioElement];
+    expect(b.getAttribute('src')).toBe(LOCAL);
+    setPaused(a, false);
+    a.currentTime = 19;
+    await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
+    await settle();
+    expect(b.paused).toBe(false);
+    b.currentTime = 7;
+    // The outgoing song ends: the player promotes deck B and asks for the next song.
+    await act(async () => { a.dispatchEvent(new Event('ended')); });
+    expect(onNext).toHaveBeenCalled();
+    view.rerender(createElement(Player, { ...props, onNext, playing: two, upNext: [] }));
+    await settle();
+    expect(view.container.querySelector('iframe')).toBeNull();
+    expect(b.getAttribute('src')).toBe(LOCAL);
+    expect(b.paused).toBe(false);
+    expect(b.currentTime).toBe(7);
+    expect(view.container.querySelector('.np__note')?.textContent).not.toMatch(/YouTube/);
+  });
+
+  it('downloads the next full song ahead of time so the blend can reach it', async () => {
+    setMixSlider(100);
+    const nextFull: UpNext[] = [{ key: 'two', title: 'Song two', artist: 'A', artwork: null, preview: route('two'), track: withVideo('two').track }];
+    fullVersions.add('two');
+    const { container } = render(createElement(Player, { ...props, playing: playing('one'), upNext: nextFull }));
+    await settle();
+    expect(started).toEqual([SRC]);
+    expect(container.querySelector('.np__note--mix')?.textContent).toMatch(/Downloading the next song/i);
+  });
 });

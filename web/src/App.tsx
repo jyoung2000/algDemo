@@ -10,7 +10,7 @@ import { SoundCard } from './SoundCard';
 import { ProfileView } from './Profile';
 import { SavedView } from './SavedView';
 import { SettingsView } from './Settings';
-import { setEqConfig, setMixSlider } from './audio-engine';
+import { setEqConfig, setLocalMix, setMixSlider } from './audio-engine';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, classNames, describeTaste, fmtBytes, keepFocus, historyBack, mergeRerank, nextRepeat, playbackOfTrack, stepQueue, type RepeatMode } from './util';
 
 type Tab = 'discover' | 'saved' | 'profile' | 'downloads' | 'settings';
@@ -158,7 +158,8 @@ export function App() {
     if (!settings) return;
     setEqConfig(settings.eq);
     setMixSlider(settings.mix ?? 0);
-  }, [settings?.eq, settings?.mix]);
+    setLocalMix(settings.local_mix ?? true);
+  }, [settings?.eq, settings?.mix, settings?.local_mix]);
 
   // ---------------------------------------------------------------- recommendations
   const items = useMemo(() => (result?.items ?? []).filter((x) => !hidden.has(x.track.key)), [result, hidden]);
@@ -288,16 +289,19 @@ export function App() {
       writeFlag(REPEAT_KEY, n);
       return n;
     });
+  // The first entry is the song that WILL play next — the player cues, downloads and blends into
+  // it (SHUFFLE-NEXT-001). Shuffled, that is the committed pick; the rest are the songs still to come.
+  const nextKey = nextStep && !nextStep.wrapped ? nextStep.item.track.key : null;
   const upNext = useMemo(() => {
     const i = inQueue ? items.findIndex((x) => x.track.key === playingKey) : -1;
     const playable = (x: RecItem) => x.playback.preview || x.playback.embed;
-    // Shuffled, the songs still to come are the ones not heard this round; their order is decided when the next is picked.
     const rest = shuffle ? items.filter((x) => x.track.key !== playingKey && !heardRef.current.has(x.track.key) && !hidden.has(x.track.key)) : items.slice(i + 1);
-    return rest
+    const ordered = nextKey ? [...rest.filter((x) => x.track.key === nextKey), ...rest.filter((x) => x.track.key !== nextKey)] : rest;
+    return ordered
       .filter(playable)
       .slice(0, 4)
       .map((x) => ({ key: x.track.key, title: x.track.title, artist: artistOf(x.track), artwork: x.track.artwork, preview: x.playback.preview, track: x.track }));
-  }, [items, inQueue, playingKey, shuffle, hidden]);
+  }, [items, inQueue, playingKey, shuffle, hidden, nextKey]);
 
   // A skip or a full listen is recorded, then the songs still to come are ranked again with it.
   // Only the newest answer is applied, so two quick skips cannot show the older order.

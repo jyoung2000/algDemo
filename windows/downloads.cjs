@@ -74,7 +74,48 @@ function lastMeaningfulLine(text) {
 /**
  * @param {{ toolsDir: string, saveDir: string, tempRoot: string, reveal?: (file: string) => void, spawnImpl?: typeof spawn }} cfg
  */
+/**
+ * Finished downloads, indexed by the link they were fetched from, so the player can ask "do you
+ * hold this song?" and play it on a deck. Kept as a small JSON file beside the saved songs; entries
+ * whose file has gone are dropped when read.
+ */
+function createLibrary(saveDir) {
+  const file = path.join(saveDir, '.airwave-library.json');
+  let map = null;
+  function load() {
+    if (map) return map;
+    map = new Map();
+    try {
+      for (const [url, p] of Object.entries(JSON.parse(fs.readFileSync(file, 'utf8')))) if (typeof p === 'string') map.set(url, p);
+    } catch {
+      /* no library yet */
+    }
+    return map;
+  }
+  function save() {
+    fs.mkdirSync(saveDir, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(Object.fromEntries(load())), 'utf8');
+  }
+  return {
+    get(url) {
+      const p = load().get(url);
+      if (!p) return null;
+      if (!fs.existsSync(p)) {
+        load().delete(url);
+        save();
+        return null;
+      }
+      return p;
+    },
+    set(url, p) {
+      load().set(url, p);
+      save();
+    },
+  };
+}
+
 function createDownloads(cfg) {
+  const library = createLibrary(cfg.saveDir);
   const exe = (n) => path.join(cfg.toolsDir, `${n}.exe`);
   const run = cfg.spawnImpl || spawn;
   /** @type {Map<string, any>} */
@@ -177,6 +218,7 @@ function createDownloads(cfg) {
       j.files.push({ name: path.basename(dest), path: dest, bytes: fs.statSync(dest).size });
     }
     j.saved_to = cfg.saveDir;
+    if (j.tool === 'yt-dlp' && j.files.length === 1) library.set(j.url, j.files[0].path);
     j.state = 'done';
     j.stage = 'done';
     j.percent = 100;
@@ -258,6 +300,14 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
         cancel(String(req.id));
         return { ok: jobs.delete(String(req.id)) };
       }
+      case 'local': {
+        // What the shell holds for a link: the finished file, or whether a job for it is running.
+        const url = String(req.url || '');
+        if (!urlAllowedFor('yt-dlp', url)) throw new Error('Not a link this app downloads from.');
+        const p = library.get(url);
+        const running = [...jobs.values()].some((j) => j.url === url && (j.state === 'queued' || j.state === 'running'));
+        return { file: p ? { name: path.basename(p), bytes: fs.statSync(p).size } : null, running };
+      }
       case 'reveal': {
         const j = jobs.get(String(req.id));
         const f = j && j.files[0];
@@ -277,7 +327,10 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
     }
   }
 
-  return { handle, health, shutdown };
+  /** The file held for a link, for the shell to serve at the app origin; null when there is none. */
+  const localFile = (url) => (urlAllowedFor('yt-dlp', url) ? library.get(url) : null);
+
+  return { handle, health, shutdown, localFile };
 }
 
 module.exports = { createDownloads, buildArgs, urlAllowedFor, safeName, YTDLP_HOSTS, SPOTDL_HOSTS, FORMATS };

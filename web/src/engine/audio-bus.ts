@@ -99,7 +99,18 @@ export interface AudioBus {
   masterGain(): number;
   setMasterGain(v: number): void;
   trimDb(): number;
+  /**
+   * A read-only picture of the graph: which deck is live, each deck's fader level and EQ state.
+   * For the UI's engine line and for checks against a real build (ENGINE-PEEK-001).
+   */
+  peek(): BusPeek;
   dispose(): void;
+}
+
+export interface BusPeek {
+  live: DeckId;
+  master: number;
+  decks: Partial<Record<DeckId, { gain: number; src: string; eq: ReturnType<EqGraph['peek']> }>>;
 }
 
 /** Steps used to draw the equal-power curve into a param ramp. */
@@ -378,6 +389,11 @@ export function createAudioBus(ctx: BusContext, initialEq: EqConfig = EQ_DEFAULT
       return liveDeck;
     },
     cut: cutTo,
+    peek: () => {
+      const out: BusPeek = { live: liveDeck, master: master.gain.value, decks: {} };
+      for (const [id, d] of decks) out.decks[id] = { gain: d.gain.gain.value, src: d.element.currentSrc || d.element.src || '', eq: d.eq.peek() };
+      return out;
+    },
     masterGain: () => master.gain.value,
     setMasterGain(v) {
       const want = Math.max(0, Math.min(1, Number.isFinite(v) ? v : 1));

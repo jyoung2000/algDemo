@@ -304,6 +304,12 @@ export interface Settings {
   eq?: { on: boolean; presetId: string; gains: number[]; preampDb: number; limiter: boolean };
   /** The single mixing slider, 0 (off) to 100 (long and creative). MIXER-001. */
   mix?: number;
+  /**
+   * Download full songs (bundled yt-dlp, to the Music folder) so the decks can play them and the
+   * equaliser and crossfader reach them. LOCAL-AUDIO-001. Without it, full songs play in
+   * YouTube's player, which the engine cannot touch.
+   */
+  local_mix?: boolean;
   /** The improved (v2) ranking engine; false falls back to the original scorer. */
   rank_v2?: boolean;
 }

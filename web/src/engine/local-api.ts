@@ -96,7 +96,7 @@ export function characteristicsOf(c: Dict, taste: TasteProfile | null): Dict {
 
 // `settings()` returns { ...DEFAULT_SETTINGS, ...stored }, so a new key defaults cleanly for an
 // install that predates it — no migration needed.
-const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, discover_while_listening: true, rank_v2: true, eq: EQ_DEFAULTS, mix: 0 };
+const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, discover_while_listening: true, rank_v2: true, eq: EQ_DEFAULTS, mix: 0, local_mix: true };
 /** How many songs one discovery run adds to the list: the user's choice in Settings. */
 export const QUEUE_SIZE_MIN = 5;
 export const QUEUE_SIZE_MAX = 60;
