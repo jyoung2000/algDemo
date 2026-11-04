@@ -88,8 +88,11 @@ android {
   lint { abortOnError = false }
 }
 
+// Lint and its model-writer tasks read the merged assets, so every one of them has to wait for the
+// sync that produces them — otherwise Gradle fails the build for an undeclared dependency (seen on
+// `lintRelease`, which uses a different task name from the vital-lint path).
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach { dependsOn(syncWebAssets) }
-tasks.matching { it.name.contains("lintVitalAnalyze") || it.name.contains("generate") && it.name.endsWith("LintVitalReportModel") }.configureEach { dependsOn(syncWebAssets) }
+tasks.matching { it.name.contains("Lint") || it.name.contains("lint") }.configureEach { dependsOn(syncWebAssets) }
 
 dependencies {
   // yt-dlp, a Python runtime and ffmpeg, unpacked from the APK on first run (see Downloads.kt).
