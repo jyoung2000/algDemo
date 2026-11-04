@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
@@ -13,7 +14,9 @@ import com.yausername.youtubedl_android.YoutubeDLRequest
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.net.URI
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -26,7 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * The page names a URL, a tool and a format; every flag is written here, `--ignore-config` first so a
  * config file can never add `--exec`. The URL goes last, after `--`, so it cannot be read as an option.
- * Finished files are copied to the phone's Music folder (Music/Airwave Discovery) through MediaStore.
+ * Manual downloads go to Music/Airwave Discovery; cache downloads stay in app-private storage.
  *
  * spotDL is not run here: it is a Python app that depends on packages with no Android build
  * (rapidfuzz, pydantic-core, uvloop). The page does what spotDL does instead (Spotify track ->
@@ -43,7 +46,7 @@ object Downloads {
   private val audioExtensions = setOf("mp3", "m4a", "aac", "flac", "opus", "ogg", "oga", "wav", "webm", "mka")
   private val mime = mapOf("mp3" to "audio/mpeg", "m4a" to "audio/mp4", "aac" to "audio/aac", "flac" to "audio/flac", "opus" to "audio/ogg", "ogg" to "audio/ogg", "oga" to "audio/ogg", "wav" to "audio/wav", "webm" to "audio/webm", "mka" to "audio/x-matroska")
 
-  class Job(val id: String, val url: String, val format: String, val label: String, val dir: File) {
+  class Job(val id: String, val url: String, val format: String, val label: String, val dir: File, val cache: Boolean = false) {
     @Volatile var state = "queued"
     @Volatile var stage = "queued"
     @Volatile var percent: Double? = null
@@ -62,7 +65,122 @@ object Downloads {
    * SharedPreferences; an entry whose file has gone is dropped when read.
    */
   private const val LIBRARY = "airwave-library"
+  private const val CACHE = "airwave-private-audio"
+  private const val CACHE_LIMIT = "limitGb"
+  private const val CACHE_PROTECTED = "protectedUrls"
+  private const val DEFAULT_LIMIT_GB = 2.0
+  private const val DESTINATION = "airwave-download-destination"
+  private const val TREE = "treeUri"
   private val libraryLock = Any()
+
+  private fun cacheDir(context: Context) = File(context.filesDir, "audio-cache").also { it.mkdirs() }
+  private fun cachePrefs(context: Context) = context.getSharedPreferences(CACHE, Context.MODE_PRIVATE)
+  private fun cacheFile(context: Context, url: String): File? {
+    val name = cachePrefs(context).getString(url, null) ?: return null
+    if (!Regex("[a-f0-9]{64}\\.(mp3|m4a|aac|flac|opus|ogg|oga|wav|webm|mka)").matches(name)) return null
+    return File(cacheDir(context), name)
+  }
+
+  private fun cachedGet(context: Context, url: String): File? = synchronized(libraryLock) {
+    val file = cacheFile(context, url) ?: return null
+    if (!file.isFile || file.length() == 0L) {
+      cachePrefs(context).edit().remove(url).commit()
+      return null
+    }
+    file.setLastModified(System.currentTimeMillis()) // LRU on actual playback lookup, not download time alone.
+    file
+  }
+
+  private fun cacheLimit(context: Context): Long = (cachePrefs(context).getFloat(CACHE_LIMIT, DEFAULT_LIMIT_GB.toFloat()) * 1_073_741_824.0).toLong()
+  private fun protectedUrls(context: Context): Set<String> = cachePrefs(context).getStringSet(CACHE_PROTECTED, emptySet())?.toSet() ?: emptySet()
+
+  /** All cache mutation runs under libraryLock. Plan evictions first, so a rejected quota never deletes anything. */
+  private fun evictions(context: Context, incoming: Long, keep: String? = null, limit: Long = cacheLimit(context), protected: Set<String> = protectedUrls(context)): List<Pair<String, File>> {
+    val entries = cachePrefs(context).all.keys.filter { it != CACHE_LIMIT && it != CACHE_PROTECTED }.mapNotNull { url ->
+      cacheFile(context, url)?.takeIf { it.isFile }?.let { url to it }
+    }
+    val names = planCacheEvictions(entries.map { CacheEntry(it.first, it.second.length(), it.second.lastModified()) }, incoming, keep, limit, protected).toSet()
+    return entries.filter { it.first in names }
+  }
+
+  private fun removeEntries(context: Context, entries: List<Pair<String, File>>) {
+    val editor = cachePrefs(context).edit()
+    for ((url, file) in entries) {
+      if (!file.delete()) throw IOException("Could not evict cached audio.")
+      editor.remove(url)
+    }
+    if (!editor.commit()) throw IOException("Could not update cache index.")
+  }
+
+  private fun configureCache(context: Context, req: JSONObject): JSONObject = synchronized(libraryLock) {
+    val gb = req.optDouble("limitGb", Double.NaN)
+    require(gb.isFinite() && gb in 0.25..20.0) { "limitGb must be between 0.25 and 20." }
+    val arr = req.optJSONArray("protected") ?: throw IllegalArgumentException("protected must be an array of URLs.")
+    require(arr.length() <= 200) { "Too many protected URLs." }
+    val protected = (0 until arr.length()).map { arr.getString(it).also { url -> require(urlAllowed(url)) { "Invalid protected URL." } } }.toSet()
+    val limit = (gb * 1_073_741_824.0).toLong()
+    val discard = evictions(context, 0, limit = limit, protected = protected)
+    removeEntries(context, discard)
+    if (!cachePrefs(context).edit().putFloat(CACHE_LIMIT, gb.toFloat()).putStringSet(CACHE_PROTECTED, protected).commit()) throw IOException("Could not save cache limit.")
+    JSONObject().put("ok", true).put("limitGb", gb).put("limitBytes", limit).put("bytes", cacheBytes(context))
+  }
+
+  private fun cacheBytes(context: Context): Long = cachePrefs(context).all.keys.filter { it != CACHE_LIMIT && it != CACHE_PROTECTED }
+    .sumOf { cacheFile(context, it)?.takeIf(File::isFile)?.length() ?: 0L }
+
+  private fun cacheSong(context: Context, job: Job, source: File): File = synchronized(libraryLock) {
+    val extension = source.extension.lowercase()
+    val hash = MessageDigest.getInstance("SHA-256").digest(job.url.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    val target = File(cacheDir(context), "$hash.$extension")
+    val size = source.length()
+    val discard = evictions(context, size, keep = job.url)
+    val temp = File(cacheDir(context), "$hash.$extension.partial")
+    try {
+      source.inputStream().use { input -> temp.outputStream().use { output -> input.copyTo(output) } }
+      if (temp.length() != size) throw IOException("Incomplete cache copy.")
+      removeEntries(context, discard)
+      if (target.exists() && !target.delete()) throw IOException("Could not replace cached audio.")
+      if (!temp.renameTo(target)) throw IOException("Could not finish cached audio.")
+      val previous = cacheFile(context, job.url)
+      if (!cachePrefs(context).edit().putString(job.url, target.name).commit()) {
+        target.delete()
+        throw IOException("Could not index cached audio.")
+      }
+      if (previous != null && previous != target) previous.delete()
+      target.setLastModified(System.currentTimeMillis())
+      target
+    } finally {
+      temp.delete()
+    }
+  }
+
+  private fun keep(context: Context, url: String): JSONObject = synchronized(libraryLock) {
+    require(urlAllowed(url)) { "Not a link this app downloads from." }
+    val saved = libraryGet(context, url)
+    if (saved != null) return JSONObject().put("ok", true).put("job", JSONObject.NULL).put("alreadyKept", true)
+    val cached = cachedGet(context, url) ?: throw IllegalArgumentException("Song is not in the private cache.")
+    val (name, uri, where) = saveToMusic(context, cached)
+    check(uri != null) { "Could not save song." }
+    librarySet(context, url, uri)
+    // Keep the cache copy for any open WebView stream; it remains subject to the configured LRU.
+    JSONObject().put("ok", true).put("job", JSONObject.NULL).put("file", JSONObject().put("name", name).put("bytes", cached.length())).put("saved_to", where)
+  }
+
+  fun setFolder(context: Context, uri: Uri) {
+    require(DocumentsContract.isTreeUri(uri)) { "Selected destination is not a folder." }
+    if (!context.getSharedPreferences(DESTINATION, Context.MODE_PRIVATE).edit().putString(TREE, uri.toString()).commit()) {
+      throw IOException("Could not save selected folder.")
+    }
+  }
+
+  private fun chosenFolder(context: Context): Uri? = context.getSharedPreferences(DESTINATION, Context.MODE_PRIVATE)
+    .getString(TREE, null)?.let(Uri::parse)
+
+  private fun destinationName(context: Context): String {
+    val tree = chosenFolder(context) ?: return "Music/Airwave Discovery"
+    val label = runCatching { DocumentsContract.getTreeDocumentId(tree).substringAfterLast(':') }.getOrDefault("folder")
+    return "Selected folder: ${safeName(label).take(80)}"
+  }
 
   private fun libraryGet(context: Context, url: String): Uri? = synchronized(libraryLock) {
     val prefs = context.getSharedPreferences(LIBRARY, Context.MODE_PRIVATE)
@@ -80,7 +198,7 @@ object Downloads {
   /** The held file for a link (its URI, size and MIME type), for the activity to serve at the app origin. */
   fun localFile(context: Context, url: String): Triple<Uri, Long, String>? {
     if (!urlAllowed(url)) return null
-    val uri = libraryGet(context, url) ?: return null
+    val uri = libraryGet(context, url) ?: cachedGet(context, url)?.let(Uri::fromFile) ?: return null
     val size = runCatching { context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } }.getOrNull() ?: return null
     val type = context.contentResolver.getType(uri) ?: mime[uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase() ?: ""] ?: "application/octet-stream"
     return Triple(uri, size, type)
@@ -140,12 +258,14 @@ object Downloads {
         .put("detail", state ?: JSONObject.NULL),
     )
     tools.put(JSONObject().put("id", "ffmpeg").put("present", ready).put("version", if (ready) "bundled with this app" else JSONObject.NULL).put("method", "the real ffmpeg, run inside this app").put("detail", state ?: JSONObject.NULL))
-    return JSONObject().put("ready", ready).put("runs_spotdl", false).put("tools", tools).put("saves_to", "Music/Airwave Discovery")
+    return JSONObject().put("ready", ready).put("runs_spotdl", false).put("tools", tools).put("saves_to", destinationName(context))
   }
 
   fun handle(context: Context, req: JSONObject): JSONObject = when (val op = req.optString("op")) {
     "health" -> health(context)
-    "start" -> JSONObject().put("job", view(start(context, req.optString("url"), req.optString("tool"), req.optString("format"), req.optString("label"))))
+    "start" -> JSONObject().put("job", view(start(context, req.optString("url"), req.optString("tool"), req.optString("format"), req.optString("label"), req.optBoolean("cache", false))))
+    "cache-config" -> configureCache(context, req)
+    "keep" -> keep(context, req.optString("url"))
     "jobs" -> JSONObject().put("jobs", JSONArray().also { a -> order.mapNotNull { jobs[it] }.forEach { a.put(view(it)) } })
     "cancel" -> JSONObject().put("ok", cancel(req.optString("id")))
     "forget" -> { val id = req.optString("id"); cancel(id); order.remove(id); JSONObject().put("ok", jobs.remove(id) != null) }
@@ -157,12 +277,14 @@ object Downloads {
       val running = jobs.values.any { it.url == url && (it.state == "queued" || it.state == "running") }
       JSONObject()
         .put("file", held?.let { (uri, size, _) -> JSONObject().put("name", uri.lastPathSegment ?: "song").put("bytes", size) } ?: JSONObject.NULL)
+        .put("cached", cachedGet(context, url) != null)
+        .put("kept", libraryGet(context, url) != null)
         .put("running", running)
     }
     else -> throw IllegalArgumentException("Unknown request: $op")
   }
 
-  private fun start(context: Context, url: String, tool: String, format: String, label: String): Job {
+  private fun start(context: Context, url: String, tool: String, format: String, label: String, cache: Boolean): Job {
     // The page maps a Spotify link to a YouTube Music link first, so only yt-dlp is ever run here.
     require(tool == "yt-dlp") { "Only yt-dlp runs on this device." }
     require(format in FORMATS) { "Unsupported format." }
@@ -170,7 +292,7 @@ object Downloads {
     require(jobs.values.count { it.state == "queued" || it.state == "running" } < 20) { "Too many downloads are waiting. Let some finish first." }
     val id = UUID.randomUUID().toString()
     val dir = File(File(context.cacheDir, "dl-jobs"), id).also { it.mkdirs() }
-    val job = Job(id, url, format, label.take(200), dir)
+    val job = Job(id, url, format, label.take(200), dir, cache)
     jobs[id] = job
     order.add(id)
     val app = context.applicationContext
@@ -199,6 +321,7 @@ object Downloads {
     r.addOption("--no-mtime")
     r.addOption("--no-cache-dir")
     r.addOption("--no-playlist")
+    if (job.cache) r.addOption("--max-filesize", cacheLimit(context).toString())
     r.addOption("--paths", job.dir.absolutePath)
     r.addOption("--output", "%(title).180B.%(ext)s")
     r.addOption("--extract-audio")
@@ -217,6 +340,16 @@ object Downloads {
     job.stage = "finalizing"
     val found = job.dir.walkTopDown().maxDepth(4).filter { it.isFile && it.extension.lowercase() in audioExtensions }.sortedBy { it.name }.toList()
     if (found.isEmpty()) return fail(job, "yt-dlp finished without producing an audio file.")
+    if (job.cache) {
+      if (found.size != 1) return fail(job, "Private playback cache requires exactly one audio file.")
+      val cached = cacheSong(context, job, found.single())
+      job.files.add(Triple(safeName(found.single().name), cached.length(), Uri.fromFile(cached)))
+      job.savedTo = "Private audio cache"
+      job.state = "done"
+      job.stage = "done"
+      job.percent = 100.0
+      return
+    }
     for (f in found) {
       val (name, uri, where) = saveToMusic(context, f)
       job.files.add(Triple(name, f.length(), uri))
@@ -228,10 +361,25 @@ object Downloads {
     job.percent = 100.0
   }
 
-  /** Copies into Music/Airwave Discovery. Android 10+ uses MediaStore (no permission needed); older versions use the app's own Music folder. */
+  /** Copies into a chosen SAF tree, otherwise Music/Airwave Discovery. */
   private fun saveToMusic(context: Context, f: File): Triple<String, Uri?, String> {
     val name = safeName(f.name)
     val type = mime[f.extension.lowercase()] ?: "application/octet-stream"
+    chosenFolder(context)?.let { tree ->
+      val resolver = context.contentResolver
+      val parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+      val uri = DocumentsContract.createDocument(resolver, parent, type, name)
+        ?: throw IOException("Selected folder is unavailable; choose it again.")
+      try {
+        (resolver.openOutputStream(uri) ?: throw IOException("Could not write to selected folder.")).use { out ->
+          f.inputStream().use { it.copyTo(out) }
+        }
+      } catch (e: Exception) {
+        runCatching { DocumentsContract.deleteDocument(resolver, uri) }
+        throw e
+      }
+      return Triple(name, uri, destinationName(context))
+    }
     if (Build.VERSION.SDK_INT >= 29) {
       val values = ContentValues().apply {
         put(MediaStore.Audio.Media.DISPLAY_NAME, name)
@@ -241,8 +389,13 @@ object Downloads {
       }
       val resolver = context.contentResolver
       val uri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values) ?: throw java.io.IOException("Could not create a file in the Music folder.")
-      resolver.openOutputStream(uri)!!.use { out -> f.inputStream().use { it.copyTo(out) } }
-      resolver.update(uri, ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) }, null, null)
+      try {
+        (resolver.openOutputStream(uri) ?: throw IOException("Could not open Music destination.")).use { out -> f.inputStream().use { it.copyTo(out) } }
+        if (resolver.update(uri, ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) }, null, null) < 1) throw IOException("Could not publish Music file.")
+      } catch (e: Exception) {
+        resolver.delete(uri, null, null)
+        throw e
+      }
       return Triple(name, uri, "Music/Airwave Discovery")
     }
     val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MUSIC), "Airwave Discovery").also { it.mkdirs() }
@@ -279,6 +432,7 @@ object Downloads {
     return JSONObject().put("id", j.id).put("url", j.url).put("tool", "yt-dlp").put("format", j.format).put("label", j.label)
       .put("state", j.state).put("stage", j.stage).put("percent", j.percent ?: JSONObject.NULL).put("message", j.message ?: JSONObject.NULL)
       .put("error", j.error ?: JSONObject.NULL).put("files", files).put("saved_to", j.savedTo ?: JSONObject.NULL)
+      .put("cached", j.cache)
   }
 
   fun safeName(name: String): String {

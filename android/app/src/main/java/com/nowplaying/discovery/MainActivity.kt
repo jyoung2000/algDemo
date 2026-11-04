@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.util.Base64
 import android.util.Log
@@ -47,6 +48,10 @@ class MainActivity : Activity() {
   private val pool = Executors.newFixedThreadPool(16)
   private var pendingMic: PermissionRequest? = null
   private var pendingFile: ValueCallback<Array<Uri>>? = null
+  private var pendingFolderId: Int? = null
+  @Volatile private var webAudioPlaying = false
+  private var activityPaused = false
+  private var notificationRequested = false
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -239,16 +244,74 @@ class MainActivity : Activity() {
     @JavascriptInterface
     fun version(): String = BuildConfig.VERSION_NAME
 
-    /** The downloaders (yt-dlp). The answer comes back through window.__awDl(id, json); see Downloads.kt. */
+    /** JS opt-in: AirwaveNative.playbackState(JSON.stringify({playing, title})).
+     * Reports state for the notification only; no native player or media session is created.
+     */
+    @JavascriptInterface
+    fun playbackState(json: String) {
+      if (json.length > 2048) return
+      val state = runCatching { JSONObject(json) }.getOrNull() ?: return
+      val playing = state.optBoolean("playing", false)
+      val title = state.optString("title", "Airwave Discovery").take(120)
+      view.post {
+        if (web !== view) return@post
+        webAudioPlaying = playing
+        if (playing) {
+          if (Build.VERSION.SDK_INT >= 33 && !activityPaused && !notificationRequested &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notificationRequested = true
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+          }
+          if (activityPaused) view.onResume()
+          val service = Intent(this@MainActivity, PlaybackNotificationService::class.java)
+            .setAction(PlaybackNotificationService.ACTION_PLAYING)
+            .putExtra(PlaybackNotificationService.EXTRA_TITLE, title)
+          try {
+            startForegroundService(service)
+          } catch (e: RuntimeException) {
+            // Android 12+ can reject an FGS start made after the Activity went to background.
+            Log.w("AirwavePlayback", "Could not start playback notification", e)
+          }
+        } else {
+          stopService(Intent(this@MainActivity, PlaybackNotificationService::class.java))
+          if (activityPaused) view.onPause()
+        }
+      }
+    }
+
+    /** Fire-and-forget requests, except choose-folder: it resolves after the system picker returns. */
     @JavascriptInterface
     fun downloads(id: Int, json: String) {
+      val req = runCatching { JSONObject(json) }.getOrElse {
+        view.post { replyDownload(view, id, JSONObject().put("error", "Invalid download request.")) }
+        return
+      }
+      if (req.optString("op") == "choose-folder") {
+        view.post {
+          if (pendingFolderId != null) {
+            replyDownload(view, id, JSONObject().put("error", "A folder picker is already open."))
+          } else {
+            pendingFolderId = id
+            try {
+              @Suppress("DEPRECATION")
+              startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+              ), REQ_FOLDER)
+            } catch (e: Exception) {
+              pendingFolderId = null
+              replyDownload(view, id, JSONObject().put("error", e.message ?: "No folder picker available."))
+            }
+          }
+        }
+        return
+      }
       pool.execute {
         val out = try {
-          Downloads.handle(applicationContext, JSONObject(json))
+          Downloads.handle(applicationContext, req)
         } catch (e: Exception) {
           JSONObject().put("error", e.message ?: e.javaClass.simpleName)
         }
-        view.post { view.evaluateJavascript("window.__awDl($id, ${JSONObject.quote(out.toString())})", null) }
+        view.post { replyDownload(view, id, out) }
       }
     }
 
@@ -297,6 +360,10 @@ class MainActivity : Activity() {
     }
   }
 
+  private fun replyDownload(view: WebView, id: Int, result: JSONObject) {
+    if (web === view) view.evaluateJavascript("window.__awDl($id, ${JSONObject.quote(result.toString())})", null)
+  }
+
   override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
     super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     if (requestCode != REQ_MIC) return
@@ -308,6 +375,22 @@ class MainActivity : Activity() {
   @Deprecated("Deprecated in Java")
   override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
     @Suppress("DEPRECATION") super.onActivityResult(requestCode, resultCode, data)
+    if (requestCode == REQ_FOLDER) {
+      val id = pendingFolderId ?: return
+      pendingFolderId = null
+      val out = try {
+        val uri = if (resultCode == RESULT_OK) data?.data else null
+        if (uri == null) throw IllegalStateException("Folder selection cancelled.")
+        if (((data?.flags ?: 0) and Intent.FLAG_GRANT_WRITE_URI_PERMISSION) == 0) throw SecurityException("Folder write permission was not granted.")
+        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        Downloads.setFolder(applicationContext, uri)
+        JSONObject().put("saves_to", Downloads.health(applicationContext).getString("saves_to"))
+      } catch (e: Exception) {
+        JSONObject().put("error", e.message ?: "Could not save selected folder.")
+      }
+      web?.let { replyDownload(it, id, out) }
+      return
+    }
     if (requestCode != REQ_FILE) return
     val cb = pendingFile ?: return
     pendingFile = null
@@ -323,14 +406,19 @@ class MainActivity : Activity() {
     if (w != null && w.canGoBack()) w.goBack() else @Suppress("DEPRECATION") super.onBackPressed()
   }
 
-  override fun onPause() { web?.onPause(); super.onPause() }
-  override fun onResume() { super.onResume(); web?.onResume() }
-  override fun onDestroy() { web?.destroy(); web = null; pool.shutdownNow(); super.onDestroy() }
+  override fun onPause() { activityPaused = true; if (!webAudioPlaying) web?.onPause(); super.onPause() }
+  override fun onResume() { super.onResume(); activityPaused = false; web?.onResume() }
+  override fun onDestroy() {
+    stopService(Intent(this, PlaybackNotificationService::class.java))
+    web?.destroy(); web = null; pool.shutdownNow(); super.onDestroy()
+  }
 
   private companion object {
     const val APP_HOST = "appassets.androidplatform.net"
     const val REQ_MIC = 41
     const val REQ_FILE = 42
+    const val REQ_FOLDER = 43
+    const val REQ_NOTIFY = 44
     // Mirrors server/airwave_discovery/net.py ALLOWED_HOSTS / ALLOWED_SUFFIXES.
     val HOSTS = setOf(
       "api.deezer.com", "www.deezer.com", "deezer.com", "deezer.page.link", "link.deezer.com",

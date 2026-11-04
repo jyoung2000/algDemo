@@ -5,6 +5,9 @@
   <!-- Song identification from the search bar's Mic: asked for when Mic is tapped, never at start-up. -->
   <uses-permission android:name="android.permission.RECORD_AUDIO" />
   <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
   <application
@@ -26,5 +29,8 @@
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
     </activity>
+    <!-- Notification helper only: the actual audio element still lives in MainActivity's WebView. -->
+    <service android:name=".PlaybackNotificationService" android:exported="false"
+      android:foregroundServiceType="mediaPlayback" />
   </application>
 </manifest>
