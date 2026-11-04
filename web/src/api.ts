@@ -347,6 +347,10 @@ export interface Health {
 export interface Status {
   storage: {
     areas: Record<string, number>;
+    /** The shell's private queue-audio cache against its size limit; null in a plain browser. */
+    queue_audio: { bytes: number; limit: number } | null;
+    /** This origin's own data (IndexedDB, caches) — what `navigator.storage.estimate()` sees. */
+    app_data: number;
     limits: Record<string, number>;
     total: number;
     hard_cap: number;

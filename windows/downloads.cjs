@@ -196,7 +196,9 @@ function createDownloads(cfg) {
 
   function health() {
     const tools = probe();
-    return { ready: tools.every((t) => t.present), runs_spotdl: true, tools, saves_to: saveDir };
+    // The queue cache is the app's real audio footprint. The page shows it next to the limit the
+    // owner sets, so it must come from disk here, not from the WebView's own storage estimate.
+    return { ready: tools.every((t) => t.present), runs_spotdl: true, tools, saves_to: saveDir, cache_bytes: cacheBytes(), cache_limit_bytes: limitBytes };
   }
 
   function keep(url) {

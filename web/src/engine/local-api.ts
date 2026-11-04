@@ -32,6 +32,7 @@ import { classify, classifyAll } from './classify';
 import { makeTag } from './genres';
 import { inferFromArtist, inferFromSeed, inferFromSound, recordArtistGenres } from './infer';
 import { BlockedUrl, BudgetExceeded, Cancelled, FetchError, Http, type HttpPort, Meter } from './net';
+import { dl, downloadsAvailable } from './downloads';
 import { Job, Pipeline, pmap, type Embedder } from './pipeline';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
@@ -1154,10 +1155,22 @@ export class LocalApi {
       /* storage estimates are optional */
     }
     const cache = this.store.cacheBytes();
+    // STORAGE-TRUTH-001: `navigator.storage.estimate()` only sees this origin's own data. The full
+    // songs the app downloads live in the native shell's private audio cache, so the honest answer
+    // has to be asked for over the bridge, and it is what the owner's size limit actually governs.
+    let queueAudio: { bytes: number; limit: number } | null = null;
+    if (downloadsAvailable()) {
+      try {
+        const h = await dl.health();
+        if (Number.isFinite(h.cache_bytes) && Number.isFinite(h.cache_limit_bytes)) queueAudio = { bytes: Number(h.cache_bytes), limit: Number(h.cache_limit_bytes) };
+      } catch {
+        /* an older shell has no cache figures; report app data alone rather than inventing one */
+      }
+    }
     return {
-      storage: { areas: { cache, other: Math.max(0, usage - cache) }, limits: { cache: 150_000_000 }, total: usage, hard_cap: quota, target: quota, free_disk: free, not_counted: 'Songs played in the embedded players are streamed by the player and not stored.' },
+      storage: { areas: { cache, other: Math.max(0, usage - cache) }, queue_audio: queueAudio, app_data: usage, limits: { cache: 150_000_000 }, total: usage + (queueAudio?.bytes ?? 0), hard_cap: quota, target: quota, free_disk: free, not_counted: 'Songs you Download are copied to your music folder and are not counted here.' },
       transfer_today: this.store.transferToday(), transfer_daily_cap: Math.trunc(Number(settings['daily_mb']) * 1e6), transfer_request_cap: Math.trunc(Number(settings['request_mb']) * 1e6),
-      transfer_note: 'Downloads made by the app itself. Playing songs in the embedded players streams directly and is not counted here.',
+      transfer_note: 'Network the page itself read today. Songs fetched by the built-in downloader do not pass through the page and are not counted here.',
       cache: { hits: this.store.cacheHits, misses: this.store.cacheMisses, bytes: cache, vectors: this.store.vectorCount() },
       startup_ms: Math.round(this.started), memory: { rss: null, peak: null }, audio: this.audioState(), health_checked_at: this.healthAt, telemetry: 'none',
     };

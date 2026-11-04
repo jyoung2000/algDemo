@@ -273,7 +273,10 @@ object Downloads {
         .put("detail", state ?: JSONObject.NULL),
     )
     tools.put(JSONObject().put("id", "ffmpeg").put("present", ready).put("version", if (ready) "bundled with this app" else JSONObject.NULL).put("method", "the real ffmpeg, run inside this app").put("detail", state ?: JSONObject.NULL))
+    // The private audio cache is the app's real audio footprint, so the page can show it against
+    // the owner's limit instead of the WebView's own storage estimate, which never sees these files.
     return JSONObject().put("ready", ready).put("runs_spotdl", false).put("tools", tools).put("saves_to", destinationName(context))
+      .put("cache_bytes", cacheBytes(context)).put("cache_limit_bytes", cacheLimit(context))
   }
 
   fun handle(context: Context, req: JSONObject): JSONObject = when (val op = req.optString("op")) {

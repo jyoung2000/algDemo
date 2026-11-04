@@ -86,3 +86,16 @@ test('LRU evicts old cache to stay under 0.25 GiB; protected playing song is nev
   assert.ok(dl.handle({ op: 'local', url: b }).file);
   dl.shutdown();
 });
+
+test('health reports the queue cache usage and its limit, and reading it evicts nothing', async (t) => {
+  const { dl } = fixture(t);
+  const source = url('dQw4w9WgXcQ');
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [source] });
+  const { job } = dl.handle({ op: 'start', url: source, tool: 'yt-dlp', format: 'original', label: 'Song', cache: true });
+  assert.equal((await done(dl, job.id)).state, 'done');
+  const health = dl.handle({ op: 'health' });
+  assert.equal(health.cache_bytes, 20);
+  assert.equal(health.cache_limit_bytes, Math.floor(0.25 * 1024 ** 3));
+  assert.equal(dl.handle({ op: 'local', url: source }).file.bytes, 20);
+  dl.shutdown();
+});

@@ -66,6 +66,10 @@ export interface DlHealth {
   runs_spotdl: boolean;
   tools: DlToolHealth[];
   saves_to: string;
+  /** Bytes in the shell's private queue-audio cache. Absent on shells older than this contract. */
+  cache_bytes?: number;
+  /** The size limit that cache is held under, in bytes. */
+  cache_limit_bytes?: number;
 }
 
 declare global {

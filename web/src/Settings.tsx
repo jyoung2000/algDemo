@@ -100,6 +100,9 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
 
   const tr = status?.transfer_today ?? {};
   const trTotal = Object.values(tr).reduce((a, b) => a + (b || 0), 0);
+  // The stored full songs, which only the installed shells have. This is the figure the "Queue audio
+  // storage limit" slider governs, so it is the one the meter shows.
+  const qa = status?.storage.queue_audio ?? null;
   const discoverySize = settings?.queue_size ?? 30;
   const discoveryPct = ((discoverySize - QUEUE_SIZE_MIN) / (QUEUE_SIZE_MAX - QUEUE_SIZE_MIN)) * 100;
 
@@ -404,24 +407,41 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
       {status && (
         <section className="card" aria-labelledby="st-h">
           <h2 id="st-h">Storage and downloads</h2>
-          <div
-            className="meter"
-            aria-label={`App storage ${fmtBytes(status.storage.total)} of ${fmtBytes(status.storage.hard_cap)}`}
-          >
-            <span
-              style={{
-                width: `${Math.min(100, (status.storage.total / status.storage.hard_cap) * 100)}%`,
-              }}
-            />
-          </div>
-          <p className="note">
-            {fmtBytes(status.storage.total)} of {fmtBytes(status.storage.hard_cap)} used by the app.{' '}
-            {status.storage.not_counted}
-          </p>
+          {qa ? (
+            <>
+              <div
+                className="meter"
+                aria-label={`Queue audio ${fmtBytes(qa.bytes)} of ${fmtBytes(qa.limit)}`}
+              >
+                <span style={{ width: `${Math.min(100, (qa.bytes / qa.limit) * 100)}%` }} />
+              </div>
+              <p className="note">
+                {fmtBytes(qa.bytes)} of {fmtBytes(qa.limit)} of queue audio stored, plus{' '}
+                {fmtBytes(status.storage.app_data)} of app data. {status.storage.not_counted}
+              </p>
+            </>
+          ) : (
+            <p className="note">
+              {fmtBytes(status.storage.app_data)} of app data. Full songs are stored only in the
+              installed Windows and Android apps.
+            </p>
+          )}
           <dl className="kv">
+            {qa && (
+              <div>
+                <dt>queue audio</dt>
+                <dd>
+                  {fmtBytes(qa.bytes)} of {fmtBytes(qa.limit)}
+                </dd>
+              </div>
+            )}
+            <div>
+              <dt>app data</dt>
+              <dd>{fmtBytes(status.storage.app_data)}</dd>
+            </div>
             {Object.entries(status.storage.areas).map(([k, v]) => (
               <div key={k}>
-                <dt>{k.replace(/_/g, ' ')}</dt>
+                <dt>· {k.replace(/_/g, ' ')}</dt>
                 <dd>{fmtBytes(v)}</dd>
               </div>
             ))}
