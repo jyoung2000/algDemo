@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { api, type Track } from './api';
 import { DL_FORMATS, dl, downloadsAvailable, matchTarget, targetFor, urlAllowedFor, type DlFormat, type DlHealth, type DlJob, type DlTool } from './engine/downloads';
+import { heldCopy } from './engine/held';
 import { classNames, fmtBytes } from './util';
 
 const FORMAT_KEY = 'airwave.dl.format';
@@ -124,6 +125,17 @@ export function useDownloads(flash: (m: string) => void) {
           flash(`Downloading “${r2.job.label || label}”. Follow it in Downloads.`);
           poll();
           return r2.job;
+        }
+        // Whichever tool and format: if a permanent copy is already on disk, reuse it. Without
+        // this a second Download of a spotdl song wrote "Artist - Title (2).opus".
+        const already = await heldCopy((u) => dl.local(u), url);
+        if (already) {
+          flash(`“${label}” is already in your Downloads folder.`);
+          poll();
+          return {
+            id: `held:${url}`, url, tool, format, label, state: 'done', stage: 'done', percent: 100,
+            message: null, error: null, files: already.file ? [already.file] : [], saved_to: null,
+          } satisfies DlJob;
         }
         if (tool === 'yt-dlp' && format === 'original') {
           // The queue cache may already hold this exact song; keeping it costs no second download.

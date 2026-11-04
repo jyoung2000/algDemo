@@ -20,6 +20,14 @@ describe('Download keeps a permanent copy without disturbing playback', () => {
     expect(ui).toMatch(/satisfies DlJob/);
   });
 
+  it('checks for a copy already on disk before starting any download, for every tool', () => {
+    // The yt-dlp/original `keep` path below is narrower than the duplicate bug: a spotdl song took
+    // neither branch and was refetched. This check must stay ahead of every dl.start call.
+    expect(ui).toMatch(/const already = await heldCopy\(/);
+    expect(ui.indexOf('await heldCopy(')).toBeLessThan(ui.indexOf("if (tool === 'yt-dlp' && format === 'original')"));
+    expect(ui.indexOf('await heldCopy(')).toBeLessThan(ui.indexOf('await dl.start(url, tool, format, label)'));
+  });
+
   it('never cancels or deletes the playing cache entry from the download path', () => {
     expect(ui).not.toMatch(/dl\.cancel\([^)]*\)\s*;?\s*\/\/\s*keep/);
     expect(ui).not.toMatch(/op: 'forget'/);

@@ -196,7 +196,11 @@ function fixture(t, bytes = 20) {
       child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
       child.pid = 0; child.kill = () => {};
       process.nextTick(() => {
-        const jobDir = args[args.indexOf('--paths') + 1];
+        // yt-dlp takes `--paths <dir>`; spotdl takes `--output <dir>/<template>`.
+        const jobDir = args.includes('--paths')
+          ? args[args.indexOf('--paths') + 1]
+          : path.dirname(args[args.indexOf('--output') + 1]);
+        fs.mkdirSync(jobDir, { recursive: true });
         fs.writeFileSync(path.join(jobDir, 'full-song.opus'), '');
         fs.truncateSync(path.join(jobDir, 'full-song.opus'), bytes);
         child.emit('close', 0);
@@ -221,6 +225,44 @@ test('automatic full song stays in private quota cache; Keep copies it without d
   assert.equal(fs.existsSync(path.join(dir, 'saved', 'full-song.opus')), true);
   assert.equal(dl.handle({ op: 'local', url: source }).file.bytes, 20);
   assert.equal(dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [] }).bytes, 20);
+  dl.shutdown();
+});
+
+test('a finished spotdl download is registered, so pressing Download again does not refetch it', async (t) => {
+  // The registration was gated on `tool === 'yt-dlp'`, so a spotdl song was never recorded: the app
+  // did not know it already held the file and a second press wrote "Artist - Title (2).opus".
+  const { dir, dl } = fixture(t);
+  fs.writeFileSync(path.join(dir, 'spotdl.exe'), 'fixture');
+  const track = 'https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT';
+  const first = dl.handle({ op: 'start', url: track, tool: 'spotdl', format: 'mp3', label: 'Song' }).job;
+  assert.equal((await done(dl, first.id)).state, 'done');
+  // The library index lives beside the songs, so count audio files only.
+  const songs = () => fs.readdirSync(path.join(dir, 'saved')).filter((f) => f.endsWith('.opus') || f.endsWith('.mp3'));
+  assert.deepEqual(songs(), ['full-song.opus'], 'one song after the first download');
+  const held = dl.handle({ op: 'local', url: track });
+  assert.ok(held.file, 'the shell knows it holds this song');
+  assert.equal(held.kept, true, 'an explicit download is a kept copy');
+  // Second press: the app can now see the file, and no duplicate is written.
+  assert.deepEqual(songs(), ['full-song.opus'], 'no "Artist - Title (2).opus" duplicate');
+  dl.shutdown();
+});
+
+test('local separates an evictable cache entry from a permanently kept copy', async (t) => {
+  // The card badge reads `kept`, not `file`: `file` is true for a mere cache entry too, and calling
+  // that "Kept in Music folder" would erase the distinction. Android already returns both flags.
+  const { dir, dl } = fixture(t);
+  const source = url('dQw4w9WgXcQ');
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [source] });
+  const { job } = dl.handle({ op: 'start', url: source, tool: 'yt-dlp', format: 'original', label: 'Song', cache: true });
+  assert.equal((await done(dl, job.id)).state, 'done');
+  const cachedOnly = dl.handle({ op: 'local', url: source });
+  assert.ok(cachedOnly.file, 'a cached song is still playable');
+  assert.equal(cachedOnly.cached, true);
+  assert.equal(cachedOnly.kept, false, 'a cache entry is NOT a kept copy');
+  dl.handle({ op: 'keep', url: source });
+  const afterKeep = dl.handle({ op: 'local', url: source });
+  assert.equal(afterKeep.kept, true, 'an explicit Keep is reported as kept');
+  assert.equal(fs.existsSync(path.join(dir, 'saved', 'full-song.opus')), true);
   dl.shutdown();
 });
 

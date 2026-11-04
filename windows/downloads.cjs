@@ -340,7 +340,10 @@ function createDownloads(cfg) {
         j.files.push({ name: path.basename(dest), path: dest, bytes: fs.statSync(dest).size });
       }
       j.saved_to = saveDir;
-      if (j.tool === 'yt-dlp' && j.files.length === 1) library.set(j.url, j.files[0].path);
+      // Register whichever tool produced it. Gating this on yt-dlp meant a finished spotdl song was
+      // never recorded, so the app could not tell it already held the file and a second Download
+      // wrote "Artist - Title (2).opus" instead of reusing it.
+      if (j.files.length === 1) library.set(j.url, j.files[0].path);
     }
     j.state = 'done';
     j.stage = 'done';
@@ -471,11 +474,17 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
       case 'local': {
         // What the shell holds for a link: the finished file, or whether a job for it is running.
         const url = String(req.url || '');
-        if (!urlAllowedFor('yt-dlp', url)) throw new Error('Not a link this app downloads from.');
-        const p = library.get(url) || cachedFile(url);
+        // Either downloader's link is a fair question: asking "do you hold this?" about a Spotify
+        // track used to throw, so the app could never see a finished spotdl download.
+        if (!urlAllowedFor('yt-dlp', url) && !urlAllowedFor('spotdl', url)) throw new Error('Not a link this app downloads from.');
+        // `kept` and `cached` are reported separately: the card badge must distinguish a permanent
+        // Music-folder copy from an evictable queue-cache entry. `file` is either, for playback.
+        const keptPath = library.get(url);
+        const cachedPath = cachedFile(url);
+        const p = keptPath || cachedPath;
         const running = [...jobs.values()].some((j) => j.url === url && (j.state === 'queued' || j.state === 'running'));
         const failed = [...jobs.values()].reverse().find((j) => j.url === url && j.state === 'failed');
-        return { file: p ? { name: path.basename(p), bytes: fs.statSync(p).size } : null, running, error: !p && !running ? failed?.error || null : null };
+        return { file: p ? { name: path.basename(p), bytes: fs.statSync(p).size } : null, kept: Boolean(keptPath), cached: Boolean(cachedPath), running, error: !p && !running ? failed?.error || null : null };
       }
       case 'reveal': {
         const j = jobs.get(String(req.id));
