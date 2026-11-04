@@ -52,8 +52,42 @@ class MainActivity : Activity() {
     super.onCreate(savedInstanceState)
     root = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#f7f6f3")) }
     setContentView(root)
+    edgeToEdge()
     Downloads.warmUp(this) // unpacks yt-dlp, Python and ffmpeg in the background
     open()
+  }
+
+  /**
+   * The page never sits under the status bar (ANDROID-INSETS-001).
+   *
+   * From Android 15 (targetSdk 35) the system draws every app edge to edge and ignores a request not
+   * to, so the WebView's top row ends up behind the clock and the battery. Rather than have two
+   * behaviours to reason about, this asks for edge to edge from API 30 up — an API 34 emulator then
+   * runs the same path the phone does — and pays for it by padding the root view with the real inset
+   * the window reports.
+   *
+   * Three things this has to get right:
+   *  - the inset is READ from the window, never computed from a dimen: a notch, a hole punch and a
+   *    plain 24dp bar all give different numbers, and only the window knows which one this phone has;
+   *  - the insets are CONSUMED, so the WebView inside reports `env(safe-area-inset-*)` as zero. The
+   *    padding is then the single place the bars are paid for, and the stylesheet's existing
+   *    `env(safe-area-inset-bottom)` terms add nothing instead of paying a second time;
+   *  - `setDecorFitsSystemWindows(false)` also takes the keyboard out of `adjustResize`'s hands, so
+   *    the bottom padding is the larger of the navigation bar and the IME. Without this the search
+   *    field would sit under the keyboard it just opened.
+   */
+  private fun edgeToEdge() {
+    if (android.os.Build.VERSION.SDK_INT < 30) return
+    window.setDecorFitsSystemWindows(false)
+    root.setOnApplyWindowInsetsListener { v, insets ->
+      val types = android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout()
+      val bars = insets.getInsets(types)
+      val ime = insets.getInsets(android.view.WindowInsets.Type.ime())
+      v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
+      Log.d("AirwaveInsets", "top=${bars.top} bottom=${bars.bottom} ime=${ime.bottom} left=${bars.left} right=${bars.right}")
+      android.view.WindowInsets.CONSUMED
+    }
+    root.requestApplyInsets()
   }
 
   @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")

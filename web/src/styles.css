@@ -2248,7 +2248,10 @@ a.push {
   .app {
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;
-    padding: 0 12px 24px;
+    /* The status bar is cleared by the Android root view's padding (ANDROID-INSETS-001), not by
+       env(safe-area-inset-top) — which the native side consumes and so reads 0 here. This 10px is
+       breathing room BELOW that bar, so the first row is not flush against the clock. */
+    padding: 10px 12px 24px;
   }
   /* Phone: the tabs are a fixed bottom bar; the docked player sits above it (--tab-h + --dock-h). */
   .app {
