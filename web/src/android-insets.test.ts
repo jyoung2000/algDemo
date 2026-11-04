@@ -55,8 +55,12 @@ describe('Android status bar insets (ANDROID-INSETS-001)', () => {
   });
 
   it('leaves breathing room under the bar so the first row is not flush against the clock', () => {
-    // The inset clears the bar; this padding is the gap below it the owner asked for.
-    expect(css).toMatch(/@media \(max-width: 899px\) \{\s*\.app \{[\s\S]*?padding: 10px 12px 24px;/);
+    // The inset clears the bar; this padding is the gap below it the owner asked for. It was 10px
+    // and the owner asked for more after seeing it on a real phone, so the floor is what matters:
+    // assert a value, and that it is at least 24px, rather than pinning one exact number.
+    const rule = /@media \(max-width: 899px\) \{\s*\.app \{[\s\S]*?padding: (\d+)px 12px 24px;/.exec(css);
+    expect(rule).not.toBeNull();
+    expect(Number(rule![1])).toBeGreaterThanOrEqual(24);
   });
 
   it('still targets the SDK that forces edge to edge, so this stays the real path', () => {

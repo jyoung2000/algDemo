@@ -2249,9 +2249,11 @@ a.push {
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;
     /* The status bar is cleared by the Android root view's padding (ANDROID-INSETS-001), not by
-       env(safe-area-inset-top) — which the native side consumes and so reads 0 here. This 10px is
-       breathing room BELOW that bar, so the first row is not flush against the clock. */
-    padding: 10px 12px 24px;
+       env(safe-area-inset-top) — which the native side consumes and so reads 0 here. This 24px is
+       breathing room BELOW that bar, so the first row is not flush against the clock. The owner
+       asked for more than the original 10px after seeing it on a real phone: with the inset the
+       search field now sits about 76 CSS px down on a 2.625dpr device (51.8 native + 24). */
+    padding: 24px 12px 24px;
   }
   /* Phone: the tabs are a fixed bottom bar; the docked player sits above it (--tab-h + --dock-h). */
   .app {
