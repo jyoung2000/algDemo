@@ -137,7 +137,8 @@
 }
 
 /* ------------------------------------------------------------------ genre ticker */
-/* One genre at a time, strongest first: a short, readable line instead of a scrolling marquee. */
+/* TICKER-MARQUEE-001: the owner asked the header to scroll through the genres, strongest first.
+   The run is rendered twice and the track travels exactly -50%, so the wrap is seamless. */
 .genre-ticker {
   display: flex;
   align-items: center;
@@ -149,19 +150,39 @@
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+  /* Fade both edges so a label slides in and out instead of being chopped at the boundary. The
+     mask only applies while scrolling, or a line that fits would have faded ends for no reason. */
+}
+.genre-ticker.is-scrolling .genre-ticker__window {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 18px, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 18px, #000 calc(100% - 18px), transparent);
+}
+.genre-ticker__track {
+  display: flex;
+  align-items: center;
+  width: max-content;
+}
+.genre-ticker.is-scrolling .genre-ticker__track {
+  animation: ticker-scroll var(--ticker-duration, 24s) linear infinite;
+}
+/* Hover, focus, a hidden tab or reduced motion PAUSE the scroll; the genres stay on screen. */
+.genre-ticker.is-still .genre-ticker__track {
+  animation-play-state: paused;
+}
+.genre-ticker__run {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 18px;
+  padding-right: 18px;
 }
 .genre-ticker__entry {
   display: flex;
   align-items: center;
   gap: 7px;
-  min-width: 0;
+  flex: none;
   font-size: 13px;
   color: var(--ink);
-  animation: ticker-in 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-.genre-ticker__entry > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .genre-ticker__entry > b {
@@ -180,19 +201,13 @@
   font-size: 13px;
   color: var(--ink-3);
 }
-.genre-ticker .quiet-control {
-  min-width: 32px;
-  min-height: 32px;
-  border-radius: 10px;
-}
-@keyframes ticker-in {
+@keyframes ticker-scroll {
   from {
-    opacity: 0;
-    transform: translateY(6px);
+    transform: translate3d(0, 0, 0);
   }
   to {
-    opacity: 1;
-    transform: translateY(0);
+    /* Exactly one copy of the run, so copy two lands where copy one began. */
+    transform: translate3d(-50%, 0, 0);
   }
 }
 
@@ -280,10 +295,14 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .quiet-control,
-  .genre-ticker__entry {
+  .quiet-control {
     transition: none;
     animation: none;
+  }
+  /* The marquee is paused, not removed: the genres stay readable rather than vanishing. The
+     component also watches this query, so .is-still is set in JS; this is the CSS-only guarantee. */
+  .genre-ticker__track {
+    animation-play-state: paused;
   }
   .action-progress {
     animation-duration: 2400ms;

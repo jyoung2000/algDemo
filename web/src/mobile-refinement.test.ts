@@ -49,21 +49,49 @@ describe('taste history is a blended field, not columns', () => {
   });
 });
 
-describe('the Your sound header shows one genre at a time, strongest first', () => {
-  it('reads the ordered rows and starts at the strongest', () => {
+describe('the Your sound header marquees the genres, most to least dominant (TICKER-MARQUEE-001)', () => {
+  it('scrolls one continuous line rather than swapping one genre at a time', () => {
+    // The owner asked for a marquee that scrolls THROUGH the genres, so the line is the whole
+    // ordered run of them, not a single entry replaced on a timer.
     expect(card).toContain('<GenreTicker entries={view?.leaves ?? []} />');
-    expect(ticker).toMatch(/useState\(0\)/);
-    expect(ticker).toMatch(/\(i \+ 1\) % entries\.length/);
+    expect(ticker).toMatch(/genre-ticker__track/);
+    expect(ticker).toMatch(/entries\.map/);
+    // Two passes of the same run, so the scroll can wrap with no visible gap.
+    expect(ticker).toMatch(/aria-hidden="true"[\s\S]*?entries\.map|entries\.map[\s\S]*?aria-hidden="true"/);
+  });
+
+  it('keeps the order the taste view already computed: strongest genre first', () => {
+    // soundView() sorts leaves by pct descending, so the marquee must not re-sort or reverse them.
+    expect(ticker).not.toMatch(/\.sort\(|\.reverse\(/);
+    expect(ticker).toMatch(/entries\.map\(\(/);
+  });
+
+  it('drives the scroll from the number of genres so the pace does not depend on the count', () => {
+    // A fixed duration would crawl with twelve genres and race with two.
+    expect(ticker).toMatch(/--ticker-duration/);
+    expect(css).toMatch(/@keyframes ticker-scroll/);
+    expect(css).toMatch(/\.genre-ticker__track \{[\s\S]*?animation: ticker-scroll/);
   });
 
   it('holds still for reduced motion, a hidden tab, hover or focus', () => {
     expect(ticker).toMatch(/prefers-reduced-motion: reduce/);
     expect(ticker).toMatch(/const still = focused \|\| hovered \|\| hidden \|\| reduced;/);
-    expect(ticker).toMatch(/if \(still \|\| entries\.length < 2\) return;/);
+    // Paused, not unmounted: the genres stay readable when the marquee stops.
+    expect(ticker).toMatch(/still && 'is-still'/);
+    expect(css).toMatch(/\.genre-ticker\.is-still \.genre-ticker__track \{[\s\S]*?animation-play-state: paused/);
+  });
+
+  it('still reads as a list to a screen reader instead of a smear of duplicated text', () => {
+    // The rendered proof (one exposed list, each genre once, in order) is in GenreTicker.test.tsx,
+    // which can use JSX. Here: only the first pass carries the roles, the duplicate is hidden.
+    expect(ticker).toMatch(/role: 'list'/);
+    expect(ticker).toMatch(/role: 'listitem'/);
+    expect(ticker).toMatch(/'aria-hidden': 'true'/);
   });
 
   it('restarts at the strongest genre when the mix itself changes', () => {
-    expect(ticker).toMatch(/useEffect\(\(\) => setIndex\(0\), \[signature\]\)/);
+    expect(ticker).toMatch(/signature/);
+    expect(ticker).toMatch(/key=\{signature\}/);
   });
 });
 
@@ -105,13 +133,15 @@ describe('the taste map trail shows distinct songs (TASTE-MAP-DISTINCT)', () => 
 });
 
 describe('the Your sound ticker has no play/pause button', () => {
-  it('still pauses on hover, focus, a hidden tab and reduced motion, with only a next button', () => {
-    // The owner asked for the play/pause button to go. The a11y intent stays — the ticker holds
-    // still under the pointer, under focus, in a hidden tab and under reduced motion — but there
-    // is no control for it; the one button advances.
+  it('still rests on hover, focus, a hidden tab and reduced motion, with no control at all', () => {
+    // The owner asked for the play/pause button to go, and TICKER-MARQUEE-001 then replaced the
+    // one-at-a-time swap with a continuous scroll, which leaves nothing for a "next" button to do.
+    // The a11y intent is unchanged: the marquee holds still under the pointer, under focus, in a
+    // hidden tab and under reduced motion — it is simply paused rather than stepped.
     expect(ticker).not.toMatch(/Pause genre rotation/);
     expect(ticker).not.toMatch(/name=\{paused \? 'play' : 'pause'\}/);
-    expect(ticker).toMatch(/Next genre/);
+    expect(ticker).not.toMatch(/<button/);
+    expect(ticker).toMatch(/const still = focused \|\| hovered \|\| hidden \|\| reduced;/);
   });
 });
 

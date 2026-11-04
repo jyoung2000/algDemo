@@ -1,16 +1,36 @@
-import { useEffect, useState } from 'react';
-import { Glyph } from '@now-playing/aqua-ui/icons';
+import { useEffect, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import type { LeafView } from './taste-view';
+import { classNames } from './util';
 
-/** A readable one-at-a-time marquee, never an endlessly moving line of text; it rests under the pointer. */
+/**
+ * The "Your sound" header marquee (TICKER-MARQUEE-001).
+ *
+ * The owner asked for the header to scroll through the genres from most to least dominant, so this
+ * is one continuous line of the whole ordered run rather than a single genre swapped on a timer.
+ * `soundView()` already sorts `leaves` by share descending, so the order is taken as given and
+ * never re-sorted here.
+ *
+ * How the scroll works: the run is rendered twice and the track is translated by exactly -50%, so
+ * the moment the first copy leaves the window the second sits in precisely the same place and the
+ * wrap is invisible. The pace comes from the number of genres, not a fixed duration, or the line
+ * would crawl with twelve and race with two.
+ *
+ * It still rests: under the pointer, under focus, in a hidden tab and under reduced motion the
+ * animation is PAUSED rather than removed, so the genres stay on screen and readable. And it only
+ * scrolls when the run really does not fit, which is measured rather than assumed from a width.
+ */
 export function GenreTicker({ entries }: { entries: LeafView[] }) {
-  const [index, setIndex] = useState(0);
   const [focused, setFocused] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [hidden, setHidden] = useState(document.hidden);
   const [reduced, setReduced] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const [overflowing, setOverflowing] = useState(false);
+  const windowRef = useRef<HTMLSpanElement>(null);
+  const runRef = useRef<HTMLSpanElement>(null);
+  // Remounting the track on this restarts the scroll at the strongest genre when the mix changes.
   const signature = entries.map((e) => `${e.label}:${e.pct}`).join('|');
-  useEffect(() => setIndex(0), [signature]);
+
   useEffect(() => {
     const media = window.matchMedia('(prefers-reduced-motion: reduce)');
     const motion = () => setReduced(media.matches);
@@ -22,30 +42,66 @@ export function GenreTicker({ entries }: { entries: LeafView[] }) {
       document.removeEventListener('visibilitychange', visibility);
     };
   }, []);
-  // No play/pause control (the owner asked for it to go). The ticker still holds still under the
-  // pointer, under focus, in a hidden tab and under reduced motion; the one button advances it.
-  const still = focused || hovered || hidden || reduced;
+
+  // A line that fits should sit still and be read; on a wide desktop two genres fit easily.
   useEffect(() => {
-    if (still || entries.length < 2) return;
-    const timer = window.setInterval(() => setIndex((i) => (i + 1) % entries.length), 4800);
-    return () => window.clearInterval(timer);
-  }, [still, signature, entries.length]);
-  const entry = entries[index % Math.max(1, entries.length)];
-  if (!entry) return <p className="genre-ticker__empty">Still learning your sound</p>;
+    const box = windowRef.current;
+    const run = runRef.current;
+    if (!box || !run) return;
+    const measure = () => setOverflowing(run.scrollWidth > box.clientWidth + 1);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    observer.observe(run);
+    return () => observer.disconnect();
+  }, [signature]);
+
+  if (!entries.length) return <p className="genre-ticker__empty">Still learning your sound</p>;
+
+  const still = focused || hovered || hidden || reduced;
+  // ~3.4s of travel per genre, so a label and its percentage can be read as they pass.
+  const duration = `${Math.max(12, entries.length * 3.4 * 2)}s`;
+  const run = (decorative: boolean) => (
+    <span
+      className="genre-ticker__run"
+      ref={decorative ? undefined : runRef}
+      {...(decorative ? { 'aria-hidden': 'true' as const } : { role: 'list' as const })}
+    >
+      {entries.map((e, i) => (
+        <span
+          className="genre-ticker__entry"
+          key={`${e.label}-${i}`}
+          {...(decorative ? {} : { role: 'listitem' as const })}
+        >
+          <i style={{ background: e.color }} aria-hidden="true" />
+          <span>{e.label}</span>
+          <b>{e.pct}%</b>
+        </span>
+      ))}
+    </span>
+  );
+
   return (
-    <div className="genre-ticker" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
-      onFocusCapture={() => setFocused(true)} onBlurCapture={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); }}>
-      <span className="genre-ticker__window" aria-live="off">
-        <span className="genre-ticker__entry" key={entry.label}>
-          <i style={{ background: entry.color }} aria-hidden="true" />
-          <span>{entry.label}</span><b>{entry.pct}%</b>
+    <div
+      className={classNames('genre-ticker', still && 'is-still', overflowing && 'is-scrolling')}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocusCapture={() => setFocused(true)}
+      onBlurCapture={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false);
+      }}
+    >
+      <span className="genre-ticker__window" ref={windowRef}>
+        <span
+          className="genre-ticker__track"
+          key={signature}
+          style={{ '--ticker-duration': duration } as CSSProperties}
+        >
+          {run(false)}
+          {overflowing && run(true)}
         </span>
       </span>
-      {entries.length > 1 && (
-        <button type="button" className="quiet-control" aria-label={`Next genre (${index % entries.length + 1} of ${entries.length})`} onClick={() => setIndex((i) => (i + 1) % entries.length)}>
-          <Glyph name="chevron-right" size={14} />
-        </button>
-      )}
     </div>
   );
 }
