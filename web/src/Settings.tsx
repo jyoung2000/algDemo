@@ -86,6 +86,15 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
       });
   };
 
+  /**
+   * Re-read just the storage figures for the live meter. Deliberately silent: it sets no checking
+   * flag and clears no error, so a poll never flickers the panel or blanks a real message.
+   */
+  const refreshStorage = () =>
+    api.status()
+      .then((s) => setStatus(s))
+      .catch(() => { /* a blip must not disturb a panel the listener is reading */ });
+
   const load = (refresh = false) => {
     setChecking(refresh);
     setErr(null);
@@ -98,6 +107,23 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
       .finally(() => setChecking(false));
   };
   useEffect(() => load(false), []);
+  // A storage meter that only reads once on mount is a screenshot. Measured on Windows 0.6.1: it
+  // showed "381 MB of 1.07 GB" for 125 s while the shell already held a 3 GB limit. Poll the shell
+  // while this panel is open, and stop when it closes or the tab is hidden so a background screen
+  // never keeps waking the shell.
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    const start = () => {
+      stop();
+      // Cheap call (status() reads counters, it evicts nothing), but 4 s is plenty for a meter.
+      timer = setInterval(() => { if (!document.hidden) void refreshStorage(); }, 4000);
+    };
+    const onVisible = () => (document.hidden ? stop() : start());
+    document.addEventListener('visibilitychange', onVisible);
+    start();
+    return () => { document.removeEventListener('visibilitychange', onVisible); stop(); };
+  }, []);
 
   const tr = status?.transfer_today ?? {};
   const trTotal = Object.values(tr).reduce((a, b) => a + (b || 0), 0);
@@ -145,7 +171,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
             <input id="cache-gb" type="range" min={0.25} max={20} step={0.25} value={settings?.cache_gb ?? 1}
               aria-describedby="cache-gb-output cache-gb-help"
               style={{ '--pct': `${(((settings?.cache_gb ?? 1) - 0.25) / 19.75) * 100}%` } as React.CSSProperties}
-              onChange={(e) => onSettings({ cache_gb: Number(e.target.value) })} />
+              onChange={(e) => { onSettings({ cache_gb: Number(e.target.value) }); void refreshStorage(); }} />
           </div>
           <p className="note" id="cache-gb-help">Full songs for the player are kept in a private, reusable queue cache up to this limit. The whole list loads ahead in the background; older unpinned songs leave first. Songs you explicitly download are kept separately and never deleted by this setting.</p>
           <QueueDownloadSettings settings={settings} onSettings={onSettings} />
