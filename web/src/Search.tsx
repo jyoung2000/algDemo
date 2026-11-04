@@ -892,11 +892,16 @@ export function TrackList({
               <span className="track__srcname">{PROVIDER_LABEL[t.provider] ?? t.provider}</span>
             </span>
             <span className="track__actions">
-              {(t.preview || t.provider === 'ytmusic' || t.provider === 'soundcloud') && (
-                <button className="iconbtn" type="button" onClick={() => onPreview(t)} aria-label={`Play ${t.title}`} title="Play">
-                  <Glyph name="play" size={14} />
-                </button>
-              )}
+              {/*
+                NP-ALWAYS-001: every row offers Play. It used to appear only for a row that carried a
+                preview or came from YouTube Music or SoundCloud — so the owner's "BATMAN" row had no
+                Play button at all, on a song the player could have found and downloaded. The player
+                knows how to look a song up, and how to download it when no player here can play it;
+                the row's job is to ask.
+              */}
+              <button className="iconbtn" type="button" onClick={() => onPreview(t)} aria-label={`Play ${t.title}`} title="Play">
+                <Glyph name="play" size={14} />
+              </button>
               {onDownload && (
                 <button className="iconbtn" type="button" onClick={() => onDownload(t)} aria-label={`Download ${t.title}`} title="Download">
                   <Glyph name="download" size={14} />

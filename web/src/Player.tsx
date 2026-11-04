@@ -9,6 +9,7 @@ import { Wheel } from './Wheel';
 import { loadYouTube, youtubeEmbedUrl, type YTPlayer } from './youtube';
 import { attachElement, bus as audioBus, localMix, mixSlider, playThrough, resumeEngine, setUnprocessable, subscribeEngine, wantsProcessing } from './audio-engine';
 import { localLibrary, sourceUrlFor } from './engine/local-audio';
+import { rescueSource } from './engine/rescue';
 import { downloadsAvailable } from './engine/downloads';
 import { type DeckId } from './engine/audio-bus';
 import { PreviewMixer } from './engine/preview-mixer';
@@ -198,30 +199,54 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
    * still plays in YouTube's player (never silence), and the download runs for next time.
    */
   const canLocal = wantLocal && downloadsAvailable();
-  const localSource = videoId ? sourceUrlFor(videoId) : null;
-  const localStatus = canLocal && localSource ? localLibrary.status(localSource) : 'missing';
+  const wantSource = canLocal && videoId ? sourceUrlFor(videoId) : null;
   // Once this song has started in YouTube's player it stays there: a download finishing mid-song
   // must not swap players and restart it at 0:00. The file is for next time and for the lookahead.
   const inYouTube = useRef<string | null>(null);
   const latched = inYouTube.current === key;
-  const localSrc = canLocal && localSource && !latched ? localLibrary.src(localSource) : null;
+  /**
+   * NP-ALWAYS-001. Owner's screenshot: "No player here for this song. Open it in its app.", with no
+   * progress bar and a dead play button, on a song that was carrying a YouTube Music link all
+   * along. YouTube's iframe refuses plenty of videos (embedding off, an age gate, a region) and
+   * Deezer has no preview for everything — but both shells carry yt-dlp, so there is one more
+   * thing to try before sending a listener elsewhere: download the song and play it here.
+   *
+   * It runs only where the song would otherwise be silent, so listening to a playable song still
+   * downloads nothing the listener did not ask for — that is what `local_mix` is for.
+   */
+  const previewPick = !videoId && !lookingUp ? previewSrc : null;
+  const embedPick = !videoId && !previewPick && !lookingUp ? scEmbed : null;
+  const stranded = !videoId && !previewPick && !embedPick && !lookingUp;
+  const rescue = stranded
+    ? rescueSource({
+        badVideoId: badVideo,
+        links: playing?.playback.open.length ? playing.playback.open : playing?.track.url ? [{ url: playing.track.url }] : [],
+        shell: downloadsAvailable(),
+      })
+    : null;
+  const localSource = wantSource ?? rescue;
+  const localStatus = localSource ? localLibrary.status(localSource) : 'missing';
+  const localSrc = localSource && !latched ? localLibrary.src(localSource) : null;
   useEffect(() => {
-    if (!canLocal || !localSource || !playing) return;
+    if (!localSource || !playing) return;
     void localLibrary.ensure(localSource, `${playing.track.title} — ${playing.track.artist}`);
-  }, [canLocal, localSource, playing]);
+  }, [localSource, playing]);
   // Hold while the shell is being asked, AND while a held song's bytes are being read into a Blob
   // (LOCAL-AUDIO-002): both are a round trip of a few milliseconds, and starting YouTube's player
   // in that gap would strand the song there — the latch below never swaps players mid-song.
-  const askingLocal =
-    canLocal && localSource !== null && !latched && (localStatus === 'unknown' || (localStatus === 'ready' && localSrc === null));
-  const src = localSrc ?? (!videoId && !lookingUp ? previewSrc : null);
-  const embed = !videoId && !src && !lookingUp ? scEmbed : null;
-  const mode: Mode = localSrc ? 'local' : askingLocal ? 'none' : videoId ? 'full' : src ? 'preview' : embed ? 'embed' : 'none';
+  const askingLocal = localSource !== null && !latched && (localStatus === 'unknown' || (localStatus === 'ready' && localSrc === null));
+  /** A rescue download in flight: seconds to a minute, and the only thing that will make a sound. */
+  const fetchingLocal = rescue !== null && localStatus === 'running';
+  /** Tried and failed: say which part failed, rather than blaming the song. */
+  const rescueError = rescue !== null && localStatus === 'missing' ? localLibrary.error(rescue) : null;
+  const src = localSrc ?? previewPick;
+  const embed = embedPick;
+  const mode: Mode = localSrc ? 'local' : askingLocal || fetchingLocal ? 'none' : videoId ? 'full' : src ? 'preview' : embed ? 'embed' : 'none';
   const hasSound = mode === 'full' || mode === 'local' || mode === 'preview';
   const onDeck = mode === 'local' || mode === 'preview';
   // Looking the song up, or asking the shell whether it holds it: a moment of waiting, shown as
   // loading with the bar in place — never as "no player here" (NP-STRIP-007).
-  const pending = lookingUp || askingLocal;
+  const pending = lookingUp || askingLocal || fetchingLocal;
 
   useEffect(() => {
     if (!playing || !needsLookup) return;
@@ -601,7 +626,12 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   );
 
   const total = dur || playing?.track.duration || (mode === 'preview' ? 30 : 0);
-  const progress = hasSound || pending ? (
+  /*
+   * NP-ALWAYS-001: the bar belongs to the song, not to whether this app can play it. A strip with
+   * no bar read as broken; a bar at 0:00 that cannot be dragged, with the reason in words under
+   * it, reads as what it is.
+   */
+  const progress = playing ? (
     <div className="prog">
       <span className="prog__t">{fmtDuration(cur) || '0:00'}</span>
       <input
@@ -611,7 +641,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
         max={total || 1}
         step={0.1}
         value={Math.min(cur, total || 1)}
-        disabled={mode === 'full' && !ytReady}
+        disabled={!hasSound || (mode === 'full' && !ytReady)}
         aria-label={mode === 'preview' ? 'Position in the preview' : 'Position in the song'}
         aria-valuetext={`${fmtDuration(cur) || '0:00'} of ${fmtDuration(total) || '0:00'}`}
         style={{ ['--pct' as string]: `${total ? (cur / total) * 100 : 0}%` }}
@@ -644,7 +674,9 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       <Glyph name="warning" size={12} /> {err}
     </p>
   ) : pending ? (
-    <p className="np__note">{askingLocal ? 'Loading the full song…' : 'Finding the full song…'}</p>
+    <p className="np__note">
+      {askingLocal ? 'Loading the full song…' : fetchingLocal ? 'Getting the full song: no player here can play it, so the app is downloading it.' : 'Finding the full song…'}
+    </p>
   ) : mode === 'full' ? (
     <p className="np__note">
       {loading ? 'Loading the full song…' : localStatus === 'running' ? 'Full song in YouTube’s player while this app downloads it for the equaliser and mixer.' : 'Full song, played by YouTube’s own player.'}
@@ -659,8 +691,12 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     </p>
   ) : embed ? (
     <p className="np__note">Playing in the {PROVIDER_LABEL[embed.provider]} player. Airwave can’t see its progress or volume, so it records nothing about this listen.</p>
-  ) : (
+  ) : rescue === null ? (
     <p className="np__note">No player here for this song. Open it in its app.</p>
+  ) : (
+    <p className="np__note np__note--bad">
+      <Glyph name="warning" size={12} /> {rescueError ? `This song could not be downloaded: ${rescueError}` : 'This song could not be downloaded here. Open it in its app.'}
+    </p>
   );
 
   const openLinks = playing && (
