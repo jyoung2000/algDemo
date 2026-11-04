@@ -9,7 +9,7 @@ function rig() {
   const listeners = new Set<() => void>();
   const emit = () => listeners.forEach(f => f());
   const started: string[] = [];
-  const configure = vi.fn(async (_gb: number, _protected: string[], _wanted: string[]) => undefined);
+  const configure = vi.fn(async (_gb: number, _protected: string[], _wanted: string[], _parallel: number) => undefined);
   const resolve = vi.fn(async (t: Track) => `url:${t.key}`);
   const library = {
     status: (u: string) => states.get(u) ?? 'unknown',
@@ -56,7 +56,7 @@ it('configures the full wanted set separately from live deck protection', async 
   const r = rig(); r.loader.update(tracks(5)); await tick();
   for (let i = 0; i < 5; i++) { r.finish(`url:t${i}`); await tick(); }
   await r.loader.protect(2, ['url:t4']);
-  expect(r.configure).toHaveBeenLastCalledWith(2, ['url:t4'], expect.arrayContaining(['url:t0', 'url:t4']));
+  expect(r.configure).toHaveBeenLastCalledWith(2, ['url:t4'], expect.arrayContaining(['url:t0', 'url:t4']), 2);
   expect(r.configure.mock.calls.at(-1)?.[2]).toHaveLength(5);
   r.loader.dispose();
 });

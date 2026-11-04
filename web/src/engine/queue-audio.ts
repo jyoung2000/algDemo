@@ -8,7 +8,7 @@ import { QueuePreloader } from './queue-preload';
 export const queueAudio = new QueuePreloader({
   library: localLibrary,
   known: track => track.provider === 'ytmusic' ? sourceUrlFor(track.platform_id) : null,
-  configure: (gb, protectedUrls, wanted) => dl.cacheConfig(gb, protectedUrls, wanted),
+  configure: (gb, protectedUrls, wanted, parallel) => dl.cacheConfig(gb, protectedUrls, wanted, parallel),
   resolve: async (track: Track) => {
     const direct = track.provider === 'ytmusic' ? sourceUrlFor(track.platform_id) : null;
     if (direct) return direct;

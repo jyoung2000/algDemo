@@ -1,10 +1,11 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 
 import { api, type PlaylistSummary, type SavedItem, type Track } from './api';
 import { Art } from './Art';
 import { SaveMenu } from './SaveMenu';
 import { PLAYLIST_NAME_MAX } from './engine/playlists';
+import type { CardCache } from './engine/queue-controls';
 import { artistOf, classNames } from './util';
 import './save-menu.css';
 import './saved-lists.css';
@@ -17,6 +18,8 @@ interface Props {
   onPreview: (track: Track, listId?: string) => void;
   onRemoveSaved: (track: Track) => void;
   onDownload?: (track: Track) => void;
+  /** Per-song cache state for the row rail; absent where there is no local downloader. */
+  cacheOf?: (key: string) => CardCache | null;
   onVisibleList?: (id: string) => void;
 }
 
@@ -29,7 +32,7 @@ const ALL = 'all';
  * There is deliberately no "Add" button here: a saved song is not a starting song, and the owner
  * asked for that control to go.
  */
-export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onDownload, onVisibleList }: Props) {
+export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onDownload, cacheOf, onVisibleList }: Props) {
   const [view, setView] = useState<string>(ALL);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -241,8 +244,17 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
         <p className="empty">{current ? 'Nothing in this list yet.' : 'Songs you like appear here.'}</p>
       ) : (
         <ul className="well tracks tracks--saved">
-          {rows.map(({ track, played }) => (
-            <li key={track.key} className="track">
+          {rows.map(({ track, played }) => {
+            const cache = cacheOf?.(track.key) ?? null;
+            return (
+            <li key={track.key} className="track" data-dl={cache?.state}
+              style={cache ? ({ '--dl': `${cache.progress}%` } as CSSProperties) : undefined}>
+              {cache && (
+                <span className="rec__dl" data-dl={cache.state}>
+                  <span className="rec__dl-rail" aria-hidden="true" />
+                  <span className="sr">{cache.keptText ? `${cache.text}. ${cache.keptText}.` : `${cache.text}.`}</span>
+                </span>
+              )}
               <Art src={track.artwork} size={44} />
               <div className="track__text">
                 <span className="track__title">{track.title}</span>
@@ -291,7 +303,8 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
                 </div>
               )}
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </section>

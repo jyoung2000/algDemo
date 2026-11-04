@@ -102,7 +102,7 @@ export function characteristicsOf(c: Dict, taste: TasteProfile | null): Dict {
 
 // `settings()` returns { ...DEFAULT_SETTINGS, ...stored }, so a new key defaults cleanly for an
 // install that predates it — no migration needed.
-const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, cache_gb: 1, discover_while_listening: true, rank_v2: true, eq: EQ_DEFAULTS, mix: 0, local_mix: true, play_through: PLAY_THROUGH_DEFAULT };
+const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, cache_gb: 1, dl_parallel: 0, preload_target: 'all' as 'all' | 'count', preload_count: 20, discover_while_listening: true, rank_v2: true, eq: EQ_DEFAULTS, mix: 0, local_mix: true, play_through: PLAY_THROUGH_DEFAULT };
 /** How many songs one discovery run adds to the list: the user's choice in Settings. */
 export const QUEUE_SIZE_MIN = 5;
 export const QUEUE_SIZE_MAX = 60;
@@ -509,6 +509,22 @@ export class LocalApi {
       const gb = Number(body['cache_gb']);
       if (!Number.isFinite(gb) || gb < 0.25 || gb > 20) return fail(400, 'cache_gb must be between 0.25 and 20');
       cur['cache_gb'] = gb;
+    }
+    // 0 means "let the shell pick its own safe default" (a phone's ceiling is lower than a desktop's).
+    if ('dl_parallel' in body) {
+      const n = Math.round(Number(body['dl_parallel']));
+      if (!Number.isFinite(n) || n < 0 || n > 6) return fail(400, 'dl_parallel must be between 0 and 6');
+      cur['dl_parallel'] = n;
+    }
+    if ('preload_target' in body) {
+      const t = String(body['preload_target']);
+      if (t !== 'all' && t !== 'count') return fail(400, "preload_target must be 'all' or 'count'");
+      cur['preload_target'] = t;
+    }
+    if ('preload_count' in body) {
+      const n = Math.round(Number(body['preload_count']));
+      if (!Number.isFinite(n) || n < 1 || n > 500) return fail(400, 'preload_count must be between 1 and 500');
+      cur['preload_count'] = n;
     }
     if ('weights' in body) {
       try {

@@ -1,6 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
 import type { FeedbackKind, PlaylistSummary, RecItem, Track } from './api';
+import type { CardCache } from './engine/queue-controls';
 import { Art } from './Art';
 import { SaveMenu } from './SaveMenu';
 import { PROVIDER_LABEL, TIER_LABEL, artistOf, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreTags, markKey, pickerColorFor, playbackOfTrack, toneLabel } from './util';
@@ -27,6 +28,8 @@ interface Props {
   onPlayTrack: (track: Track) => void;
   onFeedback: (item: RecItem, kind: FeedbackKind) => void;
   onDownload?: (track: Track) => void;
+  /** Per-song cache state for the card rail; absent in contexts with no local downloader. */
+  cacheOf?: (key: string) => CardCache | null;
   /** The listener's saved lists, for the menu that opens when a song is liked. */
   lists?: PlaylistSummary[];
   onLists?: (lists: PlaylistSummary[]) => void;
@@ -37,7 +40,7 @@ interface Props {
  * diversified order; nothing here re-sorts it.
  * Arrow keys / j k move between rows; Enter plays; the row keeps focus when results refresh.
  */
-export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload, lists, onLists }: Props) {
+export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload, cacheOf, lists, onLists }: Props) {
   const [open, setOpen] = useState<string | null>(null);
   /** Which row's save menu is showing, by song key. Only one opens at a time. */
   const [saving, setSaving] = useState<string | null>(null);
@@ -124,11 +127,14 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         const genreBubbles = genreTags(it.characteristics);
         const toneFact = toneLabel(it.characteristics);
         const toneColor = it.characteristics?.color ?? null;
+        const cache = cacheOf?.(t.key) ?? null;
         return (
           <li
             key={t.key}
             id={rowId(t.key)}
             className={classNames('rec', focusKey === t.key && 'is-focus', playingKey === t.key && 'is-playing', f.dislike && 'is-disliked')}
+            data-dl={cache?.state}
+            style={cache ? ({ '--dl': `${cache.progress}%` } as CSSProperties) : undefined}
             tabIndex={focusKey === t.key || (focusKey == null && i === 0) ? 0 : -1}
             aria-current={playingKey === t.key ? 'true' : undefined}
             onFocus={(e) => {
@@ -148,6 +154,14 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               }
             }}
           >
+            {cache && (
+              // Glyph + text, never colour alone; the rail is decorative and sits on the bottom edge.
+              <span className="rec__dl" data-dl={cache.state}>
+                <span className="rec__dl-rail" aria-hidden="true" />
+                <span className="rec__dl-mark" aria-hidden="true">{cache.glyph}</span>
+                <span className="sr">{cache.keptText ? `${cache.text}. ${cache.keptText}.` : `${cache.text}.`}</span>
+              </span>
+            )}
             <span className="rec__rank" aria-hidden="true">
               {playingKey === t.key ? <Glyph name="speaker" size={12} /> : it.rank}
             </span>

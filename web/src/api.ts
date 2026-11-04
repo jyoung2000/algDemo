@@ -302,6 +302,10 @@ export interface Settings {
   queue_size?: number;
   /** User-selected private audio queue cache capacity in GiB (0.25–20). Kept downloads are separate. */
   cache_gb?: number;
+  /** 0 = let the shell pick its own safe default (a phone's ceiling is lower than a desktop's). */
+  dl_parallel?: number;
+  preload_target?: 'all' | 'count';
+  preload_count?: number;
   /** Replenish a nearly played-through list after a completed song. */
   discover_while_listening?: boolean;
   /**

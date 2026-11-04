@@ -9,7 +9,9 @@
  *    never be read as an option;
  *  - `--ignore-config` is first for yt-dlp, so a config file cannot add `--exec`;
  *  - files are written to a private temp folder, then moved to the user's Music folder.
- * Two background jobs and one foreground job can run at a time; progress is real (parsed from the tool's own output) or absent, never invented.
+ * Background downloads run `parallel` at a time (settable from cache-config, 1-6, default 2, because each
+ * slot is a real yt-dlp process); one foreground job is always additional to them. Progress is real
+ * (parsed from the tool's own output) or absent, never invented.
  */
 const { spawn, spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
@@ -18,6 +20,10 @@ const path = require('node:path');
 
 const YTDLP_HOSTS = ['youtu.be', 'youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'soundcloud.com', 'www.soundcloud.com', 'm.soundcloud.com', 'on.soundcloud.com'];
 const SPOTDL_HOSTS = ['open.spotify.com'];
+/** One slot is one yt-dlp process, so a desktop takes more of them than a phone. */
+const PARALLEL_MIN = 1;
+const PARALLEL_MAX = 6;
+const PARALLEL_DEFAULT = 2;
 const FORMATS = ['mp3', 'm4a', 'opus', 'flac', 'wav', 'original'];
 const SPOTDL_FORMATS = ['mp3', 'm4a', 'opus', 'flac', 'wav'];
 const AUDIO_EXT = new Set(['mp3', 'm4a', 'aac', 'flac', 'opus', 'ogg', 'oga', 'wav', 'webm', 'mka']);
@@ -143,6 +149,7 @@ function createDownloads(cfg) {
   let limitBytes = 1024 ** 3;
   let protectedUrls = new Set();
   let wantedUrls = new Set();
+  let backgroundParallel = PARALLEL_DEFAULT;
   const cacheBytes = () => [...cached.values()].reduce((n, e) => n + fs.statSync(path.join(cacheDir, e.name)).size, 0);
   function persistCache() {
     const file = `${cacheIndex}.tmp`;
@@ -181,9 +188,10 @@ function createDownloads(cfg) {
   const active = { background: 0, foreground: 0 };
   function pump() {
     for (const lane of ['foreground', 'background']) {
-      const max = lane === 'background' ? 2 : 1;
       for (const j of jobs.values()) {
-        if (active[lane] >= max) break;
+        // Read the limit per candidate: lowering it mid-flight stops new starts without touching
+        // the processes already running, and raising it takes effect on this same pass.
+        if (active[lane] >= (lane === 'background' ? backgroundParallel : 1)) break;
         if (j.state !== 'queued' || j.cancelled || j.dispatched || (j.background ? 'background' : 'foreground') !== lane) continue;
         active[lane]++;
         j.dispatched = true;
@@ -422,6 +430,14 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
           if (!Array.isArray(list) || list.length > max || list.some(url => typeof url !== 'string' || !urlAllowedFor('yt-dlp', url))) throw new Error(`${name} must contain at most ${max} valid URLs.`);
           return new Set(list);
         };
+        // Omitting parallel keeps whatever is in force; a bad value is refused, never quietly clamped.
+        let nextParallel = backgroundParallel;
+        if (req.parallel !== undefined) {
+          if (typeof req.parallel !== 'number' || !Number.isInteger(req.parallel) || req.parallel < PARALLEL_MIN || req.parallel > PARALLEL_MAX) {
+            throw new Error(`parallel must be a whole number of background downloads between ${PARALLEL_MIN} and ${PARALLEL_MAX}.`);
+          }
+          nextParallel = req.parallel;
+        }
         const nextProtected = urls('protected', 3, []);
         const nextWanted = urls('wanted', 10000, []);
         const previousLimit = limitBytes;
@@ -430,8 +446,11 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
         protectedUrls = nextProtected;
         try { prune(); } catch (e) { limitBytes = previousLimit; protectedUrls = previousProtected; throw e; }
         wantedUrls = nextWanted;
+        backgroundParallel = nextParallel;
         for (const j of jobs.values()) if (j.cache && !wantedUrls.has(j.url) && !protectedUrls.has(j.url) && (j.state === 'queued' || j.state === 'running')) cancel(j.id);
-        return { bytes: cacheBytes(), limitBytes };
+        // A raised limit must start queued songs now, not when a running download happens to end.
+        pump();
+        return { bytes: cacheBytes(), limitBytes, parallel: backgroundParallel };
       }
       case 'keep':
         return keep(String(req.url || ''));

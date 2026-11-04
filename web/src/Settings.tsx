@@ -3,6 +3,7 @@ import { ProviderMark } from '@now-playing/aqua-ui/icons';
 import { api, type Health, type Settings as S, type Status } from './api';
 import { parseHistoryFile, type ImportSummary } from './engine/import';
 import { MicSettings } from './MicSettings';
+import { QueueDownloadSettings } from './QueueDownloadSettings';
 import { AudioSettings } from './AudioSettings';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, classNames, fmtBytes, markKey } from './util';
 import './discovery-settings.css';
@@ -146,7 +147,8 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
               style={{ '--pct': `${(((settings?.cache_gb ?? 1) - 0.25) / 19.75) * 100}%` } as React.CSSProperties}
               onChange={(e) => onSettings({ cache_gb: Number(e.target.value) })} />
           </div>
-          <p className="note" id="cache-gb-help">Full songs for the player are kept in a private, reusable queue cache up to this limit. One next song loads ahead; older unpinned songs leave first. Songs you explicitly download are kept separately and never deleted by this setting.</p>
+          <p className="note" id="cache-gb-help">Full songs for the player are kept in a private, reusable queue cache up to this limit. The whole list loads ahead in the background; older unpinned songs leave first. Songs you explicitly download are kept separately and never deleted by this setting.</p>
+          <QueueDownloadSettings settings={settings} onSettings={onSettings} />
           <label className="chk discovery-settings__toggle">
             <input
               type="checkbox"

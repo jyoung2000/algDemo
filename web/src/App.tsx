@@ -10,6 +10,8 @@ import { SoundCard } from './SoundCard';
 import { ProfileView } from './Profile';
 import { SavedView } from './SavedView';
 import { QueuePreparation } from './QueuePreparation';
+import { useCardCache } from './useCardCache';
+import { useKeptKeys } from './useKeptKeys';
 import { savedTracks, playbackRows, preparationTracks } from './engine/queue-context';
 import { SettingsView } from './Settings';
 import { setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
@@ -327,6 +329,8 @@ export function App() {
     [...seeds, ...items.filter(x => !hidden.has(x.track.key)).map(x => x.track)],
     tab === 'saved' ? savedTracks(saved, lists, visibleSavedList) : []),
     [playing, upNext, activeItems, hidden, seeds, items, tab, saved, lists, visibleSavedList]);
+  const keptKeys = useKeptKeys(cacheTracks);
+  const cardCache = useCardCache(cacheTracks, keptKeys);
 
   // A skip or a full listen is recorded, then the songs still to come are ranked again with it.
   // Only the newest answer is applied, so two quick skips cannot show the older order.
@@ -669,6 +673,7 @@ export function App() {
                       onPlayTrack={previewTrack}
                       onFeedback={onFeedback}
                       onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
+                      cacheOf={cardCache}
                       lists={lists}
                       onLists={setLists}
                     />
@@ -709,6 +714,7 @@ export function App() {
                     onPlayTrack={previewTrack}
                     onFeedback={onFeedback}
                     onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
+                    cacheOf={cardCache}
                   />
                   <p className="queue__foot">Press “Find my next favorite” to add songs to this list.</p>
                 </>
@@ -741,6 +747,7 @@ export function App() {
             }}
             onRemoveSaved={removeSaved}
             onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
+            cacheOf={cardCache}
           />
         )}
 
@@ -778,7 +785,8 @@ export function App() {
       </main>
 
       <aside className="rail" aria-label="Player">
-        <QueuePreparation tracks={cacheTracks} />
+        <QueuePreparation tracks={cacheTracks} parallel={settings?.dl_parallel ?? 0}
+          preload={{ target: settings?.preload_target ?? 'all', count: settings?.preload_count ?? 20 }} />
         <Player
           playing={playing}
           upNext={upNext}

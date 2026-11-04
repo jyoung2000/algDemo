@@ -103,6 +103,75 @@ test('latest configuration cancels obsolete jobs and their late output never ent
   assert.equal((await done(dl, far.id)).state, 'done');
 });
 
+// Several ticks: a finished job resolves its spawn promise, finalizes, then releases its slot.
+const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
+const keepAll = (dl, parallel, ...ids) => dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [], wanted: ids.map(url), ...(parallel === undefined ? {} : { parallel }) });
+
+test('raising parallel starts more queued downloads at once, without waiting for one to finish', async t => {
+  const { dl, active } = controlled(t);
+  for (const id of ['a', 'b', 'c', 'd', 'e']) start(dl, id);
+  await settle();
+  assert.deepEqual(active.map(j => j.url), [url('a'), url('b')], 'the default is two background downloads');
+  assert.equal(keepAll(dl, 4, 'a', 'b', 'c', 'd', 'e').parallel, 4);
+  await settle();
+  assert.deepEqual(active.map(j => j.url), [url('a'), url('b'), url('c'), url('d')], 'raising starts the queued songs immediately');
+  for (const j of active) j.finish();
+  await settle();
+});
+
+test('lowering parallel below the running count keeps those downloads and starts nothing new', async t => {
+  const { dl, active } = controlled(t);
+  const ids = ['a', 'b', 'c', 'd'];
+  keepAll(dl, 3, ...ids);
+  const jobs = ids.map(id => start(dl, id));
+  await settle();
+  assert.equal(active.length, 3);
+  keepAll(dl, 1, ...ids);
+  await settle();
+  const running = () => dl.handle({ op: 'jobs' }).jobs.filter(j => j.state === 'running').map(j => j.url);
+  assert.deepEqual(running(), [url('a'), url('b'), url('c')], 'lowering must not cancel or orphan running downloads');
+  assert.equal(active.length, 3, 'nothing new starts while the count is over the new limit');
+  active[0].finish(); await settle();
+  assert.equal(active.length, 3, 'two still running: still over the limit');
+  active[1].finish(); await settle();
+  assert.equal(active.length, 3, 'one still running: already at the limit');
+  active[2].finish(); await settle();
+  assert.equal(active.length, 4, 'the last queued song starts once the count drops under the limit');
+  active[3].finish();
+  for (const j of jobs) assert.equal((await done(dl, j.id)).state, 'done');
+});
+
+test('parallel is rejected rather than clamped, and an absent parallel keeps the current limit', async t => {
+  const { dl, active } = controlled(t);
+  for (const bad of [0, 7, 2.5, '2', null, true, NaN, Infinity, -1]) {
+    assert.throws(() => dl.handle({ op: 'cache-config', limitGb: 0.25, parallel: bad }), /parallel/i, `rejects ${String(bad)}`);
+  }
+  assert.equal(keepAll(dl, 6).parallel, 6);
+  assert.equal(keepAll(dl, 1).parallel, 1);
+  for (const id of ['a', 'b', 'c']) start(dl, id);
+  await settle();
+  assert.equal(active.length, 1, 'the configured limit of one is in force');
+  assert.equal(keepAll(dl, undefined, 'a', 'b', 'c').parallel, 1, 'an absent parallel changes nothing');
+  await settle();
+  assert.equal(active.length, 1);
+  for (let i = 0; i < 3; i++) { active[i].finish(); await settle(); }
+});
+
+test('the foreground slot is additional to a full background set', async t => {
+  const { dl, active } = controlled(t);
+  const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
+  keepAll(dl, 6, ...ids, 'now');
+  for (const id of ids) start(dl, id);
+  await settle();
+  assert.equal(active.length, 6);
+  start(dl, 'now', false);
+  await settle();
+  assert.equal(active.length, 7, 'the foreground download runs alongside six background downloads');
+  assert.equal(active[6].url, url('now'));
+  for (const j of active) j.finish();
+  await settle();
+});
+
 const scratch = path.join(process.env.LOCALAPPDATA, 'hermes', 'cache', 'scratch');
 const url = (id) => `https://music.youtube.com/watch?v=${id}`;
 const done = async (dl, id) => {

@@ -754,6 +754,8 @@ a.push {
   display: flex;
   align-items: center;
   gap: 12px;
+  /* QUEUE-CTRL-001: positioning context for the cache rail on saved rows. */
+  position: relative;
   padding: 7px 10px;
   min-height: 56px;
   border-bottom: 1px solid var(--hair-2);
@@ -1118,6 +1120,9 @@ a.push {
     '. . actions actions actions';
   gap: 6px 12px;
   align-items: center;
+  /* QUEUE-CTRL-001: the cache rail is absolutely positioned, because every grid child here needs a
+     named area and an unplaced one would be auto-placed into the rank/art columns. */
+  position: relative;
   padding: 10px 12px 10px 8px;
   border-bottom: 1px solid var(--hair-2);
   background: var(--panel);
@@ -3446,3 +3451,58 @@ a.push {
     flex: none;
   }
 }
+
+/* QUEUE-CTRL-001: whether this song's audio is on local disk.
+   A 3px rail on the row's bottom edge, plus a glyph over the artwork corner. It deliberately does
+   NOT tint the row background: that is already carrying the playing, hover, focus and selected
+   states, and a fifth meaning there would both collide and risk the title's contrast. */
+.rec__dl {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 3px;
+  pointer-events: none;
+}
+.rec__dl-rail {
+  display: block;
+  height: 100%;
+  width: var(--dl, 0%);
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+  transition: width 220ms linear;
+}
+/* Ready is the quiet, common case: a full hairline, not a shout. */
+.rec__dl[data-dl='ready'] .rec__dl-rail { background: var(--accent-soft); }
+.rec__dl[data-dl='failed'] .rec__dl-rail,
+.rec__dl[data-dl='blocked'] .rec__dl-rail { width: 100%; background: var(--danger); opacity: 0.5; }
+.rec__dl[data-dl='queued'] .rec__dl-rail { width: 100%; background: var(--hair); }
+/* The glyph sits over the artwork corner, so the state survives without colour vision. */
+.rec__dl-mark {
+  position: absolute;
+  left: 42px;
+  bottom: 4px;
+  width: 14px;
+  height: 14px;
+  border-radius: 7px;
+  background: var(--panel);
+  border: 1px solid var(--hair);
+  color: var(--ink-2);
+  font-size: 9px;
+  line-height: 12px;
+  text-align: center;
+}
+.rec__dl[data-dl='ready'] .rec__dl-mark { color: var(--accent); border-color: var(--accent-soft); }
+.rec__dl[data-dl='failed'] .rec__dl-mark,
+.rec__dl[data-dl='blocked'] .rec__dl-mark { color: var(--danger); }
+@media (prefers-reduced-motion: reduce) {
+  .rec__dl-rail { transition: none; }
+}
+
+/* The kept-music path can be long, and Android can only report a label, never a real path. */
+.qdl__path {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--ink-2);
+}
+/* Saved rows have no rank column to hang a glyph beside, so there the rail plus the
+   screen-reader text carries the state and the mark is suppressed. */
+.track .rec__dl-mark { display: none; }

@@ -139,16 +139,19 @@ object Downloads {
       }
     }
     val next = DownloadSelection(urls("protected", 3), urls("wanted", 10000, optional = true))
+    // Validate before anything is written: a bad parallel must not half-apply the new selection.
+    val parallel = parsedParallel(if (req.has("parallel")) req.get("parallel") else null, queue.parallel())
     val protected = next.protected
     val limit = (gb * 1_073_741_824.0).toLong()
     val discard = evictions(context, 0, limit = limit, protected = protected)
     removeEntries(context, discard)
     if (!cachePrefs(context).edit().putFloat(CACHE_LIMIT, gb.toFloat()).putStringSet(CACHE_PROTECTED, protected).commit()) throw IOException("Could not save cache limit.")
     selection = next
+    queue.setParallel(parallel)
     // Keep the entire active playlist, not just the currently cued decks.
     jobs.values.filter { it.cache && !next.retains(it.url) && (it.state == "queued" || it.state == "running") }
       .forEach { cancel(it.id) }
-    JSONObject().put("ok", true).put("limitGb", gb).put("limitBytes", limit).put("bytes", cacheBytes(context))
+    JSONObject().put("ok", true).put("limitGb", gb).put("limitBytes", limit).put("bytes", cacheBytes(context)).put("parallel", parallel)
   }
 
   private fun cacheBytes(context: Context): Long = synchronized(libraryLock) {

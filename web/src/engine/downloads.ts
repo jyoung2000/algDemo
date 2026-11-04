@@ -139,7 +139,7 @@ export const dl = {
   health: () => call<DlHealth>({ op: 'health' }),
   start: (url: string, tool: DlTool, format: DlFormat, label: string, cache = false, background = false) => call<{ job: DlJob }>({ op: 'start', url, tool, format, label, cache, background }),
   keep: (url: string) => call<{ ok?: boolean; job?: DlJob | null; alreadyKept?: boolean; file?: DlFile | null; saved_to?: string | null }>({ op: 'keep', url }),
-  cacheConfig: (limitGb: number, protectedUrls: string[], wanted?: string[]) => call<{ bytes: number; limitBytes: number }>({ op: 'cache-config', limitGb, protected: protectedUrls, ...(wanted ? { wanted } : {}) }),
+  cacheConfig: (limitGb: number, protectedUrls: string[], wanted?: string[], parallel?: number) => call<{ bytes: number; limitBytes: number }>({ op: 'cache-config', limitGb, protected: protectedUrls, ...(wanted ? { wanted } : {}), ...(parallel ? { parallel } : {}) }),
   chooseFolder: () => call<{ saves_to: string }>({ op: 'choose-folder' }, 120_000),
   jobs: () => call<{ jobs: DlJob[] }>({ op: 'jobs' }),
   cancel: (id: string) => call<{ ok: boolean }>({ op: 'cancel', id }),
