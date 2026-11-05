@@ -4,7 +4,16 @@
 .list-availability__count { flex: 1; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .list-availability__head > .push { margin-left: auto; flex-shrink: 0; min-height: 44px; min-width: 44px; }
 .list-availability__meter { height: 10px; margin-top: 10px; border: 1px solid var(--well-edge); border-radius: 6px; background: var(--track-lo); overflow: hidden; }
-.list-availability__meter > span { display: block; height: 100%; width: var(--available); background: linear-gradient(var(--sel-top), var(--sel-bot)); }
+.list-availability__meter > span {
+  display: block;
+  height: 100%;
+  /* DL-GRADIENT-001: the gradient is painted across the FULL track and revealed by clip-path, so
+     a colour at a given x always means the same share of the list. Sizing the layer to --available
+     would rescale it, making 10% ready and 100% ready both end green. */
+  width: 100%;
+  background: linear-gradient(to right, var(--dl-from), var(--dl-to));
+  clip-path: inset(0 calc(100% - var(--available)) 0 0);
+}
 .list-availability__help { color: var(--ink-2); margin: 8px 0 0; font-size: 12px; overflow-wrap: anywhere; }
 .list-availability .push:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 @media (max-width: 560px) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { api, type Track } from './api';
 import { DL_FORMATS, dl, downloadsAvailable, matchTarget, targetFor, urlAllowedFor, type DlFormat, type DlHealth, type DlJob, type DlTool } from './engine/downloads';
@@ -308,8 +308,9 @@ export function DownloadsView({ d }: { d: Downloads }) {
                   {j.state === 'running' && j.percent != null ? ` ${Math.round(j.percent)}%` : ''}
                 </span>
                 {active(j) && (
-                  <div className="meter" role="progressbar" aria-label={`Progress for ${j.label}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={j.percent != null ? Math.round(j.percent) : undefined}>
-                    <span style={{ width: `${j.percent ?? 4}%` }} />
+                  <div className="meter meter--dl" role="progressbar" aria-label={`Progress for ${j.label}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={j.percent != null ? Math.round(j.percent) : undefined}
+                    style={{ '--fill': `${j.percent ?? 4}%` } as CSSProperties}>
+                    <span />
                   </div>
                 )}
                 {j.state === 'failed' && <span className="track__warn">{j.error}</span>}

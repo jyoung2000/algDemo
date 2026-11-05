@@ -13,6 +13,10 @@
   --shadow: 0 1px 2px rgba(30, 30, 30, 0.06), 0 6px 20px rgba(30, 30, 30, 0.06);
   --accent: #1f6fd1;
   --accent-soft: #e6effb;
+  /* DL-GRADIENT-001: every downloader visualizer runs this blue -> green, so distance along a
+     track reads the same everywhere. Blue is the window kit's accent, green its --success. */
+  --dl-from: #1f6fd1;
+  --dl-to: #3a9a5e;
   --radius: 12px;
   --dock-h: 76px;
   --tab-h: 56px;
@@ -1976,6 +1980,13 @@ a.push {
   height: 100%;
   background: var(--gel-thumb);
 }
+/* DL-GRADIENT-001: a DOWNLOAD meter runs blue -> green, because reaching the end is success. The
+   plain .meter above still carries the Settings storage meter, where filling up is a warning. */
+.meter--dl span {
+  width: 100%;
+  background: linear-gradient(to right, var(--dl-from), var(--dl-to));
+  clip-path: inset(0 calc(100% - var(--fill, 0%)) 0 0);
+}
 .kv {
   margin: 0;
   display: grid;
@@ -3465,16 +3476,20 @@ a.push {
 .rec__dl-rail {
   display: block;
   height: 100%;
-  width: var(--dl, 0%);
+  /* DL-GRADIENT-001: full-width gradient layer revealed by clip-path, so the colour at a point on
+     the rail means the same share of the file on every row. */
+  width: 100%;
   border-radius: 0 2px 2px 0;
-  background: var(--accent);
-  transition: width 220ms linear;
+  background: linear-gradient(to right, var(--dl-from), var(--dl-to));
+  clip-path: inset(0 calc(100% - var(--dl, 0%)) 0 0);
+  transition: clip-path 220ms linear;
 }
+/* These states fill the whole rail and carry their own flat colour, so no clip and no gradient. */
 /* Ready is the quiet, common case: a full hairline, not a shout. */
-.rec__dl[data-dl='ready'] .rec__dl-rail { background: var(--accent-soft); }
+.rec__dl[data-dl='ready'] .rec__dl-rail { background: var(--accent-soft); clip-path: none; }
 .rec__dl[data-dl='failed'] .rec__dl-rail,
-.rec__dl[data-dl='blocked'] .rec__dl-rail { width: 100%; background: var(--danger); opacity: 0.5; }
-.rec__dl[data-dl='queued'] .rec__dl-rail { width: 100%; background: var(--hair); }
+.rec__dl[data-dl='blocked'] .rec__dl-rail { width: 100%; background: var(--danger); opacity: 0.5; clip-path: none; }
+.rec__dl[data-dl='queued'] .rec__dl-rail { width: 100%; background: var(--hair); clip-path: none; }
 /* The glyph sits over the artwork corner, so the state survives without colour vision. */
 .rec__dl-mark {
   position: absolute;
@@ -3510,6 +3525,8 @@ a.push {
    smooth fake animation would be inventing progress, so this shows motion WITHOUT a number. */
 .rec__dl[data-indeterminate] .rec__dl-rail {
   width: 35%;
+  /* No clip: there is no percent to reveal, and clipping to --dl: 0% would hide the sweep. */
+  clip-path: none;
   animation: rec-dl-sweep 1.4s ease-in-out infinite;
 }
 @keyframes rec-dl-sweep {
