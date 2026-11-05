@@ -3,10 +3,43 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { ListAvailability } from './ListAvailability';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// Read the stylesheet from disk rather than importing it: a `?raw` CSS import comes back empty
+// under the happy-dom environment, which made the outline assertion pass against an empty string.
+const availabilityCss = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'list-availability.css'), 'utf8');
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root | undefined;
 afterEach(async () => { if (root) await act(() => root!.unmount()); document.body.innerHTML = ''; });
+
+/**
+ * LIST-METER-003, from the owner: "get rid of the black outline around the bar and move the download
+ * all button next to the clear list and make the download all button just a download icon like the
+ * download button". The card becomes a plain meter plus its caption; the action moves to the list
+ * header where Clear list already lives, as an icon button matching every other row action.
+ */
+it('draws the meter with no outline around it', () => {
+  const meterRule = availabilityCss.match(/\.list-availability__meter\s*\{[^}]*\}/)?.[0] ?? '';
+  expect(meterRule, 'meter rule not found').not.toBe('');
+  expect(meterRule).not.toMatch(/border\s*:/);
+  expect(meterRule).not.toMatch(/outline\s*:/);
+  // The track still has to be visible as a track.
+  expect(meterRule).toMatch(/background/);
+});
+
+it('no longer puts a Download all button on the card', async () => {
+  const el = document.createElement('div'); document.body.append(el); root = createRoot(el);
+  await act(() => root!.render(<ListAvailability total={97} ready={91} active={false} failed={6} blocked={false} onDownload={vi.fn()} />));
+  expect(el.querySelector('button')).toBeNull();
+  expect(el.textContent).not.toMatch(/Download all/i);
+  // The information it carried is still there.
+  expect(el.textContent).toContain('91 of 97 songs ready locally');
+  expect(el.querySelector('[role=meter]')).not.toBeNull();
+});
+
 it('explains automatic background retries instead of requiring Download all', async () => {
   const el = document.createElement('div'); document.body.append(el); root = createRoot(el);
   await act(() => root!.render(<ListAvailability total={4} ready={2} active={false} failed={2} blocked={false} onDownload={vi.fn()} />));
@@ -82,18 +115,19 @@ it('does not carry the unavailable-songs warning; Settings owns it', async () =>
   expect(help).not.toMatch(/6 songs/);
 });
 
-it('renders current availability, grows on completion and shrinks on eviction; button requests missing music', async () => {
+// The action lives in the list header now (see list-download-button.test.tsx); this covers the meter
+// tracking availability in both directions.
+it('renders current availability, grows on completion and shrinks on eviction', async () => {
   const el = document.createElement('div'); document.body.append(el); root = createRoot(el);
-  const download = vi.fn();
-  const render = async (ready: number) => act(() => root!.render(<ListAvailability total={4} ready={ready} active={false} failed={0} blocked={false} onDownload={download} />));
+  const render = async (ready: number) => act(() => root!.render(<ListAvailability total={4} ready={ready} active={false} failed={0} blocked={false} />));
   await render(1);
   expect(el.querySelector('[role=meter]')?.getAttribute('aria-valuenow')).toBe('1');
   expect(el.textContent).toContain('1 of 4 songs ready locally');
-  await act(() => el.querySelector('button')!.click()); expect(download).toHaveBeenCalledTimes(1);
   await render(4);
   expect(el.querySelector('[role=meter]')?.getAttribute('aria-valuenow')).toBe('4');
-  expect(el.querySelector('button')!.disabled).toBe(true);
+  // A complete list is the only state that fills the track.
+  expect(parseFloat((el.querySelector('.list-availability__meter') as HTMLElement).style.getPropertyValue('--available'))).toBe(100);
   await render(2);
   expect(el.querySelector('[role=meter]')?.getAttribute('aria-valuenow')).toBe('2');
-  expect(el.querySelector('button')!.disabled).toBe(false);
+  expect(parseFloat((el.querySelector('.list-availability__meter') as HTMLElement).style.getPropertyValue('--available'))).toBeLessThanOrEqual(92);
 });

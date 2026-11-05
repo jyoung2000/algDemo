@@ -7,9 +7,13 @@ export interface ListAvailabilityProps {
   active: boolean;
   failed: number;
   blocked: boolean;
-  /** Names the list in the button's accessible label, e.g. 'Download all in Road Trip'. */
+  /** Names the list for assistive tech, e.g. 'Road Trip'. */
   label?: string;
-  onDownload: () => void;
+  /**
+   * LIST-METER-003: kept for the callers that still pass it, but the card no longer renders an
+   * action - the download icon lives in the list header beside Clear list.
+   */
+  onDownload?: () => void;
 }
 
 /**
@@ -24,7 +28,7 @@ export interface ListAvailabilityProps {
 const PARTIAL_CEILING = 92;
 
 /** LIST-AVAILABILITY-001: current local-file availability, NOT cumulative download progress. */
-export function ListAvailability({ total, ready, active, failed, blocked, label, onDownload }: ListAvailabilityProps) {
+export function ListAvailability({ total, ready, active, failed, blocked }: ListAvailabilityProps) {
   const id = useId();
   const complete = total > 0 && ready === total;
   const count = total ? `${ready} of ${total} songs ready locally` : 'No songs in this list';
@@ -56,7 +60,7 @@ export function ListAvailability({ total, ready, active, failed, blocked, label,
     : failed ? 'Still fetching some songs. Retrying automatically while the app is running.'
     : active ? 'Downloading missing songs using your cache and speed settings.'
     : complete ? 'All songs are on this device. Cached songs may be removed to free space.'
-    : 'Loads songs automatically within your preload and cache limits. Download all prioritizes this list, not your permanent Music folder.';
+    : 'Loads songs automatically within your preload and cache limits. The download button prioritizes this list, not your permanent Music folder.';
   // The visual count changes on every event. Batch announcements, not the meter, to avoid chatter.
   const [announced, setAnnounced] = useState('');
   useEffect(() => {
@@ -68,10 +72,6 @@ export function ListAvailability({ total, ready, active, failed, blocked, label,
     <div className="list-availability__head">
       <strong className="list-availability__count">{count}</strong>
       {spin && <span className="list-availability__spin" data-dir={spin} aria-hidden="true" />}
-      <button type="button" className="push" onClick={onDownload} disabled={!total || complete || (active && !blocked)}
-        aria-describedby={`${id}-help`}
-        aria-label={label ? `${complete ? 'All songs ready in' : 'Download all songs in'} ${label}` : undefined}>
-        {complete ? 'All ready' : active && !blocked ? 'Downloading…' : 'Download all'}</button>
     </div>
     {total > 0 && <div className="list-availability__meter" role="meter" aria-label="Current list local availability"
       aria-valuemin={0} aria-valuemax={total} aria-valuenow={ready} aria-valuetext={count}

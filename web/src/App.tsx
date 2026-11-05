@@ -10,7 +10,7 @@ import { SoundCard } from './SoundCard';
 import { ProfileView } from './Profile';
 import { SavedView } from './SavedView';
 import { QueuePreparation } from './QueuePreparation';
-import { ListDownloadBar } from './ListDownloadBar';
+import { ListDownloadBar, ListDownloadButton } from './ListDownloadBar';
 import { useCardCache } from './useCardCache';
 import { useKeptKeys } from './useKeptKeys';
 import { savedTracks, playbackRows, preparationTracks } from './engine/queue-context';
@@ -644,9 +644,13 @@ export function App() {
                       )}
                     </span>
                     {!sample && (
-                      <button className="push push--small" type="button" title="Empty the song list. Your listening history and settings are kept." onClick={clearList}>
-                        <Glyph name="clear" size={12} /> Clear list
-                      </button>
+                      <>
+                        {/* LIST-METER-003: the list's download action sits with Clear list, as an icon. */}
+                        <ListDownloadButton tracks={queueTracks} label="this list" />
+                        <button className="push push--small" type="button" title="Empty the song list. Your listening history and settings are kept." onClick={clearList}>
+                          <Glyph name="clear" size={12} /> Clear list
+                        </button>
+                      </>
                     )}
                   </div>
                   {tasteLine && (
@@ -702,6 +706,8 @@ export function App() {
                     <h2 id="queue-h">
                       Songs <span className="count">{seeds.length}</span>
                     </h2>
+                    {/* LIST-METER-003: same pairing on the seeds-only header. */}
+                    <ListDownloadButton tracks={queueTracks} label="this list" />
                     <button className="push push--small" type="button" title="Empty the song list. Your listening history and settings are kept." onClick={clearList}>
                       <Glyph name="clear" size={12} /> Clear list
                     </button>

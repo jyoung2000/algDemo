@@ -1982,6 +1982,12 @@ a.push {
 }
 /* DL-GRADIENT-001: a DOWNLOAD meter runs blue -> green, because reaching the end is success. The
    plain .meter above still carries the Settings storage meter, where filling up is a warning. */
+/* LIST-METER-003: and it carries no dark edge. The shared .meter's inset shadow draws a hard dark
+   line round the bar, which frames the gradient like a border; the Settings capacity meter keeps
+   that edge, since there it helps read the bar as a container filling up. */
+.meter--dl {
+  box-shadow: none;
+}
 .meter--dl span {
   width: 100%;
   background: linear-gradient(to right, var(--dl-from), var(--dl-to));

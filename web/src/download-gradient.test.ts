@@ -23,6 +23,26 @@ const block = (css: string, selector: string) => {
 };
 
 describe('DL-GRADIENT-001', () => {
+  /**
+   * LIST-METER-003, from the owner: "get rid of the black outline around the download visualizer".
+   * The shared .meter carries a dark inset shadow that draws a hard dark edge round the bar; on a
+   * download meter that frames the gradient and reads as a border. The Settings capacity meter keeps
+   * its own look, exactly as it keeps --gel-thumb, because filling that one up is a warning.
+   */
+  it('draws no dark edge around a download meter', () => {
+    const css = read('styles.css');
+    const dl = block(css, '.meter--dl {');
+    expect(dl, '.meter--dl needs its own block to clear the inherited edge').toMatch(/box-shadow\s*:\s*none/);
+    expect(dl).not.toMatch(/border\s*:\s*\d/);
+  });
+
+  it('leaves no dark edge on the list availability meter either', () => {
+    const css = read('list-availability.css');
+    const meter = block(css, '.list-availability__meter {');
+    expect(meter).not.toMatch(/border\s*:/);
+    expect(meter).not.toMatch(/box-shadow\s*:\s*inset[^;]*rgba\(0,\s*0,\s*0/);
+  });
+
   it('defines one shared blue -> green pair of tokens', () => {
     const css = read('styles.css');
     const root = block(css, ':root {');
