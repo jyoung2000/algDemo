@@ -24,6 +24,8 @@ export const queueAudio = new QueuePreloader({
     if (direct && !exclude.includes(direct)) return direct;
     const match = await api.fullSong(track, retry, exclude);
     // SOURCE-CHAIN-001: a SoundCloud match arrives as a link, a YouTube Music one as a video id.
-    return match.url ?? sourceUrlFor(match.id) ?? rescueSource({ links: track.url ? [{ url: track.url }] : [], shell: true });
+    const url = match.url ?? sourceUrlFor(match.id) ?? rescueSource({ links: track.url ? [{ url: track.url }] : [], shell: true });
+    // The final track-link fallback must honour exclusions too, not resurrect the rejected link.
+    return url && !exclude.includes(url) ? url : null;
   },
 });

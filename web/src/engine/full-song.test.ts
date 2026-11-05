@@ -1,5 +1,20 @@
 import { expect, it } from 'vitest';
 
+it('does not hand back a rejected own YouTube link when an alternative was requested', async () => {
+  const store = await Store.open(new MemoryBackend());
+  const asked: string[] = [];
+  const api = new LocalApi({ store, encoder: null, spotifySearch: () => async () => [], port: {
+    request: async (req: { url: string }) => {
+      asked.push(req.url);
+      return { status: 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(ytmusicSearch) };
+    },
+  } });
+  const track = { key: 'dead-own', provider: 'ytmusic', platform_id: 'qapK8Gx6ZTo', title: 'Unavailable song', artists: ['Artist'], duration: 101 };
+  const r = await api.handle('POST', '/api/full-song', { track, retry: true, exclude: ['https://music.youtube.com/watch?v=qapK8Gx6ZTo'] });
+  expect(asked.length).toBeGreaterThan(0);
+  expect(r.body).toMatchObject({ id: null, source: 'none' });
+});
+
 it('passive retry bypasses BOTH cached source misses and cached provider searches, but keeps good matches', async () => {
   const store = await Store.open(new MemoryBackend());
   const asked: string[] = [];

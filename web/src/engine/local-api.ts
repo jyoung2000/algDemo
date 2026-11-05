@@ -1202,7 +1202,9 @@ export class LocalApi {
     const raw: Dict | undefined = body['track'];
     if (!raw || typeof raw !== 'object' || !raw['title'] || !Array.isArray(raw['artists'] ?? [])) return fail(400, 'A track with a title is needed.');
     const t: Dict = { ...raw, artists: ((raw['artists'] as unknown[]) ?? []).map(String).slice(0, 6), title: String(raw['title']).slice(0, 200) };
-    if (t['provider'] === 'ytmusic' && t['platform_id']) return ok({ id: t['platform_id'], source: 'own' });
+    const exclude = (Array.isArray(body['exclude']) ? (body['exclude'] as unknown[]).map(String) : []).slice(0, 8);
+    const own = t['provider'] === 'ytmusic' && t['platform_id'] ? String(t['platform_id']) : null;
+    if (own && !exclude.includes(`https://music.youtube.com/watch?v=${own}`)) return ok({ id: own, source: 'own' });
     const key = `fullsong:${t['title']}|${(t['artists'] as string[]).join('|')}|${t['duration']}`;
     const hit = this.store.cacheGet(key);
     // PASSIVE-CACHE-001: retry a miss against the provider, not the six-hour negative cache.
@@ -1211,7 +1213,6 @@ export class LocalApi {
     const cached = hit?.value as Dict | undefined;
     // SOURCE-SWAP-001: a caller naming dead links already knows the cached answer does not work,
     // so the cache is skipped entirely rather than handing back the link that just failed.
-    const exclude = (Array.isArray(body['exclude']) ? (body['exclude'] as unknown[]).map(String) : []).slice(0, 8);
     if (!exclude.length && hit && (!retry || cached?.['id'] || cached?.['url'])) return ok(hit.value);
     const ctx = { meter: this.playbackMeter(), refresh: retry };
     // SOURCE-CHAIN-001: ask every source that can produce a downloadable link, in order of
