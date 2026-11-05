@@ -10,6 +10,7 @@ import { SoundCard } from './SoundCard';
 import { ProfileView } from './Profile';
 import { SavedView } from './SavedView';
 import { QueuePreparation } from './QueuePreparation';
+import { ListDownloadBar } from './ListDownloadBar';
 import { useCardCache } from './useCardCache';
 import { useKeptKeys } from './useKeptKeys';
 import { savedTracks, playbackRows, preparationTracks } from './engine/queue-context';
@@ -329,6 +330,10 @@ export function App() {
     [...seeds, ...items.filter(x => !hidden.has(x.track.key)).map(x => x.track)],
     tab === 'saved' ? savedTracks(saved, lists, visibleSavedList) : []),
     [playing, upNext, activeItems, hidden, seeds, items, tab, saved, lists, visibleSavedList]);
+  // Just the songs this screen is showing. cacheTracks is the union across tabs and the player,
+  // so using it here would count songs the listener cannot see in the bar's denominator.
+  const queueTracks = useMemo(() => [...seeds, ...items.filter((x) => !hidden.has(x.track.key)).map((x) => x.track)],
+    [seeds, items, hidden]);
   const keptKeys = useKeptKeys(cacheTracks);
   const cardCache = useCardCache(cacheTracks, keptKeys);
 
@@ -660,6 +665,8 @@ export function App() {
                     </p>
                   )}
                   {items.length || seeds.length ? (
+                    <>
+                    <ListDownloadBar tracks={queueTracks} label="this list" />
                     <Results
                       seeds={seeds}
                       onRemoveSeed={(k) => saveSeeds(seeds.filter((s) => s.key !== k))}
@@ -677,6 +684,7 @@ export function App() {
                       lists={lists}
                       onLists={setLists}
                     />
+                    </>
                   ) : (
                     <p className="empty">No songs to show. Move the slider or add another starting song.</p>
                   )}

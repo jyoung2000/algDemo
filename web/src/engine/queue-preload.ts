@@ -3,9 +3,10 @@ import { cacheStateOf, preloadPlan, type CardCache, type PreloadSetting } from '
 import type { LocalStatus } from './local-audio';
 
 /** WHOLE-QUEUE-001: disk prefetch, NOT a second bank of audio elements/Blobs. */
-export interface QueueCacheStatus { total: number; ready: number; active: number; failed: number; blocked: boolean; queued: number; parallel: number }
+export interface QueueCacheStatus { total: number; ready: number; active: number; failed: number; blocked: boolean; queued: number; parallel: number; bulkActive: boolean }
 interface Library {
   status(url: string): string;
+  observe?(urls: readonly string[]): void;
   error(url: string): string | null;
   ensure(url: string, label: string, retry: boolean, background: boolean): Promise<void>;
   subscribe(fn: () => void): () => void;
@@ -30,6 +31,10 @@ export class QueuePreloader {
   private parallel = 2;
   private preload: PreloadSetting = { target: 'all', count: 20 };
   private wantedKeys = new Set<string>();
+  private automaticKeys = new Set<string>();
+  /** One-shot requests survive automatic queue updates, but stop overriding count once ready. */
+  private manualKeys = new Set<string>();
+  private resolvedUrls = new Map<string, string>();
   private protectedUrls: string[] = [];
   private blocked = false;
   private config: Promise<unknown> = Promise.resolve();
@@ -39,15 +44,59 @@ export class QueuePreloader {
   }
   subscribe(fn: () => void): () => void { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
   snapshot(): QueueCacheStatus {
-    const all = [...this.entries.values()];
-    return { total: all.length, ready: all.filter(e => e.phase === 'ready').length,
-      active: all.filter(e => e.phase === 'preparing' || e.phase === 'downloading').length,
-      failed: all.filter(e => e.phase === 'failed').length, blocked: this.blocked,
-      queued: all.filter(e => e.phase === 'waiting').length, parallel: this.parallel };
+    return this.snapshotFor([...this.entries.values()].map(e => e.track));
+  }
+  /** Unique songs in this list, not the global queue. Readiness always comes from the library. */
+  snapshotFor(tracks: readonly Track[]): QueueCacheStatus {
+    const result: QueueCacheStatus = { total: 0, ready: 0, active: 0, failed: 0, blocked: false, queued: 0, parallel: this.parallel, bulkActive: false };
+    const observe: string[] = [];
+    for (const track of new Map(tracks.map(t => [t.key, t])).values()) {
+      result.total++;
+      const e = this.entries.get(track.key);
+      const url = e?.url ?? this.resolvedUrls.get(track.key) ?? this.backend.known?.(track);
+      if (url) observe.push(url);
+      const state = url ? this.backend.library.status(url) : 'unknown';
+      if (!this.blocked && this.manualKeys.has(track.key) && state !== 'ready' && e?.phase !== 'failed') result.bulkActive = true;
+      if (state === 'ready') result.ready++;
+      else if (state === 'running' || e?.phase === 'preparing' || e?.phase === 'downloading') result.active++;
+      else if (e?.phase === 'failed') {
+        if (this.blocked && url && quotaError(this.backend.library.error(url))) result.blocked = true;
+        else result.failed++;
+      } else result.queued++;
+    }
+    // A global quota stop also prevents other requested songs from starting.
+    if (this.blocked && result.ready < result.total && tracks.some(t => this.wantedKeys.has(t.key))) result.blocked = true;
+    this.backend.library.observe?.(observe);
+    return result;
+  }
+  /** Download once into evictable queue storage; never changes preload settings or keeps a copy. */
+  downloadAll(tracks: readonly Track[]): void {
+    for (const track of tracks) {
+      let e = this.entries.get(track.key);
+      if (!e) {
+        e = { track, url: this.resolvedUrls.get(track.key) ?? this.backend.known?.(track) ?? undefined, phase: 'waiting', attempts: 0, after: 0 };
+        this.entries.set(track.key, e);
+      }
+      this.manualKeys.add(track.key);
+      if (e.phase === 'waiting' || (e.phase === 'ready' && e.url && this.backend.library.status(e.url) !== 'ready')) {
+        e.phase = 'waiting'; e.after = 0; e.attempts = 0;
+      }
+      if (e.phase === 'failed' && !quotaError(e.url ? this.backend.library.error(e.url) : null)) {
+        e.phase = 'waiting'; e.attempts = 0; e.after = 0;
+      }
+    }
+    this.recomputeTarget();
+    void this.configure().catch(() => undefined);
+    this.schedule(); this.emit();
   }
   update(tracks: readonly Track[]): void {
+    this.automaticKeys = new Set(tracks.map(t => t.key));
     const next = new Map<string, Entry>();
-    for (const track of tracks) if (!next.has(track.key)) next.set(track.key, this.entries.get(track.key) ?? { track, url: this.backend.known?.(track) ?? undefined, phase: 'waiting', attempts: 0, after: 0 });
+    for (const track of tracks) if (!next.has(track.key)) next.set(track.key, this.entries.get(track.key) ?? { track, url: this.resolvedUrls.get(track.key) ?? this.backend.known?.(track) ?? undefined, phase: 'waiting', attempts: 0, after: 0 });
+    for (const key of this.manualKeys) {
+      const e = this.entries.get(key);
+      if (e && !next.has(key)) next.set(key, e);
+    }
     const changed = next.size !== this.entries.size || [...next.keys()].some(k => !this.entries.has(k));
     this.entries = next;
     this.recomputeTarget();
@@ -76,13 +125,13 @@ export class QueuePreloader {
     const e = this.entries.get(key);
     const url = e?.url;
     return cacheStateOf({
-      status: e?.phase === 'ready' ? 'ready' : url ? (this.backend.library.status(url) as LocalStatus) : 'unknown',
+      status: url ? (this.backend.library.status(url) as LocalStatus) : 'unknown',
       kept: o.kept, percent: o.percent, blocked: this.blocked && e?.phase === 'failed',
       inTarget: this.wantedKeys.has(key), error: url ? this.backend.library.error(url) : null,
     });
   }
   private recomputeTarget(): void {
-    this.wantedKeys = new Set(preloadPlan([...this.entries.keys()], this.preload));
+    this.wantedKeys = new Set([...preloadPlan([...this.automaticKeys], this.preload), ...this.manualKeys]);
   }
   retryFailed(): void {
     for (const e of this.entries.values()) if (e.phase === 'failed' && !quotaError(e.url ? this.backend.library.error(e.url) : null)) {
@@ -92,8 +141,12 @@ export class QueuePreloader {
   }
   private unblock(): void {
     this.blocked = false;
-    for (const e of this.entries.values()) if (e.phase === 'failed' && e.url && quotaError(this.backend.library.error(e.url))) {
-      e.phase = 'waiting'; e.attempts = 0; e.after = 0;
+    for (const e of this.entries.values()) {
+      // A quota failure or a song parked after eviction: both only waited on space, which now exists.
+      const parked = e.phase === 'waiting' && !Number.isFinite(e.after);
+      if (parked || (e.phase === 'failed' && e.url && quotaError(this.backend.library.error(e.url)))) {
+        e.phase = 'waiting'; e.attempts = 0; e.after = 0;
+      }
     }
   }
   private configure(): Promise<unknown> {
@@ -118,20 +171,23 @@ export class QueuePreloader {
     for (const e of this.entries.values()) {
       if (!e.url || e.phase === 'preparing') continue;
       const state = this.backend.library.status(e.url);
-      if (state === 'ready') e.phase = 'ready';
+      if (state === 'ready') { e.phase = 'ready'; this.manualKeys.delete(e.track.key); }
       else if (e.phase === 'downloading' && state === 'missing') this.fail(e, this.backend.library.error(e.url));
-      else if (e.phase === 'ready' && state === 'missing') { e.phase = 'waiting'; e.attempts = 0; e.after = 0; }
+      // Eviction is not a fresh download request: avoid an endless fill/evict loop.
+      else if (e.phase === 'ready') { e.phase = 'waiting'; e.attempts = 0; e.after = Infinity; }
     }
+    this.recomputeTarget();
     let active = this.snapshot().active;
     // A lowered limit never cancels work in flight; it just stops new starts until active drops.
-    if (!this.blocked) for (const [key, e] of this.entries) {
+    const pending = [...this.entries].sort(([a], [b]) => Number(this.manualKeys.has(b)) - Number(this.manualKeys.has(a)));
+    if (!this.blocked) for (const [key, e] of pending) {
       if (active >= this.parallel) break;
       if (e.phase !== 'waiting' || e.after > Date.now() || !this.wantedKeys.has(key)) continue;
       e.phase = 'preparing'; e.attempts++; active++;
       void this.prepare(e);
     }
     this.emit();
-    if (!this.blocked && [...this.entries.values()].some(e => e.phase === 'waiting' && e.after > Date.now())) this.schedule(1000);
+    if (!this.blocked && [...this.entries.values()].some(e => e.phase === 'waiting' && Number.isFinite(e.after) && e.after > Date.now())) this.schedule(1000);
   }
   private async prepare(e: Entry): Promise<void> {
     const live = () => !this.stopped && this.entries.get(e.track.key) === e;
@@ -139,12 +195,13 @@ export class QueuePreloader {
       e.url ??= await this.backend.resolve(e.track) ?? undefined;
       if (!live()) return;
       if (!e.url) { e.phase = 'failed'; return; }
+      this.resolvedUrls.set(e.track.key, e.url);
       await this.configure();
       if (!live()) return;
       await this.backend.library.ensure(e.url, `${e.track.title} — ${e.track.artist}`, true, true);
       if (!live()) return;
       const state = this.backend.library.status(e.url);
-      if (state === 'ready') e.phase = 'ready';
+      if (state === 'ready') { e.phase = 'ready'; this.manualKeys.delete(e.track.key); }
       else if (state === 'running') e.phase = 'downloading';
       else this.fail(e, this.backend.library.error(e.url));
     } catch (error) {

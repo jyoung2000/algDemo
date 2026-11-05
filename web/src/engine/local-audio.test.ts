@@ -127,6 +127,7 @@ describe('local audio: a downloaded full song the decks can play (LOCAL-AUDIO-00
     }
     expect(revoked).toContain('blob:song-1');
     expect(lib.src(url)).toBeNull(); // released, and fetched again on demand
+    expect(lib.status(url)).toBe('ready'); // RAM eviction is not disk eviction
   });
 
   it('keeps background work on disk and promotes it once when selected', async () => {

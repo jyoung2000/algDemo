@@ -98,3 +98,99 @@ it('ignores a stale source resolution after replacing the list', async () => {
   expect(r.started).toEqual([]); expect(r.loader.snapshot().total).toBe(0);
   r.loader.dispose();
 });
+
+// Explicit list requests do not replace the global automatic queue or its settings.
+it('downloads a deduplicated requested list beyond count, with live list-specific readiness', async () => {
+  const r = rig();
+  await r.loader.limits({ parallel: 2, preload: { target: 'count', count: 1 } });
+  r.loader.update(tracks(5)); await tick();
+  expect(r.started).toEqual(['url:t0']);
+  r.loader.downloadAll([...tracks(4), ...tracks(2)]); await tick();
+  expect(r.started).toEqual(['url:t0', 'url:t1']);
+  expect(r.loader.snapshotFor(tracks(4))).toMatchObject({ total: 4, ready: 0, active: 2 });
+  for (let i = 0; i < 4; i++) {
+    r.finish(`url:t${i}`);
+    expect(r.loader.snapshotFor(tracks(4)).ready).toBe(i + 1);
+    await tick();
+  }
+  expect(r.started).toEqual(['url:t0', 'url:t1', 'url:t2', 'url:t3']);
+  expect(r.loader.snapshotFor([...tracks(4), ...tracks(2)])).toMatchObject({ total: 4, ready: 4 });
+  r.states.set('url:t2', 'missing');
+  expect(r.loader.snapshotFor(tracks(4)).ready).toBe(3);
+  expect(r.loader.snapshot().ready).toBe(3);
+  expect(r.loader.cardOf('t2', { kept: false, percent: null }).state).not.toBe('ready');
+  r.loader.update(tracks(6)); await tick();
+  expect(r.started).not.toContain('url:t4');
+  expect(r.started).not.toContain('url:t5');
+  r.loader.dispose();
+});
+
+it('captures manual requests across automatic navigation and exposes list-scoped bulkActive', async () => {
+  const r = rig();
+  await r.loader.limits({ parallel: 1, preload: { target: 'count', count: 1 } });
+  r.loader.downloadAll(tracks(3)); await tick();
+  r.loader.update([tracks(8)[7]!]); await tick();
+  expect(r.loader.snapshotFor(tracks(3))).toMatchObject({ total: 3, bulkActive: true });
+  expect(r.loader.snapshotFor([tracks(8)[7]!])).toMatchObject({ total: 1, bulkActive: false });
+  for (let i = 0; i < 3; i++) { r.finish(`url:t${i}`); await tick(); }
+  expect(r.loader.snapshotFor(tracks(3))).toMatchObject({ ready: 3, bulkActive: false });
+  expect(r.started).toEqual(expect.arrayContaining(['url:t0', 'url:t1', 'url:t2']));
+  r.loader.dispose();
+});
+
+it('does not refill an evicted completed song until explicitly requested again', async () => {
+  const r = rig(); r.loader.update(tracks(1)); await tick();
+  r.finish('url:t0'); await tick();
+  r.fail('url:t0', ''); await tick();
+  expect(r.loader.snapshotFor(tracks(1)).ready).toBe(0);
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(r.started).toEqual(['url:t0']);
+  r.loader.downloadAll(tracks(1)); await tick();
+  expect(r.started).toEqual(['url:t0', 'url:t0']);
+  r.loader.dispose();
+});
+
+it('keeps the GB quota authoritative for manual lists and distinguishes blocked from failed', async () => {
+  const r = rig(); await r.loader.protect(0.5, ['playing']);
+  await r.loader.limits({ parallel: 1, preload: { target: 'count', count: 1 } });
+  r.loader.downloadAll(tracks(4)); await tick();
+  r.fail('url:t0', 'Cache limit cannot fit this song'); await tick();
+  expect(r.loader.snapshotFor(tracks(4))).toMatchObject({ blocked: true, bulkActive: false, ready: 0, failed: 0 });
+  r.loader.downloadAll(tracks(4)); await tick();
+  expect(r.started).toEqual(['url:t0']);
+  expect(r.configure).toHaveBeenLastCalledWith(0.5, ['playing'], expect.any(Array), 1);
+  await r.loader.protect(2, ['playing']); await tick();
+  expect(r.started).toHaveLength(2);
+  r.loader.dispose();
+});
+
+it('refills an evicted song when the listener raises the cache limit', async () => {
+  // Parking an evicted song stops fill/evict churn, but a bigger cache is a new instruction:
+  // the song fitted nowhere before and fits now, so the list must finish filling itself.
+  const r = rig(); r.loader.update(tracks(1)); await tick();
+  r.finish('url:t0'); await tick();
+  r.fail('url:t0', ''); await tick();
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(r.started).toEqual(['url:t0']);
+  await r.loader.protect(4, []); await tick();
+  expect(r.started).toEqual(['url:t0', 'url:t0']);
+  r.loader.dispose();
+});
+
+it('serializes bulk, protection and limits through the same config writer', async () => {
+  const r = rig(); let active = 0; let maximum = 0;
+  r.configure.mockImplementation(async () => {
+    maximum = Math.max(maximum, ++active);
+    await new Promise<void>(resolve => setTimeout(resolve, 2));
+    active--;
+  });
+  r.loader.downloadAll(tracks(3));
+  const protectedConfig = r.loader.protect(2, ['playing']);
+  const limitsConfig = r.loader.limits({ parallel: 1 });
+  await vi.advanceTimersByTimeAsync(100);
+  await Promise.all([protectedConfig, limitsConfig]);
+  expect(maximum).toBe(1);
+  expect(r.started).toEqual(['url:t0']);
+  expect(r.configure).toHaveBeenLastCalledWith(2, ['playing'], ['url:t0'], 1);
+  r.loader.dispose();
+});

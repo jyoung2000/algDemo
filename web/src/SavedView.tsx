@@ -3,6 +3,7 @@ import { Glyph } from '@now-playing/aqua-ui/icons';
 
 import { api, type PlaylistSummary, type SavedItem, type Track } from './api';
 import { Art } from './Art';
+import { ListDownloadBar } from './ListDownloadBar';
 import { SaveMenu } from './SaveMenu';
 import { PLAYLIST_NAME_MAX } from './engine/playlists';
 import type { CardCache } from './engine/queue-controls';
@@ -243,6 +244,8 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
       ) : rows.length === 0 ? (
         <p className="empty">{current ? 'Nothing in this list yet.' : 'Songs you like appear here.'}</p>
       ) : (
+        <>
+        <ListDownloadBar tracks={rows.map((r) => r.track)} label={current ? current.name : 'All saved'} />
         <ul className="well tracks tracks--saved">
           {rows.map(({ track, played }) => {
             const cache = cacheOf?.(track.key) ?? null;
@@ -306,6 +309,7 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
             );
           })}
         </ul>
+        </>
       )}
     </section>
   );

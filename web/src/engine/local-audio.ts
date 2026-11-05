@@ -65,17 +65,40 @@ export class LocalLibrary {
 
   constructor(private readonly api: LocalApi = shellApi) {}
 
-  /** While any download runs, ask the shell again every few seconds; stop when nothing is running. */
+  /** Poll jobs plus a rotating slice of known files; never fan out a whole large playlist. */
   private backgroundJobs = new Set<string>();
+  private polling = false;
+  private revalidateCursor = 0;
 
   private schedule(): void {
-    if (this.timer) return;
-    const running = [...this.entries].filter(([, e]) => e.status === 'running').map(([url]) => url);
-    if (running.length === 0) return;
+    if (this.timer || this.polling) return;
+    const needsPoll = [...this.entries.values()].some(e => e.status === 'running' ||
+      (this.listeners.size > 0 && (e.status === 'ready' || e.status === 'unknown')));
+    if (!needsPoll) return;
     this.timer = setTimeout(() => {
       this.timer = null;
-      void Promise.all(running.map((url) => this.refresh(url))).then(() => this.schedule());
+      this.polling = true;
+      void this.poll().finally(() => { this.polling = false; this.schedule(); });
     }, POLL_MS);
+  }
+
+  private async poll(): Promise<void> {
+    const running = [...this.entries].filter(([, e]) => e.status === 'running').map(([url]) => url);
+    const candidates = this.listeners.size ? [...this.entries].filter(([, e]) => e.status === 'ready' || e.status === 'unknown').map(([url]) => url) : [];
+    const batch: string[] = [];
+    for (let i = 0; i < Math.min(12, candidates.length); i++) batch.push(candidates[(this.revalidateCursor + i) % candidates.length]!);
+    this.revalidateCursor = candidates.length ? (this.revalidateCursor + batch.length) % candidates.length : 0;
+    const urls = [...running, ...batch];
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(4, urls.length) }, async () => {
+      while (next < urls.length) await this.refresh(urls[next++]!);
+    }));
+  }
+
+  /** Discover held files without starting downloads; the same bounded poller checks them. */
+  observe(urls: readonly string[]): void {
+    for (const url of urls) if (!this.entries.has(url)) this.entries.set(url, { status: 'unknown', error: null });
+    this.schedule();
   }
 
   status(url: string): LocalStatus {
@@ -135,6 +158,7 @@ export class LocalLibrary {
 
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn);
+    this.schedule();
     return () => this.listeners.delete(fn);
   }
 
@@ -192,7 +216,7 @@ export class LocalLibrary {
     if (before?.status === status && before.error === error) return;
     this.entries.set(url, { status, error });
     for (const l of [...this.listeners]) l();
-    if (status === 'running') this.schedule();
+    this.schedule();
   }
 }
 
