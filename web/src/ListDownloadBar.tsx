@@ -35,6 +35,8 @@ export function ListDownloadBar({ tracks, label }: { tracks: Track[]; label?: st
     active={status.bulkActive}
     failed={status.failed}
     blocked={status.blocked}
+    /* RETRY-SPIN-001: scheduled attempts, so the arrow turns between downloads too. */
+    retrying={status.retrying}
     label={label}
   />;
 }

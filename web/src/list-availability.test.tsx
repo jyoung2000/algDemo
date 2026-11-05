@@ -131,3 +131,41 @@ it('renders current availability, grows on completion and shrinks on eviction', 
   expect(el.querySelector('[role=meter]')?.getAttribute('aria-valuenow')).toBe('2');
   expect(parseFloat((el.querySelector('.list-availability__meter') as HTMLElement).style.getPropertyValue('--available'))).toBeLessThanOrEqual(92);
 });
+
+/**
+ * RETRY-SPIN-001 — the arrow must spin while the app is waiting to retry, not only mid-download.
+ *
+ * Owner, looking at a list stuck at 91 of 97: "i dont see a spinning arrow indicating active
+ * retrying." Nothing was downloading at that moment — the missing songs were serving their backoff
+ * — so `active` was false and the arrow was hidden exactly when it was needed.
+ */
+const show = async (props: Partial<Parameters<typeof ListAvailability>[0]> = {}) => {
+  const el = document.createElement('div'); document.body.append(el); root = createRoot(el);
+  await act(() => root!.render(
+    <ListAvailability total={97} ready={91} active={false} failed={6} blocked={false} retrying={6} {...props} />,
+  ));
+  return el;
+};
+
+it('keeps the arrow spinning while a retry is pending, with nothing downloading', async () => {
+  const el = await show();
+  const spin = el.querySelector('.list-availability__spin');
+  expect(spin, 'no spinner while retries are pending').not.toBeNull();
+  expect(spin?.getAttribute('data-dir')).toBe('load'); // it is working towards having them
+  expect(el.querySelector('.list-availability')?.getAttribute('data-state')).toBe('loading');
+});
+
+it('says it is retrying, and how many are left', async () => {
+  const el = await show();
+  expect(el.textContent).toMatch(/retrying 6 songs/i);
+});
+
+it('rests when the list is complete and nothing is scheduled', async () => {
+  const el = await show({ total: 5, ready: 5, failed: 0, retrying: 0 });
+  expect(el.querySelector('.list-availability__spin')).toBeNull();
+});
+
+it('does not spin when songs are parked for want of space, which is not a retry', async () => {
+  const el = await show({ total: 5, ready: 2, failed: 3, blocked: true, retrying: 0 });
+  expect(el.querySelector('.list-availability__spin')).toBeNull();
+});
