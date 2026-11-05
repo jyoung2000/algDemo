@@ -8,6 +8,7 @@
  * discovery list stays about music.
  */
 import appSource from './App.tsx?raw';
+import searchSource from './Search.tsx?raw';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { SettingsView } from './Settings';
@@ -20,6 +21,22 @@ const props = { settings: null, onSettings: vi.fn(), onReset: vi.fn(), onResetTa
 
 it('does not warn about quiet sources over the discovery list', () => {
   expect(appSource).not.toMatch(/Some sources did not answer/);
+});
+
+/**
+ * Checking App.tsx alone missed a second copy of the line in the no-results message, which only
+ * turned up by grepping the built bundle. Every user-facing surface is checked here instead.
+ */
+it('no user-facing surface carries the line, including the no-results message', () => {
+  for (const [name, source] of [['App.tsx', appSource], ['Search.tsx', searchSource]] as const) {
+    expect(source, `${name} still names quiet sources to the listener`).not.toMatch(/sources did not answer/i);
+  }
+});
+
+it('a search that found nothing still suggests trying again', () => {
+  // Dropping the warning must not drop the actionable part: when a provider was quiet, the reason
+  // the list is empty is that the run was incomplete, so the retry hint has to survive.
+  expect(searchSource).toMatch(/try again in a moment/i);
 });
 
 it('hands the per-source outcome to Settings instead of dropping it', () => {

@@ -1,6 +1,6 @@
 {
   "name": "airwave-discovery-windows",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "private": true,
   "description": "Airwave Discovery for Windows: the APK's web app and engine in an Electron window. No server needed.",
   "main": "main.cjs",

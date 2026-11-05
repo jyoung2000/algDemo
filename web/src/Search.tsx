@@ -659,7 +659,9 @@ function ResultsView({
         <p className="state">
           {lyr?.state === 'ok' && lyr.named > 0
             ? `No songs found for “${view.query}”. Genius found songs with these words, but none is on a service Airwave plays from.`
-            : `No songs found for “${view.query}”.${Object.values(view.sources).some((x) => x.state !== 'ok') ? ' Some sources did not answer; try again in a moment.' : ' Try the artist and title together, or a different line of the lyrics.'}`}
+            // SRC-WARN-001: which provider was quiet is reported in Settings, not here. The listener
+            // still gets the actionable half - an incomplete run is worth retrying.
+            : `No songs found for “${view.query}”.${Object.values(view.sources).some((x) => x.state !== 'ok') ? ' The search ran short; try again in a moment.' : ' Try the artist and title together, or a different line of the lyrics.'}`}
         </p>
       )}
     </>
