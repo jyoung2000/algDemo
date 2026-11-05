@@ -644,13 +644,14 @@ export function App() {
                       )}
                     </span>
                     {!sample && (
-                      <>
-                        {/* LIST-METER-003: the list's download action sits with Clear list, as an icon. */}
+                      /* LIST-METER-003: one group, so the two actions stay side by side. Loose
+                         siblings wrapped onto separate lines, because .push takes margin-left:auto. */
+                      <div className="queue__actions">
                         <ListDownloadButton tracks={queueTracks} label="this list" />
                         <button className="push push--small" type="button" title="Empty the song list. Your listening history and settings are kept." onClick={clearList}>
                           <Glyph name="clear" size={12} /> Clear list
                         </button>
-                      </>
+                      </div>
                     )}
                   </div>
                   {tasteLine && (
@@ -707,10 +708,12 @@ export function App() {
                       Songs <span className="count">{seeds.length}</span>
                     </h2>
                     {/* LIST-METER-003: same pairing on the seeds-only header. */}
-                    <ListDownloadButton tracks={queueTracks} label="this list" />
-                    <button className="push push--small" type="button" title="Empty the song list. Your listening history and settings are kept." onClick={clearList}>
-                      <Glyph name="clear" size={12} /> Clear list
-                    </button>
+                    <div className="queue__actions">
+                      <ListDownloadButton tracks={queueTracks} label="this list" />
+                      <button className="push push--small" type="button" title="Empty the song list. Your listening history and settings are kept." onClick={clearList}>
+                        <Glyph name="clear" size={12} /> Clear list
+                      </button>
+                    </div>
                   </div>
                   <Results
                     seeds={seeds}

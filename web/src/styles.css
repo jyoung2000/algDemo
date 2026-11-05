@@ -203,6 +203,20 @@ body {
 .queue__head > .push {
   margin-left: auto;
 }
+/* LIST-METER-003: the header's actions as one group pinned right (QUEUE-HEAD-001 still holds - the
+   action stays on the right, the heading and status on the left). They must share a container:
+   as loose siblings the auto margin on .push drove them onto separate wrapped lines, measured 40px
+   apart on the desktop app and 225px apart on a 412px phone. */
+.queue__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.queue__actions > .push {
+  margin-left: 0;
+}
 .count {
   color: var(--ink-3);
   font-weight: 400;

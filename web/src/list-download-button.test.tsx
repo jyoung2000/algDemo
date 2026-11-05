@@ -10,6 +10,9 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import appSource from './App.tsx?raw';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const snapshot = { total: 97, ready: 91, active: 0, failed: 6, blocked: false, queued: 0, parallel: 2, bulkActive: false };
 const downloadAll = vi.fn();
@@ -81,4 +84,33 @@ it('sits next to Clear list in the list header, not inside the availability card
   const withClear = headers.filter((h) => /Clear list/.test(h));
   expect(withClear.length, 'no queue header with Clear list found').toBeGreaterThan(0);
   for (const h of withClear) expect(h).toMatch(/<ListDownloadButton/);
+});
+
+/**
+ * Measured on the packaged 0.7.3 desktop app: dropping the icon in as a loose sibling put it on a
+ * DIFFERENT wrapped line from Clear list (y 612 vs 652), and 225px away on a phone, because
+ * `.queue__head > .push` takes `margin-left: auto` and forces the wrap. The two actions have to
+ * travel as one group to actually sit next to each other.
+ */
+it('groups the two actions in one right-aligned container so they stay adjacent', () => {
+  const headers = appSource.match(/<div className="queue__head">[\s\S]{0,1200}?<\/div>\s*\)?\s*\}?/g) ?? [];
+  const withClear = headers.filter((h) => /Clear list/.test(h));
+  expect(withClear.length).toBeGreaterThan(0);
+  for (const h of withClear) {
+    const group = h.match(/<div className="queue__actions">[\s\S]*?<\/div>/)?.[0] ?? '';
+    expect(group, 'actions must share a queue__actions wrapper').not.toBe('');
+    expect(group).toMatch(/<ListDownloadButton/);
+    expect(group).toMatch(/Clear list/);
+  }
+});
+
+it('right-aligns the action group as a non-shrinking row', () => {
+  const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'styles.css'), 'utf8');
+  const at = css.indexOf('.queue__actions {');
+  expect(at, '.queue__actions rule must exist').toBeGreaterThan(-1);
+  const rule = css.slice(at, css.indexOf('}', at) + 1);
+  expect(rule).toMatch(/display:\s*flex/);
+  expect(rule).toMatch(/margin-left:\s*auto/);
+  expect(rule).toMatch(/flex-shrink:\s*0/);
+  expect(rule).toMatch(/align-items:\s*center/);
 });
