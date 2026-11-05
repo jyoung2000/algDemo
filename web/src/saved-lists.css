@@ -146,6 +146,26 @@
   margin-left: auto;
 }
 @media (max-width: 480px) {
+  /* SAVED-MOBILE-001: four actions beside artwork left only 19px for titles at 320px.
+     Explicit rows keep names readable and controls aligned without shrinking touch targets. */
+  .tracks--saved > .track {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    grid-template-areas: 'art text' 'actions actions';
+    gap: 8px 12px;
+  }
+  .tracks--saved > .track > .art { grid-area: art; }
+  .tracks--saved > .track > .track__text { grid-area: text; }
+  .tracks--saved > .track > .track__actions { grid-area: actions; justify-self: end; }
+  .tracks--saved > .track > .track__savemenu { grid-column: 1 / -1; }
+  .tracks--saved .track__actions .iconbtn {
+    box-sizing: border-box;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+  }
   /* The per-song badge is the first thing to go when the row is tight; the list's own summary
      above still says how many are left to play. */
   .tracks--saved .track__played {
