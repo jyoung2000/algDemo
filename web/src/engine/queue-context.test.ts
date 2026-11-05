@@ -8,6 +8,13 @@ const b = { ...a, key: 'b', title: 'B' };
 const c = { ...a, key: 'c', title: 'C' };
 const saved = [{ track: a }, { track: b }] as SavedItem[];
 const lists = [{ id: 'p', items: [{ key: 'c', track: c }, { key: 'a', track: a }] }] as PlaylistSummary[];
+it('orders the active list from the song playing, so what comes next outranks what just played', () => {
+  const list = ['a','b','c','d','e','f'].map(k => ({ ...a, key: k }));
+  // Listening to 'd' in this list: 'e','f' are next, 'a','b','c' are behind the listener.
+  const got = preparationTracks(list[3]!, [list[4]!], list, []);
+  expect(got.map(t => t.key)).toEqual(['d','e','f','a','b','c']);
+});
+
 it('uses saved playlist order (including engine-only tracks), never discovery order', () => {
   expect(savedTracks(saved, lists, 'p').map(t => t.key)).toEqual(['c', 'a']);
   expect(savedTracks(saved, lists, 'all').map(t => t.key)).toEqual(['a', 'b']);

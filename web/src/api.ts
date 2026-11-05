@@ -481,7 +481,7 @@ export const api = {
   feedbackState: () => call<{ state: Record<string, Partial<Record<FeedbackKind, boolean>>>; events: number; taste?: TasteSummary | null }>('/api/feedback/state'),
   importHistory: (events: import('./engine/import').ImportedEvent[]) => call<{ recorded: number; duplicates: number; skipped: number }>('/api/import/history', { method: 'POST', body: json({ events }) }),
   impressions: (keys: string[]) => call<{ recorded: number }>('/api/impressions', { method: 'POST', body: json({ keys }) }),
-  fullSong: (track: Track) => call<{ id: string | null; source: string }>('/api/full-song', { method: 'POST', body: json({ track }) }),
+  fullSong: (track: Track, retry = false) => call<{ id: string | null; source: string }>('/api/full-song', { method: 'POST', body: json({ track, retry }) }),
   /**
    * Analyse the complete song the shell already holds, rather than Deezer's 30-second preview
    * (FULL-SONG-EMBED-001). Local disk only, so it costs no transfer allowance; a song already

@@ -12,6 +12,19 @@ export function playbackRows(tracks: Track[]): RecItem[] {
     score: 0, coverage: 0, tier: 'related', evidence: 'thin', best_seed: null, reasons: [], uncertainty: [],
     new_release: false, factors: {}, weights: {}, sources: [] }));
 }
+/**
+ * ROLLING-CACHE-001: priority order for the queue cache, highest first.
+ *
+ * The order is the whole message to the shell — it keeps the head of `wanted` and evicts from the
+ * tail. So each list is ROTATED to begin at the song being listened to: the rest of that list is
+ * still ahead of the listener and must outrank the songs already behind them. Without the rotation
+ * a song two places away sorted last, and on a full cache the shell evicted what was about to play
+ * to hold what had just finished.
+ */
 export function preparationTracks(current: Track | null, upcoming: Track[], ...lists: Track[][]): Track[] {
-  return [...new Map([...(current ? [current] : []), ...upcoming, ...lists.flat()].map(t => [t.key, t])).values()];
+  const rotated = lists.map((list) => {
+    const at = current ? list.findIndex(t => t.key === current.key) : -1;
+    return at > 0 ? [...list.slice(at), ...list.slice(0, at)] : list;
+  });
+  return [...new Map([...(current ? [current] : []), ...upcoming, ...rotated.flat()].map(t => [t.key, t])).values()];
 }

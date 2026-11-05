@@ -172,6 +172,110 @@ test('the foreground slot is additional to a full background set', async t => {
   await settle();
 });
 
+// Rolling-cache retention (ROLLING-CACHE-001). A listening list longer than the quota must keep a
+// window around the songs about to play: obsolete files go first, then the tail, never the next song.
+const MB = 1024 * 1024;
+/** Runs one background/foreground download to completion at a chosen size. */
+const fill = async (dl, active, id, bytes, background = true) => {
+  const job = start(dl, id, background);
+  await settle();
+  const process = active.find((a) => a.url === url(id) && !a.done);
+  if (!process) return done(dl, job.id);
+  process.done = true;
+  process.finish(bytes);
+  return done(dl, job.id);
+};
+
+test('switching lists evicts the songs left behind before anything on the new list', async (t) => {
+  const { dl, active } = controlled(t);
+  // 0.25 GiB holds four 60 MB songs with room to spare, five do not fit.
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [], wanted: ['a', 'b', 'c', 'd'].map(url) });
+  for (const id of ['a', 'b', 'c', 'd']) assert.equal((await fill(dl, active, id, 60 * MB)).state, 'done', id);
+  // The listener switches list: a and d are no longer wanted, b and c still are.
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [], wanted: ['b', 'c', 'e'].map(url) });
+  assert.ok(dl.localFile(url('a')), 'a list switch alone evicts nothing: the files still fit');
+  assert.ok(dl.localFile(url('d')));
+  assert.equal((await fill(dl, active, 'e', 60 * MB)).state, 'done');
+  assert.equal(dl.localFile(url('a')), null, 'the least recently used obsolete song goes first');
+  assert.ok(dl.localFile(url('d')), 'only as much obsolete audio as needed is dropped');
+  assert.ok(dl.localFile(url('b')) && dl.localFile(url('c')), 'songs on the new list are untouched');
+});
+
+test('an obsolete file goes before a wanted song even when it is the NEWEST in the cache', async (t) => {
+  // The sibling test above has the obsolete song also be the oldest, so plain LRU would pick it
+  // anyway and the ordering is never actually proven. This one inserts in the FOREGROUND, where
+  // every wanted song is evictable, so the sort order alone decides: plain LRU would take 'a',
+  // the song that plays next, because the left-behind song is the newest file in the cache.
+  const { dl, active } = controlled(t);
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [], wanted: ['a', 'b', 'c', 'd'].map(url) });
+  for (const id of ['a', 'b', 'c', 'd']) assert.equal((await fill(dl, active, id, 60 * MB)).state, 'done', id);
+  // d was cached last, and the listener now leaves it behind; a is the oldest but still on the list.
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [], wanted: ['a', 'b', 'c', 'e'].map(url) });
+  assert.equal((await fill(dl, active, 'e', 60 * MB, false)).state, 'done');
+  assert.equal(dl.localFile(url('d')), null, 'the song left behind goes, newest or not');
+  assert.ok(dl.localFile(url('a')), 'the oldest file stays because it is still on the list');
+  assert.ok(dl.localFile(url('b')) && dl.localFile(url('c')));
+});
+
+test('a list longer than the quota rolls forward: the tail goes, the next songs stay', async (t) => {
+  const { dl, active } = controlled(t);
+  const order = ['b', 'c', 'e', 'f', 'g'];
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [], wanted: order.map(url) });
+  for (const id of ['b', 'c', 'e', 'f']) assert.equal((await fill(dl, active, id, 60 * MB)).state, 'done', id);
+  // g is the last song on the list; it must not displace the songs that play before it.
+  const tail = await fill(dl, active, 'g', 60 * MB);
+  assert.equal(tail.state, 'failed');
+  assert.match(tail.error, /cache limit/i);
+  assert.ok(['b', 'c', 'e', 'f'].every((id) => dl.localFile(url(id))), 'no churn of the songs ahead');
+  // The listener jumps to g, so g is now the next song and f is the far tail. Keeping every wanted
+  // song would deadlock here; the plan drops the furthest-away song instead.
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [], wanted: ['g', 'b', 'c', 'e', 'f'].map(url) });
+  assert.equal((await fill(dl, active, 'g', 60 * MB)).state, 'done', 'the cache rolls instead of deadlocking');
+  assert.equal(dl.localFile(url('f')), null, 'the song furthest from playing is the one that goes');
+  assert.ok(['b', 'c', 'e'].every((id) => dl.localFile(url(id))), 'the songs about to play are kept');
+});
+
+test('eviction never reaches a protected deck or a song kept in the Music folder', async (t) => {
+  const { dl, active, dir } = controlled(t);
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [url('a')], wanted: [url('a'), url('b')] });
+  assert.equal((await fill(dl, active, 'a', 170 * MB)).state, 'done');
+  dl.handle({ op: 'keep', url: url('a') });
+  assert.equal(dl.handle({ op: 'local', url: url('a') }).kept, true);
+  // b is the next song and has to come from somewhere, but a is a live deck: the download fails
+  // rather than silently cutting the audio playing on it.
+  const blocked = await fill(dl, active, 'b', 170 * MB, false);
+  assert.equal(blocked.state, 'failed');
+  assert.ok(dl.localFile(url('a')), 'the protected deck keeps its file');
+  // Once a is no longer protected or wanted, its cache copy is evictable - and the Music copy is not.
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [], wanted: [url('b')] });
+  assert.equal((await fill(dl, active, 'b', 170 * MB, false)).state, 'done');
+  const held = dl.handle({ op: 'local', url: url('a') });
+  assert.equal(held.cached, false, 'the evictable cache entry is gone');
+  assert.equal(held.kept, true, 'the kept copy in the Music folder survived');
+  assert.equal(fs.readdirSync(path.join(dir, 'music')).filter((f) => f.endsWith('.opus')).length, 1);
+});
+
+test('a change of list cancels only obsolete background work, never a manual download', async (t) => {
+  const { dl, active } = controlled(t);
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [], wanted: ['a', 'b', 'c'].map(url) });
+  const auto = start(dl, 'a');
+  const manual = start(dl, 'b', false);
+  const keeping = start(dl, 'c');
+  dl.handle({ op: 'keep', url: url('c') });
+  await settle();
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [], wanted: [url('zzzzzzzzzzz')] });
+  // A running job reaches 'cancelled' only once its killed process closes, so let every one finish:
+  // a cancelled download discards its output, a surviving one completes.
+  for (const a of active) if (!a.done) { a.done = true; a.finish(); }
+  await settle();
+  const state = (id) => dl.handle({ op: 'jobs' }).jobs.find((j) => j.id === id).state;
+  assert.equal(state(auto.id), 'cancelled', 'a background song nobody is waiting for is dropped');
+  assert.equal(dl.localFile(url('a')), null, 'and its late output never enters the cache');
+  assert.equal(state(manual.id), 'done', 'a foreground download the listener asked for runs on');
+  assert.equal(state(keeping.id), 'done', 'a download a Keep is riding on runs on');
+  assert.equal(dl.handle({ op: 'local', url: url('c') }).kept, true, 'the Keep landed in the Music folder');
+});
+
 const scratch = path.join(process.env.LOCALAPPDATA, 'hermes', 'cache', 'scratch');
 const url = (id) => `https://music.youtube.com/watch?v=${id}`;
 const done = async (dl, id) => {

@@ -148,7 +148,8 @@ function createDownloads(cfg) {
   }
   let limitBytes = 1024 ** 3;
   let protectedUrls = new Set();
-  let wantedUrls = new Set();
+  /** url -> position in the listening order the page asked for. Rank 0 plays soonest. */
+  let wantedRank = new Map();
   let backgroundParallel = PARALLEL_DEFAULT;
   const cacheBytes = () => [...cached.values()].reduce((n, e) => n + fs.statSync(path.join(cacheDir, e.name)).size, 0);
   function persistCache() {
@@ -157,12 +158,38 @@ function createDownloads(cfg) {
     fs.renameSync(file, cacheIndex);
   }
   // Planning and finalization are synchronous: concurrent processes cannot interleave quota/index writes.
-  function prune(extra = 0, background = false) {
+  /**
+   * Retention order, not plain LRU, because the cache rolls along the list being listened to:
+   *  1. files that are no longer in `wanted` at all go first, least recently used among them;
+   *  2. then wanted songs from the TAIL of the playback order backwards, so the songs about to play
+   *     are the last to go instead of an arbitrary oldest next song;
+   *  3. protected live decks are never candidates, and kept copies live in the Music folder, which
+   *     this function never looks at.
+   * A BACKGROUND insert may only take the place of a wanted song that sits LATER in the list than
+   * itself. That is what keeps the window rolling forward: refusing every wanted song deadlocks a
+   * list bigger than the quota (nothing can ever be added again), while allowing any of them lets
+   * two background songs evict each other forever. A FOREGROUND song may evict any wanted song.
+   */
+  function prune(extra = 0, background = false, forUrl = null) {
+    const rankOf = (url) => (wantedRank.has(url) ? wantedRank.get(url) : -1);
+    const mine = forUrl !== null && wantedRank.has(forUrl) ? wantedRank.get(forUrl) : null;
+    const evictable = (url) => {
+      if (protectedUrls.has(url) || url === forUrl) return false;
+      if (!wantedRank.has(url)) return true;
+      if (!background) return true;
+      return mine !== null && wantedRank.get(url) > mine;
+    };
     let bytes = cacheBytes();
     const discard = [];
-    for (const [url, e] of [...cached].sort((a, b) => a[1].at - b[1].at)) {
+    const candidates = [...cached].filter(([url]) => evictable(url)).sort((a, b) => {
+      const ra = rankOf(a[0]);
+      const rb = rankOf(b[0]);
+      if ((ra < 0) !== (rb < 0)) return ra < 0 ? -1 : 1;
+      if (ra < 0) return a[1].at - b[1].at || (a[0] < b[0] ? -1 : 1);
+      return rb - ra;
+    });
+    for (const [url, e] of candidates) {
       if (bytes + extra <= limitBytes) break;
-      if (protectedUrls.has(url) || (background && wantedUrls.has(url))) continue;
       discard.push([url, e]);
       bytes -= fs.statSync(path.join(cacheDir, e.name)).size;
     }
@@ -171,7 +198,10 @@ function createDownloads(cfg) {
       fs.unlinkSync(path.join(cacheDir, e.name));
       cached.delete(url);
     }
-    persistCache();
+    // ROLLING-CACHE-002: the page re-states the wanted order every couple of seconds so songs the
+    // listener has passed get unloaded promptly. Writing the index on every one of those calls
+    // would rewrite it constantly for nothing, so persist only when the cache actually changed.
+    if (discard.length) persistCache();
   }
   function cachedFile(url) {
     const entry = cached.get(url);
@@ -316,7 +346,9 @@ function createDownloads(cfg) {
       const src = found[0];
       const bytes = fs.statSync(src).size;
       if (bytes > limitBytes) return fail(j, 'This song is larger than the queue cache limit. Increase it in Settings.');
-      try { prune(bytes, j.background); } catch (e) { return fail(j, e.message); }
+      // Pass the song's own URL: its rank in the listening order decides what it may displace, and
+      // a re-download of a song already cached must never evict the copy it is replacing.
+      try { prune(bytes, j.background, j.url); } catch (e) { return fail(j, e.message); }
       const name = `${j.id}${path.extname(src).toLowerCase()}`;
       const dest = path.join(cacheDir, name);
       try { fs.renameSync(src, dest); } catch { fs.copyFileSync(src, dest); }
@@ -431,7 +463,7 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
         const urls = (name, max, fallback) => {
           const list = req[name] === undefined ? fallback : req[name];
           if (!Array.isArray(list) || list.length > max || list.some(url => typeof url !== 'string' || !urlAllowedFor('yt-dlp', url))) throw new Error(`${name} must contain at most ${max} valid URLs.`);
-          return new Set(list);
+          return list;
         };
         // Omitting parallel keeps whatever is in force; a bad value is refused, never quietly clamped.
         let nextParallel = backgroundParallel;
@@ -441,16 +473,26 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
           }
           nextParallel = req.parallel;
         }
-        const nextProtected = urls('protected', 3, []);
-        const nextWanted = urls('wanted', 10000, []);
+        const nextProtected = new Set(urls('protected', 3, []));
+        // Order is meaning here, not decoration: it is the playback order the retention plan rolls along.
+        const nextWanted = new Map();
+        urls('wanted', 10000, []).forEach((url, i) => { if (!nextWanted.has(url)) nextWanted.set(url, i); });
         const previousLimit = limitBytes;
         const previousProtected = protectedUrls;
+        const previousWanted = wantedRank;
         limitBytes = Math.floor(gb * 1024 ** 3);
         protectedUrls = nextProtected;
-        try { prune(); } catch (e) { limitBytes = previousLimit; protectedUrls = previousProtected; throw e; }
-        wantedUrls = nextWanted;
+        // The new list is in force for the plan: songs the listener just left behind are the first
+        // to go when a lowered limit has to be met, ahead of any song still on the new list.
+        wantedRank = nextWanted;
+        try { prune(); } catch (e) { limitBytes = previousLimit; protectedUrls = previousProtected; wantedRank = previousWanted; throw e; }
         backgroundParallel = nextParallel;
-        for (const j of jobs.values()) if (j.cache && !wantedUrls.has(j.url) && !protectedUrls.has(j.url) && (j.state === 'queued' || j.state === 'running')) cancel(j.id);
+        // Only obsolete BACKGROUND list work is cancelled. A song the listener asked for by hand -
+        // a foreground job, or one a Keep is riding on - is never thrown away by a change of list.
+        for (const j of jobs.values()) {
+          if (!j.cache || !j.background || j.keep) continue;
+          if (!wantedRank.has(j.url) && !protectedUrls.has(j.url) && (j.state === 'queued' || j.state === 'running')) cancel(j.id);
+        }
         // A raised limit must start queued songs now, not when a running download happens to end.
         pump();
         return { bytes: cacheBytes(), limitBytes, parallel: backgroundParallel };

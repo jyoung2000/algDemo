@@ -1196,10 +1196,13 @@ export class LocalApi {
     if (t['provider'] === 'ytmusic' && t['platform_id']) return ok({ id: t['platform_id'], source: 'own' });
     const key = `fullsong:${t['title']}|${(t['artists'] as string[]).join('|')}|${t['duration']}`;
     const hit = this.store.cacheGet(key);
-    if (hit) return ok(hit.value);
+    // PASSIVE-CACHE-001: retry a miss against the provider, not the six-hour negative cache.
+    // Positive matches are reusable; passive retry must not discard working source identities.
+    const retry = body['retry'] === true;
+    if (hit && (!retry || (hit.value as Dict)?.['id'])) return ok(hit.value);
     let found: Dict | null;
     try {
-      found = (await this.ytm.findMatch(t as never, { meter: this.playbackMeter() })).match as Dict | null;
+      found = (await this.ytm.findMatch(t as never, { meter: this.playbackMeter(), refresh: retry })).match as Dict | null;
     } catch (e) {
       if (e instanceof FetchError || e instanceof ProviderError) return fail(502, `YouTube Music did not answer: ${e.message}`);
       throw e;

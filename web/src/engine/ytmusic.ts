@@ -15,6 +15,8 @@ type Json = Record<string, any>;
 export interface Ctx {
   meter?: Meter;
   token?: CancelToken;
+  /** Bounded passive full-song retries must bypass stale search misses too. */
+  refresh?: boolean;
 }
 
 const API = 'https://music.youtube.com/youtubei/v1/';
@@ -304,7 +306,7 @@ export class YouTubeMusic {
   }
 
   search(q: string, limit = 15, c: Ctx = {}): Promise<Track[]> {
-    return cached(this.store, `yt:search:${fold(q)}:${limit}`, 'search', 15 * 60, async () => {
+    return cached(c.refresh ? undefined : this.store, `yt:search:${fold(q)}:${limit}`, 'search', 15 * 60, async () => {
       const r = await this.post('search', { query: q, params: SONGS_FILTER }, c);
       return parseSearchSongs(r).slice(0, limit).map((x) => this.toTrack(x, 'song'));
     });

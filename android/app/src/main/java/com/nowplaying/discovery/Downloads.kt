@@ -105,11 +105,18 @@ object Downloads {
   private fun protectedUrls(context: Context): Set<String> = cachePrefs(context).getStringSet(CACHE_PROTECTED, emptySet())?.toSet() ?: emptySet()
 
   /** All cache mutation runs under libraryLock. Plan evictions first, so a rejected quota never deletes anything. */
-  private fun evictions(context: Context, incoming: Long, keep: String? = null, limit: Long = cacheLimit(context), protected: Set<String> = protectedUrls(context)): List<Pair<String, File>> {
+  private fun evictions(
+    context: Context, incoming: Long, keep: String? = null, limit: Long = cacheLimit(context),
+    protected: Set<String> = protectedUrls(context), wantedRank: Map<String, Int> = selection.wantedRank,
+    background: Boolean = false,
+  ): List<Pair<String, File>> {
     val entries = cachePrefs(context).all.keys.filter { it != CACHE_LIMIT && it != CACHE_PROTECTED }.mapNotNull { url ->
       cacheFile(context, url)?.takeIf { it.isFile }?.let { url to it }
     }
-    val names = planCacheEvictions(entries.map { CacheEntry(it.first, it.second.length(), it.second.lastModified()) }, incoming, keep, limit, protected).toSet()
+    val names = planCacheEvictions(
+      entries.map { CacheEntry(it.first, it.second.length(), it.second.lastModified()) },
+      incoming, keep, limit, protected, wantedRank, background,
+    ).toSet()
     return entries.filter { it.first in names }
   }
 
@@ -143,14 +150,20 @@ object Downloads {
     val parallel = parsedParallel(if (req.has("parallel")) req.get("parallel") else null, queue.parallel())
     val protected = next.protected
     val limit = (gb * 1_073_741_824.0).toLong()
-    val discard = evictions(context, 0, limit = limit, protected = protected)
+    // The new list ranks the plan: songs the listener just left behind go before any song still on
+    // it. Reconciling a limit is not a background insert, so a shrink can still reach wanted tails.
+    val discard = evictions(context, 0, limit = limit, protected = protected, wantedRank = next.wantedRank, background = false)
     removeEntries(context, discard)
     if (!cachePrefs(context).edit().putFloat(CACHE_LIMIT, gb.toFloat()).putStringSet(CACHE_PROTECTED, protected).commit()) throw IOException("Could not save cache limit.")
     selection = next
     queue.setParallel(parallel)
-    // Keep the entire active playlist, not just the currently cued decks.
-    jobs.values.filter { it.cache && !next.retains(it.url) && (it.state == "queued" || it.state == "running") }
-      .forEach { cancel(it.id) }
+    // Keep the entire active playlist, not just the currently cued decks. Only obsolete BACKGROUND
+    // list work is cancelled: a song the listener asked for by hand runs in the foreground lane and
+    // a change of list never throws it away.
+    jobs.values.filter {
+      it.cache && it.queueTask?.background != false && !next.retains(it.url) &&
+        (it.state == "queued" || it.state == "running")
+    }.forEach { cancel(it.id) }
     JSONObject().put("ok", true).put("limitGb", gb).put("limitBytes", limit).put("bytes", cacheBytes(context)).put("parallel", parallel)
   }
 
@@ -165,8 +178,8 @@ object Downloads {
     val hash = MessageDigest.getInstance("SHA-256").digest(job.url.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     val target = File(cacheDir(context), "$hash.$extension")
     val size = source.length()
-    val protection = protectedUrls(context) + if (job.queueTask?.background == true) selection.wanted else emptySet()
-    val discard = evictions(context, size, keep = job.url, protected = protection)
+    val background = job.queueTask?.background == true
+    val discard = evictions(context, size, keep = job.url, protected = protectedUrls(context), wantedRank = selection.wantedRank, background = background)
     val temp = File(cacheDir(context), "$hash.$extension.partial")
     try {
       source.inputStream().use { input -> temp.outputStream().use { output -> input.copyTo(output) } }

@@ -26,9 +26,22 @@ class DownloadSelectionTest {
   @Test fun backgroundCannotEvictWantedButForegroundCanAndProtectedAlwaysSurvives() {
     val selection = DownloadSelection(listOf(a), listOf(far))
     val entries = listOf(CacheEntry(a, 90, 1), CacheEntry(far, 90, 2))
-    assertThrows(IOException::class.java) { planCacheEvictions(entries, 30, null, 200, selection.evictionProtection(true)) }
-    assertEquals(listOf(far), planCacheEvictions(entries, 30, null, 200, selection.evictionProtection(false)))
-    assertThrows(IOException::class.java) { planCacheEvictions(entries, 120, null, 200, selection.evictionProtection(false)) }
+    // A background insert that is not itself on the list may never displace a song that is.
+    assertThrows(IOException::class.java) {
+      planCacheEvictions(entries, 30, null, 200, selection.evictionProtection(true), selection.wantedRank, true)
+    }
+    assertEquals(listOf(far), planCacheEvictions(entries, 30, null, 200, selection.evictionProtection(false), selection.wantedRank, false))
+    assertThrows(IOException::class.java) {
+      planCacheEvictions(entries, 120, null, 200, selection.evictionProtection(false), selection.wantedRank, false)
+    }
     assertEquals(2, entries.size)
+  }
+
+  @Test fun wantedRankFollowsPlaybackOrderAndARepeatKeepsItsEarliestPosition() {
+    val b = "https://music.youtube.com/watch?v=b"
+    val selection = DownloadSelection(emptyList(), listOf(far, b, a, far))
+    assertEquals(mapOf(far to 0, b to 1, a to 2), selection.wantedRank)
+    // Protection is the decks only: blanket-protecting the list deadlocked a long one.
+    assertEquals(emptySet<String>(), selection.evictionProtection(true))
   }
 }

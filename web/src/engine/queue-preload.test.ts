@@ -3,14 +3,14 @@ import { QueuePreloader } from './queue-preload';
 import type { Track } from '../api';
 
 const tracks = (n: number) => Array.from({ length: n }, (_, i) => ({ key: `t${i}`, title: `Song ${i}`, artist: 'Test' }) as Track);
-function rig() {
+function rig(capacity?: () => Promise<{ bytes: number; limit: number }>) {
   const states = new Map<string, string>();
   const errors = new Map<string, string>();
   const listeners = new Set<() => void>();
   const emit = () => listeners.forEach(f => f());
   const started: string[] = [];
   const configure = vi.fn(async (_gb: number, _protected: string[], _wanted: string[], _parallel: number) => undefined);
-  const resolve = vi.fn(async (t: Track) => `url:${t.key}`);
+  const resolve = vi.fn(async (t: Track, _retry?: boolean): Promise<string | null> => `url:${t.key}`);
   const library = {
     status: (u: string) => states.get(u) ?? 'unknown',
     error: (u: string) => errors.get(u) ?? null,
@@ -20,12 +20,67 @@ function rig() {
       if (states.get(u) !== 'ready') { started.push(u); states.set(u, 'running'); }
     }),
   };
-  const loader = new QueuePreloader({ resolve, library, configure });
+  const loader = new QueuePreloader({ resolve, library, configure, capacity });
   return { loader, states, started, configure, resolve, library, finish: (u: string) => { states.set(u, 'ready'); emit(); }, fail: (u: string, e: string) => { states.set(u, 'missing'); errors.set(u, e); emit(); } };
 }
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 const tick = () => vi.advanceTimersByTimeAsync(10);
+
+it('keeps maintaining the cache every ~2-3s with no library event at all', async () => {
+  // Owner: loading must retry and listened songs must be unloaded "continuously every 2-3 seconds".
+  // Nothing here fires a library notification, so a purely event-driven loader goes silent.
+  const r = rig(async () => ({ bytes: 10, limit: 1000 }));
+  r.loader.update(tracks(3)); await tick();
+  const configures = r.configure.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(r.configure.mock.calls.length).toBeGreaterThan(configures);
+  // And it keeps going, rather than firing once.
+  const second = r.configure.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(r.configure.mock.calls.length).toBeGreaterThan(second);
+  r.loader.dispose();
+});
+
+it('starts a due source retry within ~2-3s of it coming due, with no library event', async () => {
+  // The user's real case: six songs whose source could not be resolved. The backoff below is
+  // deliberate (5s, 30s, 2min, 5min - hammering the provider every 2s gets rate-limited), but
+  // the CHECK runs on the beat, so a retry begins promptly once it is due rather than waiting
+  // for some other song's event to wake the loader.
+  const r = rig();
+  r.resolve.mockResolvedValueOnce(null);
+  r.loader.update(tracks(1)); await tick();
+  expect(r.loader.snapshot()).toMatchObject({ failed: 1 });
+  const before = r.resolve.mock.calls.length;
+  // 5s backoff + one beat. Nothing notifies the library in this window.
+  await vi.advanceTimersByTimeAsync(8000);
+  expect(r.resolve.mock.calls.length).toBeGreaterThan(before);
+  expect(r.started).toContain('url:t0');
+  r.loader.dispose();
+});
+
+it('stops all maintenance once disposed', async () => {
+  const r = rig(async () => ({ bytes: 10, limit: 1000 }));
+  r.loader.update(tracks(2)); await tick();
+  r.loader.dispose();
+  const after = r.configure.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(r.configure.mock.calls.length).toBe(after);
+});
+
+it('tells the shell the new priority order when the listener advances within the same list', async () => {
+  // Rolling cache: as the song advances, the songs still to come must outrank the ones already
+  // played, or the shell evicts what is about to play to keep what just finished.
+  const r = rig(); const list = tracks(6);
+  r.loader.update(list); await tick();
+  for (let i = 0; i < 6; i++) { r.finish(`url:t${i}`); await tick(); }
+  const before = r.configure.mock.calls.length;
+  // Same six songs, listener has moved to t3 — identical set, different order only.
+  r.loader.update([list[3]!, list[4]!, list[5]!, list[0]!, list[1]!, list[2]!]); await tick();
+  expect(r.configure.mock.calls.length).toBeGreaterThan(before);
+  expect(r.configure.mock.calls.at(-1)?.[2]).toEqual(['url:t3', 'url:t4', 'url:t5', 'url:t0', 'url:t1', 'url:t2']);
+  r.loader.dispose();
+});
 
 it('drains the ENTIRE list with two parallel background slots, without needing playback', async () => {
   const r = rig(); r.loader.update(tracks(11)); await tick();
@@ -70,14 +125,34 @@ it('does not endlessly evict and re-download when the list exceeds the cache bud
   expect(r.started.length).toBeGreaterThan(2);
   r.loader.dispose();
 });
-it('backs off temporary failures, then stops after three attempts while continuing other songs', async () => {
+it('backs off indefinitely with a five-minute cap while continuing other songs', async () => {
   const r = rig(); r.loader.update(tracks(3)); await tick();
-  r.fail('url:t0', 'Network disconnected'); r.finish('url:t1'); await tick();
-  r.finish('url:t2'); await vi.advanceTimersByTimeAsync(6000);
-  for (let i = 0; i < 2; i++) { r.fail('url:t0', 'Network disconnected'); await vi.advanceTimersByTimeAsync(31_000); }
-  expect(r.started.filter(u => u === 'url:t0')).toHaveLength(3);
-  expect(r.started).toContain('url:t2');
-  expect(r.loader.snapshot().failed).toBe(1);
+  r.finish('url:t1'); await tick(); r.finish('url:t2'); await tick();
+  for (const delay of [5000, 30_000, 120_000, 300_000, 300_000]) {
+    const count = r.started.length;
+    r.fail('url:t0', 'Network disconnected'); await tick();
+    await vi.advanceTimersByTimeAsync(delay - 20);
+    expect(r.started).toHaveLength(count);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(r.started).toHaveLength(count + 1);
+  }
+  r.finish('url:t0'); await tick();
+  expect(r.loader.snapshot()).toMatchObject({ ready: 3, failed: 0, active: 0 });
+  r.loader.dispose();
+});
+
+it('retries a missing source without clicks and bypasses negative resolution caches', async () => {
+  const r = rig(); r.resolve.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+  r.loader.update(tracks(1)); await tick();
+  expect(r.resolve).toHaveBeenCalledTimes(1);
+  expect(r.loader.snapshot()).toMatchObject({ failed: 1, queued: 0 });
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(r.resolve).toHaveBeenLastCalledWith(tracks(1)[0], true);
+  expect(r.resolve).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(r.started).toEqual(['url:t0']);
+  r.finish('url:t0'); await tick();
+  expect(r.loader.snapshot()).toMatchObject({ ready: 1, failed: 0 });
   r.loader.dispose();
 });
 it('routes every cache-config through the preloader, so no caller silently cancels list downloads', async () => {
@@ -192,5 +267,162 @@ it('serializes bulk, protection and limits through the same config writer', asyn
   expect(maximum).toBe(1);
   expect(r.started).toEqual(['url:t0']);
   expect(r.configure).toHaveBeenLastCalledWith(2, ['playing'], ['url:t0'], 1);
+  r.loader.dispose();
+});
+
+const MiB = 1024 * 1024;
+it('does not let a removed quota-blocked entry stop the new queue', async () => {
+  const r = rig(async () => ({ bytes: 0, limit: 100 * MiB }));
+  r.loader.update(tracks(1)); await tick();
+  r.fail('url:t0', 'Cache limit cannot fit'); await tick();
+  r.loader.update([tracks(2)[1]!]); await tick();
+  expect(r.started).toEqual(['url:t0', 'url:t1']);
+  expect(r.loader.snapshot().blocked).toBe(false);
+  r.loader.dispose();
+});
+
+it.each(['disposed', 'removed', 'outside COUNT'])('does not retry a failed source once %s', async mode => {
+  const r = rig(); r.resolve.mockResolvedValue(null);
+  r.loader.update(tracks(1)); await tick();
+  if (mode === 'disposed') r.loader.dispose();
+  else if (mode === 'removed') r.loader.update([]);
+  else {
+    r.states.set('url:t1', 'ready');
+    r.resolve.mockResolvedValue('url:t1');
+    r.loader.update([tracks(2)[1]!, tracks(1)[0]!]);
+    await r.loader.limits({ preload: { target: 'count', count: 1 } });
+  }
+  await vi.advanceTimersByTimeAsync(1_000_000);
+  expect(r.resolve.mock.calls.filter(([track]) => track.key === 't0')).toHaveLength(1);
+  expect(r.started).toEqual([]);
+  expect(vi.getTimerCount()).toBe(0);
+  r.loader.dispose();
+});
+
+it('preempts future retry timers on notifications without duplicate starts', async () => {
+  const r = rig(); r.resolve.mockResolvedValueOnce(null);
+  r.loader.update(tracks(3)); await tick();
+  expect(r.started).toEqual(['url:t1', 'url:t2']);
+  r.finish('url:t1'); r.finish('url:t1'); await tick();
+  expect(r.loader.snapshot()).toMatchObject({ ready: 1, active: 1, failed: 1 });
+  r.loader.update(tracks(4)); await tick();
+  expect(r.started).toEqual(['url:t1', 'url:t2', 'url:t3']);
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(r.resolve).toHaveBeenCalledTimes(4);
+  r.finish('url:t2'); await tick();
+  expect(r.started).toEqual(['url:t1', 'url:t2', 'url:t3', 'url:t0']);
+  r.loader.dispose();
+});
+
+it('rechecks COUNT after an in-flight resolution before starting a download', async () => {
+  const r = rig(); let release!: (url: string) => void;
+  r.resolve.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  r.loader.update(tracks(1)); await tick();
+  r.states.set('url:t1', 'ready');
+  r.loader.update([tracks(2)[1]!, tracks(1)[0]!]);
+  await r.loader.limits({ preload: { target: 'count', count: 1 } });
+  release('url:t0'); await tick();
+  expect(r.started).toEqual([]);
+  r.loader.dispose();
+});
+
+it('keeps one-shot manual requests retrying outside COUNT until ready', async () => {
+  const r = rig(); r.resolve.mockResolvedValueOnce(null);
+  await r.loader.limits({ preload: { target: 'count', count: 1 } });
+  r.loader.downloadAll(tracks(1)); await tick();
+  r.loader.update([]);
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(r.started).toEqual(['url:t0']);
+  r.finish('url:t0'); await tick();
+  r.fail('url:t0', ''); await vi.advanceTimersByTimeAsync(600_000);
+  expect(r.started).toHaveLength(1);
+  r.loader.dispose();
+});
+
+it.each(['disposed', 'removed', 'outside COUNT'])('ignores a slow single-flight capacity result after %s', async mode => {
+  let release!: (value: { bytes: number; limit: number }) => void;
+  const capacity = vi.fn(() => new Promise<{ bytes: number; limit: number }>(resolve => { release = resolve; }));
+  const r = rig(capacity); r.loader.update(tracks(1)); await tick();
+  r.finish('url:t0'); await tick(); r.fail('url:t0', ''); await tick();
+  await vi.advanceTimersByTimeAsync(30_000);
+  for (let i = 0; i < 5; i++) { r.loader.update(tracks(1)); await vi.advanceTimersByTimeAsync(30_000); }
+  expect(capacity).toHaveBeenCalledTimes(1);
+  if (mode === 'disposed') r.loader.dispose();
+  else if (mode === 'removed') r.loader.update([]);
+  else {
+    r.states.set('url:t1', 'ready');
+    r.resolve.mockResolvedValue('url:t1');
+    r.loader.update([tracks(2)[1]!, tracks(1)[0]!]);
+    await r.loader.limits({ preload: { target: 'count', count: 1 } });
+  }
+  release({ bytes: 0, limit: 100 * MiB }); await tick();
+  expect(r.started).toHaveLength(1);
+  r.loader.dispose();
+});
+
+it('requires both headroom thresholds, handles failed health, and resumes on crossing the threshold', async () => {
+  const capacity = vi.fn(async () => ({ bytes: 36 * MiB, limit: 50 * MiB }));
+  capacity.mockRejectedValueOnce(new Error('health unavailable'));
+  const r = rig(capacity); r.loader.update(tracks(1)); await tick();
+  r.finish('url:t0'); await tick(); r.fail('url:t0', ''); await tick();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(capacity).toHaveBeenCalledTimes(2);
+  expect(r.started).toHaveLength(1);
+  capacity.mockResolvedValue({ bytes: 34 * MiB, limit: 50 * MiB });
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(r.started).toHaveLength(2);
+  r.loader.dispose();
+});
+
+it('resets failure backoff after a ready file is evicted and refilled', async () => {
+  const r = rig(async () => ({ bytes: 0, limit: 100 * MiB }));
+  r.loader.update(tracks(1)); await tick();
+  for (const delay of [5000, 30_000, 120_000]) {
+    r.fail('url:t0', 'Network'); await tick(); await vi.advanceTimersByTimeAsync(delay);
+  }
+  r.finish('url:t0'); await tick(); r.fail('url:t0', ''); await tick();
+  await vi.advanceTimersByTimeAsync(30_000);
+  const starts = r.started.length;
+  r.fail('url:t0', 'Network'); await tick(); await vi.advanceTimersByTimeAsync(5000);
+  expect(r.started).toHaveLength(starts + 1);
+  r.loader.dispose();
+});
+
+it('passively refills evictions once with headroom, but never churns at unchanged capacity', async () => {
+  const capacity = vi.fn(async () => ({ bytes: 50 * MiB, limit: 100 * MiB }));
+  const r = rig(capacity); r.loader.update(tracks(1)); await tick();
+  r.finish('url:t0'); await tick(); r.fail('url:t0', ''); await tick();
+  expect(r.loader.snapshot().ready).toBe(0);
+  await vi.advanceTimersByTimeAsync(29_000);
+  expect(r.started).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(r.started).toEqual(['url:t0', 'url:t0']);
+  r.finish('url:t0'); await tick();
+  expect(r.loader.snapshot()).toMatchObject({ ready: 1, active: 0 });
+  r.fail('url:t0', ''); await tick();
+  await vi.advanceTimersByTimeAsync(600_000);
+  expect(r.started).toHaveLength(2);
+  expect(capacity.mock.calls.length).toBeLessThanOrEqual(21);
+  capacity.mockResolvedValue({ bytes: 30 * MiB, limit: 100 * MiB });
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(r.started).toHaveLength(3);
+  r.loader.dispose();
+});
+
+it.each(['eviction', 'quota'])('parks %s at full capacity and resumes only on meaningful free space', async mode => {
+  const capacity = vi.fn(async () => ({ bytes: 100 * MiB, limit: 100 * MiB }));
+  const r = rig(capacity); r.loader.update(tracks(1)); await tick();
+  if (mode === 'eviction') { r.finish('url:t0'); await tick(); }
+  r.fail('url:t0', mode === 'quota' ? 'Cache limit cannot fit this song' : ''); await tick();
+  await vi.advanceTimersByTimeAsync(600_000);
+  expect(r.started).toHaveLength(1);
+  expect(capacity).toHaveBeenCalledTimes(20);
+  capacity.mockResolvedValue({ bytes: 99 * MiB, limit: 100 * MiB });
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(r.started).toHaveLength(1);
+  capacity.mockResolvedValue({ bytes: 80 * MiB, limit: 100 * MiB });
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(r.started).toEqual(['url:t0', 'url:t0']);
+  expect(r.loader.snapshot()).toMatchObject({ blocked: false, active: 1 });
   r.loader.dispose();
 });
