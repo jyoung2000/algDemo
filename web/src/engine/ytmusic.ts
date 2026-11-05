@@ -23,6 +23,12 @@ const API = 'https://music.youtube.com/youtubei/v1/';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0';
 /** ytmusicapi get_search_params('songs'). */
 const SONGS_FILTER = 'EgWKAQIIAWoMEA4QChADEAQQCRAF';
+/**
+ * ytmusicapi get_search_params('videos'). YouTube Music's songs catalogue is not all of YouTube:
+ * game soundtracks and small-creator tracks are uploaded as videos, and a songs-only search cannot
+ * see them at any number of retries (SOURCE-VIDEO-001).
+ */
+const VIDEOS_FILTER = 'EgWKAQIQAWoMEA4QChADEAQQCRAF';
 const YT_ID = /^[A-Za-z0-9_-]{11}$/;
 const MAX_BYTES = 4_000_000;
 
@@ -309,6 +315,18 @@ export class YouTubeMusic {
     return cached(c.refresh ? undefined : this.store, `yt:search:${fold(q)}:${limit}`, 'search', 15 * 60, async () => {
       const r = await this.post('search', { query: q, params: SONGS_FILTER }, c);
       return parseSearchSongs(r).slice(0, limit).map((x) => this.toTrack(x, 'song'));
+    });
+  }
+
+  /**
+   * The same question asked of YouTube's videos rather than the songs catalogue. Kept apart from
+   * `search` (own cache key, own filter) so a songs miss never satisfies a videos question. The
+   * results are ordinary YouTube ids, so the shells download them exactly as they do a song.
+   */
+  searchVideos(q: string, limit = 15, c: Ctx = {}): Promise<Track[]> {
+    return cached(c.refresh ? undefined : this.store, `yt:videos:${fold(q)}:${limit}`, 'search', 15 * 60, async () => {
+      const r = await this.post('search', { query: q, params: VIDEOS_FILTER }, c);
+      return parseSearchSongs(r).slice(0, limit).map((x) => this.toTrack(x));
     });
   }
 

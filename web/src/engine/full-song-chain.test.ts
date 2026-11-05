@@ -30,9 +30,10 @@ const cand = (o: Partial<Track> = {}): Track => ({
 function sources(o: {
   ytm?: Record<string, Track[]>;
   sc?: Record<string, Track[]>;
+  videos?: Record<string, Track[]>;
   scPresent?: boolean;
-}): { s: ChainSources; asked: { ytm: string[]; sc: string[] } } {
-  const asked = { ytm: [] as string[], sc: [] as string[] };
+}): { s: ChainSources; asked: { ytm: string[]; sc: string[]; videos: string[] } } {
+  const asked = { ytm: [] as string[], sc: [] as string[], videos: [] as string[] };
   const s: ChainSources = {
     ytm: {
       search: async (q: string) => { asked.ytm.push(q); return o.ytm?.[q] ?? []; },
@@ -40,9 +41,83 @@ function sources(o: {
     sc: o.scPresent === false ? null : {
       search: async (q: string) => { asked.sc.push(q); return o.sc?.[q] ?? []; },
     },
+    videos: {
+      search: async (q: string) => { asked.videos.push(q); return o.videos?.[q] ?? []; },
+    },
   };
   return { s, asked };
 }
+
+/**
+ * SOURCE-VIDEO-001 — YouTube Music's songs catalogue is not all of YouTube.
+ *
+ * Measured against the live InnerTube endpoint for the owner's four stuck songs: the songs-only
+ * filter (ytmusicapi `EgWKAQIIAW…`) cannot see "ManePear's Official Theme Song" by Nombra101 at all,
+ * while the videos filter returns it at exactly the right length (195s, 0s gap). Game soundtracks
+ * and small-creator tracks are uploaded as videos, so a songs-only search makes them permanently
+ * unavailable however often it is retried.
+ */
+describe('YouTube beyond the songs catalogue', () => {
+  it('finds a song that only exists as a YouTube video', async () => {
+    const t = track({ title: "ManePear's Official Theme Song", artists: ['Nombra101'], duration: 195 });
+    const { s, asked } = sources({
+      ytm: {},
+      videos: { "Nombra101 ManePear's Official Theme Song": [cand({ platform_id: 'videoidvid1', title: "ManePear's Official Theme Song", artists: ['Nombra101'], duration: 195 })] },
+    });
+    const r = await findFullSong(t, s, {});
+    expect(r).toMatchObject({ id: 'videoidvid1', source: 'video' });
+    expect(asked.ytm.length).toBeGreaterThan(0); // the songs catalogue is still asked first
+    expect(asked.videos.length).toBeGreaterThan(0);
+  });
+
+  it('prefers the songs catalogue and never asks for videos when a song matches', async () => {
+    const { s, asked } = sources({ ytm: { 'Kevin MacLeod Wallpaper': [cand()] }, videos: {} });
+    const r = await findFullSong(track(), s, {});
+    expect(r.source).toBe('match');
+    expect(asked.videos).toEqual([]);
+  });
+
+  it('refuses a user upload that is not the same recording', async () => {
+    // Real results for "Plant Island": slowed and fan-made re-uploads at the wrong length.
+    const t = track({ title: 'Plant Island', artists: ['My Singing Monsters'], duration: 219 });
+    const { s } = sources({
+      ytm: {},
+      videos: { 'My Singing Monsters Plant Island': [
+        cand({ platform_id: 'slowedslowe', title: 'My Singing Monsters - Plant Island [ slowed + reverbed ]', artists: ['ela'], duration: 199 }),
+        cand({ platform_id: 'fanmadefanm', title: 'Plant Island COLOSSOUL ( fanmade ) - My Singing Monsters', artists: ['Ewubbz'], duration: 250 }),
+      ] },
+    });
+    const r = await findFullSong(t, s, {});
+    expect(r.id).not.toBe('slowedslowe');
+    expect(r.id).not.toBe('fanmadefanm');
+  });
+
+  it('will not offer a user upload as a near miss, only as a confident match', async () => {
+    // Same artist, same title, 5s out: `matchRecordings` calls this *uncertain*. For the songs
+    // catalogue that is good enough to offer as `close`; for an unverified re-upload it is not.
+    const { s } = sources({
+      ytm: {},
+      videos: { 'Kevin MacLeod Wallpaper': [cand({ platform_id: 'uncertainup', duration: 185 })] },
+    });
+    const r = await findFullSong(track(), s, {});
+    expect(r).toMatchObject({ id: null, source: 'none' });
+  });
+
+  it('skips an excluded video link', async () => {
+    const { s } = sources({
+      ytm: {},
+      videos: { 'Kevin MacLeod Wallpaper': [cand({ platform_id: 'deadvideoid' })] },
+    });
+    const r = await findFullSong(track(), s, { exclude: ['https://music.youtube.com/watch?v=deadvideoid'] });
+    expect(r.id).not.toBe('deadvideoid');
+  });
+
+  it('works unchanged when the shell has no videos leg', async () => {
+    const { s } = sources({ ytm: { 'Kevin MacLeod Wallpaper': [cand()] } });
+    delete (s as { videos?: unknown }).videos;
+    expect(await findFullSong(track(), s, {})).toMatchObject({ source: 'match' });
+  });
+});
 
 describe('search variants', () => {
   it('asks the plain artist-and-title question first, then widens', () => {

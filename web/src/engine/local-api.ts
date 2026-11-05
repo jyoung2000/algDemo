@@ -1219,7 +1219,11 @@ export class LocalApi {
     // confidence, rather than recording "no source" after one YouTube Music query.
     let out: FullSongResult;
     try {
-      out = await findFullSong(t as never, { ytm: this.ytm as never, sc: this.sc as never }, { ctx, exclude });
+      out = await findFullSong(t as never, {
+        ytm: this.ytm as never,
+        sc: this.sc as never,
+        videos: { search: (q: string, limit: number, c: unknown) => this.ytm.searchVideos(q, limit, c as never) } as never,
+      }, { ctx, exclude });
     } catch (e) {
       if (e instanceof FetchError || e instanceof ProviderError) return fail(502, `No source answered: ${e.message}`);
       throw e;

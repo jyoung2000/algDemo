@@ -13,7 +13,10 @@
  * This widens the search in order of confidence and stops at the first thing worth downloading:
  *
  *   1. YouTube Music, several phrasings of the question — a confident match is still a confident match.
- *   2. SoundCloud, the same phrasings — both shells already allow yt-dlp to fetch soundcloud.com,
+ *   2. YouTube's videos, which the songs catalogue does not contain — game soundtracks and
+ *      small-creator uploads live there. Only a confident match counts: a user upload is accepted
+ *      solely when the matcher calls it the same recording, never as a near miss.
+ *   3. SoundCloud, the same phrasings — both shells already allow yt-dlp to fetch soundcloud.com,
  *      so a match there is genuinely downloadable rather than merely identified.
  *   3. The closest near miss anyone offered, labelled `close` with its reason, because a song the
  *      owner can play at a slightly different length beats a song that never arrives. A candidate
@@ -33,11 +36,13 @@ export interface ChainSources {
   ytm: SearchSource;
   /** Null when the shell cannot reach SoundCloud; the chain then simply has one fewer leg. */
   sc: SearchSource | null;
+  /** YouTube's videos, outside the songs catalogue (SOURCE-VIDEO-001). Optional: an older shell has none. */
+  videos?: SearchSource | null;
 }
 
 export interface FullSongResult {
   id: string | null;
-  source: 'match' | 'soundcloud' | 'close' | 'none';
+  source: 'match' | 'video' | 'soundcloud' | 'close' | 'none';
   /** A direct link for a source that is not a YouTube video id (SoundCloud). */
   url?: string;
   /** Why an uncertain answer was accepted, in the matcher's own words. */
@@ -96,7 +101,7 @@ const gapOf = (a: Track, b: Track): number => {
   return Number.isFinite(da) && Number.isFinite(db) && da > 0 && db > 0 ? Math.abs(da - db) : Number.MAX_SAFE_INTEGER;
 };
 
-const resultFor = (t: Track, source: 'match' | 'soundcloud' | 'close', note?: string): FullSongResult => {
+const resultFor = (t: Track, source: 'match' | 'video' | 'soundcloud' | 'close', note?: string): FullSongResult => {
   // A SoundCloud track is downloadable by its link; a YouTube Music one by its video id.
   const url = t.provider === 'soundcloud' && t.url ? String(t.url) : undefined;
   return { id: url ? null : (t.platform_id ?? null), source, ...(url ? { url } : {}), ...(note ? { note } : {}) };
@@ -147,6 +152,14 @@ export async function findFullSong(t: Track, s: ChainSources, o: ChainOptions = 
 
   const exact = await ask(s.ytm, t, variants, limit, o.ctx, misses, dead);
   if (exact) return resultFor(exact, 'match');
+
+  // A user upload is held to the strict bar: confident matches only, never a near miss. The
+  // matcher's own version tokens (slowed, reverb, remix, cover) reject the re-uploads that make up
+  // most of what a video search returns.
+  if (s.videos) {
+    const onVideo = await ask(s.videos, t, variants, limit, o.ctx, [], dead);
+    if (onVideo) return resultFor(onVideo, 'video');
+  }
 
   if (s.sc) {
     const onSc = await ask(s.sc, t, variants, limit, o.ctx, misses, dead);
