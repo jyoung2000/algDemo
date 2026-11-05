@@ -27,6 +27,54 @@ it('passive retry bypasses BOTH cached source misses and cached provider searche
 import { LocalApi } from './local-api';
 import { MemoryBackend, Store } from './store';
 
+/**
+ * SOURCE-CHAIN-001 — when YouTube Music has nothing, the engine must go on to ask a source whose
+ * links the shells can actually download, instead of recording "no source" and stopping.
+ */
+it('asks SoundCloud for a song YouTube Music cannot match, instead of giving up', async () => {
+  const store = await Store.open(new MemoryBackend());
+  const asked: string[] = [];
+  const api = new LocalApi({ store, encoder: null, spotifySearch: () => async () => [], port: {
+    request: async (req: { url: string }) => {
+      asked.push(req.url);
+      return { status: 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(ytmusicSearch) };
+    },
+  } });
+  const track = { key: 'sc-k', provider: 'deezer', platform_id: '7', title: 'Nowhere Song', artists: ['Obscure Act'], duration: 212 };
+  const r = await api.handle('POST', '/api/full-song', { track });
+  const ytmAsks = asked.filter((u) => u.includes('youtube.com')).length;
+  expect(ytmAsks).toBeGreaterThan(1); // more than one phrasing of the question
+  expect(asked.some((u) => u.includes('soundcloud.com'))).toBe(true); // a second source was tried
+  expect(r.status).toBe(200);
+  expect(r.body).toMatchObject({ source: 'none' }); // honest when genuinely nobody has it
+});
+
+/** A "nobody has it" answer must expire soon, so a song uploaded later is still picked up. */
+it('re-asks for a song nobody had once the short no-source answer expires', async () => {
+  let clock = 1_700_000_000;
+  const store = await Store.open(new MemoryBackend(), { now: () => clock });
+  const asked: string[] = [];
+  const api = new LocalApi({ store, encoder: null, spotifySearch: () => async () => [], port: {
+    request: async (req: { url: string }) => {
+      asked.push(req.url);
+      return { status: 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(ytmusicSearch) };
+    },
+  } });
+  const track = { key: 'ttl-k', provider: 'deezer', platform_id: '8', title: 'Later Upload', artists: ['Act'], duration: 200 };
+  await api.handle('POST', '/api/full-song', { track });
+  const first = asked.length;
+  expect(first).toBeGreaterThan(0);
+
+  clock += 10 * 60; // ten minutes later the answer still stands
+  await api.handle('POST', '/api/full-song', { track });
+  expect(asked.length).toBe(first);
+
+  clock += 25 * 60; // past half an hour it asks again, without anyone forcing a retry
+  await api.handle('POST', '/api/full-song', { track });
+  expect(asked.length).toBeGreaterThan(first);
+});
+
+
 // A spent daily discovery allowance must not stop a song from playing: finding the YouTube video for a
 // song reads a few kilobytes and the song itself streams from YouTube's own player.
 const ytmusicSearch = JSON.stringify({

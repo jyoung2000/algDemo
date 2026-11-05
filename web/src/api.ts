@@ -481,7 +481,9 @@ export const api = {
   feedbackState: () => call<{ state: Record<string, Partial<Record<FeedbackKind, boolean>>>; events: number; taste?: TasteSummary | null }>('/api/feedback/state'),
   importHistory: (events: import('./engine/import').ImportedEvent[]) => call<{ recorded: number; duplicates: number; skipped: number }>('/api/import/history', { method: 'POST', body: json({ events }) }),
   impressions: (keys: string[]) => call<{ recorded: number }>('/api/impressions', { method: 'POST', body: json({ keys }) }),
-  fullSong: (track: Track, retry = false) => call<{ id: string | null; source: string }>('/api/full-song', { method: 'POST', body: json({ track, retry }) }),
+  /** SOURCE-CHAIN-001: `url` carries a non-YouTube source (SoundCloud); `exclude` names links that failed. */
+  fullSong: (track: Track, retry = false, exclude: readonly string[] = []) =>
+    call<{ id: string | null; source: string; url?: string; note?: string }>('/api/full-song', { method: 'POST', body: json({ track, retry, ...(exclude.length ? { exclude } : {}) }) }),
   /**
    * Analyse the complete song the shell already holds, rather than Deezer's 30-second preview
    * (FULL-SONG-EMBED-001). Local disk only, so it costs no transfer allowance; a song already

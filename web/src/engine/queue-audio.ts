@@ -17,10 +17,13 @@ export const queueAudio = new QueuePreloader({
     }
     return { bytes, limit };
   },
-  resolve: async (track: Track, retry = false) => {
+  resolve: async (track: Track, retry = false, exclude: readonly string[] = []) => {
+    // A song the app already knows a YouTube id for needs no search at all — unless that very link
+    // is the one that keeps failing, in which case it has to go looking like any other (SOURCE-SWAP-001).
     const direct = track.provider === 'ytmusic' ? sourceUrlFor(track.platform_id) : null;
-    if (direct) return direct;
-    const match = await api.fullSong(track, retry);
-    return sourceUrlFor(match.id) ?? rescueSource({ links: track.url ? [{ url: track.url }] : [], shell: true });
+    if (direct && !exclude.includes(direct)) return direct;
+    const match = await api.fullSong(track, retry, exclude);
+    // SOURCE-CHAIN-001: a SoundCloud match arrives as a link, a YouTube Music one as a video id.
+    return match.url ?? sourceUrlFor(match.id) ?? rescueSource({ links: track.url ? [{ url: track.url }] : [], shell: true });
   },
 });

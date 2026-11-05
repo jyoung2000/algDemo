@@ -27,6 +27,15 @@ import { buildTaste, tasteSummary, tasteFit, type TasteProfile } from './taste';
 import { buildTasteBlend, type TasteBlend } from './taste2';
 import { ARTIST_SUBS_KEY, withArtistSubs, type ArtistSubsMap } from './artist-subs';
 import { fold, matchRecordings } from './identity';
+import { findFullSong, type FullSongResult } from './full-song-chain';
+
+/**
+ * How long "no source has this song" stands before the engine asks again (SOURCE-CHAIN-001).
+ * It used to be six hours, which with a quiet library meant a missing song stayed missing for the
+ * rest of the day. Uploads appear over time, so a miss is a snapshot, not a verdict.
+ */
+const NO_SOURCE_TTL = 15 * 60;
+
 import { buildProfile } from './profile';
 import { classify, classifyAll } from './classify';
 import { makeTag } from './genres';
@@ -1199,16 +1208,24 @@ export class LocalApi {
     // PASSIVE-CACHE-001: retry a miss against the provider, not the six-hour negative cache.
     // Positive matches are reusable; passive retry must not discard working source identities.
     const retry = body['retry'] === true;
-    if (hit && (!retry || (hit.value as Dict)?.['id'])) return ok(hit.value);
-    let found: Dict | null;
+    const cached = hit?.value as Dict | undefined;
+    // SOURCE-SWAP-001: a caller naming dead links already knows the cached answer does not work,
+    // so the cache is skipped entirely rather than handing back the link that just failed.
+    const exclude = (Array.isArray(body['exclude']) ? (body['exclude'] as unknown[]).map(String) : []).slice(0, 8);
+    if (!exclude.length && hit && (!retry || cached?.['id'] || cached?.['url'])) return ok(hit.value);
+    const ctx = { meter: this.playbackMeter(), refresh: retry };
+    // SOURCE-CHAIN-001: ask every source that can produce a downloadable link, in order of
+    // confidence, rather than recording "no source" after one YouTube Music query.
+    let out: FullSongResult;
     try {
-      found = (await this.ytm.findMatch(t as never, { meter: this.playbackMeter(), refresh: retry })).match as Dict | null;
+      out = await findFullSong(t as never, { ytm: this.ytm as never, sc: this.sc as never }, { ctx, exclude });
     } catch (e) {
-      if (e instanceof FetchError || e instanceof ProviderError) return fail(502, `YouTube Music did not answer: ${e.message}`);
+      if (e instanceof FetchError || e instanceof ProviderError) return fail(502, `No source answered: ${e.message}`);
       throw e;
     }
-    const out = found ? { id: found['platform_id'], source: 'match' } : { id: null, source: 'none' };
-    await this.store.cachePut(key, 'meta', out, found ? 7 * 86400 : 6 * 3600);
+    const got = out.id || out.url;
+    // A miss expires quickly: uploads appear over time, and the owner wants the list to fill in.
+    await this.store.cachePut(key, 'meta', out, got ? 7 * 86400 : NO_SOURCE_TTL);
     return ok(out);
   }
 
