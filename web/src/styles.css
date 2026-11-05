@@ -355,6 +355,18 @@ body {
 }
 .push {
   cursor: pointer;
+  /*
+   * BTN-TEXT-001 — owner: "ensure the text in the buttons are centered and justified".
+   *
+   * `.push` dresses both <button> (which centres its own text) and <a download> (which does not),
+   * so Export my data sat left while every real button looked centred. Centring here covers both,
+   * and the flex rules centre a label that is an icon plus words as one group.
+   */
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 .push--big {
   height: 30px;

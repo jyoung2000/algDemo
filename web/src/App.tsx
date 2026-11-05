@@ -17,7 +17,7 @@ import { savedTracks, playbackRows, preparationTracks } from './engine/queue-con
 import { SettingsView } from './Settings';
 import { setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
 import { PLAY_THROUGH_DEFAULT } from './engine/crossfade';
-import { downloadsAvailable } from './engine/downloads';
+import { dl, downloadsAvailable } from './engine/downloads';
 import { readResume } from './engine/resume';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, canPlayHere, classNames, describeTaste, fmtBytes, keepFocus, historyBack, mergeRerank, nextRepeat, playbackOfTrack, stepQueue, type RepeatMode } from './util';
 
@@ -648,8 +648,10 @@ export function App() {
                          siblings wrapped onto separate lines, because .push takes margin-left:auto. */
                       <div className="queue__actions">
                         <ListDownloadButton tracks={queueTracks} label="this list" />
-                        <button className="push push--small" type="button" title="Empty the song list. Your listening history and settings are kept." onClick={clearList}>
-                          <Glyph name="clear" size={12} /> Clear list
+                        {/* CLEAR-ICON-001: the same icon-button shape as the download action beside it, so the
+                            pair reads as one set of list controls rather than two unrelated widgets. */}
+                        <button className="iconbtn" type="button" aria-label="Clear list" title="Clear list. Your listening history and settings are kept." onClick={clearList}>
+                          <Glyph name="clear" size={14} />
                         </button>
                       </div>
                     )}
@@ -710,8 +712,9 @@ export function App() {
                     {/* LIST-METER-003: same pairing on the seeds-only header. */}
                     <div className="queue__actions">
                       <ListDownloadButton tracks={queueTracks} label="this list" />
-                      <button className="push push--small" type="button" title="Empty the song list. Your listening history and settings are kept." onClick={clearList}>
-                        <Glyph name="clear" size={12} /> Clear list
+                      {/* CLEAR-ICON-001: matches the download icon beside it. */}
+                      <button className="iconbtn" type="button" aria-label="Clear list" title="Clear list. Your listening history and settings are kept." onClick={clearList}>
+                        <Glyph name="clear" size={14} />
                       </button>
                     </div>
                   </div>
@@ -786,13 +789,25 @@ export function App() {
               )
             }
             onReset={() =>
-              api.reset(false).then(() => {
+              // RESET-APP-001: everything back to default means the downloaded songs too, so the
+              // app is as it shipped. `clear_cache` empties the engine's own store; the shell's
+              // audio cache is a separate place and has to be told as well. Songs kept in the
+              // Music folder are the owner's and are never removed.
+              api.reset(true).then(async () => {
                 setSeeds([]);
                 setFlags({});
                 setHidden(new Set());
                 setResult(null);
+                let songs = 0;
+                try {
+                  if (downloadsAvailable()) songs = (await dl.cacheClear()).removed;
+                } catch {
+                  // A shell that cannot clear its cache must not strand the rest of the reset.
+                }
                 api.settings().then(setSettings, () => undefined);
-                flash('Reset. Your starting songs, feedback and settings are cleared.');
+                flash(songs > 0
+                  ? `Reset to defaults. Starting songs, feedback, settings and ${songs} downloaded songs cleared. Songs kept in your Music folder stay.`
+                  : 'Reset to defaults. Your starting songs, feedback and settings are cleared.');
               })
             }
           />
