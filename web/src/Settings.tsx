@@ -39,7 +39,20 @@ interface Props {
 
 /** Settings and a discreet status panel. Every badge here comes from a runtime check, never a constant. */
 export function SettingsView({ settings, onSettings, onReset, onResetTaste, sources }: Props) {
-  const quietSources = Object.entries(sources ?? {}).filter(([, v]) => (v?.state ?? 'ok') !== 'ok').map(([k]) => k);
+  /**
+   * The live keys are "provider:query" pairs, so a real run carries dozens of them. Group by the
+   * provider, drop the query, and cap the list: the useful fact is WHICH provider went quiet, not
+   * every search that hit it. 'skipped' is not a failure - the run chose not to use that source.
+   */
+  const quietProviders = [...new Set(
+    Object.entries(sources ?? {})
+      .filter(([, v]) => { const s = v?.state ?? 'ok'; return s !== 'ok' && s !== 'skipped'; })
+      .map(([k]) => k.split(':')[0] ?? k),
+  )].sort();
+  const QUIET_SHOWN = 4;
+  const quietSources = quietProviders.length > QUIET_SHOWN
+    ? [...quietProviders.slice(0, QUIET_SHOWN), `${quietProviders.length - QUIET_SHOWN} more`]
+    : quietProviders;
   const [health, setHealth] = useState<Health | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
   const [checking, setChecking] = useState(false);

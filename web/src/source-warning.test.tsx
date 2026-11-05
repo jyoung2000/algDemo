@@ -48,6 +48,46 @@ it('Settings names the sources that did not answer', () => {
   expect(screen.getByText(/did not answer/i).textContent).toMatch(/musicbrainz/);
 });
 
+/**
+ * Found on the packaged 0.7.3 desktop app: the live keys are "provider:query" pairs, not provider
+ * names, so a real run printed 40+ entries like "apple-search:luther, mba:justin bieber, ..." in one
+ * unreadable paragraph. Group by provider and cap the list.
+ */
+it('groups the quiet sources by provider instead of listing every query', () => {
+  render(<SettingsView {...props} sources={{
+    'apple-search:luther': { state: 'error' },
+    'apple-search:snooze': { state: 'error' },
+    'apple-search:halo': { state: 'error' },
+    'ytmusic-radio:luther': { state: 'error' },
+    'ytmusic-radio:snooze': { state: 'error' },
+    'mba:justin bieber': { state: 'error' },
+  }} />);
+  const line = screen.getByText(/did not answer/i).textContent ?? '';
+  expect(line).toMatch(/apple-search/);
+  expect(line).toMatch(/ytmusic-radio/);
+  expect(line).toMatch(/mba/);
+  // Each provider is named once, not once per query.
+  expect(line.match(/apple-search/g)).toHaveLength(1);
+  expect(line).not.toMatch(/luther|snooze|halo|justin bieber/);
+  expect(line.length).toBeLessThan(200);
+});
+
+it('caps a very long provider list rather than printing a paragraph', () => {
+  const sources: Record<string, { state: string }> = {};
+  for (let i = 0; i < 25; i++) sources[`provider${i}:some query`] = { state: 'error' };
+  render(<SettingsView {...props} sources={sources} />);
+  const line = screen.getByText(/did not answer/i).textContent ?? '';
+  expect(line.length).toBeLessThan(200);
+  expect(line).toMatch(/more/);
+});
+
+it('a skipped source is not a failure', () => {
+  // The banner this replaced excluded 'skipped'; a source the run deliberately did not use has not
+  // "failed to answer", and calling it out would invent a problem.
+  render(<SettingsView {...props} sources={{ deezer: { state: 'ok' }, genius: { state: 'skipped' } }} />);
+  expect(screen.queryByText(/did not answer/i)).toBeNull();
+});
+
 it('Settings stays quiet when every source answered', () => {
   render(<SettingsView {...props} sources={{ deezer: { state: 'ok' } }} />);
   expect(screen.queryByText(/did not answer/i)).toBeNull();
