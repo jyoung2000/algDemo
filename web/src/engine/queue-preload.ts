@@ -62,7 +62,9 @@ const MAINTENANCE_INTERVAL = 2500;
  */
 const CAPACITY_INTERVAL = 30_000;
 const MIN_HEADROOM = 16 * 1024 * 1024;
-const RETRY_DELAYS = [5000, 30_000, 120_000, 300_000];
+// First retry is immediate; persistent failures back off briefly, never for minutes.
+const RETRY_DELAYS = [0, 2500, 5000, 15_000, 30_000];
+const rejectedLink = (error: string | null) => /requested format.*not available|video unavailable|video has been removed|private video|not available in your country/i.test(error ?? '');
 /**
  * Failed attempts on one link before the loader asks for a different source (SOURCE-SWAP-001).
  * Two, so a single flaky download does not throw away a good source, but a dead one is not retried
@@ -164,7 +166,7 @@ export class QueuePreloader {
         e.phase = 'waiting'; e.after = 0; e.attempts = 0;
       }
       if (e.phase === 'failed' && !quotaError(e.url ? this.backend.library.error(e.url) : null)) {
-        e.phase = 'waiting'; e.attempts = 0; e.after = 0;
+        e.phase = 'waiting'; e.attempts = Math.max(1, e.attempts); e.after = 0;
       }
     }
     this.recomputeTarget();
@@ -224,7 +226,7 @@ export class QueuePreloader {
   }
   retryFailed(): void {
     for (const e of this.entries.values()) if (e.phase === 'failed' && !quotaError(e.url ? this.backend.library.error(e.url) : null)) {
-      e.phase = 'waiting'; e.attempts = 0; e.after = 0;
+      e.phase = 'waiting'; e.attempts = Math.max(1, e.attempts); e.after = 0;
     }
     this.schedule();
   }
@@ -260,10 +262,9 @@ export class QueuePreloader {
     if (quotaError(error)) { this.blocked = true; e.after = Infinity; }
     else {
       e.after = Date.now() + RETRY_DELAYS[Math.min(RETRY_DELAYS.length - 1, Math.max(0, e.attempts - 1))]!;
-      // SOURCE-SWAP-001: a link that has now failed twice is unlikely to start working. Remember it
-      // as dead and let go of it, so the next attempt asks the resolver for a different source
-      // rather than spending every retry on the same unplayable upload.
-      if (e.url && e.attempts >= SWAP_SOURCE_AFTER) {
+      // Explicit rejection skips the link immediately; a transient error gets one quick retry.
+      // Remember the failed link so the resolver actually tries a different upload/source.
+      if (e.url && (rejectedLink(error) || e.attempts >= SWAP_SOURCE_AFTER)) {
         (e.dead ??= []).push(e.url);
         this.resolvedUrls.delete(e.track.key);
         e.url = undefined;
@@ -320,7 +321,9 @@ export class QueuePreloader {
     }
     let active = this.snapshot().active;
     // A lowered limit never cancels work in flight; it just stops new starts until active drops.
-    const pending = [...this.entries].sort(([a], [b]) => Number(this.manualKeys.has(b)) - Number(this.manualKeys.has(a)));
+    // Within each priority, fresh songs run before retries so a fast failure cannot monopolise slots.
+    const pending = [...this.entries].sort(([a, ea], [b, eb]) =>
+      Number(this.manualKeys.has(b)) - Number(this.manualKeys.has(a)) || ea.attempts - eb.attempts);
     if (!this.blocked) for (const [key, e] of pending) {
       if (active >= this.parallel) break;
       if ((e.phase !== 'waiting' && e.phase !== 'failed') || e.after > Date.now() || !this.wantedKeys.has(key)) continue;

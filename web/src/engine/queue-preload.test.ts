@@ -27,6 +27,51 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 const tick = () => vi.advanceTimersByTimeAsync(10);
 
+it('immediately retries a missing source without waiting for the maintenance beat', async () => {
+  const r = rig();
+  r.resolve.mockResolvedValueOnce(null);
+  r.loader.update(tracks(1)); await tick();
+  expect(r.started).toEqual(['url:t0']);
+  expect(r.resolve).toHaveBeenLastCalledWith(tracks(1)[0], true, undefined);
+  r.loader.dispose();
+});
+
+it('immediately replaces an explicitly unavailable link rather than downloading it twice', async () => {
+  const r = rig();
+  r.resolve.mockResolvedValueOnce('url:dead').mockResolvedValue('url:alternative');
+  r.loader.update(tracks(1)); await tick();
+  r.fail('url:dead', 'Requested format is not available'); await tick();
+  expect(r.started).toEqual(['url:dead', 'url:alternative']);
+  expect(r.resolve).toHaveBeenLastCalledWith(tracks(1)[0], true, ['url:dead']);
+  r.loader.dispose();
+});
+
+it.each(['reconnect', 'download all'])('%s bypasses cached misses immediately without duplicating active work', async mode => {
+  const r = rig(); r.resolve.mockResolvedValue(null);
+  r.loader.update(tracks(1)); await tick();
+  r.resolve.mockResolvedValue('url:recovered');
+  if (mode === 'reconnect') r.loader.retryFailed();
+  else r.loader.downloadAll(tracks(1));
+  await tick();
+  expect(r.resolve).toHaveBeenLastCalledWith(tracks(1)[0], true, undefined);
+  expect(r.started).toEqual(['url:recovered']);
+  r.loader.retryFailed(); await tick();
+  expect(r.started).toEqual(['url:recovered']);
+  r.loader.dispose();
+});
+
+it('limits fast failures to bounded attempts rather than spinning at zero delay', async () => {
+  const r = rig(); r.resolve.mockResolvedValue(null);
+  r.loader.update(tracks(1)); await tick();
+  expect(r.resolve).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(r.resolve).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(58_000);
+  expect(r.resolve.mock.calls.length).toBeGreaterThanOrEqual(6);
+  expect(r.resolve.mock.calls.length).toBeLessThanOrEqual(7);
+  r.loader.dispose();
+});
+
 it('keeps maintaining the cache every ~2-3s with no library event at all', async () => {
   // Owner: loading must retry and listened songs must be unloaded "continuously every 2-3 seconds".
   // Nothing here fires a library notification, so a purely event-driven loader goes silent.
@@ -43,17 +88,14 @@ it('keeps maintaining the cache every ~2-3s with no library event at all', async
 });
 
 it('starts a due source retry within ~2-3s of it coming due, with no library event', async () => {
-  // The user's real case: six songs whose source could not be resolved. The backoff below is
-  // deliberate (5s, 30s, 2min, 5min - hammering the provider every 2s gets rate-limited), but
-  // the CHECK runs on the beat, so a retry begins promptly once it is due rather than waiting
-  // for some other song's event to wake the loader.
+  // Exhaust the immediate retry; the next short backoff must wake without a library event.
   const r = rig();
-  r.resolve.mockResolvedValueOnce(null);
+  r.resolve.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
   r.loader.update(tracks(1)); await tick();
   expect(r.loader.snapshot()).toMatchObject({ failed: 1 });
   const before = r.resolve.mock.calls.length;
-  // 5s backoff + one beat. Nothing notifies the library in this window.
-  await vi.advanceTimersByTimeAsync(8000);
+  // 2.5s backoff. Nothing notifies the library in this window.
+  await vi.advanceTimersByTimeAsync(2500);
   expect(r.resolve.mock.calls.length).toBeGreaterThan(before);
   expect(r.started).toContain('url:t0');
   r.loader.dispose();
@@ -125,10 +167,12 @@ it('does not endlessly evict and re-download when the list exceeds the cache bud
   expect(r.started.length).toBeGreaterThan(2);
   r.loader.dispose();
 });
-it('backs off indefinitely with a five-minute cap while continuing other songs', async () => {
+it('retries immediately then backs off with a thirty-second cap while continuing other songs', async () => {
   const r = rig(); r.loader.update(tracks(3)); await tick();
   r.finish('url:t1'); await tick(); r.finish('url:t2'); await tick();
-  for (const delay of [5000, 30_000, 120_000, 300_000, 300_000]) {
+  r.fail('url:t0', 'Network disconnected'); await tick();
+  expect(r.started).toHaveLength(4); // first retry has no deliberate delay
+  for (const delay of [2500, 5000, 15_000, 30_000, 30_000]) {
     const count = r.started.length;
     r.fail('url:t0', 'Network disconnected'); await tick();
     await vi.advanceTimersByTimeAsync(delay - 20);
@@ -144,14 +188,14 @@ it('backs off indefinitely with a five-minute cap while continuing other songs',
 it('retries a missing source without clicks and bypasses negative resolution caches', async () => {
   const r = rig(); r.resolve.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
   r.loader.update(tracks(1)); await tick();
-  expect(r.resolve).toHaveBeenCalledTimes(1);
+  expect(r.resolve).toHaveBeenCalledTimes(2);
   expect(r.loader.snapshot()).toMatchObject({ failed: 1, queued: 0 });
-  await vi.advanceTimersByTimeAsync(5000);
+  await vi.advanceTimersByTimeAsync(2400);
   // The third argument is the dead-link list (SOURCE-SWAP-001); nothing has failed to DOWNLOAD
   // here — the source never resolved — so there is no link to exclude yet.
   expect(r.resolve).toHaveBeenLastCalledWith(tracks(1)[0], true, undefined);
   expect(r.resolve).toHaveBeenCalledTimes(2);
-  await vi.advanceTimersByTimeAsync(30_000);
+  await vi.advanceTimersByTimeAsync(100);
   expect(r.started).toEqual(['url:t0']);
   r.finish('url:t0'); await tick();
   expect(r.loader.snapshot()).toMatchObject({ ready: 1, failed: 0 });
@@ -295,14 +339,14 @@ it.each(['disposed', 'removed', 'outside COUNT'])('does not retry a failed sourc
     await r.loader.limits({ preload: { target: 'count', count: 1 } });
   }
   await vi.advanceTimersByTimeAsync(1_000_000);
-  expect(r.resolve.mock.calls.filter(([track]) => track.key === 't0')).toHaveLength(1);
+  expect(r.resolve.mock.calls.filter(([track]) => track.key === 't0')).toHaveLength(2); // initial + immediate retry only
   expect(r.started).toEqual([]);
   expect(vi.getTimerCount()).toBe(0);
   r.loader.dispose();
 });
 
 it('preempts future retry timers on notifications without duplicate starts', async () => {
-  const r = rig(); r.resolve.mockResolvedValueOnce(null);
+  const r = rig(); r.resolve.mockImplementation(async t => t.key === 't0' ? null : `url:${t.key}`);
   r.loader.update(tracks(3)); await tick();
   expect(r.started).toEqual(['url:t1', 'url:t2']);
   r.finish('url:t1'); r.finish('url:t1'); await tick();
@@ -310,7 +354,8 @@ it('preempts future retry timers on notifications without duplicate starts', asy
   r.loader.update(tracks(4)); await tick();
   expect(r.started).toEqual(['url:t1', 'url:t2', 'url:t3']);
   await vi.advanceTimersByTimeAsync(5000);
-  expect(r.resolve).toHaveBeenCalledTimes(4);
+  expect(r.resolve).toHaveBeenCalledTimes(5); // t0 failed twice, then waits while both slots are busy
+  r.resolve.mockImplementation(async t => `url:${t.key}`);
   r.finish('url:t2'); await tick();
   expect(r.started).toEqual(['url:t1', 'url:t2', 'url:t3', 'url:t0']);
   r.loader.dispose();
@@ -441,7 +486,7 @@ it.each(['eviction', 'quota'])('parks %s at full capacity and resumes only on me
  */
 it('reports songs waiting on a scheduled retry, so the spinner can show it', async () => {
   const r = rig();
-  r.resolve.mockResolvedValueOnce(null); // first attempt finds no source
+  r.resolve.mockResolvedValue(null);
   r.loader.update(tracks(1)); await tick();
   const s = r.loader.snapshot();
   expect(s).toMatchObject({ failed: 1, active: 0 });
