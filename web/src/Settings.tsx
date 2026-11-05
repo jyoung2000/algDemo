@@ -30,10 +30,16 @@ interface Props {
   onSettings: (patch: Partial<S>) => void;
   onReset: () => void;
   onResetTaste: () => void;
+  /**
+   * SRC-WARN-001: per-source outcome of the last discovery run. It used to sit above the song list,
+   * where a slow provider read as a problem with the music; it belongs with the runtime checks.
+   */
+  sources?: Record<string, { state?: string }>;
 }
 
 /** Settings and a discreet status panel. Every badge here comes from a runtime check, never a constant. */
-export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Props) {
+export function SettingsView({ settings, onSettings, onReset, onResetTaste, sources }: Props) {
+  const quietSources = Object.entries(sources ?? {}).filter(([, v]) => (v?.state ?? 'ok') !== 'ok').map(([k]) => k);
   const [health, setHealth] = useState<Health | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
   const [checking, setChecking] = useState(false);
@@ -357,6 +363,13 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste }: Pr
           </button>
         </div>
         {err && <p className="state state--bad">{err}</p>}
+        {quietSources.length > 0 && (
+          // SRC-WARN-001: moved here from above the song list. The run still used every source
+          // that did answer, so this is a status note, not a failure the listener must act on.
+          <p className="note" role="status">
+            Last discovery run: {quietSources.join(', ')} did not answer. The queue used the rest.
+          </p>
+        )}
         {!health ? (
           <p className="state">
             <span className="sdot sdot--busy" aria-hidden="true" /> Checking sources…

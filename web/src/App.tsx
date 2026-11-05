@@ -659,11 +659,8 @@ export function App() {
                       Found {result.count} songs worth suggesting{result.empty_reason ? ` — ${result.empty_reason}` : '.'} Airwave does not pad the list.
                     </p>
                   )}
-                  {failed.length > 0 && (
-                    <p className="note">
-                      <Glyph name="warning" size={12} /> Some sources did not answer ({failed.map(([k]) => k).join(', ')}); the queue uses the rest.
-                    </p>
-                  )}
+                  {/* SRC-WARN-001: a quiet provider is a status detail, not news for the listener.
+                      It is reported in Settings, next to the other runtime checks. */}
                   {items.length || seeds.length ? (
                     <>
                     <ListDownloadBar tracks={queueTracks} label="this list" />
@@ -766,6 +763,7 @@ export function App() {
         {tab === 'settings' && (
           <SettingsView
             settings={settings}
+            sources={Object.fromEntries(srcEntries)}
             onSettings={patchSettings}
             onResetTaste={() =>
               api.resetTaste().then(
