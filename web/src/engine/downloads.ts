@@ -139,6 +139,8 @@ export const dl = {
   health: () => call<DlHealth>({ op: 'health' }),
   start: (url: string, tool: DlTool, format: DlFormat, label: string, cache = false, background = false) => call<{ job: DlJob }>({ op: 'start', url, tool, format, label, cache, background }),
   keep: (url: string) => call<{ ok?: boolean; job?: DlJob | null; alreadyKept?: boolean; file?: DlFile | null; saved_to?: string | null }>({ op: 'keep', url }),
+  /** RESET-APP-001: empty the evictable audio cache. Kept copies in the Music folder are untouched. */
+  cacheClear: () => call<{ removed: number; bytes: number }>({ op: 'cache-clear' }, 120_000),
   cacheConfig: (limitGb: number, protectedUrls: string[], wanted?: string[], parallel?: number) => call<{ bytes: number; limitBytes: number }>({ op: 'cache-config', limitGb, protected: protectedUrls, ...(wanted ? { wanted } : {}), ...(parallel ? { parallel } : {}) }),
   chooseFolder: () => call<{ saves_to: string }>({ op: 'choose-folder' }, 120_000),
   jobs: () => call<{ jobs: DlJob[] }>({ op: 'jobs' }),

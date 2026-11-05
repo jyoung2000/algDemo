@@ -497,6 +497,32 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
         pump();
         return { bytes: cacheBytes(), limitBytes, parallel: backgroundParallel };
       }
+      case 'cache-clear': {
+        /*
+         * RESET-APP-001: put the audio cache back to empty, as part of "reset everything back to
+         * default". Only the app's own evictable cache is touched — a copy the owner chose to Keep
+         * lives in their Music folder and is their property, so it is never removed here. Running
+         * downloads are cancelled first, or a job in flight would write a new file straight after.
+         */
+        for (const job of jobs.values()) {
+          if (job.state === 'running' || job.state === 'queued') cancel(job.id);
+        }
+        let removed = 0;
+        for (const [url, entry] of [...cached]) {
+          try {
+            fs.rmSync(path.join(cacheDir, entry.name), { force: true });
+            removed++;
+          } catch { /* a file already gone is still a file gone */ }
+          cached.delete(url);
+        }
+        // Sweep anything the index had lost track of, so "cleared" means the directory is empty.
+        for (const name of fs.readdirSync(cacheDir)) {
+          if (name === 'index.json') continue;
+          try { fs.rmSync(path.join(cacheDir, name), { force: true, recursive: true }); removed++; } catch { /* ignore */ }
+        }
+        persistCache();
+        return { removed, bytes: cacheBytes() };
+      }
       case 'keep':
         return keep(String(req.url || ''));
       case 'choose-folder':

@@ -444,3 +444,43 @@ test('health reports the queue cache usage and its limit, and reading it evicts 
   assert.equal(dl.handle({ op: 'local', url: source }).file.bytes, 20);
   dl.shutdown();
 });
+
+/**
+ * RESET-APP-001 — "reset everything back to default" has to include the songs the app downloaded,
+ * or the promise in Settings is false. A copy the owner chose to KEEP lives in their Music folder
+ * and is theirs; a reset must not touch it.
+ */
+test('cache-clear empties the evictable cache and leaves kept Music copies alone', async (t) => {
+  const { dl, dir } = fixture(t);
+  const saves = path.join(dir, 'saved');
+  const a = url('aaaaaaaaaaa'), b = url('bbbbbbbbbbb');
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [] });
+  for (const u of [a, b]) {
+    const { job } = dl.handle({ op: 'start', url: u, tool: 'yt-dlp', format: 'original', label: 'S', cache: true });
+    assert.equal((await done(dl, job.id)).state, 'done');
+  }
+  assert.ok(dl.handle({ op: 'local', url: a }).file, 'cached before the reset');
+  dl.handle({ op: 'keep', url: b });
+  const keptBefore = fs.readdirSync(saves).length;
+  assert.ok(keptBefore > 0, 'a kept copy exists in the Music folder');
+
+  const res = dl.handle({ op: 'cache-clear' });
+  assert.ok(res.removed >= 1, `expected cached files removed, got ${res.removed}`);
+  assert.equal(dl.handle({ op: 'health' }).cache_bytes, 0, 'the evictable cache is empty');
+  assert.equal(dl.handle({ op: 'local', url: a }).file, null, 'a cache-only song is gone');
+  // The kept song is still playable, because the copy in the owner's Music folder is theirs and
+  // a reset does not touch it. That is the promise Settings makes.
+  const keptAfter = dl.handle({ op: 'local', url: b });
+  assert.ok(keptAfter.file, 'a kept song survives the reset and still plays');
+  assert.equal(keptAfter.kept, true);
+  assert.equal(fs.readdirSync(saves).length, keptBefore, 'kept Music copies must survive a reset');
+  dl.shutdown();
+});
+
+test('cache-clear on an empty cache is a no-op, not an error', async (t) => {
+  const { dl } = fixture(t);
+  const res = dl.handle({ op: 'cache-clear' });
+  assert.equal(res.removed, 0);
+  assert.equal(dl.handle({ op: 'health' }).cache_bytes, 0);
+  dl.shutdown();
+});

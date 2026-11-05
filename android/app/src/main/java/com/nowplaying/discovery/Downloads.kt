@@ -132,6 +132,31 @@ object Downloads {
     names.commit()
   }
 
+  /**
+   * RESET-APP-001: empty the private audio cache as part of "reset everything back to default".
+   *
+   * Only this app's own evictable cache is cleared. A song the owner chose to Keep was copied into
+   * their Music folder through MediaStore and belongs to them, so it is deliberately left alone —
+   * which is what the Settings confirmation promises. Returns how many files went.
+   */
+  fun clearCache(context: Context): JSONObject = synchronized(libraryLock) {
+    val prefs = cachePrefs(context)
+    val entries = prefs.all.keys.filter { it != CACHE_LIMIT && it != CACHE_PROTECTED }
+    var removed = 0
+    val editor = prefs.edit()
+    val names = cacheNames(context).edit()
+    for (url in entries) {
+      cacheFile(context, url)?.let { if (it.isFile && it.delete()) removed++ }
+      editor.remove(url)
+      names.remove(url)
+    }
+    if (!editor.commit()) throw IOException("Could not update cache index.")
+    names.commit()
+    // Sweep stragglers the index had lost track of, so "cleared" really means empty.
+    cacheDir(context).listFiles()?.forEach { if (it.isFile && it.delete()) removed++ }
+    JSONObject().put("removed", removed).put("bytes", cacheBytes(context))
+  }
+
   private fun configureCache(context: Context, req: JSONObject): JSONObject = synchronized(libraryLock) {
     val gb = req.optDouble("limitGb", Double.NaN)
     require(gb.isFinite() && gb in 0.25..20.0) { "limitGb must be between 0.25 and 20." }
@@ -316,6 +341,7 @@ object Downloads {
     "health" -> health(context)
     "start" -> JSONObject().put("job", view(start(context, req.optString("url"), req.optString("tool"), req.optString("format"), req.optString("label"), req.optBoolean("cache", false), req.optBoolean("background", false))))
     "cache-config" -> configureCache(context, req)
+    "cache-clear" -> clearCache(context)
     "keep" -> keep(context, req.optString("url"))
     "jobs" -> JSONObject().put("jobs", JSONArray().also { a -> order.mapNotNull { jobs[it] }.forEach { a.put(view(it)) } })
     "cancel" -> JSONObject().put("ok", cancel(req.optString("id")))
