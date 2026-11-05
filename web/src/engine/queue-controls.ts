@@ -32,6 +32,12 @@ export function cacheStateOf(o: {
   /** False when the song sits beyond the preload target, so "Queued" does not look stalled. */
   inTarget: boolean;
   error: string | null;
+  /**
+   * The engine stopped trying this song. Needed because a song whose SOURCE could not be resolved
+   * never gets a URL, so the library reports 'unknown' and the row would otherwise read "Queued"
+   * forever while the list bar already counts it unavailable.
+   */
+  givenUp?: boolean;
 }): CardCache {
   const keptText = o.kept ? 'Kept in Music folder' : null;
   const base = { keptText, kept: o.kept, indeterminate: false };
@@ -44,6 +50,10 @@ export function cacheStateOf(o: {
   }
   if (o.status === 'missing') {
     // The cache being full is not the song's fault, and it clears by raising the limit.
+    if (o.blocked) return { ...base, state: 'blocked', glyph: '⊘', text: 'Cache full · Raise the cache limit', progress: 0 };
+    return { ...base, state: 'failed', glyph: '!', text: o.error ? `Unavailable · ${o.error}` : 'Unavailable', progress: 0 };
+  }
+  if (o.givenUp) {
     if (o.blocked) return { ...base, state: 'blocked', glyph: '⊘', text: 'Cache full · Raise the cache limit', progress: 0 };
     return { ...base, state: 'failed', glyph: '!', text: o.error ? `Unavailable · ${o.error}` : 'Unavailable', progress: 0 };
   }

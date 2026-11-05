@@ -32,6 +32,15 @@ it('reports the five states with a glyph AND text, never colour alone', () => {
   for (const s of ['ready', 'running', 'unknown', 'missing'] as const) expect(row({ status: s }).glyph).toBeTruthy();
 });
 
+it('says Unavailable, not Queued, for a song the engine could not find a source for', () => {
+  // Resolution failing means no URL was ever made, so the library knows nothing about the song
+  // and reports 'unknown'. Without this the row reads "Queued" forever while the list bar
+  // already counts it unavailable - two different stories about the same song.
+  const card = cacheStateOf({ status: 'unknown', kept: false, percent: null, blocked: false, inTarget: true, error: null, givenUp: true });
+  expect(card.state).toBe('failed');
+  expect(card.text).toBe('Unavailable');
+  expect(cacheStateOf({ status: 'unknown', kept: false, percent: null, blocked: false, inTarget: true, error: null, givenUp: false }).state).toBe('queued');
+});
 it('marks a percent-less download indeterminate instead of showing a dead 0% bar', () => {
   // Measured on the real app: yt-dlp emits no [download] NN% line for several seconds, so five
   // songs sat at a motionless 0%. Showing motion without a number is honest; faking one is not.

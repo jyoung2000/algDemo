@@ -128,6 +128,7 @@ export class QueuePreloader {
       status: url ? (this.backend.library.status(url) as LocalStatus) : 'unknown',
       kept: o.kept, percent: o.percent, blocked: this.blocked && e?.phase === 'failed',
       inTarget: this.wantedKeys.has(key), error: url ? this.backend.library.error(url) : null,
+      givenUp: e?.phase === 'failed',
     });
   }
   private recomputeTarget(): void {
