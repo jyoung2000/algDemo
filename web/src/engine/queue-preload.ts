@@ -3,7 +3,19 @@ import { cacheStateOf, preloadPlan, type CardCache, type PreloadSetting } from '
 import type { LocalStatus } from './local-audio';
 
 /** WHOLE-QUEUE-001: disk prefetch, NOT a second bank of audio elements/Blobs. */
-export interface QueueCacheStatus { total: number; ready: number; active: number; failed: number; blocked: boolean; queued: number; parallel: number; bulkActive: boolean }
+export interface QueueCacheStatus {
+  total: number; ready: number; active: number; failed: number; blocked: boolean; queued: number;
+  parallel: number; bulkActive: boolean;
+  /**
+   * Songs that failed and have another attempt booked (RETRY-SPIN-001).
+   *
+   * Owner: "i dont see a spinning arrow indicating active retrying." A song serving its
+   * 5s/30s/2min/5min backoff is neither downloading nor given up on, and counting it only as
+   * `failed` left the interface looking idle while the app was still working. A song parked for
+   * want of cache space is NOT retrying — it is waiting for room, which the blocked flag says.
+   */
+  retrying: number;
+}
 interface Library {
   status(url: string): string;
   observe?(urls: readonly string[]): void;
@@ -12,14 +24,23 @@ interface Library {
   subscribe(fn: () => void): () => void;
 }
 interface Backend {
-  resolve(track: Track, retry?: boolean): Promise<string | null>;
+  /**
+   * The link to download for this song. `exclude` names links that already failed, so a resolver
+   * can offer a different source instead of repeating one that cannot work (SOURCE-SWAP-001).
+   */
+  resolve(track: Track, retry?: boolean, exclude?: readonly string[]): Promise<string | null>;
   known?(track: Track): string | null;
   /** Native evictable cache usage in bytes; omit to retain manual-only refill. */
   capacity?(): Promise<{ bytes: number; limit: number }>;
   library: Library;
   configure(gb: number, protectedUrls: string[], wanted: string[], parallel: number): Promise<unknown>;
 }
-interface Entry { track: Track; url?: string; phase: 'waiting' | 'preparing' | 'downloading' | 'ready' | 'failed'; attempts: number; after: number; space?: number; probedSpace?: boolean }
+interface Entry {
+  track: Track; url?: string; phase: 'waiting' | 'preparing' | 'downloading' | 'ready' | 'failed';
+  attempts: number; after: number; space?: number; probedSpace?: boolean;
+  /** Links that failed for this song, so the resolver can be asked for a different source. */
+  dead?: string[];
+}
 /** Beyond the preload target: still listed and playable on demand, just not fetched ahead. */
 export interface PreloadLimits { parallel: number; preload: PreloadSetting }
 const quotaError = (error: string | null) => /cache.*(limit|size)|protected.*exceed|larger than.*cache/i.test(error ?? '');
@@ -42,6 +63,12 @@ const MAINTENANCE_INTERVAL = 2500;
 const CAPACITY_INTERVAL = 30_000;
 const MIN_HEADROOM = 16 * 1024 * 1024;
 const RETRY_DELAYS = [5000, 30_000, 120_000, 300_000];
+/**
+ * Failed attempts on one link before the loader asks for a different source (SOURCE-SWAP-001).
+ * Two, so a single flaky download does not throw away a good source, but a dead one is not retried
+ * for the rest of the session.
+ */
+const SWAP_SOURCE_AFTER = 2;
 
 export class QueuePreloader {
   private entries = new Map<string, Entry>();
@@ -99,7 +126,7 @@ export class QueuePreloader {
   }
   /** Unique songs in this list, not the global queue. Readiness always comes from the library. */
   snapshotFor(tracks: readonly Track[]): QueueCacheStatus {
-    const result: QueueCacheStatus = { total: 0, ready: 0, active: 0, failed: 0, blocked: false, queued: 0, parallel: this.parallel, bulkActive: false };
+    const result: QueueCacheStatus = { total: 0, ready: 0, active: 0, failed: 0, blocked: false, queued: 0, parallel: this.parallel, bulkActive: false, retrying: 0 };
     const observe: string[] = [];
     for (const track of new Map(tracks.map(t => [t.key, t])).values()) {
       result.total++;
@@ -112,7 +139,11 @@ export class QueuePreloader {
       else if (state === 'running' || e?.phase === 'preparing' || e?.phase === 'downloading') result.active++;
       else if (e?.phase === 'failed') {
         if (this.blocked && url && quotaError(this.backend.library.error(url))) result.blocked = true;
-        else result.failed++;
+        else {
+          result.failed++;
+          // Another attempt is booked for this one: work is pending, not abandoned.
+          if (Number.isFinite(e.after)) result.retrying++;
+        }
       } else result.queued++;
     }
     // A global quota stop also prevents other requested songs from starting.
@@ -227,7 +258,17 @@ export class QueuePreloader {
   private fail(e: Entry, error: string | null): void {
     e.phase = 'failed';
     if (quotaError(error)) { this.blocked = true; e.after = Infinity; }
-    else e.after = Date.now() + RETRY_DELAYS[Math.min(RETRY_DELAYS.length - 1, Math.max(0, e.attempts - 1))]!;
+    else {
+      e.after = Date.now() + RETRY_DELAYS[Math.min(RETRY_DELAYS.length - 1, Math.max(0, e.attempts - 1))]!;
+      // SOURCE-SWAP-001: a link that has now failed twice is unlikely to start working. Remember it
+      // as dead and let go of it, so the next attempt asks the resolver for a different source
+      // rather than spending every retry on the same unplayable upload.
+      if (e.url && e.attempts >= SWAP_SOURCE_AFTER) {
+        (e.dead ??= []).push(e.url);
+        this.resolvedUrls.delete(e.track.key);
+        e.url = undefined;
+      }
+    }
   }
   private parked(e: Entry): boolean {
     return (e.phase === 'waiting' || e.phase === 'failed') && e.after === Infinity;
@@ -301,7 +342,7 @@ export class QueuePreloader {
       e.phase = 'waiting'; return false;
     };
     try {
-      e.url ??= await this.backend.resolve(e.track, e.attempts > 1) ?? undefined;
+      e.url ??= await this.backend.resolve(e.track, e.attempts > 1, e.dead) ?? undefined;
       if (!wanted()) return;
       if (!e.url) { this.fail(e, null); return; }
       this.resolvedUrls.set(e.track.key, e.url);

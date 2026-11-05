@@ -10,7 +10,7 @@ function rig(capacity?: () => Promise<{ bytes: number; limit: number }>) {
   const emit = () => listeners.forEach(f => f());
   const started: string[] = [];
   const configure = vi.fn(async (_gb: number, _protected: string[], _wanted: string[], _parallel: number) => undefined);
-  const resolve = vi.fn(async (t: Track, _retry?: boolean): Promise<string | null> => `url:${t.key}`);
+  const resolve = vi.fn(async (t: Track, _retry?: boolean, _exclude?: readonly string[]): Promise<string | null> => `url:${t.key}`);
   const library = {
     status: (u: string) => states.get(u) ?? 'unknown',
     error: (u: string) => errors.get(u) ?? null,
@@ -147,7 +147,9 @@ it('retries a missing source without clicks and bypasses negative resolution cac
   expect(r.resolve).toHaveBeenCalledTimes(1);
   expect(r.loader.snapshot()).toMatchObject({ failed: 1, queued: 0 });
   await vi.advanceTimersByTimeAsync(5000);
-  expect(r.resolve).toHaveBeenLastCalledWith(tracks(1)[0], true);
+  // The third argument is the dead-link list (SOURCE-SWAP-001); nothing has failed to DOWNLOAD
+  // here — the source never resolved — so there is no link to exclude yet.
+  expect(r.resolve).toHaveBeenLastCalledWith(tracks(1)[0], true, undefined);
   expect(r.resolve).toHaveBeenCalledTimes(2);
   await vi.advanceTimersByTimeAsync(30_000);
   expect(r.started).toEqual(['url:t0']);
@@ -424,5 +426,77 @@ it.each(['eviction', 'quota'])('parks %s at full capacity and resumes only on me
   await vi.advanceTimersByTimeAsync(30_000);
   expect(r.started).toEqual(['url:t0', 'url:t0']);
   expect(r.loader.snapshot()).toMatchObject({ blocked: false, active: 1 });
+  r.loader.dispose();
+});
+
+/**
+ * RETRY-SPIN-001 — the owner must be able to SEE that retrying is happening.
+ *
+ * Owner: "i dont see a spinning arrow indicating active retrying."
+ *
+ * The spinner was driven by `active`, which counts downloads in flight. A song waiting out its
+ * 5s/30s/2min/5min backoff is `failed` with a future retry time, so `active` is 0 and the arrow
+ * stopped — exactly when the owner most wants to know the app has not given up. The snapshot now
+ * reports work that is scheduled as well as work in flight.
+ */
+it('reports songs waiting on a scheduled retry, so the spinner can show it', async () => {
+  const r = rig();
+  r.resolve.mockResolvedValueOnce(null); // first attempt finds no source
+  r.loader.update(tracks(1)); await tick();
+  const s = r.loader.snapshot();
+  expect(s).toMatchObject({ failed: 1, active: 0 });
+  expect(s.retrying).toBe(1); // a retry is booked, and the UI can say so
+  r.loader.dispose();
+});
+
+it('does not claim a retry is pending when a song is parked for want of space', async () => {
+  const r = rig();
+  r.loader.update(tracks(1)); await tick();
+  r.fail('url:t0', 'cache limit reached');
+  await tick();
+  const s = r.loader.snapshot();
+  expect(s.blocked).toBe(true);
+  expect(s.retrying).toBe(0); // nothing is scheduled; it waits for room, which is a different story
+  r.loader.dispose();
+});
+
+it('reports no pending retry once every song is local', async () => {
+  const r = rig();
+  r.loader.update(tracks(1)); await tick();
+  r.finish('url:t0'); await tick();
+  expect(r.loader.snapshot()).toMatchObject({ ready: 1, retrying: 0 });
+  r.loader.dispose();
+});
+
+/**
+ * SOURCE-SWAP-001 — a source that keeps failing must be swapped, not retried for ever.
+ *
+ * Owner: "Ensure sources can download needed data and actively trys different or retries sources."
+ *
+ * `e.url ??= await resolve(...)` resolved a song once and then retried that same link for ever. A
+ * link that is geo-blocked, taken down or unplayable can never succeed, so the song stayed stuck
+ * even though another source might have had it. After repeated failures the loader now asks again
+ * and says which links already failed, so the resolver can offer something else.
+ */
+it('asks for a different source after one link keeps failing', async () => {
+  const r = rig();
+  r.loader.update(tracks(1)); await tick();
+  r.fail('url:t0', 'Requested format is not available');
+  await vi.advanceTimersByTimeAsync(8000); // first backoff, second attempt on the same link
+  r.fail('url:t0', 'Requested format is not available');
+  await vi.advanceTimersByTimeAsync(40_000); // second backoff elapses
+  const exclusions = r.resolve.mock.calls.map(c => c[2]).filter((x): x is readonly string[] => !!x);
+  expect(exclusions.length).toBeGreaterThan(0); // it stopped assuming the first answer was the only one
+  expect(exclusions.at(-1)).toContain('url:t0'); // and named the link that will not work
+  r.loader.dispose();
+});
+
+it('keeps using a link that works and never asks for an alternative', async () => {
+  const r = rig();
+  r.loader.update(tracks(1)); await tick();
+  r.finish('url:t0'); await tick();
+  await vi.advanceTimersByTimeAsync(10_000);
+  const exclusions = r.resolve.mock.calls.map(c => c[2]).filter((x): x is readonly string[] => !!x);
+  expect(exclusions.flat()).not.toContain('url:t0'); // a working source is never discarded
   r.loader.dispose();
 });
