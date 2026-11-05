@@ -15,6 +15,42 @@
   clip-path: inset(0 calc(100% - var(--available)) 0 0);
 }
 .list-availability__help { color: var(--ink-2); margin: 8px 0 0; font-size: 12px; overflow-wrap: anywhere; }
+
+/* LIST-METER-002: a spinning arrow while the cache moves. Clockwise = loading in,
+   anticlockwise = unloading. Drawn as a ring with a gap plus an arrowhead, so the direction is
+   legible without an icon font, and it carries the same blue->green download colours. */
+.list-availability__spin {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--dl-from);
+  /* The gap is what makes the rotation visible on a circle. */
+  border-right-color: transparent;
+  position: relative;
+  animation: la-spin 900ms linear infinite;
+}
+/* The arrowhead: a small triangle riding the ring, pointing the way the cache is moving. */
+.list-availability__spin::after {
+  content: '';
+  position: absolute;
+  top: -3px;
+  left: 7px;
+  border: 3px solid transparent;
+  border-left-color: var(--dl-to);
+}
+.list-availability__spin[data-dir='unload'] {
+  animation-direction: reverse;
+  border-color: var(--ink-2);
+  border-right-color: transparent;
+}
+.list-availability__spin[data-dir='unload']::after { border-left-color: transparent; border-right-color: var(--ink-2); }
+@keyframes la-spin { to { transform: rotate(360deg); } }
+/* Motion is the only signal here, so when it is unwelcome the arrow holds still rather than
+   vanishing - a static ring still says "something is in flight". */
+@media (prefers-reduced-motion: reduce) {
+  .list-availability__spin { animation: none; }
+}
 .list-availability .push:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 @media (max-width: 560px) {
   .list-availability__head { flex-direction: column; align-items: stretch; gap: 8px; }
