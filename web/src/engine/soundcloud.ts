@@ -5,6 +5,7 @@
  * upload date). Verified against responses recorded live from api-v2.soundcloud.com.
  */
 import type { CancelToken, Http, Meter } from './net';
+import { BudgetExceeded, Cancelled } from './net';
 import { fold, splitArtists } from './identity';
 import * as G from './genres';
 import { makeTrack, release, type Track } from './track';
@@ -15,6 +16,8 @@ type Json = Record<string, any>;
 export interface Ctx {
   meter?: Meter;
   token?: CancelToken;
+  /** A user-driven retry: ask the provider again instead of replaying a cached (often empty) answer. */
+  refresh?: boolean;
 }
 
 const HOME = 'https://soundcloud.com/';
@@ -23,7 +26,15 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Fi
 const SC_PATH = /^\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)\/?$/;
 const SC_RESERVED = new Set(['discover', 'stream', 'search', 'you', 'charts', 'upload', 'settings', 'messages', 'notifications', 'pages', 'terms-of-use']);
 const NOT_A_TRACK = new Set(['tracks', 'likes', 'reposts', 'albums', 'sets', 'popular-tracks']);
-const CLIENT_ID = /client_id\s*:\s*"([0-9a-zA-Z]{32})"/;
+// yt-dlp's grammar (client_id\s*:\s*"([0-9a-zA-Z]{32})") plus the quoted-key and single-quote
+// forms the same bundle is minified into, so a build-tool change alone cannot hide the id.
+const CLIENT_ID = /"?\bclient_id"?\s*:\s*["']([0-9a-zA-Z]{32})["']/;
+/**
+ * The bundle that carries the id is big: 2,950,727 bytes on 2026-11-05, and SoundCloud serves it
+ * UNCOMPRESSED, so the whole thing is charged to the transfer meter. The old 4 MB cap left little
+ * headroom, and the native bridge accepts up to 8 MB (MainActivity.kt maxBytes default).
+ */
+const BUNDLE_CAP = 6_000_000;
 const DAY = 86400;
 
 /** yt-dlp's tag_list grammar: quoted phrases or bare words. */
@@ -45,21 +56,37 @@ export class SoundCloud {
 
   /** The web app's public client id, from its newest script bundle that contains one. */
   private async fetchClientId(c: Ctx): Promise<string> {
-    const base: Parameters<Http['get']>[1] = { category: 'metadata', maxBytes: 4_000_000, headers: { 'user-agent': UA } };
-    if (c.meter) base.meter = c.meter;
+    const base: Parameters<Http['get']>[1] = { category: 'metadata', maxBytes: BUNDLE_CAP, headers: { 'user-agent': UA } };
+    // One ~3 MB read a day buys every later SoundCloud call, so it gets its own allowance instead of
+    // competing with the search that happens to trigger it; the day's budget still bounds it and
+    // every byte is still counted (Meter.reserve). Without this, a lookup that had already spent its
+    // own cap on other providers failed here and was reported as "SoundCloud changed its site".
+    const meter = c.meter?.reserve(BUNDLE_CAP);
+    if (meter) base.meter = meter;
     if (c.token) base.token = c.token;
     const { response } = await this.http.get(HOME, { ...base, maxBytes: 600_000 });
     const page = new TextDecoder().decode(response.body);
+    const inline = CLIENT_ID.exec(page);
+    if (inline) return inline[1]!;
     const srcs = [...page.matchAll(/<script[^>]+src="([^"]+)"/g)].map((m) => m[1]!).filter((u) => /^https:\/\/[a-z0-9-]+\.sndcdn\.com\//.test(u));
+    let last: Error | null = null;
     for (const src of srcs.reverse()) {
       try {
         const { response: r } = await this.http.get(src, { ...base, retries: 1 });
         const m = CLIENT_ID.exec(new TextDecoder().decode(r.body));
         if (m) return m[1]!;
-      } catch {
-        /* the next bundle may have it, as yt-dlp does */
+      } catch (e) {
+        if (e instanceof Cancelled) throw e;
+        last = e as Error;
+        // A spent allowance will stop the next bundle too, and each one costs megabytes.
+        if (e instanceof BudgetExceeded) break;
       }
     }
+    if (last instanceof BudgetExceeded) {
+      throw new ProviderError(`SoundCloud's script bundle (about 3 MB) did not fit the transfer allowance left: ${last.message}`);
+    }
+    if (last) throw new ProviderError(`SoundCloud did not hand out a client id: ${last.message}`);
+    if (!srcs.length) throw new ProviderError('SoundCloud did not hand out a client id; its home page listed no script bundles.');
     throw new ProviderError('SoundCloud did not hand out a client id; its site may have changed.');
   }
 
@@ -116,7 +143,7 @@ export class SoundCloud {
   }
 
   search(q: string, limit = 10, c: Ctx = {}): Promise<Track[]> {
-    return cached(this.store, `sc:search:${fold(q)}:${limit}`, 'search', 15 * 60, async () => {
+    return cached(c.refresh ? undefined : this.store, `sc:search:${fold(q)}:${limit}`, 'search', 15 * 60, async () => {
       const d = await this.get(`/search/tracks?q=${encodeURIComponent(q)}&limit=${limit}&offset=0`, c);
       return ((d.collection as Json[]) ?? []).filter((e) => e && e.kind === 'track').slice(0, limit).map((e) => this.toTrack(e));
     });

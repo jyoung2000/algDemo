@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { SoundCloud, parseTags } from './soundcloud';
 import { ProviderError } from './deezer';
-import { Http, HostPacer, type HttpPort, type HttpRequest, type HttpResponse } from './net';
+import { Http, HostPacer, Meter, type HttpPort, type HttpRequest, type HttpResponse } from './net';
+import type { Store } from './store';
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), 'golden');
 const load = (n: string) => JSON.parse(readFileSync(join(dir, n), 'utf8'));
@@ -121,4 +122,99 @@ describe('SoundCloud client id and links', () => {
     const l = s.playbackLink({ url: 'https://soundcloud.com/forss/flickermood' } as never);
     expect(l.embed).toBe('https://w.soundcloud.com/player/?url=https%3A%2F%2Fsoundcloud.com%2Fforss%2Fflickermood&auto_play=true&visual=false&show_comments=false');
   });
+});
+
+/**
+ * Live shape, measured 2026-11-05 against soundcloud.com: the only bundle that carries a
+ * client id is a-v2.sndcdn.com/assets/55-*.js, 2,950,727 bytes and served UNCOMPRESSED
+ * (no content-encoding), so the id costs ~3 MB of transfer. The id itself is 32 alphanumerics
+ * (`client_id:"N5nHxilyZaG4XKY57pV0M6qx6JysgIFW"` that day), exactly yt-dlp's
+ * `client_id\s*:\s*"([0-9a-zA-Z]{32})"`. Anything that makes that one read fail — a search
+ * request whose own byte allowance is nearly spent, a cancel, a transport error — used to be
+ * swallowed and reported as "SoundCloud did not hand out a client id; its site may have changed",
+ * which is what the Android trace showed for every full-song lookup.
+ */
+const LIVE_ID_SHAPE = 'N5nHxilyZaG4XKY57pV0M6qx6JysgIFW';
+
+/** A page like the real one: one tiny bundle without an id, one heavy bundle that has it. */
+function scHeavy(opts: { pad?: number; form?: 'plain' | 'json'; store?: Store; empty?: () => boolean } = {}) {
+  const pad = 'y'.repeat(opts.pad ?? 40_000);
+  const snippet = opts.form === 'json' ? `{"client_id":"${LIVE_ID_SHAPE}"}` : `var a={client_id:"${LIVE_ID_SHAPE}"}`;
+  const seen: string[] = [];
+  const port: HttpPort = {
+    async request(req: HttpRequest): Promise<HttpResponse> {
+      seen.push(req.url);
+      const u = new URL(req.url);
+      if (u.hostname === 'soundcloud.com') {
+        return { status: 200, headers: {}, body: enc('<script src="https://a-v2.sndcdn.com/assets/0-a.js"></script><script src="https://a-v2.sndcdn.com/assets/55-b.js"></script>') };
+      }
+      if (u.hostname === 'a-v2.sndcdn.com') {
+        const body = u.pathname.includes('/55-') ? `${pad}${snippet}${pad}` : 'no id in this one';
+        return { status: 200, headers: { 'content-length': String(body.length) }, body: enc(body) };
+      }
+      if (u.hostname === 'api-v2.soundcloud.com' && u.pathname === '/search/tracks') {
+        return json(opts.empty?.() ? { collection: [] } : search);
+      }
+      return { status: 404, headers: {}, body: enc('{}') };
+    },
+  };
+  return { s: new SoundCloud(new Http(port, new HostPacer({}, 0)), opts.store), seen };
+}
+
+/** Just the two cache methods `cached()` uses, so these tests need no real storage backend. */
+function memStore(): Store {
+  const map = new Map<string, unknown>();
+  return {
+    cacheGet: (k: string) => (map.has(k) ? { value: map.get(k), created: 0, stale: false } : null),
+    cachePut: async (k: string, _kind: string, v: unknown) => void map.set(k, v),
+  } as unknown as Store;
+}
+
+describe('SoundCloud client id: the ~3 MB bundle read, and what it says when it fails', () => {
+  it('still gets the id when the calling search has nearly spent its own byte allowance', async () => {
+    const { s } = scHeavy({ pad: 150_000 }); // a 300 KB bundle stands in for the live 2.95 MB one
+    const meter = new Meter(250_000, 50_000_000); // per-request cap, day wide open
+    meter.add('metadata', 150_000); // the YouTube/Deezer searches of this same lookup ran first:
+    // 100 KB left — enough for the api-v2 answer, nowhere near enough for the bundle.
+    const r = await s.search('flickermood forss', 3, { meter });
+    expect(r.length).toBe(3);
+  });
+
+  it('blames the transfer allowance, not SoundCloud, when the day is spent', async () => {
+    const { s } = scHeavy();
+    const meter = new Meter(50_000, 50_000);
+    meter.add('metadata', 49_000);
+    await expect(s.search('flickermood forss', 3, { meter })).rejects.toThrow(/allowance/i);
+  });
+
+  it('reads the id from a JSON-shaped bundle as well as a bare one', async () => {
+    const { s } = scHeavy({ form: 'json' });
+    expect((await s.search('flickermood forss', 3)).length).toBe(3);
+  });
+
+  it('a retry with refresh re-asks instead of replaying a cached empty answer', async () => {
+    let empty = true;
+    const { s } = scHeavy({ store: memStore(), empty: () => empty });
+    expect((await s.search('flickermood forss', 3)).length).toBe(0);
+    empty = false;
+    expect((await s.search('flickermood forss', 3)).length).toBe(0); // the miss is cached
+    expect((await s.search('flickermood forss', 3, { refresh: true })).length).toBe(3);
+  });
+
+  // Real network. Run with AW_LIVE=1; skipped by default so the suite stays offline.
+  it.skipIf(!process.env['AW_LIVE'])('live: a real search against api-v2.soundcloud.com', async () => {
+    const livePort: HttpPort = {
+      async request(req: HttpRequest): Promise<HttpResponse> {
+        const r = await fetch(req.url, { method: req.method ?? 'GET', headers: req.headers, redirect: 'manual' });
+        const headers: Record<string, string> = {};
+        r.headers.forEach((v, k) => (headers[k.toLowerCase()] = v));
+        return { status: r.status, headers, body: new Uint8Array(await r.arrayBuffer()) };
+      },
+    };
+    const s = new SoundCloud(new Http(livePort, new HostPacer({}, 0)));
+    const meter = new Meter(2_000_000, 60_000_000); // smaller than the live bundle on purpose
+    const r = await s.search('flickermood forss', 3, { meter });
+    console.log('live tracks:', r.map((t) => `${t.artists.join(', ')} - ${t.title}`), 'bytes:', meter.counts);
+    expect(r.length).toBeGreaterThan(0);
+  }, 60_000);
 });
