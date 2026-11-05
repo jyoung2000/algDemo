@@ -202,7 +202,18 @@ export class LocalApi {
    * allowance must not stop a song from playing. What they read still counts toward the day's total.
    */
   private playbackMeter(): Meter {
-    return new Meter(3_000_000, 3_000_000, (c, n) => this.store.addTransfer(c, n));
+    // Deliberately independent of the owner's daily discovery allowance: finding the audio for a
+    // song they are trying to play must not be refused because the day's browsing budget is spent
+    // (see "looks up the full song even when the day's discovery allowance is used up"). Every byte
+    // is still counted through the sink, so Settings shows it.
+    //
+    // 8 MB, not 3: resolving a song may have to read SoundCloud's client-id bundle, which is
+    // 2,950,727 bytes and served uncompressed (measured 2026-11-05). At 3 MB there was never room
+    // left after the YouTube searches, so the SoundCloud leg died before it ever searched and every
+    // song it could have rescued was reported as having no source. 8 MB is the native bridge's own
+    // per-request ceiling (MainActivity.kt maxBytes). The id is then cached for a day, so the cost
+    // is paid once rather than per song.
+    return new Meter(8_000_000, 8_000_000, (c, n) => this.store.addTransfer(c, n));
   }
 
   private searchMeter(): Meter {

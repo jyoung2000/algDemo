@@ -1,4 +1,53 @@
 import { expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+/**
+ * SOURCE-CHAIN-002 — the SoundCloud leg of `fullSong` must be able to pay for the client-id bundle.
+ *
+ * Live trace of the packaged app: for every stuck song the chain reached `soundcloud.com` and
+ * `a-v2.sndcdn.com` but NEVER `api-v2.soundcloud.com`, so no SoundCloud search ever ran. The id
+ * lives in a 2,950,727-byte uncompressed bundle (measured 2026-11-05), while `fullSong` ran on the
+ * 3 MB-cap/3 MB-day playback meter — after the YouTube searches there was never room, and the
+ * reserve inherits what is left of the day. Provider searching belongs on the search meter, whose
+ * own comment says it is sized for exactly this bundle; the owner's daily_mb remains the real limit.
+ */
+it('can pay for the SoundCloud client-id bundle while resolving a full song', async () => {
+  const store = await Store.open(new MemoryBackend());
+  const bundle = new TextEncoder().encode(
+    // A real bundle is minified, so the id is preceded by punctuation (`,client_id:`), which the
+    // word-boundary in the pattern needs; filler alone would read as `xxxclient_id`.
+    'x'.repeat(2_950_000) + ',client_id:"N5nHxilyZaG4XKY57pV0M6qx6JysgIFW"',
+  );
+  const asked: string[] = [];
+  // Real sizes, or the budget this test is about never actually binds: a recorded YouTube Music
+  // search response is 62,705 bytes and the chain asks up to eight (songs + videos filters), and the
+  // SoundCloud home page is read up to its 600 KB cap. Together with the bundle that is ~4 MB.
+  const ytmReal = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'golden', 'ytm-search.json'));
+  const scHome = new TextEncoder().encode(
+    '<script src="https://a-v2.sndcdn.com/assets/55-37fbc1b1.js"></script>' + '<!--' + 'p'.repeat(550_000) + '-->',
+  );
+  const api = new LocalApi({ store, encoder: null, spotifySearch: () => async () => [], port: {
+    request: async (req: { url: string }) => {
+      asked.push(new URL(req.url).host);
+      const json = (o: unknown) => ({ status: 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(o)) });
+      if (req.url.includes('music.youtube.com')) return { status: 200, headers: { 'content-type': 'application/json' }, body: new Uint8Array(ytmReal) };
+      if (req.url.startsWith('https://soundcloud.com/')) {
+        return { status: 200, headers: { 'content-type': 'text/html' }, body: scHome };
+      }
+      if (req.url.includes('a-v2.sndcdn.com')) return { status: 200, headers: { 'content-type': 'application/javascript' }, body: bundle };
+      if (req.url.includes('api-v2.soundcloud.com')) {
+        return json({ collection: [{ kind: 'track', id: 42, title: 'Wallpaper', duration: 180_000, permalink_url: 'https://soundcloud.com/kmacleod/wallpaper', user: { username: 'Kevin MacLeod' } }] });
+      }
+      return json({});
+    },
+  } });
+  const track = { key: 'sc-pay', provider: 'deezer', platform_id: '9', title: 'Wallpaper', artists: ['Kevin MacLeod'], duration: 180 };
+  const r = await api.handle('POST', '/api/full-song', { track });
+  expect(asked).toContain('api-v2.soundcloud.com'); // the search actually ran
+  expect(r.body).toMatchObject({ source: 'soundcloud', url: 'https://soundcloud.com/kmacleod/wallpaper' });
+});
 
 it('does not hand back a rejected own YouTube link when an alternative was requested', async () => {
   const store = await Store.open(new MemoryBackend());

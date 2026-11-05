@@ -12,8 +12,10 @@ import { MemoryBackend, Store } from './store';
 
 const live = process.env['AIRWAVE_LIVE'] === '1';
 
+const hosts: string[] = [];
 const port: HttpPort = {
   async request(req, signal) {
+    try { hosts.push(new URL(req.url).host); } catch { /* not a URL we can attribute */ }
     const res = await fetch(req.url, {
       method: req.method ?? 'GET',
       headers: req.headers ?? {},
@@ -40,12 +42,19 @@ describe.skipIf(!live)('the source chain, against the real services', () => {
     const api = new LocalApi({ store, port, encoder: null, spotifySearch: () => async () => [] });
     const found: Record<string, string> = {};
     for (const track of STUCK) {
+      const before = hosts.length;
       const r = await api.handle('POST', '/api/full-song', { track, retry: true });
       const body = r.body as { id: string | null; url?: string; source: string; note?: string };
+      const asked = [...new Set(hosts.slice(before))];
       found[track.title] = `${body.source}${body.id ? ' ' + body.id : ''}${body.url ? ' ' + body.url : ''}${body.note ? ' (' + body.note + ')' : ''}`;
       // eslint-disable-next-line no-console
-      console.log(`  ${track.title} -> ${found[track.title]}`);
+      console.log(`  ${track.title} -> ${found[track.title]}\n      asked: ${asked.join(', ') || '(nothing)'}`);
     }
+    // Every source must actually have been consulted, or a "none" proves nothing about the song.
+    // api-v2 is the SoundCloud SEARCH endpoint: reaching only soundcloud.com and a-v2.sndcdn.com
+    // means the client-id read ran and the search never did.
+    expect(hosts.some(h => h.includes('youtube.com'))).toBe(true);
+    expect(hosts).toContain('api-v2.soundcloud.com');
     // The one with a verified exact upload must now resolve, from the videos catalogue.
     const manePear = found["ManePear's Official Theme Song"]!;
     expect(manePear).not.toMatch(/^none/);
