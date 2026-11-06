@@ -1228,9 +1228,12 @@ export class LocalApi {
     // Positive matches are reusable; passive retry must not discard working source identities.
     const retry = body['retry'] === true;
     const cached = hit?.value as Dict | undefined;
+    // Older builds cached uncertain `close` matches for seven days. Never resurrect them as full
+    // songs even when their link once downloaded; refresh the source chain instead.
+    const cachedPlayable = cached?.['source'] !== 'close';
     // SOURCE-SWAP-001: a caller naming dead links already knows the cached answer does not work,
     // so the cache is skipped entirely rather than handing back the link that just failed.
-    if (!exclude.length && hit && (!retry || cached?.['id'] || cached?.['url'])) return ok(hit.value);
+    if (cachedPlayable && !exclude.length && hit && (!retry || cached?.['id'] || cached?.['url'])) return ok(hit.value);
     const ctx = { meter: this.playbackMeter(), refresh: retry };
     // SOURCE-CHAIN-001: ask every source that can produce a downloadable link, in order of
     // confidence, rather than recording "no source" after one YouTube Music query.

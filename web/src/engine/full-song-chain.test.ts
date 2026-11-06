@@ -167,8 +167,8 @@ describe('the source chain', () => {
     expect(asked.sc.length).toBeGreaterThan(0);
   });
 
-  it('accepts the closest near miss rather than leaving the song unavailable, and says so', async () => {
-    // Nothing matches exactly: both candidates are the right song at a slightly different length.
+  it('refuses a near miss rather than counting a different-duration upload as the full recording', async () => {
+    // A title and artist alone cannot certify that a 184s upload is the target 180s recording.
     const { s } = sources({
       ytm: {
         'Kevin MacLeod Wallpaper': [cand({ platform_id: 'farfarfarfa', duration: 187 })],
@@ -176,9 +176,8 @@ describe('the source chain', () => {
       },
     });
     const r = await findFullSong(track(), s, {});
-    expect(r.source).toBe('close');
-    expect(r.id).toBe('closeclosec'); // the smallest gap wins, not the first seen
-    expect(r.note).toMatch(/\d+s/); // the reason is carried, not hidden
+    expect(r).toMatchObject({ id: null, source: 'none' });
+    expect(r.url).toBeUndefined();
   });
 
   it('never returns a candidate the matcher called a different recording', async () => {

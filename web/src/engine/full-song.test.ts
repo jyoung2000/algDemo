@@ -64,6 +64,23 @@ it('does not hand back a rejected own YouTube link when an alternative was reque
   expect(r.body).toMatchObject({ id: null, source: 'none' });
 });
 
+it('does not reuse a previously cached uncertain near miss as a full song', async () => {
+  const store = await Store.open(new MemoryBackend());
+  const asked: string[] = [];
+  const api = new LocalApi({ store, encoder: null, spotifySearch: () => async () => [], port: {
+    request: async (req: { url: string }) => {
+      asked.push(req.url);
+      return { status: 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(ytmusicSearch) };
+    },
+  } });
+  const track = { key: 'near', provider: 'deezer', platform_id: '1', title: 'Unavailable song', artists: ['Artist'], duration: 101 };
+  await store.cachePut(`fullsong:${track.title}|${track.artists.join('|')}|${track.duration}`, 'meta',
+    { id: 'qapK8Gx6ZTo', source: 'close', note: 'durations differ by 5s' }, 3600);
+  const r = await api.handle('POST', '/api/full-song', { track });
+  expect(r.body).toMatchObject({ id: null, source: 'none' });
+  expect(asked.length).toBeGreaterThan(0);
+});
+
 it('passive retry bypasses BOTH cached source misses and cached provider searches, but keeps good matches', async () => {
   const store = await Store.open(new MemoryBackend());
   const asked: string[] = [];
