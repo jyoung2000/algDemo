@@ -8,6 +8,8 @@ export const PROVIDER_LABEL: Record<string, string> = {
   ytmusic: 'YouTube Music',
   deezer: 'Deezer',
   soundcloud: 'SoundCloud',
+  bandcamp: 'Bandcamp',
+  audius: 'Audius',
   spotify: 'Spotify',
   apple: 'Apple Music',
 };
@@ -166,14 +168,23 @@ export function stepQueue(
   fromKey: string | null,
   dir: 1 | -1,
   hidden: Set<string>,
-  o: { shuffle: boolean; repeat: RepeatMode; heard: ReadonlySet<string>; rand?: () => number },
+  o: { shuffle: boolean; repeat: RepeatMode; heard: ReadonlySet<string>; rand?: () => number; ready?: (track: Track) => boolean },
 ): QueueStep | null {
-  const ok = items.filter((x) => !hidden.has(x.track.key) && canPlayHere(x.playback));
+  const playable = items.filter((x) => !hidden.has(x.track.key) && canPlayHere(x.playback));
+  /**
+   * SEAMLESS-NEXT-001. In the installed shells a queue entry is not a playable song: only a
+   * finished local file is. So automatic movement considers ONLY songs the app already holds —
+   * never one that is still preparing, still waiting, or that no source ever answered for. The
+   * song now playing stays in the walk as the anchor even when its own file has gone, or stepping
+   * would jump back to the top of the list instead of carrying on from where the listener is.
+   */
+  const choosable = o.ready ? playable.filter((x) => o.ready!(x.track)) : playable;
+  const ok = o.ready ? playable.filter((x) => x.track.key === fromKey || o.ready!(x.track)) : playable;
   if (!ok.length) return null;
   const rand = o.rand ?? Math.random;
   const pick = (from: RecItem[]) => from[Math.min(from.length - 1, Math.floor(rand() * from.length))]!;
   if (o.shuffle && dir === 1) {
-    const fresh = ok.filter((x) => x.track.key !== fromKey && !o.heard.has(x.track.key));
+    const fresh = choosable.filter((x) => x.track.key !== fromKey && !o.heard.has(x.track.key));
     if (fresh.length) {
       const kept = shuffleNext && shuffleNext.from === fromKey ? fresh.find((x) => x.track.key === shuffleNext!.key) : undefined;
       const item = kept ?? pick(fresh);
@@ -181,15 +192,52 @@ export function stepQueue(
       return { item, wrapped: false };
     }
     if (o.repeat !== 'all') return null;
-    const others = ok.filter((x) => x.track.key !== fromKey);
-    return { item: pick(others.length ? others : ok), wrapped: true };
+    const others = choosable.filter((x) => x.track.key !== fromKey);
+    if (!others.length && !choosable.length) return null;
+    return { item: pick(others.length ? others : choosable), wrapped: true };
   }
   const i = fromKey ? ok.findIndex((x) => x.track.key === fromKey) : -1;
   if (i === -1) return { item: dir === 1 ? ok[0]! : ok[ok.length - 1]!, wrapped: false };
   const n = ok[i + dir];
   if (n) return { item: n, wrapped: false };
-  if (o.repeat === 'all') return { item: dir === 1 ? ok[0]! : ok[ok.length - 1]!, wrapped: true };
+  if (o.repeat === 'all' && choosable.length) return { item: dir === 1 ? choosable[0]! : choosable[choosable.length - 1]!, wrapped: true };
   return null;
+}
+
+/**
+ * What the queue preloader can tell the UI about a song's local file (SEAMLESS-NEXT-001).
+ *
+ * The methods are optional on purpose: the UI must keep working against a preloader build that
+ * cannot answer yet, and in a plain browser there are no local files to ask about at all.
+ */
+export interface ReadinessProbe {
+  isReady?(track: Track): boolean;
+  readyUrl?(track: Track): string | null;
+  expiredKeys?(): ReadonlySet<string>;
+}
+
+const NO_KEYS: ReadonlySet<string> = new Set<string>();
+
+/** The readiness test automatic playback must obey, or undefined where every row is fair game. */
+export function readyFilter(probe: ReadinessProbe | null | undefined, native: boolean): ((track: Track) => boolean) | undefined {
+  if (!native || !probe || typeof probe.isReady !== 'function') return undefined;
+  // Asked on every call, never captured: a pick made on a stale answer is the bug this prevents.
+  return (track: Track) => probe.isReady!(track);
+}
+
+/** Songs the preloader has given up on. A preloader that cannot say reports nothing expired. */
+export function expiredKeysOf(probe: ReadinessProbe | null | undefined): ReadonlySet<string> {
+  if (!probe || typeof probe.expiredKeys !== 'function') return NO_KEYS;
+  return probe.expiredKeys() ?? NO_KEYS;
+}
+
+/**
+ * The discovery list without the songs no source ever answered for. They leave quietly — the list,
+ * its count and the prefetch stop naming them — and NOTHING here touches a saved or kept song.
+ */
+export function dropExpired<T extends { track: Track }>(items: T[], expired: ReadonlySet<string>): T[] {
+  if (!expired.size) return items;
+  return items.filter((x) => !expired.has(x.track.key));
 }
 
 /** The song played before the current one, from the play history; `keep` is how much of the history stays. */

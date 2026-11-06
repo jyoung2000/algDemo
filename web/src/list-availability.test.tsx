@@ -133,11 +133,11 @@ it('renders current availability, grows on completion and shrinks on eviction', 
 });
 
 /**
- * RETRY-SPIN-001 — the arrow must spin while the app is waiting to retry, not only mid-download.
+ * SPIN-TRUTH-001 — the arrow turns only while the app is really resolving or downloading.
  *
- * Owner, looking at a list stuck at 91 of 97: "i dont see a spinning arrow indicating active
- * retrying." Nothing was downloading at that moment — the missing songs were serving their backoff
- * — so `active` was false and the arrow was hidden exactly when it was needed.
+ * The owner, watching a list that never finished: the arrow spun for songs that were only sitting
+ * in backoff, or that nothing was being done about at all, so a stuck list looked busy for ever.
+ * Waiting to retry is waiting, not work: the words say a retry is booked, the animation does not.
  */
 const show = async (props: Partial<Parameters<typeof ListAvailability>[0]> = {}) => {
   const el = document.createElement('div'); document.body.append(el); root = createRoot(el);
@@ -147,21 +147,32 @@ const show = async (props: Partial<Parameters<typeof ListAvailability>[0]> = {})
   return el;
 };
 
-it('keeps the arrow spinning while a retry is pending, with nothing downloading', async () => {
-  const el = await show();
+it('spins while a download is actually running', async () => {
+  const el = await show({ active: true });
   const spin = el.querySelector('.list-availability__spin');
-  expect(spin, 'no spinner while retries are pending').not.toBeNull();
-  expect(spin?.getAttribute('data-dir')).toBe('load'); // it is working towards having them
+  expect(spin, 'no spinner while a download is running').not.toBeNull();
+  expect(spin?.getAttribute('data-dir')).toBe('load');
   expect(el.querySelector('.list-availability')?.getAttribute('data-state')).toBe('loading');
 });
 
-it('says it is retrying, and how many are left', async () => {
+it('rests while songs are only waiting for a booked retry, with nothing downloading', async () => {
+  const el = await show();
+  expect(el.querySelector('.list-availability__spin'), 'spinning on backoff alone').toBeNull();
+  expect(el.querySelector('.list-availability')?.getAttribute('data-state')).not.toBe('loading');
+});
+
+it('still says a retry is booked, and how many, in words', async () => {
   const el = await show();
   expect(el.textContent).toMatch(/retrying 6 songs/i);
 });
 
 it('rests when the list is complete and nothing is scheduled', async () => {
   const el = await show({ total: 5, ready: 5, failed: 0, retrying: 0 });
+  expect(el.querySelector('.list-availability__spin')).toBeNull();
+});
+
+it('does not spin for a failure nothing is being done about', async () => {
+  const el = await show({ total: 5, ready: 2, failed: 3, retrying: 0 });
   expect(el.querySelector('.list-availability__spin')).toBeNull();
 });
 

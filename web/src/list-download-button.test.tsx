@@ -21,7 +21,7 @@ const subscribers = new Set<() => void>();
 vi.mock('./engine/downloads', () => ({ downloadsAvailable: () => true }));
 vi.mock('./engine/queue-audio', () => ({
   queueAudio: {
-    snapshotFor: () => snapshot,
+    snapshotFor: () => ({ ...snapshot }),
     subscribe: (fn: () => void) => { subscribers.add(fn); return () => subscribers.delete(fn); },
     downloadAll: (...args: unknown[]) => downloadAll(...args),
   },
@@ -29,7 +29,7 @@ vi.mock('./engine/queue-audio', () => ({
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root | undefined;
-beforeEach(() => { downloadAll.mockClear(); Object.assign(snapshot, { total: 97, ready: 91, bulkActive: false }); });
+beforeEach(() => { downloadAll.mockClear(); Object.assign(snapshot, { total: 97, ready: 91, active: 0, bulkActive: false }); });
 afterEach(async () => { if (root) await act(() => root!.unmount()); document.body.innerHTML = ''; });
 
 const tracks = [{ key: 'a', title: 'A', artist: 'X' }, { key: 'b', title: 'B', artist: 'Y' }] as never[];
@@ -76,6 +76,20 @@ it('is disabled while a bulk download is already running', async () => {
   Object.assign(snapshot, { bulkActive: true });
   const el = await mount();
   expect(el.querySelector('button')!.disabled).toBe(true);
+});
+
+it('rests its arrow during a booked retry and spins only while a source or download is active', async () => {
+  const { ListDownloadBar } = await import('./ListDownloadBar');
+  Object.assign(snapshot, { active: 0, bulkActive: true });
+  const el = document.createElement('div'); document.body.append(el); root = createRoot(el);
+  await act(() => root!.render(<ListDownloadBar tracks={tracks} />));
+  expect(el.querySelector('.list-availability__spin')).toBeNull();
+  Object.assign(snapshot, { active: 1 });
+  await act(() => { for (const fn of subscribers) fn(); });
+  expect(el.querySelector('.list-availability__spin')).not.toBeNull();
+  Object.assign(snapshot, { active: 0 });
+  await act(() => { for (const fn of subscribers) fn(); });
+  expect(el.querySelector('.list-availability__spin')).toBeNull();
 });
 
 it('sits next to Clear list in the list header, not inside the availability card', () => {

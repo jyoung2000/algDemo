@@ -3,7 +3,7 @@ import { QueuePreloader } from './queue-preload';
 import type { Track } from '../api';
 
 const tracks = (n: number) => Array.from({ length: n }, (_, i) => ({ key: `t${i}`, title: `Song ${i}`, artist: 'Test' }) as Track);
-function rig(capacity?: () => Promise<{ bytes: number; limit: number }>) {
+function rig(capacity?: () => Promise<{ bytes: number; limit: number }>, savedExpired = new Set<string>()) {
   const states = new Map<string, string>();
   const errors = new Map<string, string>();
   const listeners = new Set<() => void>();
@@ -11,6 +11,7 @@ function rig(capacity?: () => Promise<{ bytes: number; limit: number }>) {
   const started: string[] = [];
   const configure = vi.fn(async (_gb: number, _protected: string[], _wanted: string[], _parallel: number) => undefined);
   const resolve = vi.fn(async (t: Track, _retry?: boolean, _exclude?: readonly string[]): Promise<string | null> => `url:${t.key}`);
+  const remember = vi.fn();
   const library = {
     status: (u: string) => states.get(u) ?? 'unknown',
     error: (u: string) => errors.get(u) ?? null,
@@ -20,12 +21,31 @@ function rig(capacity?: () => Promise<{ bytes: number; limit: number }>) {
       if (states.get(u) !== 'ready') { started.push(u); states.set(u, 'running'); }
     }),
   };
-  const loader = new QueuePreloader({ resolve, library, configure, capacity });
-  return { loader, states, started, configure, resolve, library, finish: (u: string) => { states.set(u, 'ready'); emit(); }, fail: (u: string, e: string) => { states.set(u, 'missing'); errors.set(u, e); emit(); } };
+  const loader = new QueuePreloader({ resolve, remember, library, configure, capacity,
+    expiredKeys: () => [...savedExpired], rememberExpired: (key, expired) => { if (expired) savedExpired.add(key); else savedExpired.delete(key); } });
+  return { loader, states, started, configure, resolve, remember, savedExpired, library, finish: (u: string) => { states.set(u, 'ready'); emit(); }, fail: (u: string, e: string) => { states.set(u, 'missing'); errors.set(u, e); emit(); } };
 }
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 const tick = () => vi.advanceTimersByTimeAsync(10);
+
+it('persists a timed-out discovery song across relaunch and allows an explicit retry', async () => {
+  const saved = new Set<string>();
+  const first = rig(undefined, saved);
+  first.resolve.mockResolvedValue(null);
+  first.loader.update(tracks(1)); await tick();
+  await vi.advanceTimersByTimeAsync(10 * 60_000 + 2500);
+  expect(saved).toContain('t0');
+  first.loader.dispose();
+  const relaunched = rig(undefined, saved);
+  expect(relaunched.loader.expiredKeys()).toContain('t0');
+  relaunched.loader.update(tracks(1)); await tick();
+  expect(relaunched.resolve).not.toHaveBeenCalled();
+  relaunched.loader.downloadAll(tracks(1)); await tick();
+  expect(saved).not.toContain('t0');
+  expect(relaunched.resolve).toHaveBeenCalled();
+  relaunched.loader.dispose();
+});
 
 it('immediately retries a missing source without waiting for the maintenance beat', async () => {
   const r = rig();
@@ -130,6 +150,14 @@ it('drains the ENTIRE list with two parallel background slots, without needing p
   for (let i = 0; i < 11; i++) { r.finish(`url:t${i}`); await tick(); }
   expect(new Set(r.started).size).toBe(11);
   expect(r.loader.snapshot()).toMatchObject({ total: 11, ready: 11, active: 0 });
+  r.loader.dispose();
+});
+it('records a source hint only after the native library reports a complete file', async () => {
+  const r = rig();
+  r.loader.update(tracks(1)); await tick();
+  expect(r.remember).not.toHaveBeenCalled(); // resolving and downloading are not ready
+  r.finish('url:t0'); await tick();
+  expect(r.remember).toHaveBeenCalledWith(tracks(1)[0], 'url:t0');
   r.loader.dispose();
 });
 it('reuses ready files, deduplicates keys and never makes a blob for background tracks', async () => {
@@ -544,4 +572,160 @@ it('keeps using a link that works and never asks for an alternative', async () =
   const exclusions = r.resolve.mock.calls.map(c => c[2]).filter((x): x is readonly string[] => !!x);
   expect(exclusions.flat()).not.toContain('url:t0'); // a working source is never discarded
   r.loader.dispose();
+});
+
+/**
+ * SEAMLESS-001 — a song that is already on disk must be playable without asking the network again.
+ *
+ * Owner: "The music on both apps needs to load faster when playing songs from song list" and
+ * "if the song isnt loaded locally and ready to be played dont make it a canidate for shuffle".
+ *
+ * The loader already knows the link it downloaded for every song, but kept it private, so the
+ * player re-ran a full source lookup (a live YouTube/SoundCloud search) on every click for any
+ * song whose provider is not YouTube Music — seconds of waiting in front of a file already on
+ * disk. Readiness must be answerable synchronously, and it must mean "the shell holds the bytes",
+ * never "we found a link once".
+ */
+it('hands back the local link for a downloaded song, so playing it needs no new lookup', async () => {
+  const r = rig();
+  const [track] = tracks(1);
+  r.loader.update(tracks(1)); await tick();
+  expect(r.loader.readyUrl(track!)).toBeNull(); // resolved, but the bytes are not here yet
+  expect(r.loader.isReady(track!)).toBe(false);
+  r.finish('url:t0'); await tick();
+  expect(r.loader.readyUrl(track!)).toBe('url:t0');
+  expect(r.loader.isReady(track!)).toBe(true);
+  r.loader.dispose();
+});
+
+it('stops calling a song ready the moment its file is gone', async () => {
+  // Eviction and a deleted file both make a previously ready song unplayable. Shuffle asks this
+  // question at the moment of the pick, so a stale yes would start silence.
+  const r = rig();
+  const [track] = tracks(1);
+  r.loader.update(tracks(1)); await tick();
+  r.finish('url:t0'); await tick();
+  expect(r.loader.isReady(track!)).toBe(true);
+  r.fail('url:t0', ''); await tick();
+  expect(r.loader.isReady(track!)).toBe(false);
+  expect(r.loader.readyUrl(track!)).toBeNull();
+  r.loader.dispose();
+});
+
+it('never claims readiness for a song it has no source for at all', async () => {
+  const r = rig(); r.resolve.mockResolvedValue(null);
+  const [track] = tracks(1);
+  r.loader.update(tracks(1)); await tick();
+  expect(r.loader.isReady(track!)).toBe(false);
+  expect(r.loader.readyUrl(track!)).toBeNull();
+  r.loader.dispose();
+});
+
+/**
+ * SEAMLESS-002 — a song no source can supply is dropped from the list after ten minutes.
+ *
+ * Owner: "the music list should silently remove songs it cant find for more than 10 minutes" and
+ * "the arrow should stop spinning if its stop searching or cant load the full song".
+ *
+ * Retrying for ever is what made the dashboard sit at 95 of 97 with a spinner running all day.
+ * After ten minutes of genuine failure the loader gives up on that song: no further attempts, no
+ * retry claim, no timer, and the key is published so the list can quietly stop showing it.
+ */
+it('expires a failed song on the clock even while fresh downloads occupy every slot', async () => {
+  const r = rig();
+  await r.loader.limits({ parallel: 1 });
+  // First song fails to resolve; a new song then occupies the sole slot indefinitely. This is
+  // what the live APK did: Plant Island was 16 minutes old, still failed, with its retry overdue.
+  r.resolve.mockImplementation(async t => t.key === 't0' ? null : await new Promise<string | null>(() => {}));
+  r.loader.update(tracks(1)); await tick();
+  r.loader.update(tracks(2)); await tick();
+  expect(r.loader.snapshot().active).toBe(1);
+  expect(r.loader.expiredKeys().has('t0')).toBe(false);
+  await vi.advanceTimersByTimeAsync(10 * 60_000 + 2500);
+  expect(r.loader.expiredKeys().has('t0')).toBe(true);
+  expect(r.loader.snapshotFor(tracks(1))).toMatchObject({ active: 0, retrying: 0, failed: 1 });
+  r.loader.dispose();
+});
+
+it('gives up on a song no source can supply after ten minutes, and stops the spinner', async () => {
+  const r = rig(); r.resolve.mockResolvedValue(null);
+  const [track] = tracks(1);
+  r.loader.update(tracks(1)); await tick();
+  await vi.advanceTimersByTimeAsync(9 * 60_000);
+  expect(r.loader.expiredKeys().has('t0')).toBe(false); // still trying at nine minutes
+  expect(r.loader.snapshot().retrying).toBe(1);
+  const attempts = r.resolve.mock.calls.length;
+  expect(attempts).toBeGreaterThan(5); // it really was retrying all that time
+  await vi.advanceTimersByTimeAsync(2 * 60_000);
+  expect(r.loader.expiredKeys().has('t0')).toBe(true);
+  expect(r.loader.snapshot()).toMatchObject({ retrying: 0, failed: 1, queued: 0 }); // unavailable, not 'Queued' for ever
+  expect(r.loader.cardOf('t0', { kept: false, percent: null }).state).toBe('failed');
+  const settled = r.resolve.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(10 * 60_000);
+  expect(r.resolve.mock.calls.length).toBe(settled); // and it stays given up on
+  expect(vi.getTimerCount()).toBe(0); // an idle loader holds no timers
+  expect(r.loader.isReady(track!)).toBe(false);
+  r.loader.dispose();
+});
+
+it('keeps the give-up clock running across list updates rather than restarting it', async () => {
+  // The queue is re-stated every few seconds as the listener advances; if each update reset the
+  // clock, a song could never reach ten minutes and would retry for ever.
+  const r = rig(); r.resolve.mockResolvedValue(null);
+  r.loader.update(tracks(1)); await tick();
+  for (let i = 0; i < 12; i++) { await vi.advanceTimersByTimeAsync(60_000); r.loader.update(tracks(1)); }
+  await tick();
+  expect(r.loader.expiredKeys().has('t0')).toBe(true);
+  r.loader.dispose();
+});
+
+it('does not give up on a song that is merely waiting for cache room', async () => {
+  // Owner's rule: a full cache is not the song's fault, and it clears by raising the limit.
+  // Dropping it from the list would hide a song that is perfectly findable.
+  const capacity = vi.fn(async () => ({ bytes: 100 * MiB, limit: 100 * MiB }));
+  const r = rig(capacity);
+  r.loader.update(tracks(1)); await tick();
+  r.fail('url:t0', 'Cache limit cannot fit this song'); await tick();
+  await vi.advanceTimersByTimeAsync(20 * 60_000);
+  expect(r.loader.expiredKeys().has('t0')).toBe(false);
+  expect(r.loader.snapshot().blocked).toBe(true);
+  r.loader.dispose();
+});
+
+it('does not give up on a song that succeeds late', async () => {
+  const r = rig(); r.resolve.mockResolvedValue(null);
+  r.loader.update(tracks(1)); await tick();
+  await vi.advanceTimersByTimeAsync(5 * 60_000);
+  r.resolve.mockResolvedValue('url:t0');
+  r.loader.retryFailed(); await tick();
+  r.finish('url:t0'); await tick();
+  await vi.advanceTimersByTimeAsync(20 * 60_000);
+  expect(r.loader.expiredKeys().has('t0')).toBe(false);
+  expect(r.loader.isReady(tracks(1)[0]!)).toBe(true);
+  r.loader.dispose();
+});
+
+it('tries again for an expired song when the listener explicitly asks for it', async () => {
+  // Silent removal is for the automatic list. An explicit "download" is a new instruction.
+  const r = rig(); r.resolve.mockResolvedValue(null);
+  r.loader.update(tracks(1)); await tick();
+  await vi.advanceTimersByTimeAsync(11 * 60_000);
+  expect(r.loader.expiredKeys().has('t0')).toBe(true);
+  r.resolve.mockResolvedValue('url:t0');
+  r.loader.downloadAll(tracks(1)); await tick();
+  expect(r.started).toContain('url:t0');
+  expect(r.loader.expiredKeys().has('t0')).toBe(false);
+  r.loader.dispose();
+});
+
+it('tells subscribers when a song is dropped, so the list can update itself', async () => {
+  const r = rig(); r.resolve.mockResolvedValue(null);
+  let notices = 0;
+  const off = r.loader.subscribe(() => { notices++; });
+  r.loader.update(tracks(1)); await tick();
+  const before = notices;
+  await vi.advanceTimersByTimeAsync(11 * 60_000);
+  expect(r.loader.expiredKeys().has('t0')).toBe(true);
+  expect(notices).toBeGreaterThan(before);
+  off(); r.loader.dispose();
 });

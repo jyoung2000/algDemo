@@ -32,10 +32,10 @@ export function ListDownloadBar({ tracks, label }: { tracks: Track[]; label?: st
   return <ListAvailability
     total={status.total}
     ready={status.ready}
-    active={status.bulkActive}
+    active={status.active > 0}
     failed={status.failed}
     blocked={status.blocked}
-    /* RETRY-SPIN-001: scheduled attempts, so the arrow turns between downloads too. */
+    /* SPIN-TRUTH-001: booked attempts are reported in words; only real work spins the arrow. */
     retrying={status.retrying}
     label={label}
   />;

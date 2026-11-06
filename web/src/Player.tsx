@@ -105,6 +105,24 @@ function knownVideoId(p: Playing | null): string | null {
   return p.track.provider === 'ytmusic' ? p.track.platform_id : null;
 }
 
+/**
+ * FAST-PLAY-001: the verified local link the queue preloader already holds for a song, if any.
+ *
+ * Owner: "the music on both apps needs to load faster when playing songs from song list". The
+ * player asked the source chain for a video id on every play, including for songs the preloader had
+ * already resolved AND downloaded — a network round trip in front of audio sitting on disk. The
+ * method is read defensively so an older preloader build simply has no fast path.
+ */
+function readyLocalUrl(track: Track): string | null {
+  const probe = queueAudio as { readyUrl?: (t: Track) => string | null };
+  return typeof probe.readyUrl === 'function' ? probe.readyUrl(track) ?? null : null;
+}
+
+function knownLocalUrl(track: Track): string | null {
+  const probe = queueAudio as { sourceHint?: (t: Track) => string | null };
+  return typeof probe.sourceHint === 'function' ? probe.sourceHint(track) ?? null : null;
+}
+
 /** `local`: the downloaded full song, on a deck — the only full-song path the engine can reach. */
 type Mode = 'full' | 'local' | 'preview' | 'embed' | 'none';
 
@@ -187,7 +205,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // Which source plays. A song with no YouTube video yet is looked up once; only a confident match is used.
   const knownId = knownVideoId(playing);
   const scEmbed = playing?.playback.embed?.provider === 'soundcloud' ? playing.playback.embed : null;
-  const [found, setFound] = useState<{ key: string; id: string | null } | null>(null);
+  const [found, setFound] = useState<{ key: string; id: string | null; url?: string } | null>(null);
   const [badVideo, setBadVideo] = useState<string | null>(null);
   const previewSrc = playing?.playback.preview ?? null;
   // Songs the mixer blended into. They are already playing, as the preview they were blended as,
@@ -204,7 +222,12 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
    */
   const stayPreview = !downloadsAvailable() && key !== null && previewOnly.current.has(key);
   const promotedSource = key ? cuedSources.current.get(key) ?? null : null;
-  const needsLookup = Boolean(playing && !knownId && !promotedSource && (!scEmbed || downloadsAvailable())) && !stayPreview;
+  // FAST-PLAY-001: a song whose file the queue already holds needs no resolution at all.
+  const readySource = playing && downloadsAvailable() ? readyLocalUrl(playing.track) : null;
+  // A previously verified link is worth a direct native disk check on cold start. It is NOT
+  // considered ready for shuffle until that check succeeds; don't repeat a catalog search first.
+  const hintedSource = playing && downloadsAvailable() && !readySource ? knownLocalUrl(playing.track) : null;
+  const needsLookup = Boolean(playing && !knownId && !promotedSource && !readySource && !hintedSource && (!scEmbed || downloadsAvailable())) && !stayPreview;
   const lookedUp = found?.key === key;
   const lookingUp = needsLookup && !lookedUp;
   const candidate = stayPreview ? null : knownId ?? (lookedUp ? found.id : null);
@@ -213,6 +236,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // may still be remote, but the Now Playing queue never substitutes it or an iframe for a song.
   const canLocal = downloadsAvailable();
   const wantSource = canLocal && videoId ? sourceUrlFor(videoId) : null;
+  const foundSource = canLocal && lookedUp ? found?.url ?? null : null;
   // Once this song has started in YouTube's player it stays there: a download finishing mid-song
   // must not swap players and restart it at 0:00. The file is for next time and for the lookahead.
   const inYouTube = useRef<string | null>(null);
@@ -229,7 +253,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
    */
   const previewPick = !canLocal && !videoId && !lookingUp ? previewSrc : null;
   const embedPick = !canLocal && !videoId && !previewPick && !lookingUp ? scEmbed : null;
-  const stranded = !videoId && !previewPick && !embedPick && !lookingUp;
+  const stranded = !videoId && !foundSource && !previewPick && !embedPick && !lookingUp;
   const rescue = stranded
     ? rescueSource({
         badVideoId: badVideo,
@@ -237,7 +261,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
         shell: canLocal,
       })
     : null;
-  const localSource = promotedSource ?? wantSource ?? rescue;
+  const localSource = promotedSource ?? readySource ?? hintedSource ?? wantSource ?? foundSource ?? rescue;
   const nextTrackForCache = upNext[0]?.track;
   const upcomingSource = nextTrackForCache?.provider === 'ytmusic' ? sourceUrlFor(nextTrackForCache.platform_id) : null;
   const localStatus = localSource ? localLibrary.status(localSource) : 'missing';
@@ -282,7 +306,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     let live = true;
     api
       .fullSong(playing.track)
-      .then((r) => live && setFound({ key: playing.track.key, id: r.id }))
+      .then((r) => live && setFound({ key: playing.track.key, id: r.id, url: r.url }))
       .catch(() => live && setFound({ key: playing.track.key, id: null }));
     return () => {
       live = false;

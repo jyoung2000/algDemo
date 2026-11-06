@@ -3,11 +3,22 @@ import { dl } from './downloads';
 import { localLibrary, sourceUrlFor } from './local-audio';
 import { rescueSource } from './rescue';
 import { QueuePreloader } from './queue-preload';
+import { DiscoveryExpiryMap, ReadySourceMap } from './ready-source';
+
+const storage = (() => {
+  try { return typeof window !== 'undefined' ? window.localStorage : undefined; }
+  catch { return undefined; }
+})();
+const sources = new ReadySourceMap(storage);
+const unavailable = new DiscoveryExpiryMap(storage);
 
 /** Singleton: navigating between screens must not reset completed work or download twice. */
 export const queueAudio = new QueuePreloader({
   library: localLibrary,
-  known: track => track.provider === 'ytmusic' ? sourceUrlFor(track.platform_id) : null,
+  known: track => track.provider === 'ytmusic' ? sourceUrlFor(track.platform_id) : sources.get(track.key),
+  expiredKeys: () => unavailable.keys(),
+  rememberExpired: (key, expired) => unavailable.remember(key, expired),
+  remember: (track, url) => sources.remember(track.key, url),
   configure: (gb, protectedUrls, wanted, parallel) => dl.cacheConfig(gb, protectedUrls, wanted, parallel),
   capacity: async () => {
     const h = await dl.health();

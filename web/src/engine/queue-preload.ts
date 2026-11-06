@@ -30,16 +30,23 @@ interface Backend {
    */
   resolve(track: Track, retry?: boolean, exclude?: readonly string[]): Promise<string | null>;
   known?(track: Track): string | null;
+  /** Previously expired discovery keys, scoped to recent failed searches, not owner-kept files. */
+  expiredKeys?(): readonly string[];
+  rememberExpired?(key: string, expired: boolean): void;
+  /** A hint may be persisted only once native storage confirms a complete file. */
+  remember?(track: Track, url: string): void;
   /** Native evictable cache usage in bytes; omit to retain manual-only refill. */
   capacity?(): Promise<{ bytes: number; limit: number }>;
   library: Library;
   configure(gb: number, protectedUrls: string[], wanted: string[], parallel: number): Promise<unknown>;
 }
 interface Entry {
-  track: Track; url?: string; phase: 'waiting' | 'preparing' | 'downloading' | 'ready' | 'failed';
+  track: Track; url?: string; phase: 'waiting' | 'preparing' | 'downloading' | 'ready' | 'failed' | 'expired';
   attempts: number; after: number; space?: number; probedSpace?: boolean;
   /** Links that failed for this song, so the resolver can be asked for a different source. */
   dead?: string[];
+  /** When this song was first attempted, so the give-up clock survives list updates. */
+  firstTry?: number;
 }
 /** Beyond the preload target: still listed and playable on demand, just not fetched ahead. */
 export interface PreloadLimits { parallel: number; preload: PreloadSetting }
@@ -71,6 +78,15 @@ const rejectedLink = (error: string | null) => /requested format.*not available|
  * for the rest of the session.
  */
 const SWAP_SOURCE_AFTER = 2;
+/**
+ * SEAMLESS-002: how long a song may fail before the list quietly stops showing it.
+ *
+ * Owner: "the music list should silently remove songs it cant find for more than 10 minutes".
+ * Retrying for ever is what left the dashboard at 95 of 97 with a spinner running all day over two
+ * songs no source has. The clock starts at the FIRST attempt and survives the queue being
+ * re-stated, and a song parked for cache room is exempt — a full cache is not the song's fault.
+ */
+const GIVE_UP_AFTER = 10 * 60_000;
 
 export class QueuePreloader {
   private entries = new Map<string, Entry>();
@@ -86,6 +102,8 @@ export class QueuePreloader {
   private preload: PreloadSetting = { target: 'all', count: 20 };
   private wantedKeys = new Set<string>();
   private automaticKeys = new Set<string>();
+  /** Songs given up on after GIVE_UP_AFTER, so the list can quietly stop showing them. */
+  private expired: Set<string>;
   /** One-shot requests survive automatic queue updates, but stop overriding count once ready. */
   private manualKeys = new Set<string>();
   private resolvedUrls = new Map<string, string>();
@@ -94,6 +112,7 @@ export class QueuePreloader {
   private config: Promise<unknown> = Promise.resolve();
   private unsubscribe: () => void;
   constructor(private readonly backend: Backend) {
+    this.expired = new Set(backend.expiredKeys?.() ?? []);
     this.unsubscribe = backend.library.subscribe(() => this.schedule());
   }
   /**
@@ -112,7 +131,8 @@ export class QueuePreloader {
    * "does not retry once removed / outside COUNT" guards assert).
    */
   private syncBeat(): void {
-    const work = !this.stopped && [...this.entries].some(([key, e]) => this.wantedKeys.has(key) && e.phase !== 'ready');
+    const work = !this.stopped && [...this.entries].some(([key, e]) =>
+      this.wantedKeys.has(key) && e.phase !== 'ready' && e.phase !== 'expired');
     if (work && this.beat === undefined) {
       this.beat = setInterval(() => this.maintain(), MAINTENANCE_INTERVAL);
       // Unref'd where supported so the beat never holds a test or CLI process open.
@@ -123,6 +143,33 @@ export class QueuePreloader {
     }
   }
   subscribe(fn: () => void): () => void { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
+  /**
+   * The playable local link for a song, or null when the shell does not hold its bytes.
+   *
+   * SEAMLESS-001: answered from what the loader already resolved, so starting a song the app has
+   * already downloaded costs no network round trip. Readiness is always re-read from the library,
+   * never cached, because eviction can take a file away between the question and the answer.
+   */
+  /** Last native-verified link; a hint for direct on-demand storage checks, NOT proof of readiness. */
+  sourceHint(track: Track): string | null {
+    const e = this.entries.get(track.key);
+    const url = e?.url ?? this.resolvedUrls.get(track.key) ?? this.backend.known?.(track) ?? null;
+    return url && !e?.dead?.includes(url) ? url : null;
+  }
+  readyUrl(track: Track): string | null {
+    const url = this.sourceHint(track);
+    return url && this.backend.library.status(url) === 'ready' ? url : null;
+  }
+  private setExpired(key: string, expired: boolean): void {
+    const changed = expired ? !this.expired.has(key) : this.expired.has(key);
+    if (!changed) return;
+    if (expired) this.expired.add(key); else this.expired.delete(key);
+    this.backend.rememberExpired?.(key, expired);
+  }
+  /** Whether this song can start playing from local disk right now. */
+  isReady(track: Track): boolean { return this.readyUrl(track) !== null; }
+  /** Songs no source could supply within GIVE_UP_AFTER; the list drops these silently. */
+  expiredKeys(): ReadonlySet<string> { return this.expired; }
   snapshot(): QueueCacheStatus {
     return this.snapshotFor([...this.entries.values()].map(e => e.track));
   }
@@ -139,6 +186,8 @@ export class QueuePreloader {
       if (!this.blocked && this.manualKeys.has(track.key) && state !== 'ready' && e?.phase !== 'failed') result.bulkActive = true;
       if (state === 'ready') result.ready++;
       else if (state === 'running' || e?.phase === 'preparing' || e?.phase === 'downloading') result.active++;
+      // Given up on: it reads as unavailable, and nothing is booked for it, so nothing may spin.
+      else if (e?.phase === 'expired') result.failed++;
       else if (e?.phase === 'failed') {
         if (this.blocked && url && quotaError(this.backend.library.error(url))) result.blocked = true;
         else {
@@ -162,6 +211,9 @@ export class QueuePreloader {
         this.entries.set(track.key, e);
       }
       this.manualKeys.add(track.key);
+      // An explicit request is a new instruction: a song the list gave up on gets another go.
+      if (e.phase === 'expired') { e.phase = 'waiting'; e.attempts = 0; e.after = 0; e.firstTry = undefined; }
+      this.setExpired(track.key, false);
       if (e.phase === 'waiting' || (e.phase === 'ready' && e.url && this.backend.library.status(e.url) !== 'ready')) {
         e.phase = 'waiting'; e.after = 0; e.attempts = 0;
       }
@@ -176,7 +228,7 @@ export class QueuePreloader {
   update(tracks: readonly Track[]): void {
     this.automaticKeys = new Set(tracks.map(t => t.key));
     const next = new Map<string, Entry>();
-    for (const track of tracks) if (!next.has(track.key)) next.set(track.key, this.entries.get(track.key) ?? { track, url: this.resolvedUrls.get(track.key) ?? this.backend.known?.(track) ?? undefined, phase: 'waiting', attempts: 0, after: 0 });
+    for (const track of tracks) if (!next.has(track.key)) next.set(track.key, this.entries.get(track.key) ?? { track, url: this.resolvedUrls.get(track.key) ?? this.backend.known?.(track) ?? undefined, phase: this.expired.has(track.key) ? 'expired' : 'waiting', attempts: 0, after: 0 });
     for (const key of this.manualKeys) {
       const e = this.entries.get(key);
       if (e && !next.has(key)) next.set(key, e);
@@ -218,7 +270,7 @@ export class QueuePreloader {
       status: url ? (this.backend.library.status(url) as LocalStatus) : 'unknown',
       kept: o.kept, percent: o.percent, blocked: this.blocked && e?.phase === 'failed',
       inTarget: this.wantedKeys.has(key), error: url ? this.backend.library.error(url) : null,
-      givenUp: e?.phase === 'failed',
+      givenUp: e?.phase === 'failed' || e?.phase === 'expired',
     });
   }
   private recomputeTarget(): void {
@@ -261,6 +313,13 @@ export class QueuePreloader {
     e.phase = 'failed';
     if (quotaError(error)) { this.blocked = true; e.after = Infinity; }
     else {
+      // SEAMLESS-002: ten minutes of real failure is enough. Stop, publish the key so the list can
+      // drop it, and book nothing — a song still waiting for cache room never reaches here.
+      if (e.firstTry !== undefined && Date.now() - e.firstTry >= GIVE_UP_AFTER) {
+        e.phase = 'expired'; e.after = Infinity;
+        this.setExpired(e.track.key, true);
+        return;
+      }
       e.after = Date.now() + RETRY_DELAYS[Math.min(RETRY_DELAYS.length - 1, Math.max(0, e.attempts - 1))]!;
       // Explicit rejection skips the link immediately; a transient error gets one quick retry.
       // Remember the failed link so the resolver actually tries a different upload/source.
@@ -307,10 +366,22 @@ export class QueuePreloader {
   }
   private pump(): void {
     if (this.stopped) return;
+    // A deadline must not wait for another failed attempt: busy download slots can starve a due
+    // retry indefinitely. The live APK kept Plant Island failed for 16 minutes with this bug.
+    const now = Date.now();
+    for (const e of this.entries.values()) {
+      if ((e.phase !== 'failed' && !(e.phase === 'waiting' && e.attempts > 0)) ||
+          e.firstTry === undefined || now - e.firstTry < GIVE_UP_AFTER ||
+          (e.url && ['ready', 'running'].includes(this.backend.library.status(e.url))) ||
+          quotaError(e.url ? this.backend.library.error(e.url) : null)) continue;
+      e.phase = 'expired'; e.after = Infinity;
+      this.setExpired(e.track.key, true);
+      this.manualKeys.delete(e.track.key);
+    }
     for (const e of this.entries.values()) {
       if (!e.url || e.phase === 'preparing') continue;
       const state = this.backend.library.status(e.url);
-      if (state === 'ready') { e.phase = 'ready'; e.attempts = 0; e.after = 0; this.manualKeys.delete(e.track.key); }
+      if (state === 'ready') { e.phase = 'ready'; e.attempts = 0; e.after = 0; e.firstTry = undefined; this.manualKeys.delete(e.track.key); this.setExpired(e.track.key, false); this.backend.remember?.(e.track, e.url); }
       else if (e.phase === 'downloading' && state === 'missing') this.fail(e, this.backend.library.error(e.url));
       // Eviction is not a fresh download request: avoid an endless fill/evict loop.
       else if (e.phase === 'ready') { e.phase = 'waiting'; e.attempts = 0; e.after = Infinity; }
@@ -328,6 +399,7 @@ export class QueuePreloader {
       if (active >= this.parallel) break;
       if ((e.phase !== 'waiting' && e.phase !== 'failed') || e.after > Date.now() || !this.wantedKeys.has(key)) continue;
       e.phase = 'preparing'; e.attempts++; active++;
+      e.firstTry ??= Date.now();
       void this.prepare(e);
     }
     this.emit();
@@ -354,7 +426,7 @@ export class QueuePreloader {
       await this.backend.library.ensure(e.url, `${e.track.title} — ${e.track.artist}`, true, true);
       if (!live()) return;
       const state = this.backend.library.status(e.url);
-      if (state === 'ready') { e.phase = 'ready'; e.attempts = 0; e.after = 0; this.manualKeys.delete(e.track.key); }
+      if (state === 'ready') { e.phase = 'ready'; e.attempts = 0; e.after = 0; e.firstTry = undefined; this.manualKeys.delete(e.track.key); this.setExpired(e.track.key, false); this.backend.remember?.(e.track, e.url); }
       else if (state === 'running') e.phase = 'downloading';
       else this.fail(e, this.backend.library.error(e.url));
     } catch (error) {

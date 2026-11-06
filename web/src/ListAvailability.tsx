@@ -8,10 +8,10 @@ export interface ListAvailabilityProps {
   failed: number;
   blocked: boolean;
   /**
-   * Songs that failed and have another attempt booked (RETRY-SPIN-001).
+   * Songs that failed and have another attempt booked.
    *
-   * Owner: "i dont see a spinning arrow indicating active retrying." Between attempts nothing is
-   * downloading, so `active` alone made the card look idle while the app was still working on it.
+   * SPIN-TRUTH-001: this is said in WORDS only. A song in backoff is waiting, not being worked on,
+   * and an arrow turning for it made a stuck list look busy for ever.
    */
   retrying?: number;
   /** Names the list for assistive tech, e.g. 'Road Trip'. */
@@ -47,9 +47,14 @@ export function ListAvailability({ total, ready, active, failed, blocked, retryi
    */
   const previousReady = useRef(ready);
   const [spin, setSpin] = useState<'load' | 'unload' | null>(null);
-  // Waiting for the next attempt is work in progress, so the arrow keeps turning. A song parked for
-  // want of cache space is not retrying: it waits for room, and the blocked note explains that.
-  const working = active || (retrying > 0 && !blocked);
+  /**
+   * SPIN-TRUTH-001: the arrow turns only while the app is really resolving or downloading.
+   *
+   * It used to turn for anything with a retry booked, so a list that was only serving backoff — or
+   * one parked for cache space, or simply failed — looked like work in progress indefinitely. The
+   * retry is still announced in the text below; the animation now means "something is moving".
+   */
+  const working = active;
   useEffect(() => {
     const fell = ready < previousReady.current;
     previousReady.current = ready;

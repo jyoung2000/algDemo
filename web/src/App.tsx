@@ -19,7 +19,8 @@ import { setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-
 import { PLAY_THROUGH_DEFAULT } from './engine/crossfade';
 import { dl, downloadsAvailable } from './engine/downloads';
 import { readResume } from './engine/resume';
-import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, canPlayHere, classNames, describeTaste, fmtBytes, keepFocus, historyBack, mergeRerank, nextRepeat, playbackOfTrack, stepQueue, type RepeatMode } from './util';
+import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, canPlayHere, classNames, describeTaste, dropExpired, expiredKeysOf, fmtBytes, keepFocus, historyBack, mergeRerank, nextRepeat, playbackOfTrack, readyFilter, stepQueue, type RepeatMode } from './util';
+import { queueAudio } from './engine/queue-audio';
 
 type Tab = 'discover' | 'saved' | 'profile' | 'downloads' | 'settings';
 
@@ -93,6 +94,10 @@ export function App() {
   const playingListRef = useRef<string | null>(null);
   const [playingContext, setPlayingContext] = useState<string | null>(null);
   const [visibleSavedList, setVisibleSavedList] = useState('all');
+  // Readiness and the ten-minute give-up set change outside React as native downloads finish.
+  // Keep the displayed list and committed Up Next in sync without polling or touching kept files.
+  const [cacheRevision, setCacheRevision] = useState(0);
+  useEffect(() => queueAudio.subscribe(() => setCacheRevision(x => x + 1)), []);
   const [offline, setOffline] = useState(false);
   const docked = useMedia('(max-width: 899px)');
   const jobRef = useRef<string | null>(null);
@@ -179,7 +184,12 @@ export function App() {
   }, [settings?.eq, settings?.mix, settings?.local_mix, settings?.play_through]);
 
   // ---------------------------------------------------------------- recommendations
-  const items = useMemo(() => (result?.items ?? []).filter((x) => !hidden.has(x.track.key)), [result, hidden]);
+  const expired = expiredKeysOf(queueAudio);
+  // A revision for an ordinary progress event must not recreate the prefetch list: update() emits
+  // another progress event, which would otherwise form a render/update loop.
+  const expiredSignature = [...expired].sort().join('\0');
+  const visibleSeeds = useMemo(() => seeds.filter(t => !expired.has(t.key)), [seeds, expiredSignature]);
+  const items = useMemo(() => dropExpired((result?.items ?? []).filter((x) => !hidden.has(x.track.key)), expired), [result, hidden, expiredSignature]);
 
   const applyResult = useCallback((r: RecResult) => {
     setResult((prev) => {
@@ -281,15 +291,20 @@ export function App() {
   const activeItems = useMemo(() => playingContext === null ? items : playbackRows(savedTracks(saved, lists, playingContext)), [items, playingContext, saved, lists]);
   const playingKey = playing?.track.key ?? null;
   const inQueue = playingKey != null && activeItems.some((x) => x.track.key === playingKey);
-  const queueOpts = { shuffle, repeat, heard: heardRef.current };
+  const ready = readyFilter(queueAudio, downloadsAvailable());
+  const readySignature = useMemo(() => ready ? activeItems.filter(x => ready(x.track)).map(x => x.track.key).join('\0') : '', [activeItems, cacheRevision]);
+  const queueOpts = { shuffle, repeat, heard: heardRef.current, ready };
   const nextStep = stepQueue(activeItems, inQueue ? playingKey : null, 1, hidden, queueOpts);
-  const back = shuffle ? historyBack(historyRef.current, playingKey, activeItems, hidden) : null;
+  const back = shuffle ? historyBack(historyRef.current, playingKey, ready ? activeItems.filter(x => ready(x.track)) : activeItems, hidden) : null;
   const prevStep = shuffle ? (back ? { item: back.item, wrapped: false } : null) : inQueue ? stepQueue(activeItems, playingKey, -1, hidden, queueOpts) : null;
   const goNext = () => {
-    if (nextStep) play(nextStep.item, { newRound: nextStep.wrapped, keepList: true });
+    // Recheck the shell's current local-file answer at the moment of transition: eviction can
+    // happen after Up Next was rendered. A stale pick must never become a spinner or preview.
+    const live = stepQueue(activeItems, inQueue ? playingKey : null, 1, hidden, queueOpts);
+    if (live && (!ready || ready(live.item.track))) play(live.item, { newRound: live.wrapped, keepList: true });
   };
   const goPrev = () => {
-    if (!prevStep) return;
+    if (!prevStep || (ready && !ready(prevStep.item.track))) return;
     if (back) historyRef.current = historyRef.current.slice(0, back.keep);
     play(prevStep.item, { back: Boolean(back), keepList: true });
   };
@@ -320,20 +335,20 @@ export function App() {
     const rest = shuffle ? activeItems.filter((x) => x.track.key !== playingKey && !heardRef.current.has(x.track.key) && !hidden.has(x.track.key)) : activeItems.slice(i + 1).filter(x => !hidden.has(x.track.key));
     const ordered = nextKey ? [...rest.filter((x) => x.track.key === nextKey), ...rest.filter((x) => x.track.key !== nextKey)] : rest;
     return ordered
-      .filter(playable)
+      .filter(x => playable(x) && (!ready || ready(x.track)))
       .slice(0, 4)
       .map((x) => ({ key: x.track.key, title: x.track.title, artist: artistOf(x.track), artwork: x.track.artwork, preview: x.playback.preview, track: x.track }));
-  }, [activeItems, inQueue, playingKey, shuffle, hidden, nextKey]);
+  }, [activeItems, inQueue, playingKey, shuffle, hidden, nextKey, readySignature]);
   // The four visible Up Next rows are NOT the download queue. Prepare every entry, even before Play.
   const cacheTracks = useMemo(() => preparationTracks(playing?.track ?? null, upNext.flatMap(x => x.track ? [x.track] : []),
     activeItems.filter(x => !hidden.has(x.track.key)).map(x => x.track),
-    [...seeds, ...items.filter(x => !hidden.has(x.track.key)).map(x => x.track)],
+    [...visibleSeeds, ...items.filter(x => !hidden.has(x.track.key)).map(x => x.track)],
     tab === 'saved' ? savedTracks(saved, lists, visibleSavedList) : []),
-    [playing, upNext, activeItems, hidden, seeds, items, tab, saved, lists, visibleSavedList]);
+    [playing, upNext, activeItems, hidden, visibleSeeds, items, tab, saved, lists, visibleSavedList]);
   // Just the songs this screen is showing. cacheTracks is the union across tabs and the player,
   // so using it here would count songs the listener cannot see in the bar's denominator.
-  const queueTracks = useMemo(() => [...seeds, ...items.filter((x) => !hidden.has(x.track.key)).map((x) => x.track)],
-    [seeds, items, hidden]);
+  const queueTracks = useMemo(() => [...visibleSeeds, ...items.filter((x) => !hidden.has(x.track.key)).map((x) => x.track)],
+    [visibleSeeds, items, hidden]);
   const keptKeys = useKeptKeys(cacheTracks);
   const cardCache = useCardCache(cacheTracks, keptKeys);
 
@@ -622,7 +637,7 @@ export function App() {
                 <>
                   <div className="queue__head">
                     <h2 id="queue-h">
-                      Songs <span className="count">{seeds.length + items.length}</span>
+                      Songs <span className="count">{visibleSeeds.length + items.length}</span>
                     </h2>
                     <span className="queue__meta">
                       {running && result.phase === 'gathering' ? (
@@ -661,18 +676,18 @@ export function App() {
                       <Glyph name="info" size={12} /> {tasteLine}
                     </p>
                   )}
-                  {result.count < result.asked && !sample && (
+                  {(result.count - (result.items ?? []).filter(x => expired.has(x.track.key)).length) < result.asked && !sample && (
                     <p className="note">
-                      Found {result.count} songs worth suggesting{result.empty_reason ? ` — ${result.empty_reason}` : '.'} Airwave does not pad the list.
+                      Found {result.count - (result.items ?? []).filter(x => expired.has(x.track.key)).length} songs worth suggesting{result.empty_reason ? ` — ${result.empty_reason}` : '.'} Airwave does not pad the list.
                     </p>
                   )}
                   {/* SRC-WARN-001: a quiet provider is a status detail, not news for the listener.
                       It is reported in Settings, next to the other runtime checks. */}
-                  {items.length || seeds.length ? (
+                  {items.length || visibleSeeds.length ? (
                     <>
                     <ListDownloadBar tracks={queueTracks} label="this list" />
                     <Results
-                      seeds={seeds}
+                      seeds={visibleSeeds}
                       onRemoveSeed={(k) => saveSeeds(seeds.filter((s) => s.key !== k))}
                       onEmphasis={(k, e) => saveSeeds(seeds.map((s) => (s.key === k ? { ...s, emphasis: e } : s)))}
                       items={items}
@@ -703,11 +718,11 @@ export function App() {
                 <div className="empty">
                   <span className="sdot sdot--busy" aria-hidden="true" /> {job?.progress || 'Asking the music services…'}
                 </div>
-              ) : seeds.length ? (
+              ) : visibleSeeds.length ? (
                 <>
                   <div className="queue__head">
                     <h2 id="queue-h">
-                      Songs <span className="count">{seeds.length}</span>
+                      Songs <span className="count">{visibleSeeds.length}</span>
                     </h2>
                     {/* LIST-METER-003: same pairing on the seeds-only header. */}
                     <div className="queue__actions">
@@ -719,7 +734,7 @@ export function App() {
                     </div>
                   </div>
                   <Results
-                    seeds={seeds}
+                    seeds={visibleSeeds}
                     onRemoveSeed={(k) => saveSeeds(seeds.filter((s) => s.key !== k))}
                     onEmphasis={(k, e) => saveSeeds(seeds.map((s) => (s.key === k ? { ...s, emphasis: e } : s)))}
                     items={[]}
