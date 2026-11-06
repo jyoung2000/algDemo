@@ -10,6 +10,8 @@ import { LocalApi } from './local-api';
 import { Http, type HttpPort } from './net';
 import { Bandcamp } from './bandcamp';
 import { Audius } from './audius';
+import { InternetArchive } from './internet-archive';
+import { matchRecordings } from './identity';
 import { MemoryBackend, Store } from './store';
 
 const live = process.env['AIRWAVE_LIVE'] === '1';
@@ -39,6 +41,15 @@ const STUCK = [
 ];
 
 describe.skipIf(!live)('the source chain, against the real services', () => {
+  it('asks the real licensed Archive catalogue, never swaps the two missing recordings', async () => {
+    const archive = new InternetArchive(new Http(port));
+    const sample = await archive.search('Cold Funk', 6);
+    expect(sample.some(t => t.artists.includes('Kevin MacLeod') && t.duration === 288 && t.url.endsWith('.mp3'))).toBe(true);
+    for (const missing of [STUCK[0]!, STUCK[3]!]) {
+      const candidates = await archive.search(missing.title, 4);
+      expect(candidates.some(c => matchRecordings(missing, c).verdict === 'same')).toBe(false);
+    }
+  }, 100_000);
   it('retrieves full-length public Audius and Bandcamp track metadata', async () => {
     const http = new Http(port);
     const audius = await new Audius(http).search('Bass Go Boom LOUDWERX', 8);

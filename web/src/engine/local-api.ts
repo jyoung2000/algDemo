@@ -49,6 +49,7 @@ import { AppleMusic } from './apple';
 import { SoundCloud } from './soundcloud';
 import { Bandcamp } from './bandcamp';
 import { Audius } from './audius';
+import { InternetArchive } from './internet-archive';
 import { Spotify, looksLikeUrl, normaliseUrl, providerForUrl } from './spotify';
 import type { Store } from './store';
 import { YouTubeMusic } from './ytmusic';
@@ -156,6 +157,7 @@ export class LocalApi {
   readonly sc: SoundCloud;
   readonly bandcamp: Bandcamp;
   readonly audius: Audius;
+  readonly archive: InternetArchive;
   readonly apple: AppleMusic;
   readonly sp: Spotify;
   readonly genius: Genius;
@@ -182,6 +184,7 @@ export class LocalApi {
     this.sc = new SoundCloud(this.http, this.store);
     this.bandcamp = new Bandcamp(this.http, this.store);
     this.audius = new Audius(this.http, this.store);
+    this.archive = new InternetArchive(this.http, this.store);
     this.apple = new AppleMusic(this.http, this.store);
     this.sp = new Spotify(this.http, this.store);
     this.genius = new Genius(this.http);
@@ -1245,6 +1248,7 @@ export class LocalApi {
         videos: { search: (q: string, limit: number, c: unknown) => this.ytm.searchVideos(q, limit, c as never) } as never,
         bandcamp: this.bandcamp as never,
         audius: this.audius as never,
+        archive: this.archive as never,
       }, { ctx, exclude });
     } catch (e) {
       if (e instanceof FetchError || e instanceof ProviderError) return fail(502, `No source answered: ${e.message}`);

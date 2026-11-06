@@ -316,7 +316,9 @@ object Downloads {
     val u = runCatching { URI(raw) }.getOrNull() ?: return false
     if (u.scheme != "https" || u.userInfo != null) return false
     val host = (u.host ?: return false).lowercase()
-    return host in YTDLP_HOSTS || (YTDLP_SUFFIXES.any(host::endsWith) && host != "www.bandcamp.com" && Regex("^/track/[^/]+/?$").matches(u.path ?: ""))
+    val archiveAudio = host == "archive.org" && u.port in listOf(-1, 443) && u.query == null && u.fragment == null &&
+      !(u.path ?: "").contains("..") && Regex("^/download/[A-Za-z0-9][A-Za-z0-9._-]{1,100}/[A-Za-z0-9][A-Za-z0-9._ ()&+-]{0,180}\\.(mp3|m4a|flac)$", RegexOption.IGNORE_CASE).matches(u.path ?: "")
+    return archiveAudio || host in YTDLP_HOSTS || (YTDLP_SUFFIXES.any(host::endsWith) && host != "www.bandcamp.com" && Regex("^/track/[^/]+/?$").matches(u.path ?: ""))
   }
 
   fun health(context: Context): JSONObject {

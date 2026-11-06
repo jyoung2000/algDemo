@@ -18,7 +18,8 @@
  *      solely when the matcher calls it the same recording, never as a near miss.
  *   3. SoundCloud, the same phrasings — both shells already allow yt-dlp to fetch soundcloud.com,
  *      so a match there is genuinely downloadable rather than merely identified.
- *   4. Bandcamp and Audius public tracks, held to the same recording identity standard.
+ *   4. Bandcamp and Audius public tracks, then licensed Internet Archive single-track uploads,
+ *      all held to the same recording identity standard.
  *
  * A candidate must be confidently the same recording; a near miss never makes a full song ready.
  */
@@ -37,11 +38,12 @@ export interface ChainSources {
   videos?: SearchSource | null;
   bandcamp?: SearchSource | null;
   audius?: SearchSource | null;
+  archive?: SearchSource | null;
 }
 
 export interface FullSongResult {
   id: string | null;
-  source: 'match' | 'video' | 'soundcloud' | 'bandcamp' | 'audius' | 'none';
+  source: 'match' | 'video' | 'soundcloud' | 'bandcamp' | 'audius' | 'archive' | 'none';
   /** A direct link for a source that is not a YouTube video id (SoundCloud). */
   url?: string;
   /** Optional source diagnostic; never authorizes uncertain playback. */
@@ -94,9 +96,9 @@ export function searchVariants(t: Pick<Track, 'title' | 'artists'>): string[] {
 
 /** Turn a verified whole-track candidate into the downloader's link or video id. */
 
-const resultFor = (t: Track, source: 'match' | 'video' | 'soundcloud' | 'bandcamp' | 'audius'): FullSongResult => {
+const resultFor = (t: Track, source: 'match' | 'video' | 'soundcloud' | 'bandcamp' | 'audius' | 'archive'): FullSongResult => {
   // Site uploads use their validated track links; YouTube Music uses the video id.
-  const url = ['soundcloud', 'bandcamp', 'audius'].includes(t.provider) && t.url ? String(t.url) : undefined;
+  const url = ['soundcloud', 'bandcamp', 'audius', 'archive'].includes(t.provider) && t.url ? String(t.url) : undefined;
   return { id: url ? null : (t.platform_id ?? null), source, ...(url ? { url } : {}) };
 };
 
@@ -164,6 +166,13 @@ export async function findFullSong(t: Track, s: ChainSources, o: ChainOptions = 
   if (s.audius) {
     const onAudius = await ask(s.audius, t, variants, limit, o.ctx, dead);
     if (onAudius) return resultFor(onAudius, 'audius');
+  }
+  if (s.archive) {
+    // Last resort: at most two distinct queries, so unavailable songs do not keep the spinner
+    // alive through a long sequence of licensed Archive item-detail requests.
+    const archiveQueries = [...new Set([variants[0], t.title].filter((v): v is string => !!v))].slice(0, 2);
+    const onArchive = await ask(s.archive, t, archiveQueries, Math.min(4, limit), o.ctx, dead);
+    if (onArchive) return resultFor(onArchive, 'archive');
   }
 
   return { id: null, source: 'none' };

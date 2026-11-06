@@ -49,6 +49,26 @@ it('can pay for the SoundCloud client-id bundle while resolving a full song', as
   expect(r.body).toMatchObject({ source: 'soundcloud', url: 'https://soundcloud.com/kmacleod/wallpaper' });
 });
 
+it('falls back to a licensed Archive single-track audio file through LocalApi', async () => {
+  const store = await Store.open(new MemoryBackend());
+  const asked: string[] = [];
+  const enc = (o: unknown) => new TextEncoder().encode(JSON.stringify(o));
+  const api = new LocalApi({ store, encoder: null, spotifySearch: () => async () => [], port: {
+    request: async (req: { url: string }) => {
+      asked.push(req.url);
+      if (req.url.includes('/advancedsearch.php')) return { status: 200, headers: {}, body: enc({ response: { docs: [{ identifier: 'cold-funk-by-kevin-macleod' }] } }) };
+      if (req.url.includes('/metadata/cold-funk-by-kevin-macleod')) return { status: 200, headers: {}, body: enc({
+        metadata: { mediatype: 'audio', identifier: 'cold-funk-by-kevin-macleod', title: 'cold-funk-by-kevin-macleod', creator: 'Kevin MacLeod', licenseurl: 'https://creativecommons.org/licenses/by-nd/4.0/' },
+        files: [{ name: 'cold-funk-by-kevin-macleod.mp3', size: '11690184', length: '288.29', source: 'original' }],
+      }) };
+      return { status: 200, headers: {}, body: enc({}) };
+    },
+  } });
+  const r = await api.handle('POST', '/api/full-song', { track: { key: 'cc', provider: 'deezer', platform_id: '1', title: 'Cold Funk', artists: ['Kevin MacLeod'], duration: 288 }, retry: true });
+  expect(asked.some(u => u.includes('archive.org/advancedsearch.php'))).toBe(true);
+  expect(r.body).toMatchObject({ id: null, source: 'archive', url: 'https://archive.org/download/cold-funk-by-kevin-macleod/cold-funk-by-kevin-macleod.mp3' });
+});
+
 it('does not hand back a rejected own YouTube link when an alternative was requested', async () => {
   const store = await Store.open(new MemoryBackend());
   const asked: string[] = [];

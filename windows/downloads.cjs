@@ -21,6 +21,13 @@ const path = require('node:path');
 const YTDLP_HOSTS = ['youtu.be', 'youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'soundcloud.com', 'www.soundcloud.com', 'm.soundcloud.com', 'on.soundcloud.com', 'audius.co'];
 const YTDLP_SUFFIXES = ['.bandcamp.com'];
 const SPOTDL_HOSTS = ['open.spotify.com'];
+function archiveAudioUrl(u) {
+  if (u.hostname !== 'archive.org' || u.search || u.hash || (u.port && u.port !== '443')) return false;
+  try {
+    const filePath = decodeURIComponent(u.pathname);
+    return !filePath.includes('..') && /^\/download\/[A-Za-z0-9][A-Za-z0-9._-]{1,100}\/[A-Za-z0-9][A-Za-z0-9._ ()&+-]{0,180}\.(?:mp3|m4a|flac)$/i.test(filePath);
+  } catch { return false; }
+}
 /** One slot is one yt-dlp process, so a desktop takes more of them than a phone. */
 const PARALLEL_MIN = 1;
 const PARALLEL_MAX = 6;
@@ -39,7 +46,7 @@ function urlAllowedFor(tool, raw) {
   if (u.protocol !== 'https:' || u.username || u.password || String(raw).length > 500 || /[\s\x00-\x1f]/.test(String(raw))) return false;
   const host = u.hostname.toLowerCase();
   if (tool === 'spotdl') return SPOTDL_HOSTS.includes(host) && /^\/(intl-[a-z]{2}(-[a-z]{2})?\/)?track\/[A-Za-z0-9]{10,30}\/?$/.test(u.pathname);
-  if (tool === 'yt-dlp') return YTDLP_HOSTS.includes(host) || (YTDLP_SUFFIXES.some(s => host.endsWith(s)) && host !== 'www.bandcamp.com' && /^\/track\/[^/]+\/?$/.test(u.pathname));
+  if (tool === 'yt-dlp') return archiveAudioUrl(u) || YTDLP_HOSTS.includes(host) || (YTDLP_SUFFIXES.some(s => host.endsWith(s)) && host !== 'www.bandcamp.com' && /^\/track\/[^/]+\/?$/.test(u.pathname));
   return false;
 }
 

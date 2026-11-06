@@ -51,6 +51,13 @@ describe('urlAllowedFor', () => {
     // SOURCE-MORE-001: both verified downloadable in full by the packaged yt-dlp on 2026-11-05.
     ['yt-dlp', 'https://audius.co/Lofibeat/stars-in-the-sky-lofi-beats-370899', true],
     ['yt-dlp', 'https://benprunty.bandcamp.com/track/giant-step', true],
+    ['yt-dlp', 'https://archive.org/download/cold-funk-by-kevin-macleod/cold-funk-by-kevin-macleod.mp3', true],
+    ['yt-dlp', 'https://archive.org/download/item/A%20Song.m4a', true],
+    ['yt-dlp', 'https://archive.org/download/item/evil.zip', false],
+    ['yt-dlp', 'https://archive.org/download/item/a%2Fsecret.mp3', false],
+    ['yt-dlp', 'https://archive.org/download/item/../secret.mp3', false],
+    ['yt-dlp', 'https://archive.org/download/item/song.mp3?redirect=https://evil.example', false],
+    ['yt-dlp', 'https://archive.org.evil.example/download/item/song.mp3', false],
     ['yt-dlp', 'https://bandcamp.com/track/giant-step', false],
     ['yt-dlp', 'https://benprunty.bandcamp.com.evil.example/track/x', false],
     ['yt-dlp', 'http://benprunty.bandcamp.com/track/giant-step', false],
@@ -87,6 +94,10 @@ describe('targetFor / matchTarget', () => {
   it('a Bandcamp or Audius song goes to yt-dlp by its link', () => {
     expect(targetFor({ provider: 'bandcamp', url: 'https://benprunty.bandcamp.com/track/giant-step' })).toEqual({ tool: 'yt-dlp', url: 'https://benprunty.bandcamp.com/track/giant-step' });
     expect(targetFor({ provider: 'audius', url: 'https://audius.co/x/y' })).toEqual({ tool: 'yt-dlp', url: 'https://audius.co/x/y' });
+  });
+  it('a licensed Archive song goes to yt-dlp by its direct file link', () => {
+    const url = 'https://archive.org/download/cold-funk-by-kevin-macleod/cold-funk-by-kevin-macleod.mp3';
+    expect(targetFor({ provider: 'archive', url })).toEqual({ tool: 'yt-dlp', url });
   });
   it('a Deezer or Apple song has no direct target and needs a match first', () => {
     expect(targetFor({ provider: 'deezer', platform_id: '1', url: 'https://www.deezer.com/track/1' })).toBeNull();

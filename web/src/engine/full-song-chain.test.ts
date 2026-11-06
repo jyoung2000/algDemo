@@ -260,6 +260,23 @@ describe('a source that already failed', () => {
  * nothing else had, and they are held to the same strict bar as a user video upload: a confident
  * match or nothing. No "close enough" substitute comes from either.
  */
+describe('licensed Internet Archive leg', () => {
+  const url = 'https://archive.org/download/wallpaper-by-kevin-macleod/wallpaper-by-kevin-macleod.mp3';
+  const archive = (title = 'Wallpaper', duration = 180) => cand({ provider: 'archive', title, duration, url });
+  const chain = (candidate: Track): ChainSources => ({
+    ytm: { search: async () => [] }, sc: null,
+    archive: { search: async () => [candidate] },
+  });
+  it('offers the exact recording by its direct audio URL', async () => {
+    expect(await findFullSong(track(), chain(archive()), {})).toMatchObject({ id: null, source: 'archive', url });
+  });
+  it('does not offer a different rendition or an excluded URL', async () => {
+    expect(await findFullSong(track(), chain(archive('Wallpaper (Remix)')), {})).toMatchObject({ source: 'none' });
+    expect(await findFullSong(track(), chain(archive('Wallpaper', 195)), {})).toMatchObject({ source: 'none' });
+    expect(await findFullSong(track(), chain(archive()), { exclude: [url] })).toMatchObject({ source: 'none' });
+  });
+});
+
 describe('Bandcamp and Audius legs', () => {
   const chain = (o: { bandcamp?: Record<string, Track[]>; audius?: Record<string, Track[]> }) => {
     const asked = { bandcamp: [] as string[], audius: [] as string[] };
