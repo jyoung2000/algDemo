@@ -41,7 +41,7 @@ const STUCK = [
 describe.skipIf(!live)('the source chain, against the real services', () => {
   it('retrieves full-length public Audius and Bandcamp track metadata', async () => {
     const http = new Http(port);
-    const audius = await new Audius(http).search('Stars in the Sky Lofibeat', 8);
+    const audius = await new Audius(http).search('Bass Go Boom LOUDWERX', 8);
     const bandcamp = await new Bandcamp(http).search('Giant Step Ben Prunty', 8);
     // These are harmless real searches: the adapter must return a whole-track link and measured
     // length, not a preview. Network or upstream changes fail visibly instead of fabricating data.
@@ -49,6 +49,15 @@ describe.skipIf(!live)('the source chain, against the real services', () => {
     console.log('  Bandcamp: ', bandcamp.map(t => `${t.title} ${t.duration}s ${t.url}`).join(' | '));
     expect(audius.some(t => t.url?.startsWith('https://audius.co/') && Number(t.duration) > 30)).toBe(true);
     expect(bandcamp.some(t => t.url?.includes('.bandcamp.com/track/') && Number(t.duration) > 30)).toBe(true);
+    // Audius sometimes retains metadata after a creator has removed the stream. A real byte range
+    // from its public full-audio endpoint is stronger evidence than a duration or extractor JSON.
+    const exemplar = audius.find(t => t.title?.toLowerCase().includes('bass go boom'));
+    expect(exemplar).toBeDefined();
+    const stream = await fetch(`https://api.audius.co/v1/tracks/${exemplar!.platform_id}/stream?app_name=AirwaveDiscovery`,
+      { headers: { Range: 'bytes=0-4095' } });
+    expect(stream.ok).toBe(true);
+    expect(stream.headers.get('content-type')).toMatch(/^audio\//);
+    await stream.body?.cancel();
   }, 100_000);
   it('resolves the song that only exists as a YouTube video', async () => {
     const store = await Store.open(new MemoryBackend());

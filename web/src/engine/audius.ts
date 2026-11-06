@@ -2,14 +2,11 @@
  * Audius adapter (SOURCE-MORE-001).
  *
  * api.audius.co/v1 is Audius's own documented, keyless read API (an `app_name` is asked for by the
- * docs and sent here; no key, no account, no paid tier). It is in this app for one reason: every
- * track it returns is a whole upload with a real length, and yt-dlp's `audius` extractor downloads
- * it from the same stream endpoint the site plays, so a match here is genuinely downloadable in
- * full rather than identified and then unavailable.
- *
- * Verified live 2026-11-05: the search endpoint answered 200; `yt-dlp --dump-single-json` on
- * https://audius.co/Lofibeat/stars-in-the-sky-lofi-beats-370899 reported duration 71 s from
- * https://api.audius.co/v1/tracks/95wro/stream, exactly the length the API declares.
+ * docs and sent here; no key, no account, no paid tier). It is in this app because the returned
+ * uploads carry a declared whole-track length, and yt-dlp's `audius` extractor attempts the
+ * corresponding public stream. Catalogue rows can outlive their audio: a 71-second Lofibeat entry
+ * still returned metadata on 2026-11-06 although its stream returned 404. Only a completed native
+ * download can mark one ready; the loader retries a different source on a dead link.
  *
  * Nothing here loosens identity: the mapping only reports what Audius says, and `matchRecordings`
  * still decides whether the upload is the same recording.
