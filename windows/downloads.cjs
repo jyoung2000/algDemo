@@ -18,7 +18,8 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const YTDLP_HOSTS = ['youtu.be', 'youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'soundcloud.com', 'www.soundcloud.com', 'm.soundcloud.com', 'on.soundcloud.com'];
+const YTDLP_HOSTS = ['youtu.be', 'youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'soundcloud.com', 'www.soundcloud.com', 'm.soundcloud.com', 'on.soundcloud.com', 'audius.co'];
+const YTDLP_SUFFIXES = ['.bandcamp.com'];
 const SPOTDL_HOSTS = ['open.spotify.com'];
 /** One slot is one yt-dlp process, so a desktop takes more of them than a phone. */
 const PARALLEL_MIN = 1;
@@ -38,7 +39,7 @@ function urlAllowedFor(tool, raw) {
   if (u.protocol !== 'https:' || u.username || u.password || String(raw).length > 500 || /[\s\x00-\x1f]/.test(String(raw))) return false;
   const host = u.hostname.toLowerCase();
   if (tool === 'spotdl') return SPOTDL_HOSTS.includes(host) && /^\/(intl-[a-z]{2}(-[a-z]{2})?\/)?track\/[A-Za-z0-9]{10,30}\/?$/.test(u.pathname);
-  if (tool === 'yt-dlp') return YTDLP_HOSTS.includes(host);
+  if (tool === 'yt-dlp') return YTDLP_HOSTS.includes(host) || (YTDLP_SUFFIXES.some(s => host.endsWith(s)) && host !== 'www.bandcamp.com' && /^\/track\/[^/]+\/?$/.test(u.pathname));
   return false;
 }
 
@@ -579,4 +580,4 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
   return { handle, health, shutdown, localFile };
 }
 
-module.exports = { createDownloads, buildArgs, urlAllowedFor, safeName, YTDLP_HOSTS, SPOTDL_HOSTS, FORMATS };
+module.exports = { createDownloads, buildArgs, urlAllowedFor, safeName, YTDLP_HOSTS, YTDLP_SUFFIXES, SPOTDL_HOSTS, FORMATS };

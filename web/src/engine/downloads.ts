@@ -25,7 +25,10 @@ export const YTDLP_HOSTS: readonly string[] = [
   'www.soundcloud.com',
   'm.soundcloud.com',
   'on.soundcloud.com',
+  'audius.co',
 ];
+/** Artist-owned Bandcamp subdomains only; the main site is not a track URL. */
+export const YTDLP_SUFFIXES: readonly string[] = ['.bandcamp.com'];
 
 /** spotDL takes a Spotify track link and nothing else. */
 export const SPOTDL_HOSTS: readonly string[] = ['open.spotify.com'];
@@ -163,7 +166,7 @@ export function urlAllowedFor(tool: DlTool, raw: string): boolean {
   if (u.protocol !== 'https:' || u.username || u.password || raw.length > 500 || /[\s\x00-\x1f]/.test(raw)) return false;
   const host = u.hostname.toLowerCase();
   if (tool === 'spotdl') return SPOTDL_HOSTS.includes(host) && /^\/(intl-[a-z]{2}(-[a-z]{2})?\/)?track\/[A-Za-z0-9]{10,30}\/?$/.test(u.pathname);
-  return YTDLP_HOSTS.includes(host);
+  return YTDLP_HOSTS.includes(host) || (YTDLP_SUFFIXES.some(s => host.endsWith(s)) && host !== 'www.bandcamp.com' && /^\/track\/[^/]+\/?$/.test(u.pathname));
 }
 
 export interface Target {
@@ -184,7 +187,7 @@ export interface TrackLike {
 export function targetFor(t: TrackLike): Target | null {
   if (t.provider === 'spotify' && t.url && urlAllowedFor('spotdl', t.url)) return { tool: 'spotdl', url: t.url };
   if (t.provider === 'ytmusic' && t.platform_id && /^[A-Za-z0-9_-]{11}$/.test(t.platform_id)) return { tool: 'yt-dlp', url: `https://music.youtube.com/watch?v=${t.platform_id}` };
-  if (t.url && (t.provider === 'ytmusic' || t.provider === 'soundcloud') && urlAllowedFor('yt-dlp', t.url)) return { tool: 'yt-dlp', url: t.url };
+  if (t.url && ['ytmusic', 'soundcloud', 'bandcamp', 'audius'].includes(t.provider) && urlAllowedFor('yt-dlp', t.url)) return { tool: 'yt-dlp', url: t.url };
   return null;
 }
 

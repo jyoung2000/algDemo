@@ -28,6 +28,9 @@ export const ALLOWED_HOSTS: ReadonlySet<string> = new Set([
   'lrclib.net', 'musicbrainz.org',
   // Song identification: Genius lyric search (words typed by the user) and Shazam's tag endpoint (an audio fingerprint, never sound).
   'genius.com', 'amp.shazam.com',
+  // Audius (keyless, documented read API) and Bandcamp's own site endpoints: both answer with whole-track
+  // lengths and both are downloadable in full by yt-dlp (SOURCE-MORE-001).
+  'api.audius.co', 'audius.co', 'bandcamp.com', 'www.bandcamp.com',
   'i.ytimg.com',
 ]);
 // Deezer preview/image CDN and SoundCloud media CDN. Keep in step with MainActivity.kt.

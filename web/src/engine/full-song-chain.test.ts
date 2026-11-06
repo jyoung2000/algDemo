@@ -251,3 +251,75 @@ describe('a source that already failed', () => {
     expect(r).toMatchObject({ id: null, source: 'none' }); // honest: nothing left to try
   });
 });
+
+/**
+ * SOURCE-MORE-001 — two more sources that hand over whole songs.
+ *
+ * Bandcamp (artist-uploaded, `is_streamable` tracks) and Audius (keyless public API) both answer
+ * with a real track length and both are downloadable in full by yt-dlp, verified live on
+ * 2026-11-05. They are asked after YouTube and SoundCloud, so they only cost requests for the songs
+ * nothing else had, and they are held to the same strict bar as a user video upload: a confident
+ * match or nothing. No "close enough" substitute comes from either.
+ */
+describe('Bandcamp and Audius legs', () => {
+  const chain = (o: { bandcamp?: Record<string, Track[]>; audius?: Record<string, Track[]> }) => {
+    const asked = { bandcamp: [] as string[], audius: [] as string[] };
+    const s: ChainSources = {
+      ytm: { search: async () => [] },
+      sc: { search: async () => [] },
+      videos: { search: async () => [] },
+      bandcamp: { search: async (q: string) => { asked.bandcamp.push(q); return o.bandcamp?.[q] ?? []; } },
+      audius: { search: async (q: string) => { asked.audius.push(q); return o.audius?.[q] ?? []; } },
+    };
+    return { s, asked };
+  };
+
+  it('downloads from Bandcamp by link when nothing else has the song', async () => {
+    const { s, asked } = chain({
+      bandcamp: { 'Kevin MacLeod Wallpaper': [cand({ provider: 'bandcamp', platform_id: '2133171372', url: 'https://kmacleod.bandcamp.com/track/wallpaper' })] },
+    });
+    const r = await findFullSong(track(), s, {});
+    expect(r).toMatchObject({ id: null, source: 'bandcamp', url: 'https://kmacleod.bandcamp.com/track/wallpaper' });
+    expect(asked.bandcamp.length).toBeGreaterThan(0);
+    expect(asked.audius).toEqual([]); // stopped as soon as something was downloadable
+  });
+
+  it('downloads from Audius by link when Bandcamp has nothing either', async () => {
+    const { s, asked } = chain({
+      audius: { 'Kevin MacLeod Wallpaper': [cand({ provider: 'audius', platform_id: '95wro', url: 'https://audius.co/kmacleod/wallpaper' })] },
+    });
+    const r = await findFullSong(track(), s, {});
+    expect(r).toMatchObject({ id: null, source: 'audius', url: 'https://audius.co/kmacleod/wallpaper' });
+    expect(asked.bandcamp.length).toBeGreaterThan(0); // Bandcamp was asked first
+    expect(asked.audius.length).toBeGreaterThan(0);
+  });
+
+  it('never substitutes a different version from either source, even with nothing else left', async () => {
+    const { s } = chain({
+      bandcamp: { 'Kevin MacLeod Wallpaper': [cand({ provider: 'bandcamp', platform_id: '1', url: 'https://x.bandcamp.com/track/a', duration: 185 })] },
+      audius: { 'Kevin MacLeod Wallpaper': [cand({ provider: 'audius', platform_id: '2', url: 'https://audius.co/x/b', title: 'Wallpaper (Remix)' })] },
+    });
+    expect(await findFullSong(track(), s, {})).toMatchObject({ id: null, source: 'none' });
+  });
+
+  it('skips a Bandcamp or Audius link that already failed to download', async () => {
+    const { s } = chain({
+      bandcamp: { 'Kevin MacLeod Wallpaper': [cand({ provider: 'bandcamp', platform_id: '1', url: 'https://x.bandcamp.com/track/dead' })] },
+      audius: { 'Kevin MacLeod Wallpaper': [cand({ provider: 'audius', platform_id: '2', url: 'https://audius.co/x/dead' })] },
+    });
+    const r = await findFullSong(track(), s, { exclude: ['https://x.bandcamp.com/track/dead', 'https://audius.co/x/dead'] });
+    expect(r).toMatchObject({ id: null, source: 'none' });
+  });
+
+  it('works unchanged on a shell that has neither leg, and survives one that throws', async () => {
+    const plain: ChainSources = { ytm: { search: async () => [cand()] }, sc: null };
+    expect(await findFullSong(track(), plain, {})).toMatchObject({ source: 'match' });
+    const throwing: ChainSources = {
+      ytm: { search: async () => [] },
+      sc: null,
+      bandcamp: { search: async () => { throw new Error('Bandcamp changed its site'); } },
+      audius: { search: async () => [cand({ provider: 'audius', platform_id: '95wro', url: 'https://audius.co/a/b' })] },
+    };
+    expect(await findFullSong(track(), throwing, {})).toMatchObject({ source: 'audius' });
+  });
+});

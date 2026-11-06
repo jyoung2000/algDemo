@@ -38,11 +38,13 @@ export interface ChainSources {
   sc: SearchSource | null;
   /** YouTube's videos, outside the songs catalogue (SOURCE-VIDEO-001). Optional: an older shell has none. */
   videos?: SearchSource | null;
+  bandcamp?: SearchSource | null;
+  audius?: SearchSource | null;
 }
 
 export interface FullSongResult {
   id: string | null;
-  source: 'match' | 'video' | 'soundcloud' | 'close' | 'none';
+  source: 'match' | 'video' | 'soundcloud' | 'bandcamp' | 'audius' | 'close' | 'none';
   /** A direct link for a source that is not a YouTube video id (SoundCloud). */
   url?: string;
   /** Why an uncertain answer was accepted, in the matcher's own words. */
@@ -101,9 +103,9 @@ const gapOf = (a: Track, b: Track): number => {
   return Number.isFinite(da) && Number.isFinite(db) && da > 0 && db > 0 ? Math.abs(da - db) : Number.MAX_SAFE_INTEGER;
 };
 
-const resultFor = (t: Track, source: 'match' | 'video' | 'soundcloud' | 'close', note?: string): FullSongResult => {
-  // A SoundCloud track is downloadable by its link; a YouTube Music one by its video id.
-  const url = t.provider === 'soundcloud' && t.url ? String(t.url) : undefined;
+const resultFor = (t: Track, source: 'match' | 'video' | 'soundcloud' | 'bandcamp' | 'audius' | 'close', note?: string): FullSongResult => {
+  // Site uploads use their validated track links; YouTube Music uses the video id.
+  const url = ['soundcloud', 'bandcamp', 'audius'].includes(t.provider) && t.url ? String(t.url) : undefined;
   return { id: url ? null : (t.platform_id ?? null), source, ...(url ? { url } : {}), ...(note ? { note } : {}) };
 };
 
@@ -164,6 +166,16 @@ export async function findFullSong(t: Track, s: ChainSources, o: ChainOptions = 
   if (s.sc) {
     const onSc = await ask(s.sc, t, variants, limit, o.ctx, misses, dead);
     if (onSc) return resultFor(onSc, 'soundcloud');
+  }
+
+  // Community uploads are not offered as uncertain near misses: same recording or no match.
+  if (s.bandcamp) {
+    const onBandcamp = await ask(s.bandcamp, t, variants, limit, o.ctx, [], dead);
+    if (onBandcamp) return resultFor(onBandcamp, 'bandcamp');
+  }
+  if (s.audius) {
+    const onAudius = await ask(s.audius, t, variants, limit, o.ctx, [], dead);
+    if (onAudius) return resultFor(onAudius, 'audius');
   }
 
   // Last resort: the closest thing anyone had, labelled so the rest of the app can be honest.

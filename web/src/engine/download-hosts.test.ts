@@ -6,12 +6,13 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
-import { DL_FORMATS, SPOTDL_HOSTS, YTDLP_HOSTS, matchTarget, targetFor, urlAllowedFor } from './downloads';
+import { DL_FORMATS, SPOTDL_HOSTS, YTDLP_HOSTS, YTDLP_SUFFIXES, matchTarget, targetFor, urlAllowedFor } from './downloads';
 
 const root = new URL('../../../', import.meta.url);
 const path = (p: string): string => new URL(p, root).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const quoted = (block: string): string[] => [...block.matchAll(/"([^"]+)"/g)].map((m) => m[1] as string);
 const win = createRequire(import.meta.url)(path('windows/downloads.cjs')) as {
+  YTDLP_SUFFIXES: string[];
   YTDLP_HOSTS: string[];
   SPOTDL_HOSTS: string[];
   FORMATS: string[];
@@ -22,6 +23,7 @@ const win = createRequire(import.meta.url)(path('windows/downloads.cjs')) as {
 describe('download host lists agree', () => {
   it('Windows matches the page', () => {
     expect(new Set(win.YTDLP_HOSTS)).toEqual(new Set(YTDLP_HOSTS));
+    expect(new Set(win.YTDLP_SUFFIXES)).toEqual(new Set(YTDLP_SUFFIXES));
     expect(new Set(win.SPOTDL_HOSTS)).toEqual(new Set(SPOTDL_HOSTS));
     expect(new Set(win.FORMATS)).toEqual(new Set(DL_FORMATS));
   });
@@ -29,8 +31,10 @@ describe('download host lists agree', () => {
   it('Android matches the page', () => {
     const kt = readFileSync(path('android/app/src/main/java/com/nowplaying/discovery/Downloads.kt'), 'utf8');
     const hosts = quoted(/val YTDLP_HOSTS = setOf\(([\s\S]*?)\n\s*\)/.exec(kt)?.[1] ?? '');
+    const suffixes = quoted(/val YTDLP_SUFFIXES = listOf\(([^)]*)\)/.exec(kt)?.[1] ?? '');
     const formats = quoted(/val FORMATS = setOf\(([^)]*)\)/.exec(kt)?.[1] ?? '');
     expect(new Set(hosts)).toEqual(new Set(YTDLP_HOSTS));
+    expect(new Set(suffixes)).toEqual(new Set(YTDLP_SUFFIXES));
     expect(new Set(formats)).toEqual(new Set(DL_FORMATS));
   });
 
@@ -44,6 +48,12 @@ describe('urlAllowedFor', () => {
     ['yt-dlp', 'https://www.youtube.com/watch?v=Rgrt_8mXrK8', true],
     ['yt-dlp', 'https://music.youtube.com/watch?v=Rgrt_8mXrK8', true],
     ['yt-dlp', 'https://soundcloud.com/artist/track', true],
+    // SOURCE-MORE-001: both verified downloadable in full by the packaged yt-dlp on 2026-11-05.
+    ['yt-dlp', 'https://audius.co/Lofibeat/stars-in-the-sky-lofi-beats-370899', true],
+    ['yt-dlp', 'https://benprunty.bandcamp.com/track/giant-step', true],
+    ['yt-dlp', 'https://bandcamp.com/track/giant-step', false],
+    ['yt-dlp', 'https://benprunty.bandcamp.com.evil.example/track/x', false],
+    ['yt-dlp', 'http://benprunty.bandcamp.com/track/giant-step', false],
     ['yt-dlp', 'http://www.youtube.com/watch?v=x', false],
     ['yt-dlp', 'https://example.com/a.mp3', false],
     ['yt-dlp', 'https://www.youtube.com.evil.example/watch?v=x', false],
@@ -73,6 +83,10 @@ describe('targetFor / matchTarget', () => {
   });
   it('a SoundCloud song goes to yt-dlp by its link', () => {
     expect(targetFor({ provider: 'soundcloud', url: 'https://soundcloud.com/a/b' })?.tool).toBe('yt-dlp');
+  });
+  it('a Bandcamp or Audius song goes to yt-dlp by its link', () => {
+    expect(targetFor({ provider: 'bandcamp', url: 'https://benprunty.bandcamp.com/track/giant-step' })).toEqual({ tool: 'yt-dlp', url: 'https://benprunty.bandcamp.com/track/giant-step' });
+    expect(targetFor({ provider: 'audius', url: 'https://audius.co/x/y' })).toEqual({ tool: 'yt-dlp', url: 'https://audius.co/x/y' });
   });
   it('a Deezer or Apple song has no direct target and needs a match first', () => {
     expect(targetFor({ provider: 'deezer', platform_id: '1', url: 'https://www.deezer.com/track/1' })).toBeNull();

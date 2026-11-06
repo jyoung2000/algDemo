@@ -7,7 +7,9 @@
 // source actually answers, so a regression in the chain shows up as a real-world miss.
 import { describe, expect, it } from 'vitest';
 import { LocalApi } from './local-api';
-import type { HttpPort } from './net';
+import { Http, type HttpPort } from './net';
+import { Bandcamp } from './bandcamp';
+import { Audius } from './audius';
 import { MemoryBackend, Store } from './store';
 
 const live = process.env['AIRWAVE_LIVE'] === '1';
@@ -37,6 +39,17 @@ const STUCK = [
 ];
 
 describe.skipIf(!live)('the source chain, against the real services', () => {
+  it('retrieves full-length public Audius and Bandcamp track metadata', async () => {
+    const http = new Http(port);
+    const audius = await new Audius(http).search('Stars in the Sky Lofibeat', 8);
+    const bandcamp = await new Bandcamp(http).search('Giant Step Ben Prunty', 8);
+    // These are harmless real searches: the adapter must return a whole-track link and measured
+    // length, not a preview. Network or upstream changes fail visibly instead of fabricating data.
+    console.log('  Audius: ', audius.map(t => `${t.title} ${t.duration}s ${t.url}`).join(' | '));
+    console.log('  Bandcamp: ', bandcamp.map(t => `${t.title} ${t.duration}s ${t.url}`).join(' | '));
+    expect(audius.some(t => t.url?.startsWith('https://audius.co/') && Number(t.duration) > 30)).toBe(true);
+    expect(bandcamp.some(t => t.url?.includes('.bandcamp.com/track/') && Number(t.duration) > 30)).toBe(true);
+  }, 100_000);
   it('resolves the song that only exists as a YouTube video', async () => {
     const store = await Store.open(new MemoryBackend());
     const api = new LocalApi({ store, port, encoder: null, spotifySearch: () => async () => [] });

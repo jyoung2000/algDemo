@@ -47,6 +47,8 @@ import { Job, Pipeline, pmap, type Embedder } from './pipeline';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
 import { SoundCloud } from './soundcloud';
+import { Bandcamp } from './bandcamp';
+import { Audius } from './audius';
 import { Spotify, looksLikeUrl, normaliseUrl, providerForUrl } from './spotify';
 import type { Store } from './store';
 import { YouTubeMusic } from './ytmusic';
@@ -152,6 +154,8 @@ export class LocalApi {
   readonly dz: Deezer;
   readonly ytm: YouTubeMusic;
   readonly sc: SoundCloud;
+  readonly bandcamp: Bandcamp;
+  readonly audius: Audius;
   readonly apple: AppleMusic;
   readonly sp: Spotify;
   readonly genius: Genius;
@@ -176,6 +180,8 @@ export class LocalApi {
     this.dz = new Deezer(this.http, this.store);
     this.ytm = new YouTubeMusic(this.http, this.store);
     this.sc = new SoundCloud(this.http, this.store);
+    this.bandcamp = new Bandcamp(this.http, this.store);
+    this.audius = new Audius(this.http, this.store);
     this.apple = new AppleMusic(this.http, this.store);
     this.sp = new Spotify(this.http, this.store);
     this.genius = new Genius(this.http);
@@ -1234,6 +1240,8 @@ export class LocalApi {
         ytm: this.ytm as never,
         sc: this.sc as never,
         videos: { search: (q: string, limit: number, c: unknown) => this.ytm.searchVideos(q, limit, c as never) } as never,
+        bandcamp: this.bandcamp as never,
+        audius: this.audius as never,
       }, { ctx, exclude });
     } catch (e) {
       if (e instanceof FetchError || e instanceof ProviderError) return fail(502, `No source answered: ${e.message}`);

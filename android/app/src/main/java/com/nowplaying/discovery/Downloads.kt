@@ -39,8 +39,9 @@ object Downloads {
   /** Mirrored by web/src/engine/downloads.ts and windows/downloads.cjs; download-hosts.test.ts checks all three. */
   val YTDLP_HOSTS = setOf(
     "youtu.be", "youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com",
-    "soundcloud.com", "www.soundcloud.com", "m.soundcloud.com", "on.soundcloud.com",
+    "soundcloud.com", "www.soundcloud.com", "m.soundcloud.com", "on.soundcloud.com", "audius.co",
   )
+  val YTDLP_SUFFIXES = listOf(".bandcamp.com")
   val FORMATS = setOf("mp3", "m4a", "opus", "flac", "wav", "original")
 
   private val audioExtensions = setOf("mp3", "m4a", "aac", "flac", "opus", "ogg", "oga", "wav", "webm", "mka")
@@ -314,7 +315,8 @@ object Downloads {
     if (raw.length > 500 || raw.any { it.isWhitespace() || it.code < 32 }) return false
     val u = runCatching { URI(raw) }.getOrNull() ?: return false
     if (u.scheme != "https" || u.userInfo != null) return false
-    return (u.host ?: return false).lowercase() in YTDLP_HOSTS
+    val host = (u.host ?: return false).lowercase()
+    return host in YTDLP_HOSTS || (YTDLP_SUFFIXES.any(host::endsWith) && host != "www.bandcamp.com" && Regex("^/track/[^/]+/?$").matches(u.path ?: ""))
   }
 
   fun health(context: Context): JSONObject {
