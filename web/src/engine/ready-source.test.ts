@@ -37,3 +37,25 @@ it('refuses unsupported URLs even if local storage was tampered with', () => {
   new ReadySourceMap(s).remember('deezer:123', 'https://evil.example/song');
   expect(new ReadySourceMap(s).get('deezer:123')).toBeNull();
 });
+
+/**
+ * SOURCE-HEARTHIS-002: a creator can withdraw a download or change a license at any time, and this
+ * map has no TTL. A remembered link on a revocable host is therefore never a standing permission —
+ * it has to go back through the source chain so the license is re-read before yt-dlp runs again.
+ */
+it('never shortcuts a remembered link on a host whose permission the creator can withdraw', () => {
+  const s = storage();
+  const m = new ReadySourceMap(s);
+  m.remember('deezer:ht', 'https://hearthis.at/kmacleod/wallpaper/');
+  expect(m.get('deezer:ht')).toBeNull();
+  expect(new ReadySourceMap(s).get('deezer:ht')).toBeNull();
+  // A pre-existing entry written by an older build must not be honoured either.
+  const s2 = storage();
+  s2.setItem('airwave.ready-source.v1', JSON.stringify([['deezer:ht', 'https://hearthis.at/kmacleod/wallpaper/']]));
+  expect(new ReadySourceMap(s2).get('deezer:ht')).toBeNull();
+  // Hosts that are not creator-revocable keep the cold-launch shortcut.
+  const s3 = storage();
+  const keep = new ReadySourceMap(s3);
+  keep.remember('deezer:sc', 'https://soundcloud.com/user/real-song');
+  expect(keep.get('deezer:sc')).toBe('https://soundcloud.com/user/real-song');
+});

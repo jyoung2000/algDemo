@@ -49,6 +49,7 @@ import { AppleMusic } from './apple';
 import { SoundCloud } from './soundcloud';
 import { Bandcamp } from './bandcamp';
 import { Audius } from './audius';
+import { HearThis } from './hearthis';
 import { InternetArchive } from './internet-archive';
 import { Spotify, looksLikeUrl, normaliseUrl, providerForUrl } from './spotify';
 import type { Store } from './store';
@@ -157,6 +158,7 @@ export class LocalApi {
   readonly sc: SoundCloud;
   readonly bandcamp: Bandcamp;
   readonly audius: Audius;
+  readonly hearthis: HearThis;
   readonly archive: InternetArchive;
   readonly apple: AppleMusic;
   readonly sp: Spotify;
@@ -184,6 +186,7 @@ export class LocalApi {
     this.sc = new SoundCloud(this.http, this.store);
     this.bandcamp = new Bandcamp(this.http, this.store);
     this.audius = new Audius(this.http, this.store);
+    this.hearthis = new HearThis(this.http, this.store);
     this.archive = new InternetArchive(this.http, this.store);
     this.apple = new AppleMusic(this.http, this.store);
     this.sp = new Spotify(this.http, this.store);
@@ -308,12 +311,25 @@ export class LocalApi {
     const ytRadio: Dict = yt['state'] === 'unavailable' ? yt : { ...yt, detail: 'radio answered' };
     const sc = await this.probe(() => this.sc.search('flickermood forss', 1, c), (r) => [r.length > 0, 'SoundCloud search answered (client id read from soundcloud.com)']);
     const spm = await this.probe(() => this.sp.resolveLink('https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b', c), (t) => [Boolean(t.title), 'oEmbed answered (title + artwork, no artist)']);
+    // Full-song fallback sources: they do not stream or supply candidates, they find one exact
+    // recording and the app downloads it. Probing each keeps the panel honest about all eight
+    // sources the engine really uses (SRC-PANEL-001). The queries are harmless live searches with a
+    // known public answer, so "Working" means the catalogue actually responded.
+    const bc = await this.probe(() => this.bandcamp.search('Giant Step Ben Prunty', 3, c), (r) => [r.length > 0, 'Bandcamp search answered with a full-track link']);
+    const au = await this.probe(() => this.audius.search('Bass Go Boom LOUDWERX', 3, c), (r) => [r.length > 0, 'Audius search answered with a full-track link']);
+    const ht = await this.probe(() => this.hearthis.search('Creative Commons', 5, c), (r) => [r.length > 0, 'HearThis answered with creator-downloadable Creative Commons tracks']);
+    const ar = await this.probe(() => this.archive.search('Cold Funk', 3, c), (r) => [r.length > 0, 'Internet Archive answered with a Creative Commons audio file']);
     const caps = (names: string[], h: Dict): Dict => Object.fromEntries(names.map((n) => [n, h]));
     const out: Dict = {
       deezer: caps(['search', 'resolve_link', 'related_candidates', 'artist_candidates', 'recent_candidates', 'playback_link'], dz),
       ytmusic: { ...caps(['search', 'resolve_link', 'playback_link'], yt), ...caps(['related_candidates', 'artist_candidates'], ytRadio) },
       soundcloud: { ...caps(['search', 'resolve_link', 'related_candidates'], sc), playback_link: sc },
       spotify: { resolve_link: spm, playback_link: spm },
+      // Fallback sources only do search + play; the remaining columns fall through to 'unsupported'.
+      bandcamp: caps(['search', 'playback_link'], bc),
+      audius: caps(['search', 'playback_link'], au),
+      hearthis: caps(['search', 'playback_link'], ht),
+      archive: caps(['search', 'playback_link'], ar),
     };
     for (const p of Object.keys(out)) for (const cap of CAPS) out[p][cap] ??= unsupported;
     out['spicetify'] = { companion: { state: 'not_tested', detail: 'Optional Spotify desktop bridge; not part of the phone app.', checked: unixNow(), latency_ms: null } };
@@ -1234,6 +1250,17 @@ export class LocalApi {
     // Older builds cached uncertain `close` matches for seven days. Never resurrect them as full
     // songs even when their link once downloaded; refresh the source chain instead.
     const cachedPlayable = cached?.['source'] !== 'close';
+    // SOURCE-HEARTHIS-002: a cached HearThis link is permission that can be withdrawn. Re-read the
+    // creator's own public JSON and re-gate license/download/identity before reusing the link.
+    if (cachedPlayable && !exclude.length && hit && cached?.['source'] === 'hearthis' && typeof cached['url'] === 'string') {
+      const still = await this.hearthis.revalidate(String(cached['url']), { meter: this.playbackMeter() });
+      if (!still || matchRecordings(t as never, still).verdict !== 'same') {
+        const out: FullSongResult = { id: null, source: 'none' };
+        await this.store.cachePut(key, 'meta', out, NO_SOURCE_TTL);
+        return ok(out);
+      }
+      return ok(hit.value);
+    }
     // SOURCE-SWAP-001: a caller naming dead links already knows the cached answer does not work,
     // so the cache is skipped entirely rather than handing back the link that just failed.
     if (cachedPlayable && !exclude.length && hit && (!retry || cached?.['id'] || cached?.['url'])) return ok(hit.value);
@@ -1248,6 +1275,7 @@ export class LocalApi {
         videos: { search: (q: string, limit: number, c: unknown) => this.ytm.searchVideos(q, limit, c as never) } as never,
         bandcamp: this.bandcamp as never,
         audius: this.audius as never,
+        hearthis: this.hearthis as never,
         archive: this.archive as never,
       }, { ctx, exclude });
     } catch (e) {

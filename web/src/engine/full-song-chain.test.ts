@@ -57,6 +57,22 @@ function sources(o: {
  * and small-creator tracks are uploaded as videos, so a songs-only search makes them permanently
  * unavailable however often it is retried.
  */
+describe('owner-verified sources', () => {
+  it('downloads Plant Island from the owner-confirmed SoundCloud link, ahead of every search leg', async () => {
+    const t = track({ title: 'Plant Island', artists: ['My Singing Monsters'], duration: 219, isrc: 'USHM81262832' });
+    const { s, asked } = sources({ ytm: {}, sc: {} });
+    const r = await findFullSong(t, s, {});
+    expect(r).toMatchObject({ id: null, source: 'soundcloud', url: 'https://soundcloud.com/ghostmeow/my-singing-monsters-plant' });
+    expect(asked.ytm).toEqual([]); // the confirmation wins before any provider is asked
+    expect(asked.sc).toEqual([]);
+  });
+  it('leaves every other song to the normal strict search', async () => {
+    const { s, asked } = sources({ ytm: { 'Kevin MacLeod Wallpaper': [cand()] } });
+    expect(await findFullSong(track(), s, {})).toMatchObject({ source: 'match' });
+    expect(asked.ytm.length).toBeGreaterThan(0);
+  });
+});
+
 describe('YouTube beyond the songs catalogue', () => {
   it('finds a song that only exists as a YouTube video', async () => {
     const t = track({ title: "ManePear's Official Theme Song", artists: ['Nombra101'], duration: 195 });
@@ -260,6 +276,29 @@ describe('a source that already failed', () => {
  * nothing else had, and they are held to the same strict bar as a user video upload: a confident
  * match or nothing. No "close enough" substitute comes from either.
  */
+describe('licensed HearThis leg', () => {
+  const url = 'https://hearthis.at/kmacleod/wallpaper/';
+  const candidate = (title = 'Wallpaper', duration = 180) => cand({ provider: 'hearthis', title, duration, url });
+  const chain = (track: Track): ChainSources => ({
+    ytm: { search: async () => [] }, sc: null,
+    hearthis: { search: async () => [track] },
+  });
+  it('offers an exact creator-downloadable CC recording by its track page', async () => {
+    expect(await findFullSong(track(), chain(candidate()), {})).toMatchObject({ id: null, source: 'hearthis', url });
+  });
+  it('rejects another rendition and an already failed link', async () => {
+    expect(await findFullSong(track(), chain(candidate('Wallpaper (Remix)')), {})).toMatchObject({ source: 'none' });
+    expect(await findFullSong(track(), chain(candidate()), { exclude: [url] })).toMatchObject({ source: 'none' });
+  });
+  it('bounds an unavailable HearThis search to two distinct queries', async () => {
+    let calls = 0;
+    const s: ChainSources = { ytm: { search: async () => [] }, sc: null,
+      hearthis: { search: async () => { calls++; return []; } } };
+    expect(await findFullSong(track(), s, {})).toMatchObject({ source: 'none' });
+    expect(calls).toBeLessThanOrEqual(2);
+  });
+});
+
 describe('licensed Internet Archive leg', () => {
   const url = 'https://archive.org/download/wallpaper-by-kevin-macleod/wallpaper-by-kevin-macleod.mp3';
   const archive = (title = 'Wallpaper', duration = 180) => cand({ provider: 'archive', title, duration, url });

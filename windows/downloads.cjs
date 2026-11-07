@@ -28,6 +28,13 @@ function archiveAudioUrl(u) {
     return !filePath.includes('..') && /^\/download\/[A-Za-z0-9][A-Za-z0-9._-]{1,100}\/[A-Za-z0-9][A-Za-z0-9._ ()&+-]{0,180}\.(?:mp3|m4a|flac)$/i.test(filePath);
   } catch { return false; }
 }
+// Compared against the RAW link: new URL() drops dot segments and empty ?/# delimiters that
+// Android's java.net.URI keeps, so only a raw===canonical check keeps the three shells identical.
+function hearThisTrackUrl(u, raw) {
+  return u.hostname === 'hearthis.at' && !u.search && !u.hash && (!u.port || u.port === '443') &&
+    raw === `https://hearthis.at${u.pathname}` &&
+    /^\/[A-Za-z0-9][A-Za-z0-9._-]{0,100}\/[A-Za-z0-9][A-Za-z0-9._-]{0,180}\/$/.test(u.pathname);
+}
 /** One slot is one yt-dlp process, so a desktop takes more of them than a phone. */
 const PARALLEL_MIN = 1;
 const PARALLEL_MAX = 6;
@@ -46,7 +53,7 @@ function urlAllowedFor(tool, raw) {
   if (u.protocol !== 'https:' || u.username || u.password || String(raw).length > 500 || /[\s\x00-\x1f]/.test(String(raw))) return false;
   const host = u.hostname.toLowerCase();
   if (tool === 'spotdl') return SPOTDL_HOSTS.includes(host) && /^\/(intl-[a-z]{2}(-[a-z]{2})?\/)?track\/[A-Za-z0-9]{10,30}\/?$/.test(u.pathname);
-  if (tool === 'yt-dlp') return archiveAudioUrl(u) || YTDLP_HOSTS.includes(host) || (YTDLP_SUFFIXES.some(s => host.endsWith(s)) && host !== 'www.bandcamp.com' && /^\/track\/[^/]+\/?$/.test(u.pathname));
+  if (tool === 'yt-dlp') return archiveAudioUrl(u) || hearThisTrackUrl(u, String(raw)) || YTDLP_HOSTS.includes(host) || (YTDLP_SUFFIXES.some(s => host.endsWith(s)) && host !== 'www.bandcamp.com' && /^\/track\/[^/]+\/?$/.test(u.pathname));
   return false;
 }
 

@@ -318,7 +318,14 @@ object Downloads {
     val host = (u.host ?: return false).lowercase()
     val archiveAudio = host == "archive.org" && u.port in listOf(-1, 443) && u.query == null && u.fragment == null &&
       !(u.path ?: "").contains("..") && Regex("^/download/[A-Za-z0-9][A-Za-z0-9._-]{1,100}/[A-Za-z0-9][A-Za-z0-9._ ()&+-]{0,180}\\.(mp3|m4a|flac)$", RegexOption.IGNORE_CASE).matches(u.path ?: "")
-    return archiveAudio || host in YTDLP_HOSTS || (YTDLP_SUFFIXES.any(host::endsWith) && host != "www.bandcamp.com" && Regex("^/track/[^/]+/?$").matches(u.path ?: ""))
+    // The canonical track page only, compared against the RAW link exactly as web/Windows do:
+    // the host must already be lowercase, the port must be absent, and getRawPath() is used so
+    // percent-escapes are NOT decoded (getPath() would turn /a/b%2E%2E/ into /a/b../ and let a
+    // dot segment through, which would make Android laxer than the other two shells).
+    val hearThisTrack = host == "hearthis.at" && u.port == -1 && u.query == null && u.fragment == null &&
+      raw == "https://hearthis.at" + (u.rawPath ?: "") &&
+      Regex("^/[A-Za-z0-9][A-Za-z0-9._-]{0,100}/[A-Za-z0-9][A-Za-z0-9._-]{0,180}/$").matches(u.rawPath ?: "")
+    return archiveAudio || hearThisTrack || host in YTDLP_HOSTS || (YTDLP_SUFFIXES.any(host::endsWith) && host != "www.bandcamp.com" && Regex("^/track/[^/]+/?$").matches(u.path ?: ""))
   }
 
   fun health(context: Context): JSONObject {

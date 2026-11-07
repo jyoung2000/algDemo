@@ -50,6 +50,22 @@ describe('urlAllowedFor', () => {
     ['yt-dlp', 'https://soundcloud.com/artist/track', true],
     // SOURCE-MORE-001: both verified downloadable in full by the packaged yt-dlp on 2026-11-05.
     ['yt-dlp', 'https://audius.co/Lofibeat/stars-in-the-sky-lofi-beats-370899', true],
+    ['yt-dlp', 'https://hearthis.at/random1-ej/deep-by-random-creative-commons-royalty-free/', true],
+    ['yt-dlp', 'https://hearthis.at/', false],
+    ['yt-dlp', 'https://hearthis.at/random1-ej/', false],
+    ['yt-dlp', 'https://hearthis.at/random1-ej/song/?next=https://evil.example', false],
+    ['yt-dlp', 'https://hearthis.at/random1-ej/song/../other/', false],
+    ['yt-dlp', 'https://hearthis.at/random1-ej/song/?', false],
+    ['yt-dlp', 'https://hearthis.at/random1-ej/song/#', false],
+    ['yt-dlp', 'https://hearthis.at/random1-ej/song', false],
+    // Shell-parity cases: each of these must be rejected by web, Windows AND Android. Android's
+    // java.net.URI lowercases the host, keeps an explicit :443 and decodes percent-escapes, so
+    // without a raw-vs-canonical comparison on getRawPath() it would accept all four.
+    ['yt-dlp', 'https://HEARTHIS.AT/random1-ej/song/', false],
+    ['yt-dlp', 'https://hearthis.at:443/random1-ej/song/', false],
+    ['yt-dlp', 'https://hearthis.at/random1-ej/de%65p/', false],
+    ['yt-dlp', 'https://hearthis.at/random1-ej/song%2E%2E/', false],
+    ['yt-dlp', 'https://hearthis.at.evil.example/random1-ej/song/', false],
     ['yt-dlp', 'https://benprunty.bandcamp.com/track/giant-step', true],
     ['yt-dlp', 'https://archive.org/download/cold-funk-by-kevin-macleod/cold-funk-by-kevin-macleod.mp3', true],
     ['yt-dlp', 'https://archive.org/download/item/A%20Song.m4a', true],
@@ -94,6 +110,10 @@ describe('targetFor / matchTarget', () => {
   it('a Bandcamp or Audius song goes to yt-dlp by its link', () => {
     expect(targetFor({ provider: 'bandcamp', url: 'https://benprunty.bandcamp.com/track/giant-step' })).toEqual({ tool: 'yt-dlp', url: 'https://benprunty.bandcamp.com/track/giant-step' });
     expect(targetFor({ provider: 'audius', url: 'https://audius.co/x/y' })).toEqual({ tool: 'yt-dlp', url: 'https://audius.co/x/y' });
+  });
+  it('a licensed HearThis song goes to yt-dlp by its track page', () => {
+    const url = 'https://hearthis.at/random1-ej/deep-by-random-creative-commons-royalty-free/';
+    expect(targetFor({ provider: 'hearthis', url })).toEqual({ tool: 'yt-dlp', url });
   });
   it('a licensed Archive song goes to yt-dlp by its direct file link', () => {
     const url = 'https://archive.org/download/cold-funk-by-kevin-macleod/cold-funk-by-kevin-macleod.mp3';

@@ -6,7 +6,7 @@ const HOSTS = [
   'api.deezer.com', 'www.deezer.com', 'deezer.com', 'deezer.page.link', 'link.deezer.com',
   'open.spotify.com', 'spotify.link', 'spotify.app.link',
   'soundcloud.com', 'www.soundcloud.com', 'm.soundcloud.com', 'on.soundcloud.com', 'api-v2.soundcloud.com',
-  'bandcamp.com', 'www.bandcamp.com', 'api.audius.co', 'audius.co', 'archive.org',
+  'bandcamp.com', 'www.bandcamp.com', 'api.audius.co', 'audius.co', 'api-v2.hearthis.at', 'archive.org',
   'www.youtube.com', 'youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be',
   'itunes.apple.com', 'music.apple.com',
   'api-partner.spotify.com', 'clienttoken.spotify.com', 'open.spotifycdn.com',

@@ -42,6 +42,18 @@ function archiveAudioUrl(u: URL): boolean {
   } catch { return false; }
 }
 
+/**
+ * A single public HearThis track page, compared against the RAW link the page handed over.
+ * `new URL()` normalises away dot segments and empty `?`/`#` delimiters, so matching only the
+ * parsed path let `/a/b/../c/` and `/a/b/?` through on web/Windows while Android (java.net.URI,
+ * which keeps both) rejected them. Requiring raw === canonical keeps all three shells identical.
+ */
+function hearThisTrackUrl(u: URL, raw: string): boolean {
+  return u.hostname === 'hearthis.at' && !u.search && !u.hash && (!u.port || u.port === '443') &&
+    raw === `https://hearthis.at${u.pathname}` &&
+    /^\/[A-Za-z0-9][A-Za-z0-9._-]{0,100}\/[A-Za-z0-9][A-Za-z0-9._-]{0,180}\/$/.test(u.pathname);
+}
+
 export interface DlToolHealth {
   id: 'yt-dlp' | 'spotdl' | 'ffmpeg';
   present: boolean;
@@ -175,7 +187,7 @@ export function urlAllowedFor(tool: DlTool, raw: string): boolean {
   if (u.protocol !== 'https:' || u.username || u.password || raw.length > 500 || /[\s\x00-\x1f]/.test(raw)) return false;
   const host = u.hostname.toLowerCase();
   if (tool === 'spotdl') return SPOTDL_HOSTS.includes(host) && /^\/(intl-[a-z]{2}(-[a-z]{2})?\/)?track\/[A-Za-z0-9]{10,30}\/?$/.test(u.pathname);
-  return archiveAudioUrl(u) || YTDLP_HOSTS.includes(host) || (YTDLP_SUFFIXES.some(s => host.endsWith(s)) && host !== 'www.bandcamp.com' && /^\/track\/[^/]+\/?$/.test(u.pathname));
+  return archiveAudioUrl(u) || hearThisTrackUrl(u, String(raw)) || YTDLP_HOSTS.includes(host) || (YTDLP_SUFFIXES.some(s => host.endsWith(s)) && host !== 'www.bandcamp.com' && /^\/track\/[^/]+\/?$/.test(u.pathname));
 }
 
 export interface Target {
@@ -196,7 +208,7 @@ export interface TrackLike {
 export function targetFor(t: TrackLike): Target | null {
   if (t.provider === 'spotify' && t.url && urlAllowedFor('spotdl', t.url)) return { tool: 'spotdl', url: t.url };
   if (t.provider === 'ytmusic' && t.platform_id && /^[A-Za-z0-9_-]{11}$/.test(t.platform_id)) return { tool: 'yt-dlp', url: `https://music.youtube.com/watch?v=${t.platform_id}` };
-  if (t.url && ['ytmusic', 'soundcloud', 'bandcamp', 'audius', 'archive'].includes(t.provider) && urlAllowedFor('yt-dlp', t.url)) return { tool: 'yt-dlp', url: t.url };
+  if (t.url && ['ytmusic', 'soundcloud', 'bandcamp', 'audius', 'hearthis', 'archive'].includes(t.provider) && urlAllowedFor('yt-dlp', t.url)) return { tool: 'yt-dlp', url: t.url };
   return null;
 }
 

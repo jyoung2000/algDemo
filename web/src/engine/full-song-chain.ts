@@ -18,13 +18,14 @@
  *      solely when the matcher calls it the same recording, never as a near miss.
  *   3. SoundCloud, the same phrasings — both shells already allow yt-dlp to fetch soundcloud.com,
  *      so a match there is genuinely downloadable rather than merely identified.
- *   4. Bandcamp and Audius public tracks, then licensed Internet Archive single-track uploads,
+ *   4. Bandcamp and Audius public tracks, creator-downloadable CC HearThis tracks, then licensed Internet Archive single-track uploads,
  *      all held to the same recording identity standard.
  *
  * A candidate must be confidently the same recording; a near miss never makes a full song ready.
  */
 import type { Track } from '../api';
 import { matchRecordings } from './identity';
+import { verifiedSourceFor } from './verified-sources';
 
 export interface SearchSource {
   search(q: string, limit: number, c?: unknown): Promise<Track[]>;
@@ -38,12 +39,13 @@ export interface ChainSources {
   videos?: SearchSource | null;
   bandcamp?: SearchSource | null;
   audius?: SearchSource | null;
+  hearthis?: SearchSource | null;
   archive?: SearchSource | null;
 }
 
 export interface FullSongResult {
   id: string | null;
-  source: 'match' | 'video' | 'soundcloud' | 'bandcamp' | 'audius' | 'archive' | 'none';
+  source: 'match' | 'video' | 'soundcloud' | 'bandcamp' | 'audius' | 'hearthis' | 'archive' | 'none';
   /** A direct link for a source that is not a YouTube video id (SoundCloud). */
   url?: string;
   /** Optional source diagnostic; never authorizes uncertain playback. */
@@ -96,9 +98,9 @@ export function searchVariants(t: Pick<Track, 'title' | 'artists'>): string[] {
 
 /** Turn a verified whole-track candidate into the downloader's link or video id. */
 
-const resultFor = (t: Track, source: 'match' | 'video' | 'soundcloud' | 'bandcamp' | 'audius' | 'archive'): FullSongResult => {
+const resultFor = (t: Track, source: 'match' | 'video' | 'soundcloud' | 'bandcamp' | 'audius' | 'hearthis' | 'archive'): FullSongResult => {
   // Site uploads use their validated track links; YouTube Music uses the video id.
-  const url = ['soundcloud', 'bandcamp', 'audius', 'archive'].includes(t.provider) && t.url ? String(t.url) : undefined;
+  const url = ['soundcloud', 'bandcamp', 'audius', 'hearthis', 'archive'].includes(t.provider) && t.url ? String(t.url) : undefined;
   return { id: url ? null : (t.platform_id ?? null), source, ...(url ? { url } : {}) };
 };
 
@@ -142,6 +144,15 @@ export async function findFullSong(t: Track, s: ChainSources, o: ChainOptions = 
     return (!!r.url && excluded.has(r.url)) || (!!r.id && [...excluded].some(x => x.includes(r.id!)));
   };
 
+  // SOURCE-VERIFIED-001: an exact recording the owner has confirmed by hand overrides search and
+  // identity for that one song (e.g. a track that only exists under a re-uploader's name). The URL
+  // is a public source the app already downloads from; it is skipped only if that very link already
+  // failed this run, so a retry still falls through to the normal chain.
+  const verified = verifiedSourceFor(t);
+  if (verified && !excluded.has(verified.url)) {
+    return { id: null, source: verified.source, url: verified.url, note: verified.note };
+  }
+
   const exact = await ask(s.ytm, t, variants, limit, o.ctx, dead);
   if (exact) return resultFor(exact, 'match');
 
@@ -166,6 +177,10 @@ export async function findFullSong(t: Track, s: ChainSources, o: ChainOptions = 
   if (s.audius) {
     const onAudius = await ask(s.audius, t, variants, limit, o.ctx, dead);
     if (onAudius) return resultFor(onAudius, 'audius');
+  }
+  if (s.hearthis) {
+    const onHearThis = await ask(s.hearthis, t, variants, limit, o.ctx, dead);
+    if (onHearThis) return resultFor(onHearThis, 'hearthis');
   }
   if (s.archive) {
     // Last resort: at most two distinct queries, so unavailable songs do not keep the spinner

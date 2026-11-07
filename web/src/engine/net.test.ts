@@ -23,7 +23,7 @@ function scripted(...steps: (HttpResponse | Error)[]) {
   return { port, seen };
 }
 
-describe('host allowlist (mirrors net.py ALLOWED_HOSTS / ALLOWED_SUFFIXES)', () => {
+describe('host allowlist (the web engine\'s own list; server/net.py has a narrower Deezer/SoundCloud set and is not mirrored here)', () => {
   it('allows the music hosts and their media CDNs', () => {
     for (const h of ['api.deezer.com', 'API.DEEZER.COM', 'api.deezer.com.', 'cdns-preview-1.dzcdn.net', 'cdn-files.sndcdn.com', 'api-v2.soundcloud.com', 'youtu.be']) {
       expect(hostAllowed(h), h).toBe(true);
@@ -33,7 +33,7 @@ describe('host allowlist (mirrors net.py ALLOWED_HOSTS / ALLOWED_SUFFIXES)', () 
     for (const h of ['itunes.apple.com', 'api-partner.spotify.com', 'clienttoken.spotify.com', 'open.qobuz.com',
       'na.web.skill.music.a2z.com', 'music.amazon.com', 'resources.tidal.com', 'api.song.link', 'lrclib.net', 'musicbrainz.org', 'i.ytimg.com',
       // SOURCE-MORE-001: Audius's keyless read API and Bandcamp's own search/details endpoints.
-      'api.audius.co', 'audius.co', 'bandcamp.com']) {
+      'api.audius.co', 'audius.co', 'bandcamp.com', 'api-v2.hearthis.at']) {
       expect(hostAllowed(h), h).toBe(true);
     }
   });
@@ -44,7 +44,7 @@ describe('host allowlist (mirrors net.py ALLOWED_HOSTS / ALLOWED_SUFFIXES)', () 
   });
   it('refuses lookalikes and unknown hosts', () => {
     for (const h of ['evil-deezer.com', 'api.deezer.com.evil.net', 'dzcdn.net.attacker.io', 'localhost', '127.0.0.1', '169.254.169.254', '',
-      'audius.co.evil.net', 'bandcamp.com.attacker.io', 'notbandcamp.com', 'audius.example.com']) {
+      'audius.co.evil.net', 'bandcamp.com.attacker.io', 'notbandcamp.com', 'audius.example.com', 'api-v2.hearthis.at.evil.net']) {
       expect(hostAllowed(h), h).toBe(false);
     }
   });

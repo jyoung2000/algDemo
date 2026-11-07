@@ -8,6 +8,21 @@ import { urlAllowedFor } from './downloads';
 const KEY = 'airwave.ready-source.v1';
 type StoragePort = Pick<Storage, 'getItem' | 'setItem'>;
 
+/**
+ * SOURCE-HEARTHIS-002: hosts where the right to download belongs to the uploader and can be
+ * withdrawn at any time. This map has no TTL, so a remembered link on one of these hosts is NOT
+ * standing permission: it is dropped so the song goes back through the source chain, which re-reads
+ * the licence and the creator's download switch before yt-dlp is ever run again.
+ */
+const REVOCABLE_HOSTS = ['hearthis.at'];
+
+function revocable(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return REVOCABLE_HOSTS.some(h => host === h || host.endsWith(`.${h}`));
+  } catch { return true; }
+}
+
 export class ReadySourceMap {
   private readonly urls = new Map<string, string>();
   constructor(private readonly storage?: StoragePort) {
@@ -15,13 +30,13 @@ export class ReadySourceMap {
       const rows: unknown = JSON.parse(storage?.getItem(KEY) ?? '[]');
       if (Array.isArray(rows)) for (const entry of rows.slice(-500)) {
         if (!Array.isArray(entry) || typeof entry[0] !== 'string' || typeof entry[1] !== 'string') continue;
-        if (entry[0].length <= 200 && urlAllowedFor('yt-dlp', entry[1])) this.urls.set(entry[0], entry[1]);
+        if (entry[0].length <= 200 && urlAllowedFor('yt-dlp', entry[1]) && !revocable(entry[1])) this.urls.set(entry[0], entry[1]);
       }
     } catch { /* localStorage unavailable/private or older schema: restart empty */ }
   }
   get(trackKey: string): string | null { return this.urls.get(trackKey) ?? null; }
   remember(trackKey: string, url: string): void {
-    if (!trackKey || trackKey.length > 200 || !urlAllowedFor('yt-dlp', url) || this.urls.get(trackKey) === url) return;
+    if (!trackKey || trackKey.length > 200 || !urlAllowedFor('yt-dlp', url) || revocable(url) || this.urls.get(trackKey) === url) return;
     this.urls.delete(trackKey);
     this.urls.set(trackKey, url);
     while (this.urls.size > 500) this.urls.delete(this.urls.keys().next().value!);

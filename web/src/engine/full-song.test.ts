@@ -49,6 +49,50 @@ it('can pay for the SoundCloud client-id bundle while resolving a full song', as
   expect(r.body).toMatchObject({ source: 'soundcloud', url: 'https://soundcloud.com/kmacleod/wallpaper' });
 });
 
+it('falls back to a creator-downloadable CC HearThis track through LocalApi', async () => {
+  const store = await Store.open(new MemoryBackend());
+  const asked: string[] = [];
+  const enc = (o: unknown) => new TextEncoder().encode(JSON.stringify(o));
+  const api = new LocalApi({ store, encoder: null, spotifySearch: () => async () => [], port: {
+    request: async (req: { url: string }) => {
+      asked.push(req.url);
+      if (req.url.includes('api-v2.hearthis.at/search/')) return { status: 200, headers: {}, body: enc([{
+        id: '99', private: '0', type: 'Original', duration: '180', title: 'Wallpaper', license: 'Attribution', downloadable: '1',
+        permalink_url: 'https://hearthis.at/kmacleod/wallpaper/', download_url: 'https://hearthis.app/kmacleod/wallpaper/download/',
+        release_date: '2020-01-02 00:00:00', user: { username: 'Kevin MacLeod' },
+      }]) };
+      return { status: 200, headers: {}, body: enc({}) };
+    },
+  } });
+  const r = await api.handle('POST', '/api/full-song', { track: { key: 'ht', provider: 'deezer', platform_id: '1', title: 'Wallpaper', artists: ['Kevin MacLeod'], duration: 180 }, retry: true });
+  expect(asked.some(u => u.includes('api-v2.hearthis.at/search/'))).toBe(true);
+  expect(r.body).toMatchObject({ id: null, source: 'hearthis', url: 'https://hearthis.at/kmacleod/wallpaper/' });
+});
+
+it('revalidates a cached HearThis link and drops it when the creator withdraws the download', async () => {
+  const store = await Store.open(new MemoryBackend());
+  const url = 'https://hearthis.at/kmacleod/wallpaper/';
+  const track = { key: 'ht', provider: 'deezer', platform_id: '1', title: 'Wallpaper', artists: ['Kevin MacLeod'], duration: 180 };
+  await store.cachePut('fullsong:Wallpaper|Kevin MacLeod|180', 'meta', { id: null, source: 'hearthis', url }, 7 * 86400);
+  const enc = (o: unknown) => new TextEncoder().encode(JSON.stringify(o));
+  const asked: string[] = [];
+  const api = new LocalApi({ store, encoder: null, spotifySearch: () => async () => [], port: {
+    request: async (req: { url: string }) => {
+      asked.push(req.url);
+      // The track is still public, but the creator has turned downloads off since it was cached.
+      if (req.url.includes('api-v2.hearthis.at/kmacleod/wallpaper/')) return { status: 200, headers: {}, body: enc({
+        id: '7', private: '0', type: 'Original', duration: '180', title: 'Wallpaper', license: 'Attribution',
+        downloadable: '0', download_url: '', permalink_url: url, user: { username: 'Kevin MacLeod' },
+      }) };
+      return { status: 200, headers: {}, body: enc([]) };
+    },
+  } });
+  const r = await api.handle('POST', '/api/full-song', { track });
+  expect(asked.some(u => u.includes('api-v2.hearthis.at/kmacleod/wallpaper/'))).toBe(true);
+  expect(r.body).toMatchObject({ source: 'none' });
+  expect((r.body as { url?: string }).url).toBeUndefined();
+});
+
 it('falls back to a licensed Archive single-track audio file through LocalApi', async () => {
   const store = await Store.open(new MemoryBackend());
   const asked: string[] = [];
@@ -67,6 +111,17 @@ it('falls back to a licensed Archive single-track audio file through LocalApi', 
   const r = await api.handle('POST', '/api/full-song', { track: { key: 'cc', provider: 'deezer', platform_id: '1', title: 'Cold Funk', artists: ['Kevin MacLeod'], duration: 288 }, retry: true });
   expect(asked.some(u => u.includes('archive.org/advancedsearch.php'))).toBe(true);
   expect(r.body).toMatchObject({ id: null, source: 'archive', url: 'https://archive.org/download/cold-funk-by-kevin-macleod/cold-funk-by-kevin-macleod.mp3' });
+});
+
+it('hands back the owner-verified SoundCloud source for Plant Island without any network search', async () => {
+  const store = await Store.open(new MemoryBackend());
+  const asked: string[] = [];
+  const api = new LocalApi({ store, encoder: null, spotifySearch: () => async () => [], port: {
+    request: async (req: { url: string }) => { asked.push(req.url); return { status: 200, headers: {}, body: new TextEncoder().encode('{}') }; },
+  } });
+  const r = await api.handle('POST', '/api/full-song', { track: { key: 'pi', provider: 'deezer', platform_id: '86135503', title: 'Plant Island', artists: ['My Singing Monsters'], duration: 219, isrc: 'USHM81262832' } });
+  expect(r.body).toMatchObject({ id: null, source: 'soundcloud', url: 'https://soundcloud.com/ghostmeow/my-singing-monsters-plant' });
+  expect(asked).toEqual([]); // the owner's confirmation needs no provider call
 });
 
 it('does not hand back a rejected own YouTube link when an alternative was requested', async () => {

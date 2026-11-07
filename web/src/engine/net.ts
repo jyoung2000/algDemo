@@ -31,6 +31,8 @@ export const ALLOWED_HOSTS: ReadonlySet<string> = new Set([
   // Audius (keyless, documented read API) and Bandcamp's own site endpoints: both answer with whole-track
   // lengths and both are downloadable in full by yt-dlp (SOURCE-MORE-001).
   'api.audius.co', 'audius.co', 'bandcamp.com', 'www.bandcamp.com',
+  // HearThis's keyless search metadata. Only CC-marked creator-downloadable rows are candidates.
+  'api-v2.hearthis.at',
   // Archive.org's public search/item metadata (licensed whole-audio items only).
   'archive.org',
   'i.ytimg.com',

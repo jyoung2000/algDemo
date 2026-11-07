@@ -10,6 +10,7 @@ import { LocalApi } from './local-api';
 import { Http, type HttpPort } from './net';
 import { Bandcamp } from './bandcamp';
 import { Audius } from './audius';
+import { HearThis } from './hearthis';
 import { InternetArchive } from './internet-archive';
 import { matchRecordings } from './identity';
 import { MemoryBackend, Store } from './store';
@@ -47,6 +48,15 @@ describe.skipIf(!live)('the source chain, against the real services', () => {
     expect(sample.some(t => t.artists.includes('Kevin MacLeod') && t.duration === 288 && t.url.endsWith('.mp3'))).toBe(true);
     for (const missing of [STUCK[0]!, STUCK[3]!]) {
       const candidates = await archive.search(missing.title, 4);
+      expect(candidates.some(c => matchRecordings(missing, c).verdict === 'same')).toBe(false);
+    }
+  }, 100_000);
+  it('asks real creator-downloadable CC HearThis tracks, never swaps the missing recordings', async () => {
+    const hearthis = new HearThis(new Http(port));
+    const sample = await hearthis.search('Creative Commons', 20);
+    expect(sample.some(t => t.platform_id === '2153536' && t.duration === 377 && t.url.startsWith('https://hearthis.at/'))).toBe(true);
+    for (const missing of [STUCK[0]!, STUCK[3]!]) {
+      const candidates = await hearthis.search(missing.title, 20);
       expect(candidates.some(c => matchRecordings(missing, c).verdict === 'same')).toBe(false);
     }
   }, 100_000);

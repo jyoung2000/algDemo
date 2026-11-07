@@ -10,6 +10,8 @@ export const PROVIDER_LABEL: Record<string, string> = {
   soundcloud: 'SoundCloud',
   bandcamp: 'Bandcamp',
   audius: 'Audius',
+  hearthis: 'HearThis',
+  archive: 'Internet Archive',
   spotify: 'Spotify',
   apple: 'Apple Music',
 };

@@ -3,7 +3,7 @@
  * server returns today; optional fields are the ones the server omits when a provider does not know them.
  */
 
-export type ProviderId = 'deezer' | 'ytmusic' | 'soundcloud' | 'spotify' | 'apple' | 'bandcamp' | 'audius' | 'archive';
+export type ProviderId = 'deezer' | 'ytmusic' | 'soundcloud' | 'spotify' | 'apple' | 'bandcamp' | 'audius' | 'hearthis' | 'archive';
 
 export interface Release {
   date: string;
