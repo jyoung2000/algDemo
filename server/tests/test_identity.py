@@ -27,6 +27,14 @@ def test_match_same_by_isrc():
     assert match_recordings(t("X", ["A"], isrc="USUM71900001"), t("Totally different", ["B"], isrc="usum71900001")).verdict == "same"
 
 
+def test_shared_isrc_does_not_override_conflicting_duration_or_version():
+    # Providers do misfile an ISRC onto a re-release or a live cut; hard contradictions must win.
+    studio = t("Song", ["A"], 180, "USUM71900001")
+    assert match_recordings(studio, t("Song", ["A"], 300, "USUM71900001")).verdict != "same"
+    assert match_recordings(studio, t("Song (Live)", ["A"], 180, "USUM71900001")).verdict == "different"
+    assert match_recordings(studio, t("Song", ["A"], 182, "USUM71900001")).verdict == "same"
+
+
 def test_match_same_title_artist_duration():
     r = match_recordings(t("Weird Fishes/Arpeggi", ["Radiohead"], 318), t("Weird Fishes/Arpeggi", ["Radiohead"], 319))
     assert r.verdict == "same"

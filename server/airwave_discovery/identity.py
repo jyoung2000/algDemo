@@ -110,11 +110,22 @@ class MatchResult:
 
 def match_recordings(a: dict, b: dict) -> MatchResult:
     """Compare two track dicts (title, artists, duration, isrc, version)."""
-    if a.get("isrc") and b.get("isrc"):
-        if a["isrc"].upper() == b["isrc"].upper():
-            return MatchResult("same", "same ISRC")
     pa = parse_title(a.get("title", ""), a.get("version") or "")
     pb = parse_title(b.get("title", ""), b.get("version") or "")
+    # A shared ISRC is strong evidence, but providers do misfile them onto re-releases and live cuts.
+    # Hard contradictions (a version tag or a duration that cannot be the same recording) win, so the
+    # shortcut can never certify a different recording as the requested full song (SOURCE-ISRC-001).
+    if a.get("isrc") and b.get("isrc") and a["isrc"].upper() == b["isrc"].upper():
+        if pa.versions != pb.versions:
+            return MatchResult("different", f"same ISRC but different version ({', '.join(sorted(pa.versions ^ pb.versions))})")
+        ia, ib = a.get("duration"), b.get("duration")
+        if ia and ib:
+            gap = abs(float(ia) - float(ib))
+            if gap > 8:
+                return MatchResult("different", f"same ISRC but durations differ by {gap:.0f}s")
+            if gap > 3:
+                return MatchResult("uncertain", f"same ISRC but durations differ by {gap:.0f}s")
+        return MatchResult("same", "same ISRC")
     arts_a = set(split_artists(a.get("artists") or [])) | set(pa.featured)
     arts_b = set(split_artists(b.get("artists") or [])) | set(pb.featured)
     if not arts_a & arts_b:

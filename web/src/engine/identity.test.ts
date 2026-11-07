@@ -34,6 +34,15 @@ describe('identity (port of test_identity.py)', () => {
     expect(matchRecordings(t('X', ['A'], null, 'USUM71900001'), t('Totally different', ['B'], null, 'usum71900001')).verdict).toBe('same');
   });
 
+  // A provider can attach the wrong ISRC to a re-release or a live cut. When the other hard evidence
+  // contradicts it, the shortcut must not certify a different recording as the requested full song.
+  it('does not let a shared ISRC override a conflicting duration or version', () => {
+    const studio = t('Song', ['A'], 180, 'USUM71900001');
+    expect(matchRecordings(studio, t('Song', ['A'], 300, 'USUM71900001')).verdict).not.toBe('same');
+    expect(matchRecordings(studio, t('Song (Live)', ['A'], 180, 'USUM71900001')).verdict).toBe('different');
+    expect(matchRecordings(studio, t('Song', ['A'], 182, 'USUM71900001')).verdict).toBe('same');
+  });
+
   it('matches same title, artist and duration', () => {
     expect(matchRecordings(t('Weird Fishes/Arpeggi', ['Radiohead'], 318), t('Weird Fishes/Arpeggi', ['Radiohead'], 319)).verdict).toBe('same');
   });

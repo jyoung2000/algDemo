@@ -115,9 +115,24 @@ const setEq = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].ev
 
 /** Compare two tracks (title, artists, duration, isrc, version). */
 export function matchRecordings(a: TrackLike, b: TrackLike): MatchResult {
-  if (a.isrc && b.isrc && a.isrc.toUpperCase() === b.isrc.toUpperCase()) return { verdict: 'same', reason: 'same ISRC' };
   const pa = parseTitle(a.title ?? '', a.version ?? '');
   const pb = parseTitle(b.title ?? '', b.version ?? '');
+  // A shared ISRC is strong evidence, but providers do misfile them onto re-releases and live cuts.
+  // Hard contradictions (a version tag or a duration that cannot be the same recording) win, so the
+  // shortcut can never certify a different recording as the requested full song (SOURCE-ISRC-001).
+  if (a.isrc && b.isrc && a.isrc.toUpperCase() === b.isrc.toUpperCase()) {
+    if (!setEq(pa.versions, pb.versions)) {
+      const diff = [...pa.versions].filter((x) => !pb.versions.has(x)).concat([...pb.versions].filter((x) => !pa.versions.has(x))).sort();
+      return { verdict: 'different', reason: `same ISRC but different version (${diff.join(', ')})` };
+    }
+    const ia = a.duration, ib = b.duration;
+    if (ia && ib) {
+      const gap = Math.abs(Number(ia) - Number(ib));
+      if (gap > 8) return { verdict: 'different', reason: `same ISRC but durations differ by ${Math.round(gap)}s` };
+      if (gap > 3) return { verdict: 'uncertain', reason: `same ISRC but durations differ by ${Math.round(gap)}s` };
+    }
+    return { verdict: 'same', reason: 'same ISRC' };
+  }
   const artsA = new Set([...splitArtists(a.artists ?? []), ...pa.featured]);
   const artsB = new Set([...splitArtists(b.artists ?? []), ...pb.featured]);
   if (![...artsA].some((x) => artsB.has(x))) return { verdict: 'different', reason: 'no shared artist' };
