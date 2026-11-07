@@ -2,6 +2,7 @@ package com.nowplaying.discovery
 
 import android.content.Intent
 import android.app.PendingIntent
+import android.net.Uri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
@@ -94,15 +95,17 @@ class PlaybackService : MediaLibraryService() {
           folderItem(FOLDER_SONGS, "Song list", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED),
           folderItem(FOLDER_PLAYLISTS, "Playlists", MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS),
         )
-        parentId == FOLDER_SONGS -> MediaHub.songs.map(::songItem)
+        parentId == FOLDER_SONGS -> MediaHub.songs.map { songItem(it) }
         parentId == FOLDER_PLAYLISTS -> MediaHub.playlists.map {
-          folderItem("$PLAYLIST_PREFIX${it.id}", it.title, MediaMetadata.MEDIA_TYPE_PLAYLIST)
+          folderItem("$PLAYLIST_PREFIX${Uri.encode(it.id)}", it.title, MediaMetadata.MEDIA_TYPE_PLAYLIST)
         }
-        parentId.startsWith(PLAYLIST_PREFIX) ->
-          MediaHub.playlist(parentId.removePrefix(PLAYLIST_PREFIX))?.songs?.map(::songItem) ?: emptyList()
+        parentId.startsWith(PLAYLIST_PREFIX) -> {
+          val listId = Uri.decode(parentId.removePrefix(PLAYLIST_PREFIX))
+          MediaHub.playlist(listId)?.songs?.map { songItem(it, playlistTrackId(listId, it.id)) } ?: emptyList()
+        }
         else -> emptyList()
       }
-      return Futures.immediateFuture(LibraryResult.ofItemList(ImmutableList.copyOf(items), params))
+      return Futures.immediateFuture(LibraryResult.ofItemList(ImmutableList.copyOf(page(items, page, pageSize)), params))
     }
 
     override fun onGetItem(
@@ -114,9 +117,11 @@ class PlaybackService : MediaLibraryService() {
         mediaId == ROOT -> folderItem(ROOT, "Airwave Discovery", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
         mediaId == FOLDER_SONGS -> folderItem(FOLDER_SONGS, "Song list", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
         mediaId == FOLDER_PLAYLISTS -> folderItem(FOLDER_PLAYLISTS, "Playlists", MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS)
+        mediaId.startsWith(PLAYLIST_PREFIX) && mediaId.contains("/track/") ->
+          scopedSong(mediaId)?.let { songItem(it, mediaId) }
         mediaId.startsWith(PLAYLIST_PREFIX) ->
-          MediaHub.playlist(mediaId.removePrefix(PLAYLIST_PREFIX))?.let { folderItem(mediaId, it.title, MediaMetadata.MEDIA_TYPE_PLAYLIST) }
-        else -> MediaHub.findSong(mediaId)?.let(::songItem)
+          MediaHub.playlist(Uri.decode(mediaId.removePrefix(PLAYLIST_PREFIX)))?.let { folderItem(mediaId, it.title, MediaMetadata.MEDIA_TYPE_PLAYLIST) }
+        else -> MediaHub.findSong(mediaId)?.let { songItem(it) }
       }
       return if (item != null) Futures.immediateFuture(LibraryResult.ofItem(item, null))
       else Futures.immediateFuture(LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE))
@@ -140,7 +145,7 @@ class PlaybackService : MediaLibraryService() {
       pageSize: Int,
       params: LibraryParams?,
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
-      Futures.immediateFuture(LibraryResult.ofItemList(ImmutableList.copyOf(MediaHub.search(query).map(::songItem)), params))
+      Futures.immediateFuture(LibraryResult.ofItemList(ImmutableList.copyOf(page(MediaHub.search(query).map { songItem(it) }, page, pageSize)), params))
 
     /** A tap in the car, or a voice request ("play X"), arrives here as bare ids or a search query;
      *  resolve each to a real song so the player can forward the right id to the page. */
@@ -164,14 +169,23 @@ class PlaybackService : MediaLibraryService() {
 
     private fun resolve(item: MediaItem): MediaItem {
       val query = item.requestMetadata.searchQuery
+      val scoped = if (query.isNullOrBlank()) scopedSong(item.mediaId) else null
+      if (scoped != null) return songItem(scoped, item.mediaId)
       val song = if (!query.isNullOrBlank()) {
         val hits = MediaHub.search(query)
         hits.firstOrNull { it.ready } ?: hits.firstOrNull()
       } else {
         item.mediaId.takeIf { it.isNotBlank() }?.let { MediaHub.findSong(it) }
       }
-      return song?.let(::songItem) ?: item
+      return song?.let { songItem(it) } ?: item
     }
+  }
+
+  private fun <T> page(items: List<T>, index: Int, size: Int): List<T> {
+    if (index < 0 || size <= 0) return emptyList()
+    val from = index.toLong() * size
+    if (from >= items.size) return emptyList()
+    return items.subList(from.toInt(), (from + size).coerceAtMost(items.size.toLong()).toInt())
   }
 
   private fun folderItem(id: String, title: String, mediaType: Int): MediaItem =
@@ -187,9 +201,20 @@ class PlaybackService : MediaLibraryService() {
       )
       .build()
 
-  private fun songItem(song: MediaHub.Song): MediaItem =
+  private fun playlistTrackId(listId: String, songId: String) =
+    "$PLAYLIST_PREFIX${Uri.encode(listId)}/track/${Uri.encode(songId)}"
+
+  private fun scopedSong(mediaId: String): MediaHub.Song? {
+    val match = Regex("^playlist/([^/]+)/track/([^/]+)$").matchEntire(mediaId) ?: return null
+    val listId = Uri.decode(match.groupValues[1])
+    val songId = Uri.decode(match.groupValues[2])
+    if (mediaId != playlistTrackId(listId, songId)) return null
+    return MediaHub.playlist(listId)?.songs?.firstOrNull { it.id == songId }
+  }
+
+  private fun songItem(song: MediaHub.Song, id: String = song.id): MediaItem =
     MediaItem.Builder()
-      .setMediaId(song.id)
+      .setMediaId(id)
       .setMediaMetadata(WebPlayer.metadataOf(song, playable = true))
       .build()
 

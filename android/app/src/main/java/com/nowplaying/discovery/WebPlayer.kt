@@ -56,12 +56,16 @@ class WebPlayer(looper: Looper) : SimpleBasePlayer(looper) {
       )
       .build()
 
+    // The page can switch to a saved-list song before it has published the matching queue. Never
+    // let the OS/car announce an unrelated queue entry as the song that is actually playing.
+    val currentInQueue = s.queue.indexOfFirst { it.id == s.mediaId }
+    val actualQueue = if (s.hasTrack && currentInQueue < 0) listOf(currentAsSong(s)) + s.queue else s.queue
     val playlist: List<MediaItemData> =
-      if (s.queue.isNotEmpty()) s.queue.map { mediaItemData(it) }
+      if (actualQueue.isNotEmpty()) actualQueue.map { mediaItemData(it) }
       else if (s.hasTrack) listOf(mediaItemData(currentAsSong(s)))
       else emptyList()
 
-    val index = if (playlist.isEmpty()) 0 else s.queueIndex.coerceIn(0, playlist.size - 1)
+    val index = if (playlist.isEmpty()) 0 else if (currentInQueue >= 0) currentInQueue else 0
     val basePos = if (s.hasTrack) {
       val elapsed = if (s.playing) (SystemClock.elapsedRealtime() - s.reportedAt).coerceAtLeast(0) else 0
       (s.positionMs + elapsed).coerceAtLeast(0)

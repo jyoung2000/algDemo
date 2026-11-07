@@ -14,7 +14,7 @@ import { ListDownloadBar, ListDownloadButton } from './ListDownloadBar';
 import { useCardCache } from './useCardCache';
 import { useKeptKeys } from './useKeptKeys';
 import { savedTracks, playbackRows, preparationTracks } from './engine/queue-context';
-import { mediaNativeAvailable, pushMediaLibrary, pushMediaState, setMediaHandlers, songFromTrack } from './engine/media-native';
+import { decodePlaylistMediaId, mediaNativeAvailable, pushMediaLibrary, pushMediaState, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { SettingsView } from './Settings';
 import { setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
 import { PLAY_THROUGH_DEFAULT } from './engine/crossfade';
@@ -364,6 +364,19 @@ export function App() {
       prev: goPrev,
       playIndex: (i) => { const it = activeItems[i]; if (it) play(it, { keepList: true }); },
       playId: (id) => {
+        const scoped = decodePlaylistMediaId(id);
+        if (scoped) {
+          const list = lists.find((l) => l.id === scoped.listId);
+          const track = list && savedTracks(saved, lists, list.id).find((t) => t.key === scoped.key);
+          if (!track) return; // A stale/forged car id must not play an unrelated song.
+          playingListRef.current = list.id;
+          setPlayingContext(list.id);
+          heardRef.current = new Set([track.key]);
+          historyRef.current = [track.key];
+          const row = playbackRows([track])[0];
+          if (row) play(row, { keepList: true });
+          return;
+        }
         const inActive = activeItems.find((x) => x.track.key === id);
         if (inActive) { play(inActive, { keepList: true }); return; }
         const fromList = lists.flatMap((l) => savedTracks(saved, lists, l.id)).find((t) => t.key === id);

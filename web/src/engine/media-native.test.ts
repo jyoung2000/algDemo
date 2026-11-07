@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  decodePlaylistMediaId,
   installMediaCommands,
   mediaNativeAvailable,
   pushMediaLibrary,
@@ -67,6 +68,13 @@ describe('media-native bridge', () => {
     expect(songFromTrack(track(), true).durationMs).toBe(219000);
     expect(songFromTrack(track({ duration: undefined }), false).durationMs).toBe(-1);
     expect(songFromTrack(track({ artist: undefined, artists: ['A', 'B'] }), true).artist).toBe('A, B');
+  });
+
+  it('decodes a playlist-scoped car item without confusing it with a discovery song', () => {
+    expect(decodePlaylistMediaId('playlist/p1/track/deezer%3A123')).toEqual({ listId: 'p1', key: 'deezer:123' });
+    expect(decodePlaylistMediaId('playlist/my%2Fmix/track/a%2Fb')).toEqual({ listId: 'my/mix', key: 'a/b' });
+    expect(decodePlaylistMediaId('deezer:123')).toBeNull();
+    expect(decodePlaylistMediaId('playlist/p1/track/%ZZ')).toBeNull();
   });
 
   it('routes native transport commands to the registered handlers', () => {

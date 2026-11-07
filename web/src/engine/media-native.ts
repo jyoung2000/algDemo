@@ -70,6 +70,17 @@ const nativeMedia = (): NativeMedia | undefined =>
 /** True only inside the Android shell, where a native MediaSession and Android Auto exist. */
 export const mediaNativeAvailable = (): boolean => typeof nativeMedia()?.media === 'function';
 
+/** Playlist rows carry context in their Android Auto mediaId; a plain track key has none. */
+export function decodePlaylistMediaId(id: string): { listId: string; key: string } | null {
+  const match = /^playlist\/([^/]+)\/track\/([^/]+)$/.exec(id);
+  if (!match) return null;
+  try {
+    const listId = decodeURIComponent(match[1]!);
+    const key = decodeURIComponent(match[2]!);
+    return listId && key ? { listId, key } : null;
+  } catch { return null; }
+}
+
 let handlers: MediaHandlers = {};
 /** Register transport handlers. Partial and merged, so App (queue/library) and Player (play/seek) can
  *  each register their own slice without clobbering the other. */
