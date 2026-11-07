@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Declares this app as an Android Auto media app. Android Auto reads this descriptor (named by the
+     com.google.android.gms.car.application meta-data in the manifest) to know it may browse and play
+     this app's media library through the MediaLibraryService/MediaBrowserService. -->
+<automotiveApp>
+    <uses name="media"/>
+</automotiveApp>

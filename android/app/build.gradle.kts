@@ -43,8 +43,9 @@ android {
     applicationId = "com.nowplaying.discovery"
     minSdk = 26
     targetSdk = 35
-    versionCode = 24
-    versionName = "0.10.9"
+    versionCode = 25
+    versionName = "0.11.0"
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     // The embedded Python, yt-dlp and ffmpeg ship per CPU. Phones are arm64; the emulator is x86_64.
     ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
   }
@@ -101,5 +102,15 @@ dependencies {
   // The library asks for older androidx; pin the versions the rest of the Airwave apps build with.
   implementation("androidx.core:core-ktx:1.13.1")
   implementation("androidx.appcompat:appcompat:1.7.0")
+  // Media3: a native MediaSession/MediaLibraryService so the OS, lock screen, Bluetooth and Android
+  // Auto see a real music player. The actual audio is still rendered by the WebView's Web Audio
+  // engine (EQ/crossfade/mixer); the session's Player (WebPlayer) is a proxy that mirrors and remote-
+  // controls it. Android Auto does not render audio itself, so this preserves every in-app effect.
+  implementation("androidx.media3:media3-session:1.9.3")
+  implementation("androidx.media3:media3-common:1.9.3")
   testImplementation("junit:junit:4.13.2")
+  // Instrumented browse-tree test (Android Auto): connects a real MediaBrowser to PlaybackService.
+  androidTestImplementation("androidx.test.ext:junit:1.1.5")
+  androidTestImplementation("androidx.test:runner:1.5.2")
+  androidTestImplementation("androidx.test:core-ktx:1.5.0")
 }

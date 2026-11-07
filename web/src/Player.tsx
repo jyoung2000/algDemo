@@ -11,6 +11,7 @@ import { attachElement, bus as audioBus, mixSlider, playThrough, resumeEngine, s
 import { localLibrary, sourceUrlFor } from './engine/local-audio';
 import { rescueSource } from './engine/rescue';
 import { downloadsAvailable, playbackActive } from './engine/downloads';
+import { mediaNativeAvailable, pushMediaState, setMediaHandlers } from './engine/media-native';
 import { queueAudio } from './engine/queue-audio';
 import { clearResume, writeResume } from './engine/resume';
 import { type DeckId } from './engine/audio-bus';
@@ -615,6 +616,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     else if (audio.current) audio.current.currentTime = s;
     meter.current.seeked(s);
     setCur(s);
+    if (mediaNativeAvailable()) pushMediaState({ positionMs: Math.round(Math.max(0, s) * 1000) });
   };
 
   // A song that plays to its end counts as listened; then the next one starts. A second end of the
@@ -817,8 +819,31 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     </div>
   );
 
-  const syncPlayback = () => queueMicrotask(() => playbackActive(Boolean((deckA.current && !deckA.current.paused) || (deckB.current && !deckB.current.paused)), playing?.track.title));
+  const syncPlayback = () => queueMicrotask(() => {
+    const active = (deckA.current && !deckA.current.paused) ? deckA.current : (deckB.current && !deckB.current.paused) ? deckB.current : null;
+    const playingNow = Boolean(active);
+    playbackActive(playingNow, playing?.track.title);
+    // MEDIA-NATIVE-001: keep the native session's play/pause + playhead in step with the deck.
+    if (mediaNativeAvailable()) {
+      const el = active ?? deckA.current ?? deckB.current;
+      pushMediaState({
+        playing: playingNow,
+        positionMs: Math.round(((el?.currentTime ?? cur) || 0) * 1000),
+        durationMs: el && el.duration > 0 ? Math.round(el.duration * 1000) : (dur > 0 ? Math.round(dur * 1000) : -1),
+      });
+    }
+  });
   useEffect(() => () => playbackActive(false), []);
+  // MEDIA-NATIVE-001: the lock screen, Bluetooth and Android Auto drive play/pause/seek through here.
+  useEffect(() => {
+    if (!mediaNativeAvailable()) return;
+    const isPlayingNow = () => mode === 'full' ? yt.current?.getPlayerState() === 1 : Boolean(audio.current && !audio.current.paused);
+    setMediaHandlers({
+      play: () => { if (!isPlayingNow()) toggle(); },
+      pause: () => { if (isPlayingNow()) toggle(); },
+      seek: (ms) => seek(Math.max(0, ms) / 1000),
+    });
+  });
   /**
    * RESUME-001. The OS can tear this page down without warning (Android recreates the Activity
    * under memory pressure, and closing the Windows window ends the page), so the listener's place

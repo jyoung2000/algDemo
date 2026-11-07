@@ -3,6 +3,7 @@ package com.nowplaying.discovery
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -24,6 +25,10 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import androidx.core.content.ContextCompat
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import com.google.common.util.concurrent.ListenableFuture
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.net.HttpURLConnection
@@ -52,6 +57,15 @@ class MainActivity : Activity() {
   @Volatile private var webAudioPlaying = false
   private var activityPaused = false
   private var notificationRequested = false
+  private var mediaControllerFuture: ListenableFuture<MediaController>? = null
+  private var mediaController: MediaController? = null
+
+  /** Forwards a native transport command (lock screen, Bluetooth, Android Auto) into the page, where
+   *  the Web Audio engine actually acts on it. The page implements `window.__awMediaCmd(jsonString)`. */
+  private val mediaCommandSink: (JSONObject) -> Unit = { cmd ->
+    val v = web
+    v?.post { if (web === v) v.evaluateJavascript("window.__awMediaCmd && window.__awMediaCmd(${JSONObject.quote(cmd.toString())})", null) }
+  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -60,6 +74,34 @@ class MainActivity : Activity() {
     edgeToEdge()
     Downloads.warmUp(this) // unpacks yt-dlp, Python and ffmpeg in the background
     open()
+    startNativeSession()
+  }
+
+  /**
+   * Bring up the native Media3 session (MEDIA-NATIVE-001). Connecting a MediaController to
+   * [PlaybackService] starts the service and establishes its [MediaLibrarySession], so the lock
+   * screen, quick panel, Bluetooth and Android Auto have a session to read and control the moment the
+   * page starts playing; the service promotes itself to the foreground then, keeping the WebView's
+   * Web Audio alive with the screen off. The page's transport commands are routed back through
+   * [mediaCommandSink]. The controller itself issues no commands — the page stays the authority.
+   */
+  private fun startNativeSession() {
+    MediaHub.setCommandSink(mediaCommandSink)
+    val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
+    val f = MediaController.Builder(this, token).buildAsync()
+    mediaControllerFuture = f
+    f.addListener({ runCatching { mediaController = f.get() } }, ContextCompat.getMainExecutor(this))
+  }
+
+  /** Android 13+ needs POST_NOTIFICATIONS before the media notification (and the foreground service)
+   *  can appear; asked for on first play, never at start-up, and only while in the foreground. */
+  private fun maybeAskNotifications() {
+    if (Build.VERSION.SDK_INT >= 33 && !activityPaused && !notificationRequested &&
+      checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+    ) {
+      notificationRequested = true
+      requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
+    }
   }
 
   /**
@@ -248,7 +290,10 @@ class MainActivity : Activity() {
     fun version(): String = BuildConfig.VERSION_NAME
 
     /** JS opt-in: AirwaveNative.playbackState(JSON.stringify({playing, title})).
-     * Reports state for the notification only; no native player or media session is created.
+     * The legacy play/pause hint: it keeps the WebView's Web Audio awake in the background and
+     * updates the native session's play/pause + title. The richer snapshot (queue, position,
+     * library) comes through [media]; this only merges the flag and title so older web builds still
+     * get working lock-screen play/pause.
      */
     @JavascriptInterface
     fun playbackState(json: String) {
@@ -256,28 +301,39 @@ class MainActivity : Activity() {
       val state = runCatching { JSONObject(json) }.getOrNull() ?: return
       val playing = state.optBoolean("playing", false)
       val title = state.optString("title", "Airwave Discovery").take(120)
+      MediaHub.setPlaying(playing, title)
       view.post {
         if (web !== view) return@post
         webAudioPlaying = playing
         if (playing) {
-          if (Build.VERSION.SDK_INT >= 33 && !activityPaused && !notificationRequested &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            notificationRequested = true
-            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFY)
-          }
+          maybeAskNotifications()
           if (activityPaused) view.onResume()
-          val service = Intent(this@MainActivity, PlaybackNotificationService::class.java)
-            .setAction(PlaybackNotificationService.ACTION_PLAYING)
-            .putExtra(PlaybackNotificationService.EXTRA_TITLE, title)
-          try {
-            startForegroundService(service)
-          } catch (e: RuntimeException) {
-            // Android 12+ can reject an FGS start made after the Activity went to background.
-            Log.w("AirwavePlayback", "Could not start playback notification", e)
-          }
-        } else {
-          stopService(Intent(this@MainActivity, PlaybackNotificationService::class.java))
-          if (activityPaused) view.onPause()
+        } else if (activityPaused) {
+          view.onPause()
+        }
+      }
+    }
+
+    /**
+     * JS opt-in: AirwaveNative.media(JSON.stringify(snapshot)) — the full native-player snapshot
+     * (MEDIA-NATIVE-001). It carries now playing, playhead, the up-next queue, and the browsable
+     * library (song list + playlists) so the lock screen, Bluetooth and Android Auto render and
+     * control the same playback the page is producing. See [MediaHub] for the shape.
+     */
+    @JavascriptInterface
+    fun media(json: String) {
+      if (json.length > 1_000_000) return
+      val obj = runCatching { JSONObject(json) }.getOrNull() ?: return
+      MediaHub.apply(obj)
+      val playing = obj.optJSONObject("state")?.optBoolean("playing", false) ?: false
+      view.post {
+        if (web !== view) return@post
+        webAudioPlaying = playing
+        if (playing) {
+          maybeAskNotifications()
+          if (activityPaused) view.onResume()
+        } else if (activityPaused) {
+          view.onPause()
         }
       }
     }
@@ -412,7 +468,11 @@ class MainActivity : Activity() {
   override fun onPause() { activityPaused = true; if (!webAudioPlaying) web?.onPause(); super.onPause() }
   override fun onResume() { super.onResume(); activityPaused = false; web?.onResume() }
   override fun onDestroy() {
-    stopService(Intent(this, PlaybackNotificationService::class.java))
+    MediaHub.clearCommandSink(mediaCommandSink)
+    mediaController?.release()
+    mediaControllerFuture?.let { MediaController.releaseFuture(it) }
+    mediaController = null
+    mediaControllerFuture = null
     web?.destroy(); web = null; pool.shutdownNow(); super.onDestroy()
   }
 

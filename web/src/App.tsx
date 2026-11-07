@@ -14,6 +14,7 @@ import { ListDownloadBar, ListDownloadButton } from './ListDownloadBar';
 import { useCardCache } from './useCardCache';
 import { useKeptKeys } from './useKeptKeys';
 import { savedTracks, playbackRows, preparationTracks } from './engine/queue-context';
+import { mediaNativeAvailable, pushMediaLibrary, pushMediaState, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { SettingsView } from './Settings';
 import { setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
 import { PLAY_THROUGH_DEFAULT } from './engine/crossfade';
@@ -351,6 +352,67 @@ export function App() {
     [visibleSeeds, items, hidden]);
   const keptKeys = useKeptKeys(cacheTracks);
   const cardCache = useCardCache(cacheTracks, keptKeys);
+
+  // MEDIA-NATIVE-001: mirror the player onto the Android native MediaSession / Android Auto. Every
+  // call is a no-op outside the Android app, so these run unconditionally but only act in the shell.
+  // App owns the list, queue and navigation; Player (below) owns play/pause, the playhead and seek.
+  const nativeReady = (t: Track) => (ready ? ready(t) : false);
+  useEffect(() => {
+    if (!mediaNativeAvailable()) return;
+    setMediaHandlers({
+      next: goNext,
+      prev: goPrev,
+      playIndex: (i) => { const it = activeItems[i]; if (it) play(it, { keepList: true }); },
+      playId: (id) => {
+        const inActive = activeItems.find((x) => x.track.key === id);
+        if (inActive) { play(inActive, { keepList: true }); return; }
+        const fromList = lists.flatMap((l) => savedTracks(saved, lists, l.id)).find((t) => t.key === id);
+        const t = fromList ?? (saved ?? []).map((s) => s.track).find((x) => x.key === id);
+        const row = t ? playbackRows([t])[0] : undefined;
+        if (row) play(row, { keepList: true });
+      },
+      search: (q) => {
+        const ql = q.trim().toLowerCase();
+        if (!ql) return;
+        const pool = [...activeItems.map((x) => x.track), ...lists.flatMap((l) => savedTracks(saved, lists, l.id))];
+        const hit = pool.find((t) => `${t.title} ${artistOf(t)}`.toLowerCase().includes(ql));
+        if (!hit) return;
+        const row = activeItems.find((x) => x.track.key === hit.key) ?? playbackRows([hit])[0];
+        if (row) play(row, { keepList: true });
+      },
+      shuffle: (on) => { if (on !== shuffle) toggleShuffle(); },
+      repeat: (mode) => {
+        const target: RepeatMode = mode === 1 ? 'one' : mode === 2 ? 'all' : 'off';
+        setRepeat(() => { writeFlag(REPEAT_KEY, target); return target; });
+      },
+    });
+  });
+  useEffect(() => {
+    if (!mediaNativeAvailable()) return;
+    const idx = Math.max(0, activeItems.findIndex((x) => x.track.key === playingKey));
+    pushMediaState({
+      hasTrack: Boolean(playing),
+      mediaId: playing?.track.key ?? null,
+      title: playing?.track.title ?? 'Airwave Discovery',
+      artist: playing ? artistOf(playing.track) : '',
+      album: playing?.track.album ?? null,
+      artwork: playing?.track.artwork ?? null,
+      durationMs: playing?.track.duration ? Math.round(playing.track.duration * 1000) : -1,
+      canNext: Boolean(nextStep),
+      canPrev: Boolean(prevStep),
+      shuffle,
+      repeat: repeat === 'one' ? 1 : repeat === 'all' ? 2 : 0,
+      queue: activeItems.map((x) => songFromTrack(x.track, nativeReady(x.track))),
+      queueIndex: idx,
+    });
+  }, [playing, activeItems, playingKey, Boolean(nextStep), Boolean(prevStep), shuffle, repeat, readySignature]);
+  useEffect(() => {
+    if (!mediaNativeAvailable()) return;
+    pushMediaLibrary(
+      activeItems.map((x) => songFromTrack(x.track, nativeReady(x.track))),
+      lists.map((l) => ({ id: l.id, title: l.name, songs: savedTracks(saved, lists, l.id).map((t) => songFromTrack(t, nativeReady(t))) })),
+    );
+  }, [activeItems, lists, saved, readySignature]);
 
   // A skip or a full listen is recorded, then the songs still to come are ranked again with it.
   // Only the newest answer is applied, so two quick skips cannot show the older order.
