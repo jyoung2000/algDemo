@@ -82,3 +82,6 @@
 
 ## Rulings
 - 2026-11-07: the original Media3 proxy is not a playback owner; an unattached application-context WebView AudioContext stopped responding after screen off in an isolated instrumentation spike. Owner selected a native service-owned engine with ported effects rather than weakening background/Auto support.
+- 2026-11-08: **Task 5's DSP core moves ahead of Task 1's session integration.** The engine's shape (two decoded PCM streams → one summed output → always-on post-mix compressor) dictates how the session Player is built; wiring the single-ExoPlayer slice in as the session Player now would be thrown away at Task 5. The DSP core is pure Kotlin, so it is verified on the JVM against fixtures rendered by real Chromium Web Audio running the app's own `audio-bus.ts`/`eq.ts` — contract in `tools/dsp-parity/CONTRACT.md`. Order now: DSP core (parity) → engine I/O (decode, resample, one AudioTrack) behind a Media3 Player → Task 2 → Task 3 → Task 4 → Task 6.
+- 2026-11-08: three Web Audio behaviours the port must reproduce that are easy to miss: a `highpass` filter's `Q` is in **dB**; a `lowshelf` ignores `Q`; and `DynamicsCompressorNode` applies automatic **makeup gain** (threshold −1, ratio 20 → about +0.57 dB on everything below the ceiling), plus a 6 ms look-ahead delay.
+

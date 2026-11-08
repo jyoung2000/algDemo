@@ -1,0 +1,1409 @@
+{
+  "generator": {
+    "electron": "44.1.1",
+    "chrome": "152.0.7977.65",
+    "createdAt": "2026-11-08T06:08:08.785Z",
+    "webEngineCommit": "d66876adb801209f1346ff9ba70d55fd29410d63",
+    "summationOrder": {
+      "rule": "smallest-sha256-of-all-variants",
+      "stableAfter": 150,
+      "scenarios": [
+        {
+          "name": "eq-off-passthrough",
+          "variants": 3,
+          "renders": 163,
+          "maxSpread": 0.00004056096076965332,
+          "sha256": "1ec87d886b9463632abbc2ccfb29fdfa291d10cbfee0369c5f582770977e5cce"
+        },
+        {
+          "name": "eq-rock",
+          "variants": 3,
+          "renders": 156,
+          "maxSpread": 0.00002579018473625183,
+          "sha256": "1a4bb0b6cfe9abbec89d6a3d844bfaa1f8de3e28b4e67cf7fcb08c44b4c1b9fe"
+        },
+        {
+          "name": "eq-bass-booster-no-limiter",
+          "variants": 3,
+          "renders": 155,
+          "maxSpread": 0.00004234910011291504,
+          "sha256": "1078c9ba405a39dd55bd3d893ae857926a7ef6476b1dd315202c3c8471b9c7b0"
+        },
+        {
+          "name": "eq-solfeggio-528",
+          "variants": 3,
+          "renders": 153,
+          "maxSpread": 0.000020172446966171265,
+          "sha256": "2f0a13d843621dbd9f0483067da49c63c81d9654131c8b5617907a0bd744cb58"
+        },
+        {
+          "name": "eq-extreme-custom",
+          "variants": 3,
+          "renders": 153,
+          "maxSpread": 0.000021398067474365234,
+          "sha256": "000fd360fe2eafb1532a75273bce93fd1e28226c9feddc14f9f3decbc40e2c98"
+        },
+        {
+          "name": "eq-toggle-ramp",
+          "variants": 3,
+          "renders": 159,
+          "maxSpread": 0.00003108382225036621,
+          "sha256": "28b8c840f3a4a3c4694249c93b4f84d64f9b56e0e0085d37f57a20da848aac62"
+        },
+        {
+          "name": "xfade-blend",
+          "variants": 9,
+          "renders": 174,
+          "maxSpread": 0.00004056096076965332,
+          "sha256": "0b17f3410cc562610fe798f80daebc0b56677fa27e459eae7320b1063c0d1e82"
+        },
+        {
+          "name": "xfade-bass-swap",
+          "variants": 9,
+          "renders": 181,
+          "maxSpread": 0.00004056096076965332,
+          "sha256": "05990070d47e4709fc3a2ae2bd20461f54353359c8e554126563ce4e11651941"
+        },
+        {
+          "name": "xfade-filter",
+          "variants": 9,
+          "renders": 171,
+          "maxSpread": 0.000028468668460845947,
+          "sha256": "18ee897622d8aa127fa23dd69871c574342bbded566781c26fa45ecabe9c9105"
+        },
+        {
+          "name": "xfade-cut",
+          "variants": 9,
+          "renders": 180,
+          "maxSpread": 0.00004254281520843506,
+          "sha256": "31859917b2754ba7260cf26b309f1d692dcef55305cab3fb09f18783cb0a3185"
+        },
+        {
+          "name": "xfade-reversal",
+          "variants": 9,
+          "renders": 172,
+          "maxSpread": 0.00004544854164123535,
+          "sha256": "4f07dd2284a291c93a6f7c7e98a1ec7a5ce6879b13a64791ca5b83c7c2f412d5"
+        },
+        {
+          "name": "loud-sum-limiter",
+          "variants": 9,
+          "renders": 171,
+          "maxSpread": 0.00009301304817199707,
+          "sha256": "11d14b94c251785517c6d68e8567b75c63b54725237fa9d59c3360c32b0bbfd3"
+        },
+        {
+          "name": "master-gain",
+          "variants": 3,
+          "renders": 154,
+          "maxSpread": 0.000037610530853271484,
+          "sha256": "1706a4a68878d79baffcd92699d34c60c590c8e03907ed05996ca25b5f0ba44a"
+        }
+      ]
+    }
+  },
+  "sampleRate": 48000,
+  "channels": 2,
+  "quantum": 128,
+  "scenarios": [
+    {
+      "name": "eq-off-passthrough",
+      "frames": 48000,
+      "file": "eq-off-passthrough.f32",
+      "inputs": {
+        "a": [
+          {
+            "seed": 1,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                55,
+                0.12
+              ],
+              [
+                440,
+                0.1
+              ],
+              [
+                3000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 2,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                82.5,
+                0.12
+              ],
+              [
+                660,
+                0.1
+              ],
+              [
+                5000,
+                0.04
+              ]
+            ]
+          }
+        ],
+        "b": [
+          {
+            "seed": 3,
+            "noiseAmp": 0,
+            "sines": []
+          },
+          {
+            "seed": 4,
+            "noiseAmp": 0,
+            "sines": []
+          }
+        ]
+      },
+      "initialEq": {
+        "on": false,
+        "presetId": "flat",
+        "gains": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "preampDb": 0,
+        "limiter": true,
+        "toneHz": null,
+        "toneDb": 6
+      },
+      "actions": []
+    },
+    {
+      "name": "eq-rock",
+      "frames": 48000,
+      "file": "eq-rock.f32",
+      "inputs": {
+        "a": [
+          {
+            "seed": 1,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                55,
+                0.12
+              ],
+              [
+                440,
+                0.1
+              ],
+              [
+                3000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 2,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                82.5,
+                0.12
+              ],
+              [
+                660,
+                0.1
+              ],
+              [
+                5000,
+                0.04
+              ]
+            ]
+          }
+        ],
+        "b": [
+          {
+            "seed": 3,
+            "noiseAmp": 0,
+            "sines": []
+          },
+          {
+            "seed": 4,
+            "noiseAmp": 0,
+            "sines": []
+          }
+        ]
+      },
+      "initialEq": {
+        "on": true,
+        "presetId": "rock",
+        "gains": [
+          5,
+          4,
+          3,
+          1.5,
+          -0.5,
+          -1,
+          0.5,
+          3,
+          4,
+          4.5
+        ],
+        "preampDb": 0,
+        "limiter": true,
+        "toneHz": null,
+        "toneDb": 6
+      },
+      "actions": []
+    },
+    {
+      "name": "eq-bass-booster-no-limiter",
+      "frames": 48000,
+      "file": "eq-bass-booster-no-limiter.f32",
+      "inputs": {
+        "a": [
+          {
+            "seed": 1,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                55,
+                0.12
+              ],
+              [
+                440,
+                0.1
+              ],
+              [
+                3000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 2,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                82.5,
+                0.12
+              ],
+              [
+                660,
+                0.1
+              ],
+              [
+                5000,
+                0.04
+              ]
+            ]
+          }
+        ],
+        "b": [
+          {
+            "seed": 3,
+            "noiseAmp": 0,
+            "sines": []
+          },
+          {
+            "seed": 4,
+            "noiseAmp": 0,
+            "sines": []
+          }
+        ]
+      },
+      "initialEq": {
+        "on": true,
+        "presetId": "bass-booster",
+        "gains": [
+          7,
+          5.5,
+          4,
+          2,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "preampDb": 0,
+        "limiter": false,
+        "toneHz": null,
+        "toneDb": 6
+      },
+      "actions": []
+    },
+    {
+      "name": "eq-solfeggio-528",
+      "frames": 48000,
+      "file": "eq-solfeggio-528.f32",
+      "inputs": {
+        "a": [
+          {
+            "seed": 1,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                55,
+                0.12
+              ],
+              [
+                440,
+                0.1
+              ],
+              [
+                3000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 2,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                82.5,
+                0.12
+              ],
+              [
+                660,
+                0.1
+              ],
+              [
+                5000,
+                0.04
+              ]
+            ]
+          }
+        ],
+        "b": [
+          {
+            "seed": 3,
+            "noiseAmp": 0,
+            "sines": []
+          },
+          {
+            "seed": 4,
+            "noiseAmp": 0,
+            "sines": []
+          }
+        ]
+      },
+      "initialEq": {
+        "on": true,
+        "presetId": "solfeggio-528",
+        "gains": [
+          0,
+          0,
+          0,
+          1,
+          2,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "preampDb": 0,
+        "limiter": true,
+        "toneHz": 528,
+        "toneDb": 6
+      },
+      "actions": []
+    },
+    {
+      "name": "eq-extreme-custom",
+      "frames": 48000,
+      "file": "eq-extreme-custom.f32",
+      "inputs": {
+        "a": [
+          {
+            "seed": 1,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                55,
+                0.12
+              ],
+              [
+                440,
+                0.1
+              ],
+              [
+                3000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 2,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                82.5,
+                0.12
+              ],
+              [
+                660,
+                0.1
+              ],
+              [
+                5000,
+                0.04
+              ]
+            ]
+          }
+        ],
+        "b": [
+          {
+            "seed": 3,
+            "noiseAmp": 0,
+            "sines": []
+          },
+          {
+            "seed": 4,
+            "noiseAmp": 0,
+            "sines": []
+          }
+        ]
+      },
+      "initialEq": {
+        "on": true,
+        "presetId": "custom",
+        "gains": [
+          12,
+          -12,
+          12,
+          -12,
+          12,
+          -12,
+          12,
+          -12,
+          12,
+          -12
+        ],
+        "preampDb": 6,
+        "limiter": true,
+        "toneHz": null,
+        "toneDb": 6
+      },
+      "actions": []
+    },
+    {
+      "name": "eq-toggle-ramp",
+      "frames": 72064,
+      "file": "eq-toggle-ramp.f32",
+      "inputs": {
+        "a": [
+          {
+            "seed": 1,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                55,
+                0.12
+              ],
+              [
+                440,
+                0.1
+              ],
+              [
+                3000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 2,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                82.5,
+                0.12
+              ],
+              [
+                660,
+                0.1
+              ],
+              [
+                5000,
+                0.04
+              ]
+            ]
+          }
+        ],
+        "b": [
+          {
+            "seed": 3,
+            "noiseAmp": 0,
+            "sines": []
+          },
+          {
+            "seed": 4,
+            "noiseAmp": 0,
+            "sines": []
+          }
+        ]
+      },
+      "initialEq": {
+        "on": false,
+        "presetId": "flat",
+        "gains": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "preampDb": 0,
+        "limiter": true,
+        "toneHz": null,
+        "toneDb": 6
+      },
+      "actions": [
+        {
+          "frame": 24064,
+          "op": "setEq",
+          "args": [
+            {
+              "on": true,
+              "presetId": "rock",
+              "gains": [
+                5,
+                4,
+                3,
+                1.5,
+                -0.5,
+                -1,
+                0.5,
+                3,
+                4,
+                4.5
+              ],
+              "preampDb": 0,
+              "limiter": true,
+              "toneHz": null,
+              "toneDb": 6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "xfade-blend",
+      "frames": 72064,
+      "file": "xfade-blend.f32",
+      "inputs": {
+        "a": [
+          {
+            "seed": 1,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                55,
+                0.12
+              ],
+              [
+                440,
+                0.1
+              ],
+              [
+                3000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 2,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                82.5,
+                0.12
+              ],
+              [
+                660,
+                0.1
+              ],
+              [
+                5000,
+                0.04
+              ]
+            ]
+          }
+        ],
+        "b": [
+          {
+            "seed": 3,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                110,
+                0.12
+              ],
+              [
+                880,
+                0.1
+              ],
+              [
+                2000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 4,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                165,
+                0.12
+              ],
+              [
+                1320,
+                0.1
+              ],
+              [
+                7000,
+                0.04
+              ]
+            ]
+          }
+        ]
+      },
+      "initialEq": {
+        "on": false,
+        "presetId": "flat",
+        "gains": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "preampDb": 0,
+        "limiter": true,
+        "toneHz": null,
+        "toneDb": 6
+      },
+      "actions": [
+        {
+          "frame": 12800,
+          "op": "transitionTo",
+          "args": [
+            "b",
+            0.8,
+            "blend"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "xfade-bass-swap",
+      "frames": 72064,
+      "file": "xfade-bass-swap.f32",
+      "inputs": {
+        "a": [
+          {
+            "seed": 1,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                55,
+                0.12
+              ],
+              [
+                440,
+                0.1
+              ],
+              [
+                3000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 2,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                82.5,
+                0.12
+              ],
+              [
+                660,
+                0.1
+              ],
+              [
+                5000,
+                0.04
+              ]
+            ]
+          }
+        ],
+        "b": [
+          {
+            "seed": 3,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                110,
+                0.12
+              ],
+              [
+                880,
+                0.1
+              ],
+              [
+                2000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 4,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                165,
+                0.12
+              ],
+              [
+                1320,
+                0.1
+              ],
+              [
+                7000,
+                0.04
+              ]
+            ]
+          }
+        ]
+      },
+      "initialEq": {
+        "on": false,
+        "presetId": "flat",
+        "gains": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "preampDb": 0,
+        "limiter": true,
+        "toneHz": null,
+        "toneDb": 6
+      },
+      "actions": [
+        {
+          "frame": 12800,
+          "op": "transitionTo",
+          "args": [
+            "b",
+            0.8,
+            "bass-swap"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "xfade-filter",
+      "frames": 72064,
+      "file": "xfade-filter.f32",
+      "inputs": {
+        "a": [
+          {
+            "seed": 1,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                55,
+                0.12
+              ],
+              [
+                440,
+                0.1
+              ],
+              [
+                3000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 2,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                82.5,
+                0.12
+              ],
+              [
+                660,
+                0.1
+              ],
+              [
+                5000,
+                0.04
+              ]
+            ]
+          }
+        ],
+        "b": [
+          {
+            "seed": 3,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                110,
+                0.12
+              ],
+              [
+                880,
+                0.1
+              ],
+              [
+                2000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 4,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                165,
+                0.12
+              ],
+              [
+                1320,
+                0.1
+              ],
+              [
+                7000,
+                0.04
+              ]
+            ]
+          }
+        ]
+      },
+      "initialEq": {
+        "on": false,
+        "presetId": "flat",
+        "gains": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "preampDb": 0,
+        "limiter": true,
+        "toneHz": null,
+        "toneDb": 6
+      },
+      "actions": [
+        {
+          "frame": 12800,
+          "op": "transitionTo",
+          "args": [
+            "b",
+            0.8,
+            "filter"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "xfade-cut",
+      "frames": 72064,
+      "file": "xfade-cut.f32",
+      "inputs": {
+        "a": [
+          {
+            "seed": 1,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                55,
+                0.12
+              ],
+              [
+                440,
+                0.1
+              ],
+              [
+                3000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 2,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                82.5,
+                0.12
+              ],
+              [
+                660,
+                0.1
+              ],
+              [
+                5000,
+                0.04
+              ]
+            ]
+          }
+        ],
+        "b": [
+          {
+            "seed": 3,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                110,
+                0.12
+              ],
+              [
+                880,
+                0.1
+              ],
+              [
+                2000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 4,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                165,
+                0.12
+              ],
+              [
+                1320,
+                0.1
+              ],
+              [
+                7000,
+                0.04
+              ]
+            ]
+          }
+        ]
+      },
+      "initialEq": {
+        "on": false,
+        "presetId": "flat",
+        "gains": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "preampDb": 0,
+        "limiter": true,
+        "toneHz": null,
+        "toneDb": 6
+      },
+      "actions": [
+        {
+          "frame": 12800,
+          "op": "transitionTo",
+          "args": [
+            "b",
+            0.8,
+            "cut"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "xfade-reversal",
+      "frames": 72064,
+      "file": "xfade-reversal.f32",
+      "inputs": {
+        "a": [
+          {
+            "seed": 1,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                55,
+                0.12
+              ],
+              [
+                440,
+                0.1
+              ],
+              [
+                3000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 2,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                82.5,
+                0.12
+              ],
+              [
+                660,
+                0.1
+              ],
+              [
+                5000,
+                0.04
+              ]
+            ]
+          }
+        ],
+        "b": [
+          {
+            "seed": 3,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                110,
+                0.12
+              ],
+              [
+                880,
+                0.1
+              ],
+              [
+                2000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 4,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                165,
+                0.12
+              ],
+              [
+                1320,
+                0.1
+              ],
+              [
+                7000,
+                0.04
+              ]
+            ]
+          }
+        ]
+      },
+      "initialEq": {
+        "on": false,
+        "presetId": "flat",
+        "gains": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "preampDb": 0,
+        "limiter": true,
+        "toneHz": null,
+        "toneDb": 6
+      },
+      "actions": [
+        {
+          "frame": 12800,
+          "op": "transitionTo",
+          "args": [
+            "b",
+            1,
+            "filter"
+          ]
+        },
+        {
+          "frame": 32000,
+          "op": "crossfadeTo",
+          "args": [
+            "a",
+            0.5
+          ]
+        }
+      ]
+    },
+    {
+      "name": "loud-sum-limiter",
+      "frames": 72064,
+      "file": "loud-sum-limiter.f32",
+      "inputs": {
+        "a": [
+          {
+            "seed": 1,
+            "noiseAmp": 0.05,
+            "sines": [
+              [
+                55,
+                0.45
+              ],
+              [
+                440,
+                0.25
+              ],
+              [
+                3000,
+                0.1
+              ]
+            ]
+          },
+          {
+            "seed": 2,
+            "noiseAmp": 0.05,
+            "sines": [
+              [
+                82.5,
+                0.45
+              ],
+              [
+                660,
+                0.25
+              ],
+              [
+                5000,
+                0.1
+              ]
+            ]
+          }
+        ],
+        "b": [
+          {
+            "seed": 3,
+            "noiseAmp": 0.05,
+            "sines": [
+              [
+                110,
+                0.45
+              ],
+              [
+                880,
+                0.25
+              ],
+              [
+                2000,
+                0.1
+              ]
+            ]
+          },
+          {
+            "seed": 4,
+            "noiseAmp": 0.05,
+            "sines": [
+              [
+                165,
+                0.45
+              ],
+              [
+                1320,
+                0.25
+              ],
+              [
+                7000,
+                0.1
+              ]
+            ]
+          }
+        ]
+      },
+      "initialEq": {
+        "on": false,
+        "presetId": "flat",
+        "gains": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "preampDb": 0,
+        "limiter": true,
+        "toneHz": null,
+        "toneDb": 6
+      },
+      "actions": [
+        {
+          "frame": 12800,
+          "op": "transitionTo",
+          "args": [
+            "b",
+            0.8,
+            "blend"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "master-gain",
+      "frames": 48000,
+      "file": "master-gain.f32",
+      "inputs": {
+        "a": [
+          {
+            "seed": 1,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                55,
+                0.12
+              ],
+              [
+                440,
+                0.1
+              ],
+              [
+                3000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 2,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                82.5,
+                0.12
+              ],
+              [
+                660,
+                0.1
+              ],
+              [
+                5000,
+                0.04
+              ]
+            ]
+          }
+        ],
+        "b": [
+          {
+            "seed": 3,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                110,
+                0.12
+              ],
+              [
+                880,
+                0.1
+              ],
+              [
+                2000,
+                0.05
+              ]
+            ]
+          },
+          {
+            "seed": 4,
+            "noiseAmp": 0.08,
+            "sines": [
+              [
+                165,
+                0.12
+              ],
+              [
+                1320,
+                0.1
+              ],
+              [
+                7000,
+                0.04
+              ]
+            ]
+          }
+        ]
+      },
+      "initialEq": {
+        "on": false,
+        "presetId": "flat",
+        "gains": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "preampDb": 0,
+        "limiter": true,
+        "toneHz": null,
+        "toneDb": 6
+      },
+      "actions": [
+        {
+          "frame": 9600,
+          "op": "setMasterGain",
+          "args": [
+            0.5
+          ]
+        }
+      ]
+    }
+  ]
+}
