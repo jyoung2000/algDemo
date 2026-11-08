@@ -359,6 +359,8 @@ export function App() {
   // call is a no-op outside the Android app, so these run unconditionally but only act in the shell.
   // App owns the list, queue and navigation; Player (below) owns play/pause, the playhead and seek.
   const nativeReady = (t: Track) => (ready ? ready(t) : false);
+  /** The ready song as the native side needs it, including the exact file the native engine plays. */
+  const nativeSong = (t: Track) => { const r = nativeReady(t); return songFromTrack(t, r, r ? queueAudio.readyUrl(t) : null); };
   useEffect(() => {
     if (!mediaNativeAvailable()) return;
     setMediaHandlers({
@@ -418,15 +420,15 @@ export function App() {
       canPrev: Boolean(prevStep),
       shuffle,
       repeat: repeat === 'one' ? 1 : repeat === 'all' ? 2 : 0,
-      queue: activeItems.map((x) => songFromTrack(x.track, nativeReady(x.track))),
+      queue: activeItems.map((x) => nativeSong(x.track)),
       queueIndex: idx,
     });
   }, [playing, activeItems, playingKey, Boolean(nextStep), Boolean(prevStep), shuffle, repeat, readySignature]);
   useEffect(() => {
     if (!mediaNativeAvailable()) return;
     pushMediaLibrary(
-      activeItems.map((x) => songFromTrack(x.track, nativeReady(x.track))),
-      lists.map((l) => ({ id: l.id, title: l.name, songs: savedTracks(saved, lists, l.id).map((t) => songFromTrack(t, nativeReady(t))) })),
+      activeItems.map((x) => nativeSong(x.track)),
+      lists.map((l) => ({ id: l.id, title: l.name, songs: savedTracks(saved, lists, l.id).map((t) => nativeSong(t)) })),
     );
   }, [activeItems, lists, saved, readySignature]);
 

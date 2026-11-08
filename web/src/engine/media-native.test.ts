@@ -70,6 +70,13 @@ describe('media-native bridge', () => {
     expect(songFromTrack(track({ artist: undefined, artists: ['A', 'B'] }), true).artist).toBe('A, B');
   });
 
+  it('names the exact local file only for a ready song, so the native engine never plays a guess', () => {
+    const url = 'https://www.youtube.com/watch?v=abc';
+    expect(songFromTrack(track(), true, url).source).toBe(url);
+    expect(songFromTrack(track(), false, url).source).toBeNull();
+    expect(songFromTrack(track(), true).source).toBeNull();
+  });
+
   it('decodes a playlist-scoped car item without confusing it with a discovery song', () => {
     expect(decodePlaylistMediaId('playlist/p1/track/deezer%3A123')).toEqual({ listId: 'p1', key: 'deezer:123' });
     expect(decodePlaylistMediaId('playlist/my%2Fmix/track/a%2Fb')).toEqual({ listId: 'my/mix', key: 'a/b' });

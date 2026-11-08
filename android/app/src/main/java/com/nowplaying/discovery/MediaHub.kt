@@ -44,6 +44,10 @@ object MediaHub {
     val artwork: String?,
     val durationMs: Long,
     val ready: Boolean,
+    /** The download link whose complete audio is held on the phone (`Downloads.localFile` key),
+     *  pushed only while [ready]. The native engine plays this file; without it a song is not
+     *  playable natively, whatever [ready] says. */
+    val source: String? = null,
   )
 
   /** A browsable folder in the Android Auto tree: the now playing queue, or one playlist. */
@@ -265,6 +269,7 @@ object MediaHub {
           artwork = o.optStringOrNull("artwork"),
           durationMs = o.optLong("durationMs", -1).let { if (it > 0) it else C_TIME_UNSET },
           ready = o.optBoolean("ready", false),
+          source = o.optStringOrNull("source")?.takeIf { o.optBoolean("ready", false) && Downloads.urlAllowed(it) },
         ),
       )
     }

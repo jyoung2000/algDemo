@@ -20,6 +20,9 @@ export interface NativeSong {
   artwork?: string | null;
   durationMs: number;
   ready: boolean;
+  /** The download link of the complete audio held on the phone, so the native engine can play this
+   *  exact file without the page. Sent only while `ready`. */
+  source?: string | null;
 }
 
 export interface NativeFolder {
@@ -134,7 +137,7 @@ function send(payload: { state: NativeState; library?: { songs: NativeSong[]; pl
 }
 
 /** Map an app [Track] to the native song shape. Duration is seconds in the app, milliseconds here. */
-export function songFromTrack(track: Track, ready: boolean): NativeSong {
+export function songFromTrack(track: Track, ready: boolean, source?: string | null): NativeSong {
   return {
     id: track.key,
     title: track.title,
@@ -143,6 +146,7 @@ export function songFromTrack(track: Track, ready: boolean): NativeSong {
     artwork: track.artwork ?? null,
     durationMs: typeof track.duration === 'number' && track.duration > 0 ? Math.round(track.duration * 1000) : -1,
     ready,
+    source: ready ? source ?? null : null,
   };
 }
 
