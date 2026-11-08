@@ -137,6 +137,7 @@ class EnginePlayer(
   fun pageLoad(song: MediaHub.Song, mediaId: String?, positionMs: Long, play: Boolean, pageRev: Int) {
     val id = mediaId ?: song.id
     val current = queue.current
+    Log.i(TAG, "page load ${song.id.take(60)} link=${song.source != null} play=$play rev=$pageRev/$rev")
     if (current != null && current.song.id == song.id) {
       // Same song: keep it playing where it is; only pick up a file that arrived for it.
       if (waitingFor == song.id && song.source != null) { replaceCurrent(Entry(song, id)); loadCurrent(positionMs, chosen = true) }
@@ -446,6 +447,7 @@ class EnginePlayer(
           if (chosen) {
             // The listener picked it: wait for the file rather than skip away from their choice.
             waitingFor = song.id
+            Log.i(TAG, "waiting for the file of ${song.id.take(60)} (link=${song.source != null})")
             watchForFile()
             invalidateState()
             emit(null)
@@ -460,6 +462,7 @@ class EnginePlayer(
           }
           return@post
         }
+        Log.i(TAG, "opened ${song.id.take(60)} at ${startMs} ms")
         engine.load(song.id, source, startMs * SAMPLE_RATE / 1000, play = playWhenReady)
         loadedKey = song.id
         invalidateState()
