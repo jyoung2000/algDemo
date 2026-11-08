@@ -31,6 +31,11 @@ export interface SubDef {
   family: string;
   /** Folded service names that mean this subgenre. */
   aliases: string[];
+  /**
+   * The slash-free name on a genre bubble (TAGS-CANON-001), only where the first part of `name`
+   * does not stand alone ("NY" of "NY / Brooklyn drill"); otherwise that first part is used.
+   */
+  short?: string;
 }
 
 export const SUBS: SubDef[] = [
@@ -50,7 +55,7 @@ export const SUBS: SubDef[] = [
   { key: 'boom-bap', name: 'Boom bap revival', family: 'hip-hop', aliases: ['boom bap', 'boom-bap', 'old school hip hop', 'golden age hip hop', 'east coast hip hop', 'east coast rap', 'new york hip hop'] },
   { key: 'jersey-club', name: 'Jersey club (rap crossover)', family: 'hip-hop', aliases: ['jersey club', 'jersey-club'] },
   { key: 'trap', name: 'Trap', family: 'hip-hop', aliases: ['trap music', 'southern trap', 'atlanta trap', 'mumble rap', 'hip hop trap'] },
-  { key: 'drill', name: 'NY / Brooklyn drill', family: 'hip-hop', aliases: ['drill', 'ny drill', 'brooklyn drill', 'chicago drill', 'bronx drill', 'drill rap'] },
+  { key: 'drill', name: 'NY / Brooklyn drill', family: 'hip-hop', aliases: ['drill', 'ny drill', 'brooklyn drill', 'chicago drill', 'bronx drill', 'drill rap'], short: 'NY drill' },
   { key: 'plugg', name: 'Plugg / pluggnb', family: 'hip-hop', aliases: ['plugg', 'pluggnb', 'plugg nb'] },
   { key: 'phonk', name: 'Phonk (OG and drift)', family: 'hip-hop', aliases: ['phonk', 'drift phonk', 'memphis phonk', 'memphis rap', 'brazilian phonk'] },
   { key: 'trap-metal', name: 'Trap metal / SoundCloud rap', family: 'hip-hop', aliases: ['trap metal', 'soundcloud rap', 'soundcloud', 'emo rap'] },
@@ -60,11 +65,11 @@ export const SUBS: SubDef[] = [
   // Hip-hop subgenres listeners tell apart that the picker has no cell for. They carry no tempo range
   // (so tempo never invents them); only a tag or a community tag can name them. Words come from real
   // MusicBrainz artist tags (Pop Smoke, Playboi Carti, Kendrick Lamar, MF DOOM).
-  { key: 'cloud-rap', name: 'Cloud / melodic rap', family: 'hip-hop', aliases: ['cloud rap', 'melodic rap', 'sad rap', 'dream rap', 'ethereal rap'] },
-  { key: 'conscious', name: 'Conscious / jazz rap', family: 'hip-hop', aliases: ['conscious hip hop', 'conscious rap', 'political hip hop', 'lyrical hip hop', 'jazz rap', 'jazz hip hop', 'hardcore hip hop'] },
+  { key: 'cloud-rap', name: 'Cloud / melodic rap', family: 'hip-hop', aliases: ['cloud rap', 'melodic rap', 'sad rap', 'dream rap', 'ethereal rap'], short: 'Cloud rap' },
+  { key: 'conscious', name: 'Conscious / jazz rap', family: 'hip-hop', aliases: ['conscious hip hop', 'conscious rap', 'political hip hop', 'lyrical hip hop', 'jazz rap', 'jazz hip hop', 'hardcore hip hop'], short: 'Conscious rap' },
   { key: 'west-coast', name: 'West Coast / G-funk', family: 'hip-hop', aliases: ['west coast hip hop', 'west coast rap', 'g funk', 'g-funk', 'gangsta rap', 'hyphy', 'bay area hip hop'] },
   { key: 'southern', name: 'Southern hip-hop / crunk', family: 'hip-hop', aliases: ['southern hip hop', 'southern rap', 'dirty south', 'crunk', 'houston rap', 'chopped and screwed', 'chopped screwed', 'bounce music', 'miami bass'] },
-  { key: 'alt-hip-hop', name: 'Alternative / underground hip-hop', family: 'hip-hop', aliases: ['alternative hip hop', 'alternative rap', 'underground hip hop', 'underground rap', 'abstract hip hop', 'experimental hip hop', 'indie rap', 'left field hip hop'] },
+  { key: 'alt-hip-hop', name: 'Alternative / underground hip-hop', family: 'hip-hop', aliases: ['alternative hip hop', 'alternative rap', 'underground hip hop', 'underground rap', 'abstract hip hop', 'experimental hip hop', 'indie rap', 'left field hip hop'], short: 'Alternative hip-hop' },
   { key: 'grime', name: 'Grime / UK rap', family: 'hip-hop', aliases: ['grime', 'uk hip hop', 'uk rap', 'road rap'] },
   // Pop
   { key: 'alt-pop', name: 'Alt-pop / dark pop', family: 'pop', aliases: ['alt pop', 'alternative pop', 'dark pop', 'alt-pop'] },
@@ -86,12 +91,12 @@ export const SUBS: SubDef[] = [
   { key: 'slacker-rock', name: 'Lo-fi indie / slacker rock', family: 'indie', aliases: ['lo fi indie', 'lofi indie', 'slacker rock', 'bedroom rock'] },
   { key: 'indietronica', name: 'Indietronica', family: 'indie', aliases: ['indietronica', 'indie electronic', 'indie dance'] },
   { key: 'indie-pop', name: 'Indie pop', family: 'indie', aliases: [] },
-  { key: 'garage-psych', name: 'Garage / psych rock', family: 'indie', aliases: ['garage rock', 'psych rock', 'psychedelic rock', 'garage psych', 'psych'] },
+  { key: 'garage-psych', name: 'Garage / psych rock', family: 'indie', aliases: ['garage rock', 'psych rock', 'psychedelic rock', 'garage psych', 'psych'], short: 'Garage rock' },
   { key: 'jangle-pop', name: 'Jangle pop / C86 revival', family: 'indie', aliases: ['jangle pop', 'jangle-pop', 'c86', 'twee pop'] },
   { key: 'math-rock', name: 'Math rock', family: 'indie', aliases: ['math rock', 'math-rock', 'math'] },
   // Soul/Jazz/Funk
   { key: 'neo-soul', name: 'Neo-soul', family: 'soul-jazz-funk', aliases: ['neo soul', 'neo-soul'] },
-  { key: 'uk-soul', name: 'Alternative / UK soul', family: 'soul-jazz-funk', aliases: ['alternative soul', 'uk soul', 'uk-soul'] },
+  { key: 'uk-soul', name: 'Alternative / UK soul', family: 'soul-jazz-funk', aliases: ['alternative soul', 'uk soul', 'uk-soul'], short: 'Alternative soul' },
   { key: 'nu-jazz', name: 'Jazz-hop / nu-jazz', family: 'soul-jazz-funk', aliases: ['jazz hop', 'jazz-hop', 'nu jazz', 'nu-jazz', 'jazz rap'] },
   { key: 'spiritual-jazz', name: 'Spiritual jazz / UK jazz revival', family: 'soul-jazz-funk', aliases: ['spiritual jazz', 'uk jazz', 'uk jazz revival'] },
   { key: 'boogie', name: 'Modern funk / boogie revival', family: 'soul-jazz-funk', aliases: ['modern funk', 'boogie', 'funk revival', 'boogie revival'] },

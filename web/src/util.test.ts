@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { RecItem, TasteSummary } from './api';
-import { ListenMeter, addSeed, historyBack, isSilent, nextRepeat, stepQueue, toggleMuteState, describeCharacteristics, describeTaste, genreTags, mergeRerank, pickerColorFor, playbackOfTrack, qualifiesCompletion, toneLabel } from './util';
+import { classify } from './engine/classify';
+import { SUBS } from './engine/genre-table';
+import type { Tag } from './engine/genres';
+import { ListenMeter, addSeed, historyBack, isSilent, nextRepeat, stepQueue, toggleMuteState, describeCharacteristics, describeTaste, genreBubbles, genreTags, mergeRerank, pickerColorFor, playbackOfTrack, qualifiesCompletion, toneLabel } from './util';
 
 const item = (key: string, rank: number): RecItem => ({ rank, track: { key } }) as unknown as RecItem;
 
@@ -120,8 +123,9 @@ describe('genreTags', () => {
     for (const t of tags) expect(t).not.toMatch(/[\/·,]/);
   });
   it('splits a slashed subgenre and keeps it, dropping the duplicate main-genre copy', () => {
+    // Main genre first, then the subgenre, as above; the provider's "underground hip hop" IS that subgenre.
     const tags = genreTags({ ...base, genres: ['Rap', 'Hip Hop', 'underground hip hop'], family: 'Hip-hop', subgenre: 'Alternative / underground hip-hop' });
-    expect(tags).toEqual(['Alternative', 'underground hip-hop']);
+    expect(tags).toEqual(['Rap', 'Alternative hip-hop']);
     for (const t of tags) expect(t).not.toMatch(/[\/·,]/);
   });
   it('drops the duplicate rap / hip-hop names a song repeats', () => {
@@ -140,6 +144,71 @@ describe('pickerColorFor', () => {
   it('gives a genre the Taste Picker colour, the same colour for the same genre', () => {
     expect(pickerColorFor('Rap')).toMatch(/^hsl\(/);
     expect(pickerColorFor('Rap')).toBe(pickerColorFor('Rap'));
+  });
+});
+
+// TAGS-CANON-001: one genre is one bubble, named one way, in the Taste Picker's colour for that genre.
+describe('genre bubbles follow the Taste Picker', () => {
+  const base = { bpm: null, genres: [] as string[], explicit: null, duration: null, release_year: null, popularity: null, taste_fit: null };
+  const pickerColour = (word: string) => classify([{ name: word, label: word, confidence: 1 }] as Tag[], null)!.color;
+  const rnb = pickerColour('r&b');
+  const pop = pickerColour('pop');
+
+  it('gives R&B its own picker colour however it is written, never the song\'s colour', () => {
+    for (const w of ['R&B', 'r&b', 'rnb', 'RnB', 'r and b', 'Rhythm and Blues']) expect(pickerColorFor(w), w).toBe(rnb);
+    expect(rnb).not.toBe(pop);
+    // A pop song's R&B bubble is R&B-coloured, not pop-coloured.
+    const popSong = genreBubbles({ ...base, genres: ['Pop', 'rnb'], family: 'Pop', color: pop });
+    expect(popSong).toEqual([{ label: 'Pop', color: pop, sub: false }, { label: 'R&B', color: rnb, sub: false }]);
+  });
+
+  it('shows R&B once, spelt R&B, when providers spell it several ways', () => {
+    expect(genreTags({ ...base, genres: ['rnb', 'R&B', 'r&b'] })).toEqual(['R&B']);
+  });
+
+  it('does not split a picker family into genres the song was never tagged with', () => {
+    const tags = genreTags({
+      ...base,
+      genres: ['Pop', 'rnb'],
+      family: 'Pop',
+      families: [
+        { family: 'Pop', subgenre: null, color: pop },
+        { family: 'R&B/Afro/Latin', subgenre: null, color: rnb },
+        { family: 'Soul/Jazz/Funk', subgenre: null, color: pickerColour('soul') },
+      ],
+    });
+    expect(tags).not.toContain('Afro');
+    expect(tags).not.toContain('Latin');
+    expect(tags).not.toContain('Jazz');
+    expect(tags).not.toContain('Funk');
+    expect(tags).toEqual(['Pop', 'R&B', 'Soul']);
+  });
+
+  it('names every genre in one consistent case', () => {
+    expect(genreTags({ ...base, genres: ['soul', 'hip hop', 'ELECTRONIC'] })).toEqual(['Soul', 'Hip-hop', 'Electronic']);
+    expect(genreTags({ ...base, genres: ['electronic'] })).toEqual(['Electronic']);
+  });
+
+  it('shows a picker subgenre as one slash-free bubble, merged with the provider word for it', () => {
+    const disco = genreBubbles({ ...base, genres: ['disco', 'Pop'], families: [{ family: 'Soul/Jazz/Funk', subgenre: 'Nu-disco / disco revival', color: '' }] });
+    // Its family leads it, as Rap leads Rage: main genre first, then the subgenre.
+    expect(disco.map((b) => b.label)).toEqual(['Pop', 'Soul', 'Nu-disco']);
+    expect(disco[2]!.color).toBe(pickerColour('nu-disco'));
+  });
+
+  it('every picker subgenre has a slash-free name that leads back to its own colour', () => {
+    for (const s of SUBS) {
+      const b = genreBubbles({ ...base, families: [{ family: 'none', subgenre: s.name, color: '' }] }).find((x) => x.sub);
+      expect(b, s.name).toBeDefined();
+      expect(b!.label, s.name).not.toMatch(/[/·,()]/);
+      expect(b!.color, s.name).toBe(pickerColour(s.key));
+      expect(pickerColorFor(b!.label), b!.label).toBe(b!.color);
+    }
+  });
+
+  it('gives a genre the picker has no place for no bubble, so no bubble is grey', () => {
+    const b = genreBubbles({ ...base, genres: ['Gospel', 'Soul'] });
+    expect(b).toEqual([{ label: 'Soul', color: pickerColour('soul'), sub: false }]);
   });
 });
 

@@ -4,7 +4,7 @@ import type { FeedbackKind, PlaylistSummary, RecItem, Track } from './api';
 import type { CardCache } from './engine/queue-controls';
 import { Art } from './Art';
 import { SaveMenu } from './SaveMenu';
-import { PROVIDER_LABEL, TIER_LABEL, artistOf, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreTags, markKey, pickerColorFor, playbackOfTrack, toneLabel } from './util';
+import { PROVIDER_LABEL, TIER_LABEL, artistOf, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreBubbles, markKey, playbackOfTrack, toneLabel } from './util';
 
 export interface FeedbackFlags {
   like?: boolean;
@@ -124,9 +124,8 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         const isOpen = open === t.key;
         const facts = describeCharacteristics(it.characteristics);
         // One coloured bubble per genre or subgenre, no separators. The Taste Picker colour sits on the family/subgenre bubble.
-        const genreBubbles = genreTags(it.characteristics);
+        const bubbles = genreBubbles(it.characteristics);
         const toneFact = toneLabel(it.characteristics);
-        const toneColor = it.characteristics?.color ?? null;
         const cache = cacheOf?.(t.key) ?? null;
         return (
           <li
@@ -187,16 +186,14 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
             </div>
             <div className="rec__sub">
               <span className="rec__why1">{it.reasons[0]?.text ?? 'Found from your starting songs.'}</span>
-              {(genreBubbles.length > 0 || facts.length > 0) && (
+              {(bubbles.length > 0 || facts.length > 0) && (
                 <span className="rec__facts" aria-label="Song details">
-                  {genreBubbles.map((g) => {
-                    const tone = pickerColorFor(g) ?? toneColor;
-                    return (
-                      <span key={g} className="genre" style={tone ? ({ '--tone': tone } as CSSProperties) : undefined}>
-                        {g}
-                      </span>
-                    );
-                  })}
+                  {/* TAGS-CANON-001: each bubble in the Taste Picker's colour for its own genre. */}
+                  {bubbles.map((g) => (
+                    <span key={g.label} className="genre" style={{ '--tone': g.color } as CSSProperties}>
+                      {g.label}
+                    </span>
+                  ))}
                   {facts.map((f) => (
                     <span key={f} className="fact">
                       {f}

@@ -1,7 +1,5 @@
-import { classify } from './engine/classify';
 import { downloadsAvailable } from './engine/downloads';
-import { FAMILY_TAGS } from './engine/genre-table';
-import type { Tag } from './engine/genres';
+import { familyIdentity, genreIdentity, subIdentity, type GenreIdentity } from './engine/genre-identity';
 import type { Characteristics, Playback, ProviderId, RecItem, Release, TasteSummary, Track } from './api';
 
 export const PROVIDER_LABEL: Record<string, string> = {
@@ -330,72 +328,54 @@ export function genreNames(c?: Characteristics | null): string[] {
   return (c?.genres ?? []).flatMap((g) => g.split(/\s*[\/·,]\s*/)).map((g) => g.trim()).filter(Boolean);
 }
 
-/** Tag ids that name the same thing ("Hip-hop", "hip hop", "Hip Hop") collapse to one. */
-const tagKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+/** One genre bubble: its one name, and the Taste Picker's colour for that genre. */
+export interface GenreBubble {
+  label: string;
+  color: string;
+  sub: boolean;
+}
 
 /**
- * The genre bubbles for a row, in reading order: main genres first (the family, or a bare genre such as
- * "Rap"), then subgenres. Each bubble is one name with no separators. A name already named by a longer
- * bubble is dropped ("Hip Hop" beside "underground hip hop"), and "Rap" and "Hip Hop" count as one.
+ * The genre bubbles for a row, in reading order: main genres first (the provider's own, e.g. "Rap",
+ * then a family the tags name), then subgenres (TAGS-CANON-001).
+ *
+ * Every word goes through genreIdentity, so a genre is one bubble however providers spell it ("rnb",
+ * "R&B" and "r&b" are one "R&B"), every name is in one case, and each bubble carries the picker's
+ * colour for ITS genre, never the song's. A family is shown by a genre the song was tagged with, not
+ * split into words it was not ("R&B/Afro/Latin" is not also "Afro" and "Latin"). A word the picker has
+ * no place for gets no bubble. "Rap" and "Hip Hop" are one genre, so a song keeps the first of them.
  */
+export function genreBubbles(c?: Characteristics | null): GenreBubble[] {
+  if (!c) return [];
+  const list = c.families ?? [];
+  const subs = (list.length ? list.map((f) => f.subgenre) : [c.subgenre]).filter((s): s is string => Boolean(s));
+  const families = list.length ? list.map((f) => f.family) : c.family ? [c.family] : [];
+  const ids: GenreIdentity[] = [
+    ...genreNames(c).slice(0, 3).map(genreIdentity),
+    ...subs.map(subIdentity),
+    ...families.map(familyIdentity),
+  ].filter((x): x is GenreIdentity => x !== null);
+  const seen = new Set<string>();
+  const unique = ids.filter((id) => !seen.has(id.key) && (seen.add(id.key), true));
+  // The family is the main genre only when no genre the song was tagged with already says it:
+  // "Rap" leads a Rage song, and "Hip-hop" leads it when the provider named no main genre.
+  const fromFamily = new Set(families.map(familyIdentity).map((id) => id?.key));
+  const kept = unique.filter((id) => !fromFamily.has(id.key) || !unique.some((o) => o !== id && !o.sub && o.family === id.family && !fromFamily.has(o.key)));
+  const ordered = [...kept.filter((id) => !id.sub), ...kept.filter((id) => id.sub)];
+  return ordered.map(({ label, color, sub }) => ({ label, color, sub }));
+}
+
+/** The genre names on a row's bubbles, in order (see genreBubbles). */
 export function genreTags(c?: Characteristics | null): string[] {
-  // Every family and subgenre the tags name (TAGS-MULTI-001), not only the strongest pair: a song
-  // that is R&B and pop shows both. Older answers without the list fall back to the single pair.
-  const list = c?.families ?? [];
-  const family = list.length ? list.flatMap((f) => splitTag(f.family)) : c?.family ? splitTag(c.family) : [];
-  const sub = list.length
-    ? list.flatMap((f) => (f.subgenre ? splitTag(f.subgenre) : []))
-    : c?.subgenre
-      ? splitTag(c.subgenre)
-      : [];
-  const provider = genreNames(c).slice(0, 3);
-  const isSub = (n: string) => sub.some((x) => tagKey(x) === tagKey(n));
-  // The provider's own main genre ("Rap") is the main bubble; the family ("Hip-hop") only fills in when there is none.
-  const main = [...provider, ...family].filter((n) => !isSub(n));
-  // A subgenre wins over a main-genre copy of the same name ("underground hip hop" vs "underground hip-hop").
-  const ordered = [...sub, ...main];
-
-  const keys: string[] = [];
-  const unique: string[] = [];
-  for (const name of ordered) {
-    const k = tagKey(name);
-    if (!k || keys.includes(k)) continue;
-    keys.push(k);
-    unique.push(name);
-  }
-  // Drop a bubble whose words are all inside a longer bubble's words (e.g. "Hip Hop" inside "underground hip hop").
-  const covered = unique.filter((name) => {
-    const words = tagKey(name);
-    return !unique.some((other) => other !== name && tagKey(other).length > words.length && tagKey(other).includes(words));
-  });
-  // "Rap" and "Hip Hop" name the same thing: a song keeps only the first of them.
-  let rapSeen = false;
-  const dedup = covered.filter((name) => {
-    if (!/hiphop|^rap$/.test(tagKey(name))) return true;
-    if (rapSeen) return false;
-    rapSeen = true;
-    return true;
-  });
-  return [...dedup.filter((n) => !isSub(n)), ...dedup.filter((n) => isSub(n))];
+  return genreBubbles(c).map((b) => b.label);
 }
 
-/**
- * The Taste Picker colour for one genre name: the same colour the picker gives a song with that genre
- * (classify: family hue band, shaded by the subgenre's energy and brightness). Null when the name is
- * not a picker family or subgenre.
- */
+/** The Taste Picker's colour for a genre, however it is spelt, or null when the picker has no place for it. */
 export function pickerColorFor(name: string): string | null {
-  const tag = [{ name, label: name, confidence: 1 }] as Tag[];
-  const sub = classify(tag, null);
-  if (sub?.color && sub.subgenre) return sub.color;
-  // A main genre with no subgenre of its own ("Rap") takes its family's band colour.
-  const fam = FAMILY_TAGS[name.toLowerCase()];
-  if (!fam) return null;
-  return classify([{ name: fam, label: fam, confidence: 1 }] as Tag[], null)?.color ?? null;
+  return genreIdentity(name)?.color ?? null;
 }
 
-/** Split a provider string on the separators it uses ("A / B", "A · B") so each part is its own bubble. */
-const splitTag = (s: string): string[] => s.split(/\s*[\/·,]\s*/).map((x) => x.trim()).filter(Boolean);
 
 /** The facts shown on a row so the listener can see why a song was picked: tempo, genres, year, fit. */
 export function describeCharacteristics(c?: Characteristics | null): string[] {
