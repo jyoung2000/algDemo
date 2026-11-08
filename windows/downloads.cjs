@@ -10,7 +10,7 @@
  *  - `--ignore-config` is first for yt-dlp, so a config file cannot add `--exec`;
  *  - files are written to a private temp folder, then moved to the user's Music folder.
  * Background downloads run `parallel` at a time (settable from cache-config, 1-6, default 2, because each
- * slot is a real yt-dlp process); one foreground job is always additional to them. Progress is real
+ * slot is a real yt-dlp process); two foreground jobs, newest first, are always additional to them. Progress is real
  * (parsed from the tool's own output) or absent, never invented.
  */
 const { spawn, spawnSync } = require('node:child_process');
@@ -231,12 +231,16 @@ function createDownloads(cfg) {
   /** @type {Map<string, any>} */
   const jobs = new Map();
   const active = { background: 0, foreground: 0 };
+  /** Two taps at once, newest first: a tap never waits behind the song the listener just left (DL-FAST-001). */
+  const FOREGROUND_SLOTS = 2;
   function pump() {
     for (const lane of ['foreground', 'background']) {
-      for (const j of jobs.values()) {
+      // Background songs go in listening order; the listener's own taps newest first.
+      const candidates = lane === 'background' ? [...jobs.values()] : [...jobs.values()].reverse();
+      for (const j of candidates) {
         // Read the limit per candidate: lowering it mid-flight stops new starts without touching
         // the processes already running, and raising it takes effect on this same pass.
-        if (active[lane] >= (lane === 'background' ? backgroundParallel : 1)) break;
+        if (active[lane] >= (lane === 'background' ? backgroundParallel : FOREGROUND_SLOTS)) break;
         if (j.state !== 'queued' || j.cancelled || j.dispatched || (j.background ? 'background' : 'foreground') !== lane) continue;
         active[lane]++;
         j.dispatched = true;

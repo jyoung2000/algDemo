@@ -63,6 +63,8 @@ class EnginePlayer(
   initialEq: EqConfig = EqConfig.DEFAULTS,
   /** Off in tests that drive the player without a real audio route. */
   private val manageFocus: Boolean = true,
+  /** Subscribes to "this link's file is now held"; returns the unsubscribe. */
+  landed: ((String) -> Unit) -> () -> Unit = Downloads::onLanded,
 ) : SimpleBasePlayer(looper) {
 
   /** The page, when there is one. All calls are made on the player's looper. */
@@ -359,6 +361,7 @@ class EnginePlayer(
 
   override fun handleRelease(): ListenableFuture<*> {
     loadGeneration++
+    stopLanded()
     main.removeCallbacksAndMessages(null)
     holdWake(false)
     abandonFocus()
@@ -567,6 +570,19 @@ class EnginePlayer(
           if (gen != loadGeneration || waitingFor != id) return@post
           if (landed) loadCurrent(pendingStartMs, chosen = true) else main.postDelayed(this, FILE_WATCH_MS)
         }
+      }
+    }
+  }
+
+  /**
+   * The download says the moment a file lands, so the chosen song opens then instead of on the
+   * watch's next look up to FILE_WATCH_MS later (measured 0.77 s). The watch stays as the backstop.
+   */
+  private val stopLanded = landed { url ->
+    main.post {
+      if (waitingFor != null && queue.current?.song?.source == url) {
+        main.removeCallbacks(fileWatch)
+        fileWatch.run()
       }
     }
   }

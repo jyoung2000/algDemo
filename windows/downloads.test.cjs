@@ -49,12 +49,30 @@ test('two background slots and independent foreground slot; queued background pr
   assert.equal(start(dl, 'a', false).id, a.id);
   start(dl, 'd', false);
   await tick();
-  assert.deepEqual(active.map(j => j.url), [url('a'), url('b'), url('c')]);
-  active[2].finish(); await tick();
-  assert.deepEqual(active.map(j => j.url), [url('a'), url('b'), url('c'), url('d')]);
-  active[0].finish(); active[1].finish(); active[3].finish();
+  // Two foreground slots (DL-FAST-001): d starts beside the promoted c instead of after it.
+  assert.deepEqual(active.map(j => j.url).sort(), [url('a'), url('b'), url('c'), url('d')]);
+  for (const j of active) j.finish();
   assert.equal((await done(dl, b.id)).state, 'done');
   await tick();
+});
+
+test('a new tap starts at once beside the song the listener left, and the newest queued tap goes first', async t => {
+  // DL-FAST-001: with one foreground slot a tap waited for the previous song's download to finish.
+  const { dl, active } = controlled(t);
+  keepAll(dl, undefined, 'left', 'tapped', 'older', 'newest');
+  const running = (id) => active.find(j => j.url === url(id));
+  start(dl, 'left', false); await settle();
+  start(dl, 'tapped', false); await settle();
+  assert.deepEqual(active.map(j => j.url), [url('left'), url('tapped')], 'the second tap does not wait for the first');
+  start(dl, 'older', false); start(dl, 'newest', false);
+  await settle();
+  assert.equal(active.length, 2, 'two foreground downloads at once');
+  running('left').finish(); await settle();
+  assert.equal(active[2].url, url('newest'), 'a freed slot goes to the newest tap');
+  running('tapped').finish(); await settle();
+  assert.equal(active[3].url, url('older'));
+  running('newest').finish(); running('older').finish();
+  await settle();
 });
 
 

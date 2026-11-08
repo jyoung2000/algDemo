@@ -4,6 +4,13 @@ package com.nowplaying.discovery
 internal const val PARALLEL_MIN = 1
 internal const val PARALLEL_MAX = 3
 internal const val PARALLEL_DEFAULT = 1
+/**
+ * Songs the listener asked for now. Two, newest first, so a tap never waits behind the song they
+ * just left, whose download is still running (DL-FAST-001; measured: a 5.4 s wait with one slot).
+ */
+internal const val FOREGROUND_SLOTS = 2
+/** Enough threads for every lane at once; a fixed pool smaller than the lanes queues a tap behind them. */
+internal const val DOWNLOAD_THREADS = PARALLEL_MAX + FOREGROUND_SLOTS
 
 /**
  * The cache-config `parallel` field: absent keeps the limit in force, anything that is not a whole
@@ -62,9 +69,11 @@ internal class DownloadQueue(private val dispatch: (() -> Unit) -> Unit) {
 
   private fun pump() {
     for (lane in listOf(false, true)) {
-      for (task in tasks.values.toList()) {
+      // Background songs go in listening order; the listener's own taps newest first.
+      val candidates = tasks.values.toList().let { if (lane) it else it.asReversed() }
+      for (task in candidates) {
         // The limit is read per candidate, so a change mid-flight takes effect on this same pass.
-        if (if (lane) background >= backgroundParallel else foreground >= 1) break
+        if (if (lane) background >= backgroundParallel else foreground >= FOREGROUND_SLOTS) break
         if (task.dispatched || task.cancelled || task.background != lane) continue
         task.dispatched = true
         if (lane) background++ else foreground++

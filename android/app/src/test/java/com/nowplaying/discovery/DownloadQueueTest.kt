@@ -17,12 +17,35 @@ class DownloadQueueTest {
     assertSame(c, queue.submit("c", false) { fail("duplicate c") })
     queue.submit("a", false) { fail("duplicate a") }
     queue.submit("d", false) { ran.add("d") }
-    assertEquals(3, work.size)
+    // Two foreground slots (DL-FAST-001): d starts beside the promoted c instead of after it.
+    assertEquals(4, work.size)
     work[2]()
     assertEquals(listOf("c"), ran)
-    assertEquals(4, work.size)
     work[0](); work[1](); work[3]()
     assertEquals(listOf("c", "a", "b", "d"), ran)
+  }
+
+  @Test fun aNewTapStartsAtOnceBesideTheSongTheListenerLeftAndTheNewestQueuedTapGoesFirst() {
+    // DL-FAST-001: measured on the emulator, a tap waited 5.4 s for the previous song's download.
+    val work = mutableListOf<() -> Unit>()
+    val ran = mutableListOf<String>()
+    val queue = DownloadQueue { work.add(it) }
+    queue.submit("left", false) { ran.add("left") }
+    queue.submit("tapped", false) { ran.add("tapped") }
+    assertEquals("the second tap does not wait for the first", 2, work.size)
+    queue.submit("older", false) { ran.add("older") }
+    queue.submit("newest", false) { ran.add("newest") }
+    assertEquals("only $FOREGROUND_SLOTS foreground downloads at once", 2, work.size)
+    work[0]()
+    assertEquals("a freed slot goes to the newest tap", 3, work.size)
+    work[2]()
+    assertEquals(listOf("left", "newest"), ran)
+    work[1](); work[3]()
+    assertEquals(listOf("left", "newest", "tapped", "older"), ran)
+  }
+
+  @Test fun theWorkerPoolHoldsEveryLaneAtOnceSoATapNeverWaitsForAThread() {
+    assertEquals(PARALLEL_MAX + FOREGROUND_SLOTS, DOWNLOAD_THREADS)
   }
 
   @Test fun concurrentSubmissionsDeduplicateAndForegroundDoesNotWaitForBackground() {

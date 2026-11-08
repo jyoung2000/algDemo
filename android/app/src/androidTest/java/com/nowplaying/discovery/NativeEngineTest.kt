@@ -283,4 +283,55 @@ class NativeEngineTest {
     assertTrue("the whole of both songs played, nothing cut (gap ${gap} frames)", gap >= -64)
     assertTrue("no long silence between songs (gap ${gap} frames)", gap < 48000 / 2)
   }
+
+  @Test fun aChosenSongOpensTheMomentItsDownloadLandsNotOnTheNextLook() {
+    // DL-FAST-001: the song is chosen before its file exists. When the download says it landed, the
+    // player opens it at once; before, it waited for its once-a-second look.
+    val song = MediaHub.Song("w1", "Waiting", "A", null, null, 2000, ready = true, source = "x:w1")
+    val file = wav("w1.wav", 440.0, 2.0)
+    val held = java.util.concurrent.atomic.AtomicBoolean(false)
+    val looks = java.util.concurrent.atomic.AtomicInteger(0)
+    val listeners = java.util.concurrent.CopyOnWriteArrayList<(String) -> Unit>()
+    val out = PacedOutput()
+    val player = AtomicReference<EnginePlayer>()
+    instr.runOnMainSync {
+      val p = EnginePlayer(
+        ctx, Looper.getMainLooper(),
+        resolve = { looks.incrementAndGet(); if (held.get()) file else null },
+        lookup = { id -> song.takeIf { it.id == id } },
+        output = out,
+        manageFocus = false,
+        landed = { l -> listeners.add(l); { listeners.remove(l) } },
+      )
+      p.setMediaItems(listOf(MediaItem.Builder().setMediaId("w1").build()), 0, 0)
+      p.prepare()
+      p.play()
+      player.set(p)
+    }
+    // Let it find the file missing and start waiting. Then land the file just after one of its looks,
+    // the worst moment for a player that only looks: it would see it about a second later.
+    Thread.sleep(1300)
+    var before = Player.STATE_IDLE
+    instr.runOnMainSync { before = player.get().playbackState }
+    assertEquals("waits for the chosen song", Player.STATE_BUFFERING, before)
+    val seen = looks.get()
+    while (looks.get() == seen) Thread.sleep(1)
+    Thread.sleep(20)
+    held.set(true)
+    val landedAt = System.nanoTime()
+    listeners.forEach { it("x:w1") }
+    var openedMs = -1L
+    while ((System.nanoTime() - landedAt) / 1_000_000 < 3000) {
+      var state = Player.STATE_IDLE
+      instr.runOnMainSync { state = player.get().playbackState }
+      if (state == Player.STATE_READY) { openedMs = (System.nanoTime() - landedAt) / 1_000_000; break }
+      Thread.sleep(5)
+    }
+    instr.runOnMainSync { player.get().release() }
+    android.util.Log.i("NativeEngineTest", "opened ${openedMs} ms after the file landed")
+    assertTrue("opened at all ($openedMs ms)", openedMs >= 0)
+    // Opening (decoding the start of the file) takes about 200 ms on the emulator; a look is 1000 ms away.
+    assertTrue("opened within 500 ms of landing, not on the next look ($openedMs ms)", openedMs < 500)
+    assertEquals("one listener while alive, none after release", 0, listeners.size)
+  }
 }

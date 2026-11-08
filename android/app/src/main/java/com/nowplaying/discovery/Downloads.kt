@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.util.Log
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
@@ -56,9 +57,11 @@ object Downloads {
     @Volatile var error: String? = null
     @Volatile var savedTo: String? = null
     @Volatile var cancelled = false
+    val created = android.os.SystemClock.elapsedRealtime()
     val files = CopyOnWriteArrayList<Triple<String, Long, Uri?>>() // name, bytes, uri
   }
 
+  private const val TAG = "AirwaveDl"
   private val jobs = ConcurrentHashMap<String, Job>()
   /**
    * Finished downloads indexed by the link they were fetched from, so the player can ask "do you
@@ -277,7 +280,7 @@ object Downloads {
     return Triple(uri, size, type)
   }
   private val order = CopyOnWriteArrayList<String>()
-  private val workers = Executors.newFixedThreadPool(3)
+  private val workers = Executors.newFixedThreadPool(DOWNLOAD_THREADS)
   private val queue = DownloadQueue { task -> workers.execute(task) }
   private val setup = Executors.newSingleThreadExecutor()
   private val starting = AtomicBoolean(false)
@@ -409,6 +412,70 @@ object Downloads {
       job.state = "running"
       job.stage = "fetching"
     }
+    val began = android.os.SystemClock.elapsedRealtime()
+    val tag = job.id.take(8)
+    Log.i(TAG, "$tag start ${if (job.queueTask?.background == true) "background" else "foreground"} waited ${began - job.created} ms")
+    val attempts = YtdlpClients.attempts(job.url)
+    var problem: String? = null
+    for ((i, clients) in attempts.withIndex()) {
+      if (i > 0) {
+        // A failed attempt can leave a partial file behind; the next one starts from an empty folder.
+        job.dir.listFiles()?.forEach { it.deleteRecursively() }
+        job.percent = null
+        Log.i(TAG, "$tag ${clients ?: "default clients"} after: $problem")
+      }
+      // The library throws on a non-zero exit rather than returning it, so a failed attempt is a catch.
+      val exit = try {
+        YoutubeDL.getInstance().execute(request(context, job, clients), job.id) { progress, _, line ->
+          if (progress >= 0f) job.percent = progress.toDouble().coerceIn(0.0, 100.0)
+          val t = line.trim()
+          if (t.isNotEmpty()) {
+            if (BuildConfig.DEBUG && !t.startsWith("[download]  ")) Log.i(TAG, "$tag +${android.os.SystemClock.elapsedRealtime() - began} ms ${t.take(160)}")
+            job.message = t.take(300)
+            if (t.startsWith("[ExtractAudio]") || t.startsWith("[Merger]") || t.startsWith("[Metadata]")) job.stage = "converting"
+          }
+        }.let { resp -> if (resp.exitCode != 0) lastLine(resp.err) ?: "yt-dlp exited with code ${resp.exitCode}." else null }
+      } catch (e: Exception) {
+        if (job.cancelled) return
+        lastLine(e.message ?: "") ?: e.javaClass.simpleName
+      }
+      if (job.cancelled) return
+      problem = exit ?: if (audioFiles(job).isEmpty()) "yt-dlp finished without producing an audio file." else null
+      if (problem == null) break
+    }
+    if (problem != null) return fail(job, problem)
+    job.stage = "finalizing"
+    val found = audioFiles(job)
+    if (job.cache) {
+      if (found.size != 1) return fail(job, "Private playback cache requires exactly one audio file.")
+      val ran = android.os.SystemClock.elapsedRealtime()
+      val cached = cacheSong(context, job, found.single())
+      Log.i(TAG, "$tag done: yt-dlp ${ran - began} ms, cache ${android.os.SystemClock.elapsedRealtime() - ran} ms, ${cached.length()} bytes")
+      job.files.add(Triple(safeName(found.single().name), cached.length(), Uri.fromFile(cached)))
+      job.savedTo = "Private audio cache"
+      job.state = "done"
+      job.stage = "done"
+      job.percent = 100.0
+      landed(job.url)
+      return
+    }
+    for (f in found) {
+      val (name, uri, where) = saveToMusic(context, f)
+      job.files.add(Triple(name, f.length(), uri))
+      job.savedTo = where
+    }
+    if (found.size == 1) job.files.firstOrNull()?.third?.let { librarySet(context, job.url, it) }
+    job.state = "done"
+    job.stage = "done"
+    job.percent = 100.0
+    landed(job.url)
+  }
+
+  private fun audioFiles(job: Job): List<File> =
+    job.dir.walkTopDown().maxDepth(4).filter { it.isFile && it.extension.lowercase() in audioExtensions }.sortedBy { it.name }.toList()
+
+  /** Every option is written here; nothing from the page but the URL and format reaches yt-dlp. */
+  private fun request(context: Context, job: Job, clients: String?): YoutubeDLRequest {
     val r = YoutubeDLRequest(job.url)
     r.addOption("--ignore-config")
     r.addOption("--no-colors")
@@ -422,39 +489,24 @@ object Downloads {
     r.addOption("--extract-audio")
     r.addOption("--embed-metadata")
     if (job.format != "original") r.addOption("--audio-format", job.format)
-    val resp = YoutubeDL.getInstance().execute(r, job.id) { progress, _, line ->
-      if (progress >= 0f) job.percent = progress.toDouble().coerceIn(0.0, 100.0)
-      val t = line.trim()
-      if (t.isNotEmpty()) {
-        job.message = t.take(300)
-        if (t.startsWith("[ExtractAudio]") || t.startsWith("[Merger]") || t.startsWith("[Metadata]")) job.stage = "converting"
+    if (clients != null) r.addOption("--extractor-args", clients)
+    // Debug builds only: extra yt-dlp options from files/ytdlp-extra-args (one per line), for timing
+    // experiments on a device without a rebuild. Release builds never read it.
+    if (BuildConfig.DEBUG) File(context.filesDir, "ytdlp-extra-args").takeIf { it.isFile }?.readLines()
+      ?.map { it.trim() }?.filter { it.isNotEmpty() }?.forEach { line ->
+        val sp = line.indexOf(' ')
+        if (sp < 0) r.addOption(line) else r.addOption(line.substring(0, sp), line.substring(sp + 1))
       }
-    }
-    if (job.cancelled) return
-    if (resp.exitCode != 0) return fail(job, lastLine(resp.err) ?: "yt-dlp exited with code ${resp.exitCode}.")
-    job.stage = "finalizing"
-    val found = job.dir.walkTopDown().maxDepth(4).filter { it.isFile && it.extension.lowercase() in audioExtensions }.sortedBy { it.name }.toList()
-    if (found.isEmpty()) return fail(job, "yt-dlp finished without producing an audio file.")
-    if (job.cache) {
-      if (found.size != 1) return fail(job, "Private playback cache requires exactly one audio file.")
-      val cached = cacheSong(context, job, found.single())
-      job.files.add(Triple(safeName(found.single().name), cached.length(), Uri.fromFile(cached)))
-      job.savedTo = "Private audio cache"
-      job.state = "done"
-      job.stage = "done"
-      job.percent = 100.0
-      return
-    }
-    for (f in found) {
-      val (name, uri, where) = saveToMusic(context, f)
-      job.files.add(Triple(name, f.length(), uri))
-      job.savedTo = where
-    }
-    if (found.size == 1) job.files.firstOrNull()?.third?.let { librarySet(context, job.url, it) }
-    job.state = "done"
-    job.stage = "done"
-    job.percent = 100.0
+    return r
   }
+
+  /**
+   * Told the link of every song the moment its file is held, so a player waiting for the song the
+   * listener chose opens it then rather than on its next look (DL-FAST-001).
+   */
+  private val landedListeners = java.util.concurrent.CopyOnWriteArraySet<(String) -> Unit>()
+  fun onLanded(listener: (String) -> Unit): () -> Unit { landedListeners.add(listener); return { landedListeners.remove(listener) } }
+  private fun landed(url: String) = landedListeners.forEach { runCatching { it(url) } }
 
   /** Copies into a chosen SAF tree, otherwise Music/Airwave Discovery. */
   private fun saveToMusic(context: Context, f: File, displayName: String = f.name): Triple<String, Uri?, String> {
