@@ -25,6 +25,12 @@ it('the docked player wraps a long title and artist instead of cutting them off'
   }
 });
 
+it('the desktop side-panel player wraps its artist line instead of cutting it off', () => {
+  const rules = [...css.matchAll(/\.np--panel \.np__artist \{([^}]*)\}/g)].map((m) => m[1]!);
+  expect(rules.some((r) => /white-space:\s*normal/.test(r)), 'no panel artist rule that wraps').toBe(true);
+  for (const r of rules) expect(r).not.toMatch(CUT);
+});
+
 it('no song list cuts a title or artist off', () => {
   let rules = 0;
   for (const [file, text] of sheets) {

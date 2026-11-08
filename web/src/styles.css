@@ -1512,6 +1512,13 @@ a.push {
   white-space: normal;
   line-height: 1.25;
 }
+/* The same rule for the artist line: it wraps rather than ending in an ellipsis. */
+.np--panel .np__artist {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
 .np--panel .np__note {
   display: -webkit-box;
   -webkit-box-orient: vertical;
