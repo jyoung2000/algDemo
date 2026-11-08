@@ -162,7 +162,7 @@ class AudioEngineTest {
     assertEquals(listOf("ended:a"), ev.log)
   }
 
-  @Test fun seekingDuringABlendAbandonsIt() {
+  @Test fun seekingDuringABlendAbandonsItButTheNextSongStillFollows() {
     val (eng, ev, out) = engine()
     val b = Tone(660.0, 10.0)
     eng.setMix(50)
@@ -172,10 +172,39 @@ class AudioEngineTest {
     assertEquals(listOf("blend:b:blend"), ev.log)
     eng.seekTo(48000L * 2)
     eng.renderQuanta(1)
-    assertTrue("spare released", b.closed)
+    assertFalse("the next song stays lined up", b.closed)
     assertEquals(null, eng.snapshot.blendingInto)
     assertTrue("output flushed for the seek", out.flushes >= 2)
     assertEquals(2.0, eng.snapshot.positionFrames / 48000.0, 0.01)
+    // Only a is heard again after the seek…
+    val at = out.left.size / 48000.0
+    eng.renderQuanta(quantaFor(1.0))
+    assertTrue(toneLevel(out, 440.0, at + 0.2, at + 0.9) > 0.25 && toneLevel(out, 660.0, at + 0.2, at + 0.9) < 0.01)
+    // …and when a reaches the play-through point again, b blends in once more, from its start.
+    eng.renderQuanta(quantaFor(7.0))
+    assertEquals(listOf("blend:b:blend", "blend:b:blend", "advanced:b"), ev.log)
+    assertEquals("b restarted from 0 for the second blend", listOf(0L, 0L), b.seeks)
+  }
+
+  /** The app's progress bar: a seek before the blend must not lose the song lined up next. */
+  @Test fun aSeekBeforeTheBlendKeepsTheNextSongAndItStillBlends() {
+    val (eng, ev, out) = engine()
+    val b = Tone(660.0, 10.0)
+    eng.setMix(50)
+    eng.load("a", Tone(440.0, 10.0))
+    eng.setNext("b", b)
+    eng.renderQuanta(quantaFor(1.0))
+    eng.seekTo(48000L * 8)
+    eng.renderQuanta(quantaFor(1.4))
+    assertTrue("no blend before 95%: ${ev.log}", ev.log.isEmpty())
+    eng.renderQuanta(quantaFor(0.2))
+    assertEquals(listOf("blend:b:blend"), ev.log)
+    eng.renderQuanta(quantaFor(0.6))
+    assertEquals(listOf("blend:b:blend", "advanced:b"), ev.log)
+    assertFalse("b was played, not dropped", b.closed)
+    val end = out.left.size / 48000.0
+    eng.renderQuanta(quantaFor(0.8))
+    assertTrue("b plays on after a", toneLevel(out, 660.0, end + 0.1, end + 0.7) > 0.25)
   }
 
   @Test fun pausedRendersNothing() {

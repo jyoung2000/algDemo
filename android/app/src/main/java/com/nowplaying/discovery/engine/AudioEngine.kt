@@ -145,10 +145,18 @@ class AudioEngine(
   fun play() = post { if (decks.getValue(active).source != null) { playing = true; output.play() } }
   fun pause() = post { playing = false; output.pause() }
 
-  /** Jump within the current song. A blend in progress is abandoned (the listener chose a place). */
+  /**
+   * Jump within the current song. A blend in progress is abandoned (the listener chose a place), but
+   * the song lined up next stays lined up and blends in when this one next reaches its play-through
+   * point — preview-mixer.ts keeps its candidate across a seek too. Dropping it here was why a song
+   * seeked with the progress bar never blended (the player does not offer the same song twice).
+   */
   fun seekTo(frame: Long) = post {
     val src = decks.getValue(active).source ?: return@post
-    cancelBlend()
+    // RUNNING: the blend restarts from the spare's start at the next play-through point (tick seeks
+    // it to 0). FAILED (too little song was left): a seek can leave room for it again.
+    if (next != NextState.NONE && decks.getValue(other).source != null) next = NextState.READY
+    bus.cut(active)
     src.seekTo(frame)
     endedReported = null
     output.flush()

@@ -19,6 +19,8 @@ import com.google.common.util.concurrent.FutureCallback
 import com.google.common.util.concurrent.MoreExecutors
 import com.nowplaying.discovery.engine.EngineHub
 import com.nowplaying.discovery.engine.EnginePlayer
+import com.nowplaying.discovery.engine.TapOutput
+import com.nowplaying.discovery.engine.TrackOutput
 
 /**
  * Owns playback. The session's player is the native [EnginePlayer]: it decodes the songs held on the
@@ -36,7 +38,9 @@ class PlaybackService : MediaLibraryService() {
   override fun onCreate() {
     super.onCreate()
     // Playlist rows carry their list in the media id; the player resolves them as the browse tree does.
-    player = EnginePlayer(this, mainLooper, lookup = { id -> scopedSong(id) ?: MediaHub.findSong(id) })
+    // Debug builds can record what they play (TapOutput); release builds always get the plain track.
+    val output = TapOutput.wrap(this, BuildConfig.DEBUG, TrackOutput())
+    player = EnginePlayer(this, mainLooper, lookup = { id -> scopedSong(id) ?: MediaHub.findSong(id) }, output = output)
     EngineHub.attachPlayer(player)
     MediaHub.addListener(libraryListener)
     val open = PendingIntent.getActivity(

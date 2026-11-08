@@ -270,6 +270,37 @@ class NativeSoundTest {
     }
   }
 
+  /**
+   * The progress bar, as the page drives it (`{op:"seek"}` into [EngineHub]): a seek must not lose
+   * the song lined up next. It once did — the engine dropped the spare deck on every seek and the
+   * service never offered it again, so a song seeked in the app never blended.
+   */
+  @Test fun theCrossfaderStillBlendsAfterTheProgressBarIsMoved() {
+    val a = wav("mix-a.wav", 440.0, SONG_S, 0.5)
+    val b = wav("mix-b.wav", 880.0, SONG_S, 0.5)
+    val plan = Crossfade.mixPlan(MIX.toDouble(), SONG_S, SONG_S, MixInputs(minPlayedFraction = 0.95))
+    var seekedAt = 0
+    val (pcm, _) = play(listOf("a" to a, "b" to b), JSONObject().put("eq", eq(on = false)).put("mix", MIX).put("playThrough", 95)) { rec ->
+      seekedAt = rec.size
+      EngineHub.fromPage(JSONObject().put("op", "seek").put("positionMs", SEEK_S * 1000).toString())
+    }
+    val aSpan = span(pcm, 440.0)
+    // The seek's jump in A is a click that briefly shows energy at every frequency, 880 Hz included:
+    // count B as present only once it has been there for 200 ms straight.
+    var run = 0; var bFirst = -1; var s = seekedAt + 9600
+    while (s + 2400 <= pcm.size && bFirst < 0) {
+      if (amp(pcm, 880.0, s) > 0.005) { run++; if (run == 20) bFirst = s + 1200 - 19 * 480 } else run = 0
+      s += 480
+    }
+    assertTrue("B was heard after the seek", bFirst > 0)
+    // In the output, A runs from the seek at SEEK_S to its end; B should come in at the planned point.
+    val bInS = (bFirst - seekedAt) / 48000.0 + SEEK_S
+    val overlapS = (aSpan.last - bFirst) / 48000.0
+    android.util.Log.i("NativeSoundTest", "after a seek to $SEEK_S s: B came in at song time $bInS s (plan ${plan.startAt}), overlap $overlapS s (plan ${plan.seconds})")
+    assertEquals("B blends in where the app's planner says, after the seek", plan.startAt, bInS, 0.15)
+    assertTrue("both songs sound together through the blend ($overlapS s)", overlapS >= 0.6 * plan.seconds)
+  }
+
   @Test fun theCrossfaderAtOffPlaysEachSongWholeWithNoOverlap() {
     val (a, b, pcm) = blend(0, 95)
     android.util.Log.i("NativeSoundTest", "mix off: A ${(a.last - a.first) / 48000.0} s, B from ${(b.first - a.first) / 48000.0} s")
@@ -285,6 +316,7 @@ class NativeSoundTest {
 
   private companion object {
     const val SONG_S = 30.0
+    const val SEEK_S = 20.0
     const val MIX = 60
   }
 }

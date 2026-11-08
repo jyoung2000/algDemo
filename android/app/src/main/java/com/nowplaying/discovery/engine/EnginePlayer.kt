@@ -111,7 +111,7 @@ class EnginePlayer(
     override fun onAdvanced(key: String, outgoing: AudioEngine.Heard) { main.post { blendPromoted(key, outgoing) } }
     override fun onRepeated(key: String, heard: AudioEngine.Heard) { main.post { repeated(heard) } }
     override fun onBlendStarted(key: String, seconds: Double, style: TransitionStyle) {
-      Log.i(TAG, "blend into $key, ${"%.1f".format(seconds)} s ${style.id}")
+      Log.i(TAG, "blend into $key, ${"%.1f".format(seconds)} s ${style.id}" + if (TapOutput.frames > 0) " tapFrame=${TapOutput.frames}" else "")
     }
     override fun onError(key: String, error: Throwable) { main.post { songFailed(key, error) } }
   }, initialEq).also { it.start() }

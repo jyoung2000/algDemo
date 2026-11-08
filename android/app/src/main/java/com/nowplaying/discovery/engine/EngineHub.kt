@@ -114,10 +114,23 @@ object EngineHub {
   }
 
   private fun applySettings(p: EnginePlayer, s: JSONObject) {
+    Log.i(TAG, describe(s))
     if (s.has("eq")) p.setEq(EqJson.parse(s.optJSONObject("eq")))
     if (s.has("mix")) p.setMix(s.optDouble("mix", 0.0).let { if (it.isFinite()) Math.round(it).toInt() else 0 })
     if (s.has("playThrough")) p.setPlayThrough(s.optDouble("playThrough", 95.0).let { if (it.isFinite()) Math.round(it).toInt() else 95 })
     if (s.has("volume")) p.setVolume(s.optDouble("volume", 1.0).let { if (it.isFinite()) it else 1.0 })
+  }
+
+  /** One line per settings change, so a device log shows what the engine was told and when. */
+  private fun describe(s: JSONObject): String = buildString {
+    append("settings")
+    s.optJSONObject("eq")?.let { e ->
+      append(if (e.opt("on") == true) " eq=on ${e.optString("presetId")} gains=${e.optJSONArray("gains")} tone=${e.opt("toneHz")}" else " eq=off")
+    }
+    if (s.has("mix")) append(" mix=${s.opt("mix")}")
+    if (s.has("playThrough")) append(" playThrough=${s.opt("playThrough")}")
+    if (s.has("volume")) append(" volume=${s.opt("volume")}")
+    if (TapOutput.frames > 0) append(" tapFrame=${TapOutput.frames}")
   }
 
   private const val TAG = "AirwaveEngineHub"
