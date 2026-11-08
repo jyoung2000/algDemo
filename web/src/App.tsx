@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
-import { api, newEventId, type FeedbackKind, type JobStatus, type Playback, type PlaylistSummary, type RecItem, type RecResult, type SavedItem, type Settings, type TasteSummary, type Track } from './api';
+import { api, type PlaylistMix, newEventId, type FeedbackKind, type JobStatus, type Playback, type PlaylistSummary, type RecItem, type RecResult, type SavedItem, type Settings, type TasteSummary, type Track } from './api';
 import { Art } from './Art';
 import { Player, type ListenTelemetry, type Playing } from './Player';
 import { Results, rowId, type FeedbackFlags } from './Results';
 import { DownloadsView, useDownloads } from './Downloads';
 import { Search } from './Search';
 import { SoundCard } from './SoundCard';
+import { listMixNote } from './list-mix-note';
 import { ProfileView } from './Profile';
 import { SavedView } from './SavedView';
 import { QueuePreparation } from './QueuePreparation';
@@ -110,6 +111,11 @@ export function App() {
   // One id per app session: groups this sitting's events for the session taste horizon.
   const sessionRef = useRef(`s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   const [taste, setTaste] = useState<TasteSummary | null>(null);
+  // PLAYLIST-QUEUE-001: the saved list now in the now playing queue, and whether the queue it replaced can come back.
+  const [queueList, setQueueList] = useState<{ id: string; name: string } | null>(null);
+  const [canRestore, setCanRestore] = useState(false);
+  // PLAYLIST-MIX-001: that list's own listening mix.
+  const [listMix, setListMix] = useState<PlaylistMix | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const [carCatalog] = useState(() => new CarCatalog(api.search, track => queueAudio.isReady(track)));
 
@@ -118,6 +124,8 @@ export function App() {
     Promise.all([api.seeds(), api.settings(), api.feedbackState()])
       .then(([s, st, fb]) => {
         setSeeds(s.seeds);
+        setQueueList(s.playlist ?? null);
+        setCanRestore(Boolean(s.can_restore));
         setSettings(st);
         const f: Record<string, FeedbackFlags> = {};
         for (const [k, v] of Object.entries(fb.state)) f[k] = { like: v.like, dislike: v.dislike, hide: v.hide, save: v.save };
@@ -250,6 +258,8 @@ export function App() {
     api.clearQueue().then(
       () => {
         setSeeds([]);
+        setQueueList(null);
+        setCanRestore(false);
         setResult(null);
         setJob(null);
         setRunErr(null);
@@ -260,6 +270,65 @@ export function App() {
       (e: Error) => flash(`Could not clear the now playing queue: ${e.message}`),
     );
   };
+
+  /**
+   * PLAYLIST-QUEUE-001: a saved list takes the place of the now playing queue. Its songs become the
+   * starting songs, the first one plays, and discovery runs from all of them.
+   */
+  const useListAsQueue = (id: string) => {
+    jobRef.current = null;
+    api.queuePlaylist(id).then(
+      (r) => {
+        setSeeds(r.seeds);
+        setQueueList(r.playlist ?? null);
+        setCanRestore(Boolean(r.can_restore));
+        setResult(null);
+        setJob(null);
+        setRunErr(null);
+        setHidden(new Set());
+        setFocusKey(null);
+        setTab('discover');
+        const first = r.seeds[0];
+        if (first) play(playbackRows([first])[0]!, { newRound: true });
+        const name = r.playlist?.name ?? 'The list';
+        flash(`“${name}” is your now playing queue: ${r.seeds.length} starting ${r.seeds.length === 1 ? 'song' : 'songs'}. Finding new music from ${r.seeds.length === 1 ? 'it' : 'them'}…${r.missing ? ` ${r.missing} could not be looked up.` : ''}`);
+        void run(true);
+      },
+      (e: Error) => flash(e.message),
+    );
+  };
+
+  /** Bring back the now playing queue a saved list replaced. */
+  const restoreQueue = () => {
+    jobRef.current = null;
+    api.restoreQueue().then(
+      (r) => {
+        setSeeds(r.seeds);
+        setQueueList(null);
+        setCanRestore(false);
+        setListMix(null);
+        setJob(null);
+        setHidden(new Set());
+        setResult(null);
+        api.last().then((x) => setResult((prev) => prev ?? x), () => undefined);
+        flash('Your earlier now playing queue is back.');
+      },
+      (e: Error) => flash(e.message),
+    );
+  };
+
+  // The list's mix, again whenever its songs change or a run has learned more of their genres.
+  useEffect(() => {
+    if (!queueList) return;
+    let live = true;
+    api.playlistMix(queueList.id).then((m) => live && setListMix(m), () => live && setListMix(null));
+    return () => {
+      live = false;
+    };
+  }, [queueList, lists, job?.done]);
+
+  // Only the mix of the list now in the queue, never a stale one from the list before it.
+  const shownMix = queueList && listMix?.id === queueList.id ? listMix : null;
 
   const loadSample = () => {
     jobRef.current = null;
@@ -292,7 +361,14 @@ export function App() {
     setFocusKey(it.track.key);
   };
   const previewTrack = (t: Track) => setPlaying({ track: t, playback: playbackOfTrack(t) });
-  const activeItems = useMemo(() => playingContext === null ? items : playbackRows(savedTracks(saved, lists, playingContext)), [items, playingContext, saved, lists]);
+  // PLAYLIST-QUEUE-001: with a saved list in the now playing queue, its songs play first, in the list's
+  // order, then the songs discovered from them. Otherwise the queue is the discovered songs, as before.
+  const queueRows = useMemo(() => {
+    if (!queueList) return items;
+    const own = new Set(visibleSeeds.map((t) => t.key));
+    return [...playbackRows(visibleSeeds), ...items.filter((x) => !own.has(x.track.key))];
+  }, [queueList, items, visibleSeeds]);
+  const activeItems = useMemo(() => playingContext === null ? queueRows : playbackRows(savedTracks(saved, lists, playingContext)), [queueRows, playingContext, saved, lists]);
   const playingKey = playing?.track.key ?? null;
   const inQueue = playingKey != null && activeItems.some((x) => x.track.key === playingKey);
   const ready = readyFilter(queueAudio, downloadsAvailable());
@@ -733,8 +809,33 @@ export function App() {
             </section>
 
             <SoundCard taste={taste} listening={Boolean(playing)} />
+            {queueList && (
+              <SoundCard
+                key={queueList.id}
+                taste={shownMix?.taste ?? null}
+                listening={Boolean(playing) && activeItems === queueRows}
+                title={`Sound of “${queueList.name}”`}
+                label="This list's mix"
+                historyKey={`airwave.sound.list.${queueList.id}`}
+                idleText={shownMix ? listMixNote(shownMix) : 'Reading the list…'}
+                emptyText={shownMix ? `No genre known yet for the ${shownMix.songs} songs in this list. Discovery looks them up; this fills in as it does.` : 'Reading the list…'}
+              />
+            )}
 
             <section className="queue" aria-labelledby="queue-h" aria-busy={running}>
+              {queueList && (
+                <div className="banner banner--list" role="note">
+                  <Glyph name="info" size={14} />
+                  <span>
+                    Playing your list <strong>“{queueList.name}”</strong>. All {visibleSeeds.length} of its songs are starting songs, and new music is found from them.
+                  </span>
+                  {canRestore && (
+                    <button className="push push--small" type="button" onClick={restoreQueue}>
+                      Bring back my queue
+                    </button>
+                  )}
+                </div>
+              )}
               {sample && (
                 <p className="banner banner--sample" role="note">
                   <Glyph name="info" size={14} /> {result!.sample!.label} Recorded {result!.sample!.recorded}. These rows are for looking at the interface; likes are not saved.
@@ -897,6 +998,8 @@ export function App() {
             onRemoveSaved={removeSaved}
             onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
             cacheOf={cardCache}
+            onUseAsQueue={useListAsQueue}
+            queueListId={queueList?.id ?? null}
           />
         )}
 

@@ -37,6 +37,9 @@ import { findFullSong, type FullSongResult } from './full-song-chain';
 const NO_SOURCE_TTL = 15 * 60;
 
 import { buildProfile } from './profile';
+import { playlistMix } from './playlist-mix';
+import { seedWindow } from './seed-window';
+import type { Tag } from './genres';
 import { classify, classifyAll } from './classify';
 import { makeTag } from './genres';
 import { inferFromArtist, inferFromSeed, inferFromSound, recordArtistGenres } from './infer';
@@ -120,6 +123,10 @@ const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb
 export const QUEUE_SIZE_MIN = 5;
 export const QUEUE_SIZE_MAX = 60;
 const FEEDBACK_KINDS = new Set(['like', 'dislike', 'hide', 'save', 'replay', 'complete', 'skip', 'unlike', 'unsave', 'undislike', 'unhide']);
+/** PLAYLIST-QUEUE-001 store keys: the list now in the queue, the queue it replaced, the seed window. */
+const QUEUE_PLAYLIST_KEY = 'queue_playlist';
+const QUEUE_SAVED_KEY = 'queue_saved';
+const SEED_CURSOR_KEY = 'seed_cursor';
 const CAPS = ['search', 'resolve_link', 'related_candidates', 'artist_candidates', 'recent_candidates', 'playback_link'];
 
 /**
@@ -249,7 +256,7 @@ export class LocalApi {
       if (m === 'POST' && path === '/api/identify/audio') return await this.identifyAudio(body ?? {});
       if (m === 'POST' && path === '/api/resolve') return await this.resolve(String(body?.['url'] ?? ''));
       if (m === 'POST' && path === '/api/complete-spotify') return ok(await this.completeSpotify(String(body?.['title'] ?? ''), String(body?.['artist'] ?? '')));
-      if (path === '/api/seeds') return m === 'PUT' ? await this.putSeeds(body ?? {}) : ok({ seeds: this.store.seeds() });
+      if (path === '/api/seeds') return m === 'PUT' ? await this.putSeeds(body ?? {}) : ok(this.seedsView());
       if (path === '/api/settings') return m === 'PUT' ? await this.putSettings(body ?? {}) : ok(this.settings());
       if (m === 'POST' && path === '/api/recommend') return this.recommend(body ?? {});
       const job = /^\/api\/jobs\/([A-Za-z0-9]+)$/.exec(path);
@@ -267,6 +274,9 @@ export class LocalApi {
       if (m === 'POST' && path === '/api/reset') return this.reset(Boolean(body?.['clear_cache']));
       if (m === 'POST' && path === '/api/reset/taste') return this.resetTaste();
       if (m === 'POST' && path === '/api/queue/clear') return await this.clearQueue();
+      if (m === 'POST' && path === '/api/queue/playlist') return await this.queueFromPlaylist(String(body?.['id'] ?? ''));
+      if (m === 'POST' && path === '/api/queue/restore') return await this.restoreQueue();
+      if (m === 'GET' && path === '/api/playlists/mix') return this.playlistMixRoute(q.get('id') ?? '');
       if (m === 'POST' && path === '/api/model/install') return ok({ installed: this.encoder !== null, downloaded: 0 });
       if (m === 'POST' && path === '/api/model/selftest') return await this.selftest();
       if (m === 'POST' && path === '/api/rerank') return await this.rerank(body ?? {});
@@ -535,7 +545,101 @@ export class LocalApi {
       out.push(c);
     }
     await this.store.setSeeds(out);
-    return ok({ seeds: this.store.seeds() });
+    return ok(this.seedsView());
+  }
+
+  /**
+   * The starting songs, and the saved list they came from when one was sent to the now playing queue
+   * (PLAYLIST-QUEUE-001). `can_restore` says the queue it replaced is held and can come back.
+   */
+  private seedsView(): Dict {
+    const pl = this.store.get<{ id: string; name: string }>(QUEUE_PLAYLIST_KEY);
+    return { seeds: this.store.seeds(), playlist: pl ? { id: pl.id, name: pl.name } : null, can_restore: (this.store.get(QUEUE_SAVED_KEY) ?? null) !== null };
+  }
+
+  /** Every track the engine holds a copy of, by key: feedback rows, the list, starting songs. */
+  private knownTracks(): Map<string, Dict> {
+    const byKey = new Map<string, Dict>();
+    for (const r of this.store.feedback()) if (r.track) byKey.set(r.key, r.track as Dict);
+    for (const it of (this.store.get<Dict>('last_result')?.['items'] ?? []) as { track: Dict }[]) {
+      if (it.track) byKey.set(String(it.track['key']), it.track);
+    }
+    for (const s of this.store.seeds() as Dict[]) byKey.set(String(s['key']), s);
+    return byKey;
+  }
+
+  /**
+   * PLAYLIST-QUEUE-001: a saved list takes the place of the now playing queue. Every song in it becomes
+   * a starting song (in the list's order, equal emphasis), the songs discovered for the old queue go,
+   * and the old queue is held so it can be brought back. Switching from one list straight to another
+   * keeps the listener's own queue as the one to restore. Nothing changes when the list cannot be used.
+   */
+  private async queueFromPlaylist(id: string): Promise<LocalResponse> {
+    const list = this.storedPlaylists().find((l) => l.id === id);
+    if (!list) return fail(404, 'That list no longer exists.');
+    const known = this.knownTracks();
+    const seeds: Dict[] = [];
+    let missing = 0;
+    for (const e of list.entries) {
+      const t = known.get(e.key);
+      if (!t || !t['provider'] || !t['platform_id']) {
+        missing++;
+        continue;
+      }
+      seeds.push({ ...cleanTrack(t), key: e.key, emphasis: 1 });
+    }
+    if (!seeds.length) return fail(400, list.entries.length ? 'None of the songs in this list can be looked up any more.' : 'This list is empty. Save some songs to it first.');
+    for (const j of this.jobs.values()) j.token.cancel('a saved list replaced the now playing queue');
+    if ((this.store.get(QUEUE_SAVED_KEY) ?? null) === null) {
+      await this.store.put(QUEUE_SAVED_KEY, { seeds: this.store.seeds(), last_result: this.store.get('last_result') });
+    }
+    await this.store.setSeeds(seeds);
+    await this.store.put(QUEUE_PLAYLIST_KEY, { id: list.id, name: list.name, at: unixNow() });
+    await this.store.put(SEED_CURSOR_KEY, 0);
+    this.dropDiscoveries();
+    return ok({ ...this.seedsView(), missing });
+  }
+
+  /** Bring back the queue a saved list replaced: its starting songs and the songs discovered for it. */
+  private async restoreQueue(): Promise<LocalResponse> {
+    const held = this.store.get<{ seeds: Dict[]; last_result: Dict | null }>(QUEUE_SAVED_KEY);
+    if (!held) return fail(409, 'There is no earlier queue to bring back.');
+    for (const j of this.jobs.values()) j.token.cancel('the earlier queue was restored');
+    this.dropDiscoveries();
+    await this.store.setSeeds(held.seeds ?? []);
+    if (held.last_result) await this.store.put('last_result', held.last_result);
+    this.store.drop(QUEUE_SAVED_KEY);
+    this.store.drop(QUEUE_PLAYLIST_KEY);
+    await this.store.put(SEED_CURSOR_KEY, 0);
+    return ok(this.seedsView());
+  }
+
+  /** The songs discovered for the current queue, and everything a re-rank would compare against. */
+  private dropDiscoveries(): void {
+    this.store.drop('last_result');
+    this.pool = null;
+    this.store.drop('last_pool');
+    this.store.drop('discovery_events');
+  }
+
+  /** PLAYLIST-MIX-001: a saved list's own listening mix, for the Sound card. */
+  private playlistMixRoute(id: string): LocalResponse {
+    const list = this.storedPlaylists().find((l) => l.id === id);
+    if (!list) return fail(404, 'That list no longer exists.');
+    const known = this.knownTracks();
+    const tracks = list.entries.map((e) => known.get(e.key)).filter((t): t is Dict => Boolean(t));
+    const artists = this.store.get<Record<string, Record<string, number>>>('artist_genres') ?? {};
+    const genresOf = (t: Dict): Tag[] => {
+      const own = ((t['tags'] as Tag[] | undefined) ?? []).filter((g) => g && typeof g.name === 'string');
+      if (own.length) return own;
+      const prof = this.store.cacheGet(`seedprofile:${t['id']}`, true)?.value as Dict | undefined;
+      const dzTags = (((prof?.['dz'] as Dict | null)?.['tags'] as Tag[] | undefined) ?? []).filter((g) => g && typeof g.name === 'string');
+      if (dzTags.length) return dzTags;
+      const guess = inferFromArtist(t, artists);
+      return guess ? [guess] : [];
+    };
+    // A song the engine holds no copy of still counts as one of the list's songs, just not placed.
+    return ok({ id: list.id, name: list.name, ...playlistMix(tracks, genresOf, unixNow()), songs: list.entries.length });
   }
 
   private async putSettings(body: Dict): Promise<LocalResponse> {
@@ -711,10 +815,23 @@ export class LocalApi {
       job.meter = p.meter(settings);
       job.phase = 'profiling';
       job.progress = 'Looking up your starting songs';
-      const profs = await pmap(seeds, 3, (sd) => p.profileSeed(job, sd));
+      // PLAYLIST-QUEUE-001: a long list of starting songs (a saved list sent to the queue) is asked
+      // about a window at a time; every starting song still counts when the songs found are scored,
+      // with its profile from the cache when it has been looked up before.
+      const win = seedWindow(seeds, Number(this.store.get(SEED_CURSOR_KEY) ?? 0), trigger === 'listening' ? 1 : 0);
+      if (seeds.length > win.window.length) await this.store.put(SEED_CURSOR_KEY, win.next);
+      const asked = new Set(win.window.map((sd) => String(sd['key'])));
+      const profs = await pmap(win.window, 3, (sd) => p.profileSeed(job, sd));
       const profiles: Record<string, Dict> = {};
-      seeds.forEach((sd, i) => (profiles[sd['key']] = profs[i] as Dict));
+      win.window.forEach((sd, i) => (profiles[sd['key']] = profs[i] as Dict));
+      for (const sd of seeds) {
+        if (asked.has(String(sd['key']))) continue;
+        profiles[sd['key']] = (this.store.cacheGet(`seedprofile:${sd['id']}`, true)?.value as Dict | undefined) ?? { dz: null, ytm_vid: null, dz_uncertain: [] };
+      }
       const seedViews = seeds.map((sd) => p.seedView(sd, profiles[sd['key']] as Dict));
+      const gatherViews = seedViews.filter((sv) => asked.has(String(sv['key'])));
+      job.timings['seeds'] = seeds.length;
+      job.timings['seeds_asked'] = gatherViews.length;
       job.timings['profile_ms'] = since();
       job.phase = 'gathering';
       job.progress = 'Asking the music services for related songs';
@@ -744,7 +861,7 @@ export class LocalApi {
           /* a failed provisional wave never fails the request */
         }
       };
-      const gathered = await p.gather(job, seedViews, profiles, cfg, es.fresh, onPartial);
+      const gathered = await p.gather(job, gatherViews, profiles, cfg, es.fresh, onPartial);
       const related = gathered.related;
       // Only songs the list does not already hold can take a slot in this batch.
       const cands = newDiscoveryTracks(gathered.cands, held);
@@ -787,7 +904,8 @@ export class LocalApi {
         job.progress = 'Comparing how the songs sound (30-second previews)';
         const ta = performance.now();
         try {
-          for (const sv of seedViews) {
+          // Previews are fetched only for the songs asked about this run; the rest use a stored vector.
+          for (const sv of gatherViews) {
             const did = sv['dz_preview_id'] || (sv['provider'] === 'deezer' ? sv['platform_id'] : null);
             const prof = (profiles[sv['key']] as Dict)['dz'] as Dict | null;
             if (did && !vectors.has(sv['key'])) {
@@ -1127,12 +1245,7 @@ export class LocalApi {
   private playlists(): Dict {
     const lists = this.storedPlaylists();
     const played = this.playedKeys();
-    const byKey = new Map<string, Dict>();
-    for (const r of this.store.feedback()) if (r.track) byKey.set(r.key, r.track as Dict);
-    for (const it of (this.store.get<Dict>('last_result')?.['items'] ?? []) as { track: Dict }[]) {
-      if (it.track) byKey.set(String(it.track['key']), it.track);
-    }
-    for (const s of this.store.seeds() as Dict[]) byKey.set(String(s['key']), s);
+    const byKey = this.knownTracks();
     return {
       lists: lists.map((l) => ({
         id: l.id,
@@ -1341,12 +1454,12 @@ export class LocalApi {
   private async clearQueue(): Promise<LocalResponse> {
     for (const j of this.jobs.values()) j.token.cancel('the list was cleared');
     await this.store.setSeeds([]);
-    this.store.drop('last_result');
     // Forget the pool too, or the next batch would compare against a list that no longer exists
     // and a re-rank could bring the cleared songs back.
-    this.pool = null;
-    this.store.drop('last_pool');
-    this.store.drop('discovery_events');
+    this.dropDiscoveries();
+    // A cleared queue is no longer a saved list's, and there is nothing to go back to.
+    this.store.drop(QUEUE_PLAYLIST_KEY);
+    this.store.drop(QUEUE_SAVED_KEY);
     return ok({ ok: true });
   }
 

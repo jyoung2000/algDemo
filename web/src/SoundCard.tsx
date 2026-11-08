@@ -2,16 +2,16 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import type { TasteSummary } from './api';
 import { classNames } from './util';
-import { SNAPSHOT_MAX, describeSound, gradientStops, pushSnapshot, soundChanges, soundView, type Change, type Snapshot, type SoundView } from './taste-view';
+import { SNAPSHOT_MAX, describeSound, generalLabel, gradientStops, pushSnapshot, soundChanges, soundView, type Change, type Snapshot, type SoundView } from './taste-view';
 import { GenreTicker } from './GenreTicker';
 import { TasteHistory } from './TasteHistory';
 import './mobile-refinement.css';
 
 const STORE_KEY = 'airwave.sound.history';
 
-function loadHistory(): Snapshot[] {
+function loadHistory(key: string): Snapshot[] {
   try {
-    const v = JSON.parse(localStorage.getItem(STORE_KEY) ?? '[]') as Snapshot[];
+    const v = JSON.parse(localStorage.getItem(key) ?? '[]') as Snapshot[];
     return Array.isArray(v) ? v.filter((s) => s && Array.isArray(s.segs)).slice(-SNAPSHOT_MAX) : [];
   } catch {
     return [];
@@ -24,10 +24,30 @@ function loadHistory(): Snapshot[] {
  * song, so the user watches the algorithm change while they listen. UX rules: color is always paired
  * with a name and a percent; motion is a width transition only (the global reduced-motion rule stops it).
  */
-export function SoundCard({ taste, listening, defaultOpen = false }: { taste: TasteSummary | null; listening: boolean; defaultOpen?: boolean }) {
+export function SoundCard({
+  taste,
+  listening,
+  defaultOpen = false,
+  title = 'Your sound',
+  label = 'Your listening mix',
+  historyKey = STORE_KEY,
+  emptyText,
+  idleText = 'Play, skip or like songs and this redraws.',
+}: {
+  taste: TasteSummary | null;
+  listening: boolean;
+  defaultOpen?: boolean;
+  /** PLAYLIST-MIX-001: the same card draws a saved list's sound, under its own title and history. */
+  title?: string;
+  label?: string;
+  historyKey?: string;
+  emptyText?: string;
+  idleText?: string;
+}) {
   const view = useMemo(() => soundView(taste), [taste]);
   const [open, setOpen] = useState(defaultOpen);
-  const [history, setHistory] = useState<Snapshot[]>(loadHistory);
+  const [history, setHistory] = useState<Snapshot[]>(() => loadHistory(historyKey));
+  const bodyId = `sound-body-${historyKey.replace(/[^a-z0-9]+/gi, '-')}`;
   const [changes, setChanges] = useState<Change[]>([]);
   const [pulse, setPulse] = useState(false);
   const prev = useRef<SoundView | null>(null);
@@ -44,14 +64,14 @@ export function SoundCard({ taste, listening, defaultOpen = false }: { taste: Ta
       const next = pushSnapshot(h, view, Date.now());
       if (next !== h) {
         try {
-          localStorage.setItem(STORE_KEY, JSON.stringify(next));
+          localStorage.setItem(historyKey, JSON.stringify(next));
         } catch {
           /* storage full or blocked: the ribbon just stays for this session */
         }
       }
       return next;
     });
-  }, [view]);
+  }, [view, historyKey]);
 
   // The pulse is a short class, not a remount, so the segments keep their elements and their widths animate.
   useEffect(() => {
@@ -61,16 +81,16 @@ export function SoundCard({ taste, listening, defaultOpen = false }: { taste: Ta
   }, [pulse]);
 
   const summary = describeSound(view);
-  const announce = changes.length ? `Your sound updated: ${changes.map((c) => `${c.label} ${c.dir === 'new' ? 'is new' : c.dir}`).join(', ')}.` : '';
+  const announce = changes.length ? `${title} updated: ${changes.map((c) => `${c.label} ${c.dir === 'new' ? 'is new' : c.dir}`).join(', ')}.` : '';
 
   return (
-    <section className={classNames('sound', open && 'is-open', listening && 'is-live')} aria-label="Your sound">
-      <button className="sound__head" type="button" aria-expanded={open} aria-controls="sound-body" onClick={() => setOpen((o) => !o)}>
+    <section className={classNames('sound', open && 'is-open', listening && 'is-live')} aria-label={title}>
+      <button className="sound__head" type="button" aria-expanded={open} aria-controls={bodyId} onClick={() => setOpen((o) => !o)}>
         <span className="sound__title">
           <span className={classNames('sound__live', listening && 'is-on')} aria-hidden="true" />
-          Your sound
+          {title}
         </span>
-        <span className="sound__summary-label">Your listening mix</span>
+        <span className="sound__summary-label">{label}</span>
         <span className="sound__chev" aria-hidden="true">
           <Glyph name={open ? 'chevron-up' : 'chevron-down'} size={14} />
         </span>
@@ -95,14 +115,14 @@ export function SoundCard({ taste, listening, defaultOpen = false }: { taste: Ta
             ))}
           </>
         ) : view ? (
-          'Play, skip or like songs and this redraws.'
+          idleText
         ) : (
-          'Finish or skip a few songs and your sound appears here.'
+          emptyText ?? 'Finish or skip a few songs and your sound appears here.'
         )}
       </p>
 
       {open && (
-        <div id="sound-body" className="sound__body">
+        <div id={bodyId} className="sound__body">
           {view && view.families.length > 0 ? (
             <ul className="sound__fams">
               {view.families.map((f) => (
@@ -123,7 +143,7 @@ export function SoundCard({ taste, listening, defaultOpen = false }: { taste: Ta
                           {s.label} <b>{s.pct}%</b>
                         </li>
                       ))}
-                      {f.broadPct > 0 && <li className="schip schip--broad">General {f.name.toLowerCase()} <b>{f.broadPct}%</b></li>}
+                      {f.broadPct > 0 && <li className="schip schip--broad"><span className="schip__dot" style={{ background: f.color }} aria-hidden="true" />{generalLabel(f.name)} <b>{f.broadPct}%</b></li>}
                     </ul>
                   )}
                 </li>

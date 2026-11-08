@@ -3,12 +3,14 @@
  * gradient, and what changed between two states. Pure, so both apps draw the same thing and the
  * rules are unit-tested.
  *
- * Colour follows the Taste Picker: a family owns a hue band (classify.familyHue); a subgenre is
- * shaded by its energy and brightness (classify.color). Every colour is paired with a label in the
- * UI, never used alone.
+ * Colour follows the Taste Picker: a family owns a hue band (classify.familyHue), and every family and
+ * subgenre takes its colour from the one palette the tags and the picker use (genre-palette.ts,
+ * TAGS-COLOR-001). Every colour is paired with a label in the UI, never used alone.
  */
 import type { TasteGenre, TasteSummary } from './api';
 import { classify, familyHue } from './engine/classify';
+import { familyColor as paletteFamily, subColorOf } from './engine/genre-palette';
+import { familyIdentity } from './engine/genre-identity';
 import { FAMILIES, SUBS } from './engine/genre-table';
 import type { Tag } from './engine/genres';
 
@@ -66,11 +68,13 @@ export interface SoundView {
 }
 
 /** Tag bubbles never carry a slash: 'Southern hip-hop / crunk' reads 'Southern hip-hop & crunk'. */
+/** The family's own share in the legend, named the way its tag bubble is (TAGS-CANON-001): "General R&B". */
+export const generalLabel = (family: string) => `General ${familyIdentity(family)?.label ?? family}`;
+
 export const plainLabel = (s: string) => s.replace(/\s*\/\s*/g, ' & ');
 
 const FAMILY_NAME = new Map(FAMILIES.map((f) => [f.slug, f.name] as const));
-// Soft, even-lightness colours: eight hues that sit next to each other without clashing when blended.
-const familyColor = (slug: string) => `hsl(${Math.round(familyHue(slug))} 54% 62%)`;
+const familyColor = (slug: string) => paletteFamily(slug);
 
 const SUB_ORDER = new Map<string, { i: number; n: number }>();
 for (const f of FAMILIES) {
@@ -80,18 +84,9 @@ for (const f of FAMILIES) {
 /** Half-width, in degrees of hue, that a family's subgenres spread across inside its own band. */
 const SUB_SPREAD = 70;
 
-/**
- * A subgenre's colour inside the bar: its family's hue moved by its place among the family's subgenres,
- * so two hip-hop subgenres read as neighbours on the spectrum instead of the same flat colour. The
- * Taste Picker's own colours (classify.color) are untouched.
- */
+/** A subgenre's colour: the same one its tag bubble and the picker show (genre-palette.ts). */
 export function subColor(slug: string, key: string | null): string {
-  const base = familyHue(slug);
-  const o = key ? SUB_ORDER.get(key) : undefined;
-  if (!o || o.n < 2) return familyColor(slug);
-  const t = o.i / (o.n - 1) - 0.5; // -0.5 .. 0.5
-  // Lightness steps with the hue so neighbours stay apart even where two hues look alike.
-  return `hsl(${Math.round(base + t * 2 * SUB_SPREAD + 360) % 360} 58% ${Math.round(60 - t * 10)}%)`;
+  return (key ? subColorOf(key) : null) ?? familyColor(slug);
 }
 
 function tagOf(g: TasteGenre): Tag {
@@ -172,7 +167,7 @@ export function soundView(taste: TasteSummary | null | undefined): SoundView | n
   const topRows: LeafView[] = families
     .flatMap((f) => [
       ...f.subs.map((s) => ({ label: s.label, color: s.color, share: s.share, pct: s.pct, family: f.name })),
-      ...(f.broadPct > 0 ? [{ label: `General ${f.name.toLowerCase()}`, color: f.color, share: f.broad, pct: f.broadPct, family: f.name }] : []),
+      ...(f.broadPct > 0 ? [{ label: generalLabel(f.name), color: f.color, share: f.broad, pct: f.broadPct, family: f.name }] : []),
     ])
     .sort((a, b) => b.pct - a.pct || b.share - a.share);
 

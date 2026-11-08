@@ -22,7 +22,7 @@ describe('classify', () => {
     expect(c.subgenre).toBe('Trap');
     expect(c.family).toBe('Hip-hop');
     expect(c.tempoFit).toBeGreaterThan(0.9);
-    expect(c.color).toMatch(/^hsl\(/);
+    expect(c.color).toMatch(/^#[0-9a-f]{6}$/);
   });
 
   it('tempo alone places NOTHING when there is no genre tag', () => {

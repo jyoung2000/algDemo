@@ -1,10 +1,12 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 
-import { api, type PlaylistSummary, type SavedItem, type Track } from './api';
+import { api, type PlaylistMix, type PlaylistSummary, type SavedItem, type Track } from './api';
 import { Art } from './Art';
 import { ListDownloadBar } from './ListDownloadBar';
 import { SaveMenu } from './SaveMenu';
+import { SoundCard } from './SoundCard';
+import { listMixNote } from './list-mix-note';
 import { PLAYLIST_NAME_MAX } from './engine/playlists';
 import type { CardCache } from './engine/queue-controls';
 import { artistOf, classNames } from './util';
@@ -22,6 +24,10 @@ interface Props {
   /** Per-song cache state for the row rail; absent where there is no local downloader. */
   cacheOf?: (key: string) => CardCache | null;
   onVisibleList?: (id: string) => void;
+  /** PLAYLIST-QUEUE-001: put this list in the now playing queue, its songs as the starting songs. */
+  onUseAsQueue?: (id: string) => void;
+  /** The list now in the now playing queue, if any. */
+  queueListId?: string | null;
 }
 
 const ALL = 'all';
@@ -30,10 +36,11 @@ const ALL = 'all';
  * PLAYLISTS-001. Saved songs, plus the lists the listener makes out of them.
  *
  * "All saved" is every liked song and cannot be renamed or deleted; the named lists are theirs.
- * There is deliberately no "Add" button here: a saved song is not a starting song, and the owner
- * asked for that control to go.
+ * There is deliberately no per-song "Add" button here: a single saved song is not a starting song,
+ * and the owner asked for that control to go. A whole list can become the now playing queue instead,
+ * and then every song in it is a starting song (PLAYLIST-QUEUE-001).
  */
-export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onDownload, cacheOf, onVisibleList }: Props) {
+export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onDownload, cacheOf, onVisibleList, onUseAsQueue, queueListId }: Props) {
   const [view, setView] = useState<string>(ALL);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -46,6 +53,19 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
   const renameId = useId();
 
   const current = lists.find((l) => l.id === view) ?? null;
+  // PLAYLIST-MIX-001: the open list's own sound, read again when its songs change.
+  const [mix, setMix] = useState<PlaylistMix | null>(null);
+  const mixSig = current ? `${current.id}:${current.items.map((i) => i.key).join(',')}` : '';
+  useEffect(() => {
+    if (!current || !current.count) return;
+    let live = true;
+    api.playlistMix(current.id).then((m) => live && setMix(m), () => undefined);
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mixSig]);
+  const shown = current && mix?.id === current.id ? mix : null;
   useEffect(() => { onVisibleList?.(view); }, [view, onVisibleList]);
 
   // A list deleted elsewhere must not leave the page showing an empty mystery.
@@ -226,6 +246,15 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
                     ? 'You have played everything here, so discovery may add to it.'
                     : `${current.unplayed} of ${current.count} still to play. Discovery waits until you have heard them all.`}
               </p>
+              {onUseAsQueue && current.count > 0 && (
+                queueListId === current.id ? (
+                  <span className="lists__inqueue">In your now playing queue</span>
+                ) : (
+                  <button className="push push--default" type="button" title="Replace your now playing queue with this list. Every song in it becomes a starting song, and new music is found from them. You can bring your queue back." onClick={() => onUseAsQueue(current.id)}>
+                    <Glyph name="play" size={12} /> Play as my queue
+                  </button>
+                )
+              )}
               <button className="linkbtn" type="button" onClick={() => { setRenaming(true); setName(current.name); setError(null); }}>
                 Rename
               </button>
@@ -235,6 +264,19 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
             </>
           )}
         </div>
+      )}
+
+      {current && current.count > 0 && (
+        <SoundCard
+          key={current.id}
+          taste={shown?.taste ?? null}
+          listening={false}
+          title={`Sound of “${current.name}”`}
+          label="This list's mix"
+          historyKey={`airwave.sound.list.${current.id}`}
+          idleText={shown ? listMixNote(shown) : 'Reading the list…'}
+          emptyText={shown ? `No genre known yet for the ${shown.songs} songs in this list. Play it as your queue and discovery looks them up.` : 'Reading the list…'}
+        />
       )}
 
       {saved == null ? (

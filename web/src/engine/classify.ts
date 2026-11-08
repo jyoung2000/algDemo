@@ -3,11 +3,13 @@
  *
  * The picker places a song in a family by its hue (the spectrum band) and in a subgenre by its tempo
  * within that family. Here a song's tags pick the family and subgenre; when there is no tag, the
- * tempo alone picks the subgenre inside a family that the tags name. Colour follows the picker:
- * family -> hue band, and the subgenre's energy and brightness shade it.
+ * tempo alone picks the subgenre inside a family that the tags name. Colour follows the picker's
+ * band, from the one palette every surface uses (genre-palette.ts, TAGS-COLOR-001): a family has its
+ * colour, and each subgenre its own, measurably distinct from the family and its siblings.
  */
 import { CATALOG } from './taste-catalog';
 import { FAMILIES, FAMILY_TAGS, SUBS, type SubDef } from './genre-table';
+import { familyColor, subColorOf } from './genre-palette';
 import { fold } from './identity';
 import type { Tag } from './genres';
 
@@ -20,7 +22,7 @@ export interface Classification {
   hue: number; // 0..360, the picker's band colour
   energy: number | null;
   brightness: number | null;
-  color: string; // css colour
+  color: string; // css colour (sRGB hex), from genre-palette.ts
 }
 
 const BAND = 45;
@@ -56,12 +58,6 @@ export function tempoFitIn(bpm: number, lo: number, hi: number, halftime: boolea
   const other = near(bpm * 2) * 0.9;
   const half = near(bpm / 2) * 0.9;
   return Math.max(direct, other, half);
-}
-
-function shade(hue: number, energy: number | null, brightness: number | null): string {
-  const sat = 60 + 30 * (energy ?? 0.5);
-  const light = 40 + 25 * (brightness ?? 0.5);
-  return `hsl(${Math.round(hue)} ${Math.round(sat)}% ${Math.round(light)}%)`;
 }
 
 /** Subgenre whose name or alias appears in a tag or genre label. */
@@ -117,7 +113,7 @@ export function classify(tags: Tag[] | null | undefined, bpm: number | null | un
     hue,
     energy: cat?.energy ?? null,
     brightness: cat?.brightness ?? null,
-    color: shade(hue, cat?.energy ?? null, cat?.brightness ?? null),
+    color: (sub ? subColorOf(sub.key) : null) ?? familyColor(familySlug),
   };
 }
 

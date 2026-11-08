@@ -234,3 +234,27 @@
     scroll-behavior: auto;
   }
 }
+
+/* PLAYLIST-QUEUE-001: the list already in the now playing queue says so where its action would be. */
+.lists__inqueue {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-ink, var(--ink));
+}
+/* The banner over the now playing queue when a saved list is in it. */
+.banner--list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.banner--list > span {
+  flex: 1 1 220px;
+}
+/* A 44px target, like every other control (the small push is 40px). */
+.banner--list > .push {
+  min-height: 44px;
+}

@@ -30,6 +30,9 @@ describe('the song card (SONG-CARD-001)', () => {
     expect(genre).toMatch(/padding: 1px 8px;/);
     expect(genre).toMatch(/border: 0;/);
     expect(genre).toMatch(/background: color-mix\([^;]+var\(--tone/);
+    // TAGS-COLOR-001: enough of the colour that a subgenre reads apart from its family.
+    expect(genre).toMatch(/var\(--tone, var\(--accent\)\) 32%/);
+    expect(/\.genre::before \{([^}]+)\}/.exec(css)?.[1] ?? '').toMatch(/width: 8px;[^}]*height: 8px;/);
   });
 
   it('puts every control on one line: play, like, dislike, download, remove, why', () => {

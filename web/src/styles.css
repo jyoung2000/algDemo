@@ -1029,7 +1029,8 @@ a.push {
   border: 1px solid var(--hair);
   white-space: nowrap;
 }
-/* SONG-CARD-001: slightly larger, borderless pills retain the song's Taste Picker colour. */
+/* SONG-CARD-001: slightly larger, borderless pills retain the song's Taste Picker colour.
+   TAGS-COLOR-001: a 32% tint and an 8px dot, so a subgenre's own colour reads beside its family's. */
 .genre {
   display: inline-flex;
   align-items: center;
@@ -1042,12 +1043,12 @@ a.push {
   color: var(--ink);
   white-space: nowrap;
   border: 0;
-  background: color-mix(in srgb, var(--tone, var(--accent)) 20%, var(--pearl-2));
+  background: color-mix(in srgb, var(--tone, var(--accent)) 32%, var(--pearl-2));
 }
 .genre::before {
   content: '';
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--tone, var(--accent));
   flex: none;
@@ -2975,8 +2976,18 @@ a.push {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: hsl(var(--fh) 90% 62%);
+  background: var(--fam-color, hsl(var(--fh) 90% 62%));
   flex-shrink: 0;
+}
+/* TAGS-COLOR-001: each subgenre chip carries its tag colour. */
+.tpick__chip-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
 }
 .tpick__fam header b {
   font-size: 14px;

@@ -17,6 +17,8 @@ import {
 import { AUTO_FIT_DELAY, AUTO_FIT_DURATION, FULL_VIEW, WHEEL_STEP, fitTaste, panTaste, pointAt, projectPoint, revealPoint, selectionInView, tweenView, validPoint, viewportBackground, zoomAt, zoomTaste, type TasteViewport } from './taste-viewport';
 import { spreadMarkers } from './taste-spread';
 import { genreInk, genreSwatch } from './genre-color';
+import { familyColor, subColorOf } from './engine/genre-palette';
+import { FAMILIES } from './engine/genre-table';
 import './taste-picker-zoom.css';
 
 const pct = (x: number) => `${Math.round(x)}%`;
@@ -251,7 +253,7 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
             fill, and the name in a readable version of the same hue (see genre-color.ts for why
             the fill itself cannot be used as text). */}
         <div className="tpick__title" style={{ color: genreInk(hue) }}>
-          <span className="tpick__swatch" aria-hidden="true" style={{ background: genreSwatch(hue) }} />
+          <span className="tpick__swatch" aria-hidden="true" style={{ background: subColorOf(sub.key) ?? genreSwatch(hue) }} />
           {sub.name}
         </div>
         <div className="tpick__readout">
@@ -375,7 +377,7 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
       </div>
       <div className="tpick__catalog">
         {CATALOG.map((f, fi) => (
-          <section key={f.name} className="tpick__fam" style={{ ['--fh' as string]: fi * BAND + BAND / 2 }}>
+          <section key={f.name} className="tpick__fam" style={{ ['--fh' as string]: fi * BAND + BAND / 2, ['--fam-color' as string]: familyColor(FAMILIES[fi]!.slug) }}>
             <header>
               <i />
               <b>{f.name}</b>
@@ -393,6 +395,8 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
                   title={s.sound}
                   onClick={() => jump(MAP_SUBS.find((x) => x.name === s.name)!)}
                 >
+                  {/* TAGS-COLOR-001: the same colour the subgenre's tag bubbles carry. */}
+                  <i className="tpick__chip-dot" aria-hidden="true" style={{ background: subColorOf(MAP_SUBS.find((x) => x.name === s.name)?.key ?? '') ?? undefined }} />
                   {s.name} <span className="tpick__hint">{s.lo}–{s.hi}</span>
                 </button>
               ))}

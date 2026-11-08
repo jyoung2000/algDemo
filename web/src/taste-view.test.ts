@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TasteSummary } from './api';
-import { describeSound, gradientOf, gradientStops, pushSnapshot, soundChanges, soundView, SNAPSHOT_MAX } from './taste-view';
+import { describeSound, generalLabel, gradientOf, gradientStops, pushSnapshot, soundChanges, soundView, SNAPSHOT_MAX } from './taste-view';
 
 const g = (name: string, score: number, plays = 2, skips = 0) => ({ name, label: name, score, plays, skips });
 const summary = (genres: ReturnType<typeof g>[], events = 6, bpm: number | null = null): TasteSummary => ({
@@ -35,7 +35,7 @@ describe('soundView', () => {
     expect(header).toBe(v.leaves.slice(0, 3).map((l) => `${l.label} ${l.pct}%`).join(', '));
     expect(header.split(',').length).toBe(3);
     for (const l of v.leaves.slice(0, 3)) {
-      const row = v.families.flatMap((f) => [...f.subs.map((s) => [s.label, s.pct] as const), ...(f.broadPct ? [[`General ${f.name.toLowerCase()}`, f.broadPct] as const] : [])]).find(([n]) => n === l.label);
+      const row = v.families.flatMap((f) => [...f.subs.map((s) => [s.label, s.pct] as const), ...(f.broadPct ? [[generalLabel(f.name), f.broadPct] as const] : [])]).find(([n]) => n === l.label);
       expect(row?.[1]).toBe(l.pct);
     }
   });

@@ -387,6 +387,22 @@ export interface PlaylistItem {
 }
 
 /** A list the listener made. `discovery_ready` is false until every song in it has been played. */
+/** The starting songs, and the saved list they came from when one is the now playing queue. */
+export interface SeedsView {
+  seeds: Track[];
+  playlist?: { id: string; name: string } | null;
+  can_restore?: boolean;
+}
+
+export interface PlaylistMix {
+  id: string;
+  name: string;
+  taste: TasteSummary | null;
+  /** Songs in the list the engine could read; `placed` of them have a genre. */
+  songs: number;
+  placed: number;
+}
+
 export interface PlaylistSummary {
   id: string;
   name: string;
@@ -468,7 +484,13 @@ export const api = {
     }
   },
   completeSpotify: (title: string, artist: string) => call<{ tracks: Track[] }>('/api/complete-spotify', { method: 'POST', body: json({ title, artist }) }),
-  seeds: () => call<{ seeds: Track[] }>('/api/seeds'),
+  seeds: () => call<SeedsView>('/api/seeds'),
+  /** PLAYLIST-QUEUE-001: a saved list takes the place of the now playing queue; every song becomes a starting song. */
+  queuePlaylist: (id: string) => call<SeedsView & { missing: number }>('/api/queue/playlist', { method: 'POST', body: json({ id }) }),
+  /** Bring back the queue a saved list replaced. */
+  restoreQueue: () => call<SeedsView>('/api/queue/restore', { method: 'POST', body: json({}) }),
+  /** PLAYLIST-MIX-001: a saved list's own listening mix, in the shape the Sound card draws. */
+  playlistMix: (id: string) => call<PlaylistMix>(`/api/playlists/mix?id=${encodeURIComponent(id)}`),
   putSeeds: (seeds: Track[]) => call<{ seeds: Track[] }>('/api/seeds', { method: 'PUT', body: json({ seeds }) }),
   settings: () => call<Settings>('/api/settings'),
   putSettings: (patch: Partial<Settings>) => call<Settings>('/api/settings', { method: 'PUT', body: json(patch) }),

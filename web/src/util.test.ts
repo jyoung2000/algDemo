@@ -142,7 +142,7 @@ describe('genreTags', () => {
 
 describe('pickerColorFor', () => {
   it('gives a genre the Taste Picker colour, the same colour for the same genre', () => {
-    expect(pickerColorFor('Rap')).toMatch(/^hsl\(/);
+    expect(pickerColorFor('Rap')).toMatch(/^#[0-9a-f]{6}$/); // TAGS-COLOR-001: palette hex
     expect(pickerColorFor('Rap')).toBe(pickerColorFor('Rap'));
   });
 });
