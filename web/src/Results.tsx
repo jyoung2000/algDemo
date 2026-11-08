@@ -53,7 +53,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
   };
 
   return (
-    <ol className="recs" aria-label="Your songs and discovery queue">
+    <ol className="recs" aria-label="Now playing queue">
       {seeds.map((s) => {
         const strong = (s.emphasis ?? 1) > 1;
         const pb = playbackOfTrack(s);

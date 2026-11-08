@@ -64,7 +64,16 @@ class MainActivity : Activity() {
    *  the Web Audio engine actually acts on it. The page implements `window.__awMediaCmd(jsonString)`. */
   private val mediaCommandSink: (JSONObject) -> Unit = { cmd ->
     val v = web
-    v?.post { if (web === v) v.evaluateJavascript("window.__awMediaCmd && window.__awMediaCmd(${JSONObject.quote(cmd.toString())})", null) }
+    v?.post {
+      if (web !== v) return@post
+      if (cmd.optString("type") == "catalogSearch") {
+        // AA's keyboard backgrounds the phone Activity. Keep only this bounded catalogue request
+        // awake; do not leave the renderer permanently resumed or claim service-owned playback.
+        v.onResume()
+        v.postDelayed({ if (web === v && activityPaused && !webAudioPlaying && !MediaHub.catalogSearchPending) v.onPause() }, 25000)
+      }
+      v.evaluateJavascript("window.__awMediaCmd && window.__awMediaCmd(${JSONObject.quote(cmd.toString())})", null)
+    }
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -308,7 +317,7 @@ class MainActivity : Activity() {
         if (playing) {
           maybeAskNotifications()
           if (activityPaused) view.onResume()
-        } else if (activityPaused) {
+        } else if (activityPaused && !MediaHub.catalogSearchPending) {
           view.onPause()
         }
       }
@@ -332,7 +341,7 @@ class MainActivity : Activity() {
         if (playing) {
           maybeAskNotifications()
           if (activityPaused) view.onResume()
-        } else if (activityPaused) {
+        } else if (activityPaused && !MediaHub.catalogSearchPending) {
           view.onPause()
         }
       }
@@ -465,7 +474,7 @@ class MainActivity : Activity() {
     if (w != null && w.canGoBack()) w.goBack() else @Suppress("DEPRECATION") super.onBackPressed()
   }
 
-  override fun onPause() { activityPaused = true; if (!webAudioPlaying) web?.onPause(); super.onPause() }
+  override fun onPause() { activityPaused = true; if (!webAudioPlaying && !MediaHub.catalogSearchPending) web?.onPause(); super.onPause() }
   override fun onResume() { super.onResume(); activityPaused = false; web?.onResume() }
   override fun onDestroy() {
     MediaHub.clearCommandSink(mediaCommandSink)

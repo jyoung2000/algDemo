@@ -120,7 +120,7 @@ describe('Settings discovery controls', () => {
     fireEvent.click(listening());
     expect(onSettings).toHaveBeenLastCalledWith({ discover_while_listening: true });
     const help = document.getElementById(listening().getAttribute('aria-describedby')!)!;
-    expect(help.textContent).toMatch(/finish one from your list/);
+    expect(help.textContent).toMatch(/finish one from your now playing queue/);
     expect(help.textContent).toMatch(/3 or fewer unplayed/);
     expect(help.textContent).toMatch(/never starts a search on its own/);
   });

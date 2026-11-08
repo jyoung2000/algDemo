@@ -178,7 +178,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, sour
             />
           </div>
           <p className="note" id="discovery-size-help">
-            The most new songs one discovery may add, whether you searched or the list ran low while
+            The most new songs one discovery may add, whether you searched or your now playing queue ran low while
             you listened. Songs you already have are never removed, and a discovery may find fewer
             than this.
           </p>
@@ -205,7 +205,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, sour
             <span>Discover while listening</span>
           </label>
           <p className="note" id="discovery-listening-help">
-            Look for more songs once you finish one from your list and 3 or fewer unplayed ones are
+            Look for more songs once you finish one from your now playing queue and 3 or fewer unplayed ones are
             left. Pausing, seeking, skipping or replaying never starts a search on its own.
           </p>
         </section>
@@ -351,7 +351,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, sour
           {confirm ? (
             <>
               <span className="note">
-                Put everything back to default? Starting songs, likes, dislikes, settings and
+                Put everything back to default? Your now playing queue, starting songs, likes, dislikes, settings and
                 downloaded songs in the app cache are cleared. Songs kept in your Music folder stay.
               </span>
               <button

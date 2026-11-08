@@ -59,6 +59,8 @@ export interface MediaHandlers {
   playIndex?: (index: number) => void;
   /** A raw search query (voice), when the native side could not resolve it to a song itself. */
   search?: (query: string) => void;
+  /** Catalogue lookup for typed/voice car search; results are metadata, not automatic queue adds. */
+  catalogSearch?: (query: string) => Promise<NativeSong[]> | NativeSong[];
   shuffle?: (on: boolean) => void;
   repeat?: (mode: number) => void;
 }
@@ -121,7 +123,7 @@ export function pushMediaLibrary(songs: NativeSong[], playlists: NativeFolder[])
   send({ state: lastState, library: lastLibrary });
 }
 
-function send(payload: { state: NativeState; library?: { songs: NativeSong[]; playlists: NativeFolder[] } }): void {
+function send(payload: { state: NativeState; library?: { songs: NativeSong[]; playlists: NativeFolder[] }; search?: { requestId: string; query: string; songs: NativeSong[]; error?: string } }): void {
   const n = nativeMedia();
   if (typeof n?.media !== 'function') return;
   try {
@@ -148,7 +150,7 @@ export function songFromTrack(track: Track, ready: boolean): NativeSong {
 export function installMediaCommands(): void {
   if (typeof window === 'undefined') return;
   (window as unknown as { __awMediaCmd?: (json: string) => void }).__awMediaCmd = (json: string) => {
-    let cmd: { type?: string; positionMs?: number; index?: number; id?: string; query?: string; on?: boolean; mode?: number };
+    let cmd: { type?: string; requestId?: string; positionMs?: number; index?: number; id?: string; query?: string; on?: boolean; mode?: number };
     try {
       cmd = JSON.parse(json);
     } catch {
@@ -163,6 +165,21 @@ export function installMediaCommands(): void {
       case 'playId': if (cmd.id) handlers.playId?.(String(cmd.id)); break;
       case 'playIndex': handlers.playIndex?.(Math.max(0, Number(cmd.index) || 0)); break;
       case 'search': handlers.search?.(String(cmd.query ?? '')); break;
+      case 'catalogSearch': {
+        const requestId = String(cmd.requestId ?? '');
+        const query = String(cmd.query ?? '');
+        if (!requestId || requestId.length > 100 || query.length > 200) break;
+        void (async () => {
+          try {
+            if (!handlers.catalogSearch) throw new Error('Open Airwave on your phone to search music.');
+            const songs = await handlers.catalogSearch(query);
+            send({ state: lastState, search: { requestId, query, songs: songs.slice(0, 25) } });
+          } catch (e) {
+            send({ state: lastState, search: { requestId, query, songs: [], error: String((e as Error)?.message ?? 'Music search failed').slice(0, 200) } });
+          }
+        })();
+        break;
+      }
       case 'shuffle': handlers.shuffle?.(Boolean(cmd.on)); break;
       case 'repeat': handlers.repeat?.(Number(cmd.mode) || 0); break;
       default: break;

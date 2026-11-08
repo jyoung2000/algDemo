@@ -95,7 +95,7 @@ it('rests its arrow during a booked retry and spins only while a source or downl
 it('sits next to Clear list in the list header, not inside the availability card', () => {
   // Both list headers that offer Clear list must offer the download icon in the same row.
   const headers = appSource.match(/<div className="queue__head">[\s\S]{0,900}?<\/div>/g) ?? [];
-  const withClear = headers.filter((h) => /Clear list/.test(h));
+  const withClear = headers.filter((h) => /Clear now playing queue/.test(h));
   expect(withClear.length, 'no queue header with Clear list found').toBeGreaterThan(0);
   for (const h of withClear) expect(h).toMatch(/<ListDownloadButton/);
 });
@@ -108,13 +108,13 @@ it('sits next to Clear list in the list header, not inside the availability card
  */
 it('groups the two actions in one right-aligned container so they stay adjacent', () => {
   const headers = appSource.match(/<div className="queue__head">[\s\S]{0,1200}?<\/div>\s*\)?\s*\}?/g) ?? [];
-  const withClear = headers.filter((h) => /Clear list/.test(h));
+  const withClear = headers.filter((h) => /Clear now playing queue/.test(h));
   expect(withClear.length).toBeGreaterThan(0);
   for (const h of withClear) {
     const group = h.match(/<div className="queue__actions">[\s\S]*?<\/div>/)?.[0] ?? '';
     expect(group, 'actions must share a queue__actions wrapper').not.toBe('');
     expect(group).toMatch(/<ListDownloadButton/);
-    expect(group).toMatch(/Clear list/);
+    expect(group).toMatch(/Clear now playing queue/);
   }
 });
 

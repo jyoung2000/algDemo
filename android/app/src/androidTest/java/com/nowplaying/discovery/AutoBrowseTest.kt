@@ -121,8 +121,23 @@ class AutoBrowseTest {
     assertTrue("browser connected", built.await(15, TimeUnit.SECONDS))
     val b = browser.get()
     try {
-      val root = await { b.getLibraryRoot(null) }.value!!
-      assertEquals(listOf("songs", "playlists"), ids(await { b.getChildren(root.mediaId, 0, 10, null) }))
+      val rootResult = await { b.getLibraryRoot(null) }
+      val root = rootResult.value!!
+      assertTrue("car host can offer search", rootResult.params?.extras?.getBoolean("android.media.browse.SEARCH_SUPPORTED") == true)
+      val sections = await { b.getChildren(root.mediaId, 0, 10, null) }.value!!
+      assertEquals(listOf("songs", "playlists"), sections.map { it.mediaId })
+      assertEquals(listOf("Now playing queue", "Playlists"), sections.map { it.mediaMetadata.title.toString() })
+      assertTrue("top-level sections are browsable, not dead-end play buttons", sections.all { it.mediaMetadata.isBrowsable == true && it.mediaMetadata.isPlayable == false })
+      assertEquals("Your playback queue", sections[0].mediaMetadata.subtitle?.toString())
+      assertEquals("Your saved playlists", sections[1].mediaMetadata.subtitle?.toString())
+      instr.runOnMainSync {
+        assertTrue("search exposed to controllers", b.isSessionCommandAvailable(androidx.media3.session.SessionCommand.COMMAND_CODE_LIBRARY_SEARCH))
+        for (cmd in listOf(androidx.media3.common.Player.COMMAND_PLAY_PAUSE, androidx.media3.common.Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
+          androidx.media3.common.Player.COMMAND_SEEK_TO_NEXT, androidx.media3.common.Player.COMMAND_SEEK_TO_PREVIOUS,
+          androidx.media3.common.Player.COMMAND_GET_TIMELINE)) {
+          assertTrue("car player control available: $cmd", b.isCommandAvailable(cmd))
+        }
+      }
 
       val songs = await { b.getChildren("songs", 0, 50, null) }.value!!
       assertTrue("song list contains seeded songs", songs.map { it.mediaId }.containsAll(listOf("s1", "s2")))

@@ -5,6 +5,13 @@ import android.os.Looper
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
+import java.text.Normalizer
+import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.TimeoutException
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
 
 /**
  * The bridge between the WebView's Web Audio engine (which actually renders audio, with the
@@ -20,7 +27,7 @@ import java.util.concurrent.CopyOnWriteArrayList
  *
  * Everything the native side reads is pushed from the page through `AirwaveNative.media(json)`:
  *  - [state]:   now playing + position + the current up-next queue, for the session/lock screen;
- *  - [songs]:   the song list, for the Android Auto browse tree and typed/voice search;
+ *  - [songs]:   the now playing queue, for the Android Auto browse tree and typed/voice search;
  *  - [playlists]: the listener's playlists, for the browse tree.
  *
  * This object holds only the latest snapshot and a command sink; it owns no threads. Listeners are
@@ -39,7 +46,7 @@ object MediaHub {
     val ready: Boolean,
   )
 
-  /** A browsable folder in the Android Auto tree: the song list, or one playlist. */
+  /** A browsable folder in the Android Auto tree: the now playing queue, or one playlist. */
   data class Folder(val id: String, val title: String, val songs: List<Song>)
 
   /** The playback snapshot the session renders. [queue] is the current up-next order including the
@@ -78,7 +85,14 @@ object MediaHub {
   @Volatile private var sink: ((JSONObject) -> Unit)? = null
 
   fun setCommandSink(s: (JSONObject) -> Unit) { sink = s }
-  fun clearCommandSink(s: (JSONObject) -> Unit) { if (sink === s) sink = null }
+  fun clearCommandSink(s: (JSONObject) -> Unit) {
+    if (sink !== s) return
+    sink = null
+    synchronized(catalogLock) {
+      pendingSearches.values.forEach { it.future.setException(IllegalStateException("Open Airwave on your phone to search the catalogue")) }
+      pendingSearches.clear()
+    }
+  }
   fun hasPage(): Boolean = sink != null
 
   /** A native surface (lock screen, Bluetooth, car) asked for something; hand it to the page. */
@@ -94,6 +108,7 @@ object MediaHub {
       lib.optJSONArray("songs")?.let { songs = parseSongs(it) }
       lib.optJSONArray("playlists")?.let { playlists = parseFolders(it) }
     }
+    json.optJSONObject("search")?.let { acceptCatalogReply(it) }
     notifyListeners()
   }
 
@@ -119,14 +134,99 @@ object MediaHub {
     state.queue.firstOrNull { it.id == id }
       ?: songs.firstOrNull { it.id == id }
       ?: playlists.firstNotNullOfOrNull { f -> f.songs.firstOrNull { it.id == id } }
+      ?: synchronized(catalogLock) { catalogResults.values.flatMap { it.songs }.firstOrNull { it.id == id } }
 
   fun playlist(id: String): Folder? = playlists.firstOrNull { it.id == id }
 
-  /** Case/diacritic-insensitive substring search over the known song list, for AA typed search. */
+  private fun normalizeText(text: String): String = Normalizer.normalize(text, Normalizer.Form.NFD)
+    .replace(Regex("\\p{M}+"), "").lowercase(Locale.ROOT).trim().replace(Regex("\\s+"), " ")
+
+  /** Search queue + playlist-only tracks, matching all words regardless of title/artist order. */
   fun search(query: String): List<Song> {
-    val q = query.trim().lowercase()
-    if (q.isEmpty()) return emptyList()
-    return songs.filter { "${it.title} ${it.artist} ${it.album ?: ""}".lowercase().contains(q) }
+    val terms = normalizeText(query).split(' ').filter { it.isNotEmpty() }
+    if (terms.isEmpty()) return emptyList()
+    val pool = (songs + state.queue + playlists.flatMap { it.songs }).distinctBy { it.id }
+    return pool.filter { song ->
+      val listNames = playlists.filter { list -> list.songs.any { it.id == song.id } }.joinToString(" ") { it.title }
+      val text = normalizeText("${song.title} ${song.artist} ${song.album ?: ""} $listNames")
+      terms.all { text.contains(it) }
+    }
+  }
+
+  private data class CatalogResult(val songs: List<Song>, val at: Long)
+  private data class PendingSearch(val query: String, val key: String, val future: SettableFuture<List<Song>>)
+  private val catalogLock = Any()
+  private val catalogResults = LinkedHashMap<String, CatalogResult>()
+  private data class CatalogFailure(val error: Throwable, val at: Long)
+  private val catalogFailures = LinkedHashMap<String, CatalogFailure>()
+  val catalogSearchPending: Boolean get() = synchronized(catalogLock) { pendingSearches.isNotEmpty() }
+  private val pendingSearches = LinkedHashMap<String, PendingSearch>()
+
+  /** Local matches are immediate. New songs use the same catalogue as the phone UI, not a fake
+   * empty result. Bounded requests/replies/timeouts prevent stuck car search and cross-query races.
+   * This bridge still requires the Activity; service-owned cold-start acquisition remains separate. */
+  fun searchCatalog(rawQuery: String, timeoutMs: Long = 24000): ListenableFuture<List<Song>> {
+    val query = rawQuery.trim().take(200)
+    if (query.isBlank()) return Futures.immediateFuture(emptyList())
+    val local = search(query)
+    if (local.isNotEmpty()) return Futures.immediateFuture(local)
+    val key = normalizeText(query)
+    synchronized(catalogLock) {
+      val now = android.os.SystemClock.elapsedRealtime()
+      catalogResults.entries.removeAll { now - it.value.at > 60000 }
+      catalogResults[key]?.let { return Futures.immediateFuture(it.songs) }
+      catalogFailures.entries.removeAll { now - it.value.at > 3000 }
+      catalogFailures[key]?.let { return Futures.immediateFailedFuture(it.error) }
+      pendingSearches.values.firstOrNull { it.key == key }?.let { return it.future }
+      val target = sink ?: return Futures.immediateFailedFuture(IllegalStateException("Open Airwave on your phone to search the catalogue"))
+      if (pendingSearches.size >= 4) {
+        // Typed search emits every prefix. Admit the newest edit instead of starving the final
+        // full query behind obsolete prefixes; cached cancellation also finishes legacy callbacks.
+        val oldest = pendingSearches.entries.first()
+        pendingSearches.remove(oldest.key)
+        val error = java.util.concurrent.CancellationException("Superseded by a newer search")
+        catalogFailures[oldest.value.key] = CatalogFailure(error, now)
+        while (catalogFailures.size > 32) catalogFailures.remove(catalogFailures.keys.first())
+        oldest.value.future.setException(error)
+      }
+      val id = UUID.randomUUID().toString()
+      val future = SettableFuture.create<List<Song>>()
+      pendingSearches[id] = PendingSearch(query, key, future)
+      android.util.Log.i("AirwaveCarSearch", "request $id started")
+      main.postDelayed({ synchronized(catalogLock) {
+        pendingSearches.remove(id)?.let { pending ->
+          val error = TimeoutException("Catalogue search timed out")
+          catalogFailures[pending.key] = CatalogFailure(error, android.os.SystemClock.elapsedRealtime())
+          pending.future.setException(error)
+          android.util.Log.w("AirwaveCarSearch", "request $id timed out")
+        }
+      } }, timeoutMs.coerceIn(50, 30000))
+      try { target(JSONObject().put("type", "catalogSearch").put("requestId", id).put("query", query)) }
+      catch (e: Exception) { pendingSearches.remove(id); future.setException(e) }
+      return future
+    }
+  }
+
+  private fun acceptCatalogReply(reply: JSONObject) {
+    synchronized(catalogLock) {
+      val id = reply.optString("requestId")
+      val pending = pendingSearches[id] ?: return
+      if (reply.optString("query") != pending.query) return
+      pendingSearches.remove(id)
+      if (!reply.optString("error").isNullOrBlank()) {
+        val error = IllegalStateException(reply.optString("error").take(200))
+        catalogFailures[pending.key] = CatalogFailure(error, android.os.SystemClock.elapsedRealtime())
+        while (catalogFailures.size > 8) catalogFailures.remove(catalogFailures.keys.first())
+        pending.future.setException(error)
+        android.util.Log.w("AirwaveCarSearch", "request $id failed")
+        return
+      }
+      val results = parseSongs(reply.optJSONArray("songs") ?: JSONArray()).distinctBy { it.id }.take(25)
+      catalogResults[pending.key] = CatalogResult(results, android.os.SystemClock.elapsedRealtime())
+      while (catalogResults.size > 8) catalogResults.remove(catalogResults.keys.first())
+      pending.future.set(results)
+      android.util.Log.i("AirwaveCarSearch", "request $id completed: ${results.size} results")
+    }
   }
 
   private fun parseState(o: JSONObject): State {

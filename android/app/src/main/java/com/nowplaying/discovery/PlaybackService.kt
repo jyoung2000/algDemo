@@ -13,16 +13,15 @@ import androidx.media3.session.MediaSession
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
+import com.google.common.util.concurrent.FutureCallback
+import com.google.common.util.concurrent.MoreExecutors
 
 /**
- * The native music player service (MEDIA-NATIVE-001). It hosts the [WebPlayer] proxy and a
- * [MediaLibraryService.MediaLibrarySession], which gives the app:
- *  - background playback: while the page is playing the service runs in the foreground with a media
- *    notification, so the WebView keeps rendering audio with the screen off;
- *  - lock-screen and quick-panel controls, Bluetooth/headset buttons: System UI/One UI draw them
- *    from the session and the buttons route back through [WebPlayer] to the page;
- *  - Android Auto: the browse tree below (Song list + Playlists) and voice/typed search, with every
- *    tap resolved to the page's song id so the car plays the real local recording.
+ * Currently hosts the Activity-backed [WebPlayer] proxy; this is NOT yet a service-owned renderer.
+ * Android Auto draws the standard host UI from the browse tree, search support and player commands.
+ * Native background playback/cold-start support remains under implementation; this browse surface
+ * alone must never be advertised as proof that audio survives Activity destruction.
  */
 @UnstableApi
 class PlaybackService : MediaLibraryService() {
@@ -73,6 +72,8 @@ class PlaybackService : MediaLibraryService() {
       params: LibraryParams?,
     ): ListenableFuture<LibraryResult<MediaItem>> {
       val extras = android.os.Bundle().apply {
+        // Standard browser search hint; no fake Search folder or dead-end custom car screen.
+        putBoolean("android.media.browse.SEARCH_SUPPORTED", true)
         putInt(MediaConstants.EXTRAS_KEY_CONTENT_STYLE_BROWSABLE, MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_GRID_ITEM)
         putInt(MediaConstants.EXTRAS_KEY_CONTENT_STYLE_PLAYABLE, MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM)
       }
@@ -92,8 +93,8 @@ class PlaybackService : MediaLibraryService() {
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
       val items: List<MediaItem> = when {
         parentId == ROOT -> listOf(
-          folderItem(FOLDER_SONGS, "Song list", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED),
-          folderItem(FOLDER_PLAYLISTS, "Playlists", MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS),
+          folderItem(FOLDER_SONGS, "Now playing queue", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Your playback queue"),
+          folderItem(FOLDER_PLAYLISTS, "Playlists", MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS, "Your saved playlists"),
         )
         parentId == FOLDER_SONGS -> MediaHub.songs.map { songItem(it) }
         parentId == FOLDER_PLAYLISTS -> MediaHub.playlists.map {
@@ -115,8 +116,8 @@ class PlaybackService : MediaLibraryService() {
     ): ListenableFuture<LibraryResult<MediaItem>> {
       val item: MediaItem? = when {
         mediaId == ROOT -> folderItem(ROOT, "Airwave Discovery", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
-        mediaId == FOLDER_SONGS -> folderItem(FOLDER_SONGS, "Song list", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
-        mediaId == FOLDER_PLAYLISTS -> folderItem(FOLDER_PLAYLISTS, "Playlists", MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS)
+        mediaId == FOLDER_SONGS -> folderItem(FOLDER_SONGS, "Now playing queue", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Your playback queue")
+        mediaId == FOLDER_PLAYLISTS -> folderItem(FOLDER_PLAYLISTS, "Playlists", MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS, "Your saved playlists")
         mediaId.startsWith(PLAYLIST_PREFIX) && mediaId.contains("/track/") ->
           scopedSong(mediaId)?.let { songItem(it, mediaId) }
         mediaId.startsWith(PLAYLIST_PREFIX) ->
@@ -133,7 +134,16 @@ class PlaybackService : MediaLibraryService() {
       query: String,
       params: LibraryParams?,
     ): ListenableFuture<LibraryResult<Void>> {
-      session.notifySearchResultChanged(browser, query, MediaHub.search(query).size, params)
+      // The legacy AA adapter ignores onSearch's future and completes only after this notification.
+      // Notify on BOTH success and failure; otherwise an offline/timeout query spins forever.
+      Futures.addCallback(MediaHub.searchCatalog(query), object : FutureCallback<List<MediaHub.Song>> {
+        override fun onSuccess(songs: List<MediaHub.Song>?) {
+          android.os.Handler(mainLooper).post { session.notifySearchResultChanged(browser, query, songs?.size ?: 0, params) }
+        }
+        override fun onFailure(error: Throwable) {
+          android.os.Handler(mainLooper).post { session.notifySearchResultChanged(browser, query, 0, params) }
+        }
+      }, MoreExecutors.directExecutor())
       return Futures.immediateFuture(LibraryResult.ofVoid())
     }
 
@@ -145,7 +155,22 @@ class PlaybackService : MediaLibraryService() {
       pageSize: Int,
       params: LibraryParams?,
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
-      Futures.immediateFuture(LibraryResult.ofItemList(ImmutableList.copyOf(page(MediaHub.search(query).map { songItem(it) }, page, pageSize)), params))
+      searchResult(query) { songs ->
+        LibraryResult.ofItemList(ImmutableList.copyOf(page(songs.map { songItem(it) }, page, pageSize)), params)
+      }
+
+    private fun <T : Any> searchResult(query: String, value: (List<MediaHub.Song>) -> LibraryResult<T>): ListenableFuture<LibraryResult<T>> {
+      val result = SettableFuture.create<LibraryResult<T>>()
+      Futures.addCallback(MediaHub.searchCatalog(query), object : FutureCallback<List<MediaHub.Song>> {
+        override fun onSuccess(songs: List<MediaHub.Song>?) {
+          android.os.Handler(mainLooper).post { result.set(value(songs ?: emptyList())) }
+        }
+        override fun onFailure(error: Throwable) {
+          result.set(LibraryResult.ofError(LibraryResult.RESULT_ERROR_UNKNOWN))
+        }
+      }, MoreExecutors.directExecutor())
+      return result
+    }
 
     /** A tap in the car, or a voice request ("play X"), arrives here as bare ids or a search query;
      *  resolve each to a real song so the player can forward the right id to the page. */
@@ -154,7 +179,7 @@ class PlaybackService : MediaLibraryService() {
       controller: MediaSession.ControllerInfo,
       mediaItems: MutableList<MediaItem>,
     ): ListenableFuture<MutableList<MediaItem>> =
-      Futures.immediateFuture(mediaItems.map(::resolve).toMutableList())
+      Futures.transform(Futures.allAsList(mediaItems.map(::resolveAsync)), { it!!.toMutableList() }, MoreExecutors.directExecutor())
 
     override fun onSetMediaItems(
       mediaSession: MediaSession,
@@ -163,22 +188,25 @@ class PlaybackService : MediaLibraryService() {
       startIndex: Int,
       startPositionMs: Long,
     ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
-      val resolved = mediaItems.map(::resolve)
-      return Futures.immediateFuture(MediaSession.MediaItemsWithStartPosition(resolved, startIndex, startPositionMs))
+      return Futures.transform(Futures.allAsList(mediaItems.map(::resolveAsync)), { resolved ->
+        MediaSession.MediaItemsWithStartPosition(resolved!!, startIndex, startPositionMs)
+      }, MoreExecutors.directExecutor())
     }
 
-    private fun resolve(item: MediaItem): MediaItem {
+    private fun resolveAsync(item: MediaItem): ListenableFuture<MediaItem> {
       val query = item.requestMetadata.searchQuery
-      val scoped = if (query.isNullOrBlank()) scopedSong(item.mediaId) else null
-      if (scoped != null) return songItem(scoped, item.mediaId)
-      val song = if (!query.isNullOrBlank()) {
-        val hits = MediaHub.search(query)
-        hits.firstOrNull { it.ready } ?: hits.firstOrNull()
-      } else {
-        item.mediaId.takeIf { it.isNotBlank() }?.let { MediaHub.findSong(it) }
-      }
-      return song?.let { songItem(it) } ?: item
+      if (!query.isNullOrBlank()) return Futures.transform(MediaHub.searchCatalog(query), { hits ->
+        val song = hits?.firstOrNull { it.ready } ?: hits?.firstOrNull()
+          ?: throw IllegalArgumentException("No songs found")
+        songItem(song)
+      }, MoreExecutors.directExecutor())
+      val scoped = scopedSong(item.mediaId)
+      if (scoped != null) return Futures.immediateFuture(songItem(scoped, item.mediaId))
+      val song = MediaHub.findSong(item.mediaId)
+        ?: return Futures.immediateFailedFuture(IllegalArgumentException("Unknown song"))
+      return Futures.immediateFuture(songItem(song))
     }
+
   }
 
   private fun <T> page(items: List<T>, index: Int, size: Int): List<T> {
@@ -188,12 +216,13 @@ class PlaybackService : MediaLibraryService() {
     return items.subList(from.toInt(), (from + size).coerceAtMost(items.size.toLong()).toInt())
   }
 
-  private fun folderItem(id: String, title: String, mediaType: Int): MediaItem =
+  private fun folderItem(id: String, title: String, mediaType: Int, subtitle: String? = null): MediaItem =
     MediaItem.Builder()
       .setMediaId(id)
       .setMediaMetadata(
         MediaMetadata.Builder()
           .setTitle(title)
+          .setSubtitle(subtitle)
           .setIsBrowsable(true)
           .setIsPlayable(false)
           .setMediaType(mediaType)

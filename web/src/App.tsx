@@ -22,6 +22,7 @@ import { dl, downloadsAvailable } from './engine/downloads';
 import { readResume } from './engine/resume';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, canPlayHere, classNames, describeTaste, dropExpired, expiredKeysOf, fmtBytes, keepFocus, historyBack, mergeRerank, nextRepeat, playbackOfTrack, readyFilter, stepQueue, type RepeatMode } from './util';
 import { queueAudio } from './engine/queue-audio';
+import { CarCatalog } from './engine/car-catalog';
 
 type Tab = 'discover' | 'saved' | 'profile' | 'downloads' | 'settings';
 
@@ -109,6 +110,7 @@ export function App() {
   const sessionRef = useRef(`s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   const [taste, setTaste] = useState<TasteSummary | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
+  const [carCatalog] = useState(() => new CarCatalog(api.search, track => queueAudio.isReady(track)));
 
   // ---------------------------------------------------------------- load persisted state
   useEffect(() => {
@@ -252,9 +254,9 @@ export function App() {
         setRunErr(null);
         setFocusKey(null);
         setHidden(new Set());
-        flash('Song list cleared. Your listening history and settings are kept.');
+        flash('Now playing queue cleared. Your listening history and settings are kept.');
       },
-      (e: Error) => flash(`Could not clear the list: ${e.message}`),
+      (e: Error) => flash(`Could not clear the now playing queue: ${e.message}`),
     );
   };
 
@@ -380,10 +382,11 @@ export function App() {
         const inActive = activeItems.find((x) => x.track.key === id);
         if (inActive) { play(inActive, { keepList: true }); return; }
         const fromList = lists.flatMap((l) => savedTracks(saved, lists, l.id)).find((t) => t.key === id);
-        const t = fromList ?? (saved ?? []).map((s) => s.track).find((x) => x.key === id);
+        const t = fromList ?? (saved ?? []).map((s) => s.track).find((x) => x.key === id) ?? carCatalog.find(id);
         const row = t ? playbackRows([t])[0] : undefined;
         if (row) play(row, { keepList: true });
       },
+      catalogSearch: query => carCatalog.search(query),
       search: (q) => {
         const ql = q.trim().toLowerCase();
         if (!ql) return;
@@ -700,7 +703,7 @@ export function App() {
               )}
               {result?.saved_at && !job && (
                 <p className="banner" role="note">
-                  <Glyph name="info" size={14} /> Your last queue, from {new Date(result.saved_at * 1000).toLocaleString()}. Press “Find my next favorite” for a fresh one.
+                  <Glyph name="info" size={14} /> Your last now playing queue, from {new Date(result.saved_at * 1000).toLocaleString()}. Press “Find my next favorite” for a fresh one.
                 </p>
               )}
               {runErr && (
@@ -712,7 +715,7 @@ export function App() {
                 <>
                   <div className="queue__head">
                     <h2 id="queue-h">
-                      Songs <span className="count">{visibleSeeds.length + items.length}</span>
+                      Now playing queue <span className="count">{visibleSeeds.length + items.length}</span>
                     </h2>
                     <span className="queue__meta">
                       {running && result.phase === 'gathering' ? (
@@ -737,10 +740,10 @@ export function App() {
                       /* LIST-METER-003: one group, so the two actions stay side by side. Loose
                          siblings wrapped onto separate lines, because .push takes margin-left:auto. */
                       <div className="queue__actions">
-                        <ListDownloadButton tracks={queueTracks} label="this list" />
+                        <ListDownloadButton tracks={queueTracks} label="now playing queue" />
                         {/* CLEAR-ICON-001: the same icon-button shape as the download action beside it, so the
                             pair reads as one set of list controls rather than two unrelated widgets. */}
-                        <button className="iconbtn" type="button" aria-label="Clear list" title="Clear list. Your listening history and settings are kept." onClick={clearList}>
+                        <button className="iconbtn" type="button" aria-label="Clear now playing queue" title="Clear now playing queue. Your listening history and settings are kept." onClick={clearList}>
                           <Glyph name="clear" size={14} />
                         </button>
                       </div>
@@ -760,7 +763,7 @@ export function App() {
                       It is reported in Settings, next to the other runtime checks. */}
                   {items.length || visibleSeeds.length ? (
                     <>
-                    <ListDownloadBar tracks={queueTracks} label="this list" />
+                    <ListDownloadBar tracks={queueTracks} label="now playing queue" />
                     <Results
                       seeds={visibleSeeds}
                       onRemoveSeed={(k) => saveSeeds(seeds.filter((s) => s.key !== k))}
@@ -797,13 +800,13 @@ export function App() {
                 <>
                   <div className="queue__head">
                     <h2 id="queue-h">
-                      Songs <span className="count">{visibleSeeds.length}</span>
+                      Now playing queue <span className="count">{visibleSeeds.length}</span>
                     </h2>
                     {/* LIST-METER-003: same pairing on the seeds-only header. */}
                     <div className="queue__actions">
-                      <ListDownloadButton tracks={queueTracks} label="this list" />
+                      <ListDownloadButton tracks={queueTracks} label="now playing queue" />
                       {/* CLEAR-ICON-001: matches the download icon beside it. */}
-                      <button className="iconbtn" type="button" aria-label="Clear list" title="Clear list. Your listening history and settings are kept." onClick={clearList}>
+                      <button className="iconbtn" type="button" aria-label="Clear now playing queue" title="Clear now playing queue. Your listening history and settings are kept." onClick={clearList}>
                         <Glyph name="clear" size={14} />
                       </button>
                     </div>
@@ -823,7 +826,7 @@ export function App() {
                     onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
                     cacheOf={cardCache}
                   />
-                  <p className="queue__foot">Press “Find my next favorite” to add songs to this list.</p>
+                  <p className="queue__foot">Press “Find my next favorite” to add songs to your now playing queue.</p>
                 </>
               ) : (
                 <div className="empty empty--hero">
@@ -896,8 +899,8 @@ export function App() {
                 }
                 api.settings().then(setSettings, () => undefined);
                 flash(songs > 0
-                  ? `Reset to defaults. Starting songs, feedback, settings and ${songs} downloaded songs cleared. Songs kept in your Music folder stay.`
-                  : 'Reset to defaults. Your starting songs, feedback and settings are cleared.');
+                  ? `Reset to defaults. Now playing queue, starting songs, feedback, settings and ${songs} downloaded songs cleared. Songs kept in your Music folder stay.`
+                  : 'Reset to defaults. Your now playing queue, starting songs, feedback and settings are cleared.');
               })
             }
           />

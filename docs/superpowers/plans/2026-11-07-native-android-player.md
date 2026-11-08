@@ -18,6 +18,16 @@
 - Windows remains on its Web Audio path unless a shared behavior contract requires parity; verify the Windows packaged flow when touching shared web code.
 - New release version, signed APK, real emulator tests and fast-forward push only after ALL acceptance gates.
 
+## Android Auto usability acceptance (owner requirement)
+- Keep **Song list** and **Playlists** as clearly labelled top-level destinations; no settings or download-management detours.
+- **Player controls:** standard Now playing with correct title/artist, play/pause, previous/next, position and seek where supported by the host, and access to the queue. Controls must survive Activity removal after native engine integration.
+- **Search:** expose the standard host search capability; test voice play/search and parked typed search when the host offers it. Do not invent a fake Search browse folder or promise keyboard access while driving.
+- **Song list:** tapping a song selects that actual recording; list rows show title/artist; pagination exposes the whole list.
+- **Playlists:** one level to choose a playlist, then song rows; tap preserves playlist-specific queue and Next/Previous order.
+- Use host-rendered large controls and shallow navigation. No custom web dashboard, EQ editor or manual text input required to start normal playback in the car.
+- Real DHU/car verification must exercise all four entry points and returning to Now playing, Back, empty results, buffering, reconnect, narrow/wide displays and supported moving/parked restrictions. Controller tests prove the service contract, NOT visual usability.
+- Current implementation: root search hint + folder subtitles + real MediaBrowser capability tests added; native engine/cold start and actual DHU acceptance remain incomplete.
+
 ## Review Focus
 - Cold service before opening Activity: browsable nonempty saved library, tap playback starts; test at Task 3.
 - Activity task removed while playing: audio advances, media buttons work, no phantom PLAYING; test Task 2.
@@ -66,7 +76,8 @@
 ### Task 6: Release and actual Android Auto proof
 **Files:** version bump (`android/app/build.gradle.kts`), docs, tests.
 - [ ] Run full web, Android unit/instrumented and Windows parity gates; package signed APK and verify signature/version/asset parity.
-- [ ] Test DHU with functional updated Android Auto; current emulator Gearhead `1.2.531830-stub` cannot start head-unit server. If no updated device is available, mark DHU blocked explicitly, do not claim car UI verified.
+- [x] Unblock DHU transport: isolated official Google Play API34 AVD emulator-5560 with Google-signed Android Auto 17.9.664044, no account login. Actual projected dashboard, Airwave launcher, Song list/Playlists tabs and host Search keyboard exercised. Setup/evidence: `C:/Users/jalon/AppData/Local/hermes/testing/dhu/README.md`.
+- [ ] Test real song playback, queue/transport, voice results, buffering, cold start/task removal and narrow/wide car layouts in the now-working DHU. Empty-library UI smoke does not prove these behaviors.
 - [ ] Fresh independent code review, fix important findings RED→GREEN, commit and fast-forward push only after real playback acceptance gates; never overwrite prior delivered APKs.
 
 ## Rulings

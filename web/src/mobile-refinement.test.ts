@@ -105,7 +105,7 @@ describe('the Songs header keeps Clear list cleanly on the right (QUEUE-HEAD-001
     // In both headers (results, and seeds only) the button comes after everything else.
     for (const m of app.matchAll(/<div className="queue__head">([\s\S]*?)<\/div>\s*(?:<Results|\{running)/g)) {
       const head = m[1]!;
-      const button = head.indexOf('Clear list');
+      const button = head.indexOf('Clear now playing queue');
       const meta = head.indexOf('queue__meta');
       expect(button).toBeGreaterThan(-1);
       if (meta > -1) expect(button).toBeGreaterThan(meta);
