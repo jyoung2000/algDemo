@@ -61,9 +61,10 @@ class AudioEngineTest {
     val log = mutableListOf<String>()
     var blendSeconds = 0.0
     var onAdvance: () -> Unit = {}
-    override fun onEnded(key: String) { log += "ended:$key" }
-    override fun onAdvanced(key: String) { log += "advanced:$key"; onAdvance() }
-    override fun onRepeated(key: String) { log += "repeated:$key" }
+    val heard = mutableListOf<AudioEngine.Heard>()
+    override fun onEnded(key: String, heard: AudioEngine.Heard) { log += "ended:$key"; this.heard += heard }
+    override fun onAdvanced(key: String, outgoing: AudioEngine.Heard) { log += "advanced:$key"; heard += outgoing; onAdvance() }
+    override fun onRepeated(key: String, heard: AudioEngine.Heard) { log += "repeated:$key"; this.heard += heard }
     override fun onBlendStarted(key: String, seconds: Double, style: TransitionStyle) { log += "blend:$key:${style.id}"; blendSeconds = seconds }
   }
 
@@ -102,6 +103,7 @@ class AudioEngineTest {
     eng.load("one", Tone(440.0, 2.0))
     eng.renderQuanta(quantaFor(3.0))
     assertEquals(listOf("ended:one"), ev.log)
+    assertEquals("the whole song was heard", listOf(AudioEngine.Heard("one", 96000, 96000)), ev.heard)
     assertFalse("stops after the end", eng.snapshot.playing)
     assertFalse("output paused", out.playing)
     // Every frame of the song (plus the quantum it ended in) reached the output, and it was audible.
@@ -125,6 +127,7 @@ class AudioEngineTest {
     assertEquals(0.5, ev.blendSeconds, 0.01)
     eng.renderQuanta(quantaFor(0.5))
     assertEquals(listOf("blend:b:blend", "advanced:b"), ev.log)
+    assertEquals("all of a was heard, blend included", listOf(AudioEngine.Heard("a", 480000, 480000)), ev.heard)
     assertEquals("b", eng.snapshot.key)
     assertTrue("still playing after the handoff", eng.snapshot.playing)
     // Promotion kept b's playhead, it did not seek b back to zero a second time. At the handoff b has
@@ -183,5 +186,17 @@ class AudioEngineTest {
     eng.play()
     eng.renderQuanta(8)
     assertEquals(1024, out.left.size)
+  }
+
+  @Test fun aSkippedStretchIsNotCountedAsHeard() {
+    val (eng, ev, _) = engine()
+    eng.load("a", Tone(440.0, 4.0))
+    eng.renderQuanta(quantaFor(1.0))
+    eng.seekTo(3 * 48000)
+    eng.renderQuanta(quantaFor(1.5))
+    assertEquals(listOf("ended:a"), ev.log)
+    val h = ev.heard.single()
+    assertEquals("heard = 1 s before the seek + the last 1 s, not 4 s", 2.0 * 48000, h.heardFrames.toDouble(), 2.0 * 128)
+    assertEquals(4L * 48000, h.durationFrames)
   }
 }

@@ -48,6 +48,13 @@ class PlayQueue<T>(
     startRound()
   }
 
+  /** Swap in fresh copies of the same songs (same keys, same positions) without disturbing the order or the round. */
+  fun refresh(items: List<T>): Boolean {
+    if (items.size != this.items.size || items.indices.any { keyOf(items[it]) != keyOf(this.items[it]) }) return false
+    this.items = items
+    return true
+  }
+
   /** Jump to a song of the queue by its key. Returns false when it is not in the queue. */
   fun select(key: String): Boolean = select(items.indexOfFirst { keyOf(it) == key })
 

@@ -7,16 +7,17 @@ import { Volume } from './Volume';
 import { PlayerActions, type TrackActionProps } from './PlayerActions';
 import { Wheel } from './Wheel';
 import { loadYouTube, youtubeEmbedUrl, type YTPlayer } from './youtube';
-import { attachElement, bus as audioBus, mixSlider, playThrough, resumeEngine, setUnprocessable, subscribeEngine } from './audio-engine';
+import { attachElement, bus as audioBus, eqConfig, mixSlider, playThrough, resumeEngine, setUnprocessable, subscribeEngine } from './audio-engine';
 import { localLibrary, sourceUrlFor } from './engine/local-audio';
 import { rescueSource } from './engine/rescue';
 import { downloadsAvailable, playbackActive } from './engine/downloads';
-import { mediaNativeAvailable, pushMediaState, setMediaHandlers } from './engine/media-native';
+import { mediaNativeAvailable, pushMediaState, setMediaHandlers, songFromTrack } from './engine/media-native';
+import { engineAvailable, engineRev, engineSend, engineSong, engineState, markEngineEvent, subscribeEngineState, type EngineState } from './engine/native-engine';
 import { queueAudio } from './engine/queue-audio';
 import { clearResume, writeResume } from './engine/resume';
 import { type DeckId } from './engine/audio-bus';
 import { PreviewMixer } from './engine/preview-mixer';
-import { ListenMeter, PROVIDER_LABEL, artistOf, classNames, fmtDuration, isSilent, markKey, qualifiesCompletion, toggleMuteState, type RepeatMode } from './util';
+import { COMPLETE_S, ListenMeter, PROVIDER_LABEL, SKIP_MAX_S, SKIP_MIN_S, artistOf, classNames, fmtDuration, isSilent, markKey, qualifiesCompletion, toggleMuteState, type RepeatMode } from './util';
 
 export interface Playing {
   track: Track;
@@ -69,11 +70,6 @@ interface Props {
   onPickUpNext: (key: string) => void;
 }
 
-/** A listen this long, ended by the preview finishing, counts as a meaningful completion. */
-const COMPLETE_S = 20;
-/** A Next press after at least this much (but under SKIP_MAX_S) real listening counts as a skip. */
-const SKIP_MIN_S = 2;
-const SKIP_MAX_S = 12;
 
 /** What the player observed about the playback a listen event came from. */
 export interface ListenTelemetry {
@@ -143,6 +139,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   /** Set when the mixer promotes a song that is ALREADY playing, so the load effect leaves it. */
   const promoted = useRef<string | null>(null);
   const [mixNote, setMixNote] = useState<string | null>(null);
+  /** The song the Android engine is blending into right now, as it reports (null when not). */
+  const [engineBlend, setEngineBlend] = useState<string | null>(null);
   const [mix, setMix] = useState(mixSlider);
   useEffect(
     () => subscribeEngine(() => setMix(mixSlider())),
@@ -180,8 +178,15 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const lastLevel = useRef(vol.value);
   const repeatRef = useRef(repeat);
   repeatRef.current = repeat;
-  const onEndRef = useRef<() => void>(() => undefined);
+  const onEndRef = useRef<(engineHeard?: number) => void>(() => undefined);
   const key = playing?.track.key ?? null;
+  /**
+   * Inside the Android app the service's native engine plays (plan ruling 2026-11-08): this page
+   * chooses the song and what follows, and mirrors what the engine reports. The two <audio> decks
+   * below stay silent there, so there is never double audio.
+   */
+  const native = engineAvailable();
+  const onEngineRef = useRef<(s: EngineState) => void>(() => undefined);
 
   // `audio` is the deck playing now, so every existing use of it still means "the current element".
   // The mixer owns which deck that is: after a blend the incoming deck becomes the current one.
@@ -266,7 +271,11 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const nextTrackForCache = upNext[0]?.track;
   const upcomingSource = nextTrackForCache?.provider === 'ytmusic' ? sourceUrlFor(nextTrackForCache.platform_id) : null;
   const localStatus = localSource ? localLibrary.status(localSource) : 'missing';
-  const localSrc = localSource && !latched ? localLibrary.src(localSource) : null;
+  // In the Android app the engine reads the file itself, so the page only needs to know it is held;
+  // fetching it into a Blob as the <audio> deck needs would read every song twice.
+  const localSrc = localSource && !latched
+    ? native ? (localLibrary.status(localSource) === 'ready' ? localSource : null) : localLibrary.src(localSource)
+    : null;
 
   // Once the whole song is on disk, let the model hear it (FULL-SONG-EMBED-001). The listener is
   // already listening, so nothing is waiting on this; it is fire-and-forget, costs no transfer
@@ -409,6 +418,29 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     setDur(0);
     setErr(null);
     setPaused(true);
+    if (native) {
+      if (!playing) return;
+      const song = engineSong(playing.track, Boolean(src), localSource);
+      const st = engineState();
+      if (st && st.id === key) {
+        // The engine already plays this song: it advanced or blended into it itself, or the app
+        // reopened on it. Mirror it; reloading would restart it and throw away the overlap.
+        resumeAtRef.current = null;
+        setPaused(!st.playWhenReady);
+        setLoading(st.buffering);
+        setCur(st.positionMs / 1000);
+        if (st.durationMs > 0) setDur(st.durationMs / 1000);
+        meter.current.seeked(st.positionMs / 1000);
+        return;
+      }
+      const at = resumeAtRef.current;
+      resumeAtRef.current = null;
+      if (at && at > 0) savedAt.current = at;
+      setLoading(true);
+      // No file yet: the engine shows this song as loading and starts it when the file is sent.
+      engineSend({ op: 'load', song, positionMs: Math.round(Math.max(0, at ?? 0) * 1000), play: true, rev: engineRev() });
+      return;
+    }
     const a = audio.current;
     if (!a) return;
     if (src) {
@@ -479,7 +511,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // The mixing graph is built only once the listener asks for it. Routing an element through Web
   // Audio lasts for that element's life, so an unwanted graph is not worth creating; and both
   // decks must be routed, not just the current one, or the incoming song arrives unprocessed.
-  const wantGraph = mix > 0 || canLocal;
+  const wantGraph = !native && (mix > 0 || canLocal);
   useEffect(() => {
     if (!wantGraph) return;
     attachElement(deckA.current, 'a');
@@ -528,7 +560,17 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     }).catch(() => undefined);
     return () => { live = false; };
   }, [canLocal, nextKey, nextKnownId, repeatingOne, cacheGb, localSource]);
+  // The engine is told what comes next as soon as its file is here: it blends into it with the
+  // mixer on, and with the mixer off still starts it the moment this song ends, page or no page.
+  const nextReady = native && nextTrack && !repeatingOne ? readyLocalUrl(nextTrack) : null;
   useEffect(() => {
+    if (!native) return;
+    engineSend({ op: 'cue', song: nextTrack && nextReady ? songFromTrack(nextTrack, true, nextReady) : null });
+    // libraryTick: the next song's download finishing makes it ready to cue.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [native, key, nextKey, nextReady, repeatingOne, mix, libraryTick]);
+  useEffect(() => {
+    if (native) return;
     if (mix <= 0 || !onDeck || !nextKey || repeatingOne) {
       mixer.current?.cancel();
       setMixNote(repeatingOne && mix > 0 ? 'Repeating this song — nothing to blend into.' : null);
@@ -593,6 +635,12 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       void localLibrary.retry(localSource, `${playing?.track.title ?? 'Song'} — ${playing?.track.artist ?? ''}`);
       return;
     }
+    if (native) {
+      if (!playing) return;
+      engineSend({ op: paused ? 'play' : 'pause' });
+      setPaused(!paused);
+      return;
+    }
     if (mode === 'full') {
       const p = yt.current;
       if (!p) return;
@@ -612,7 +660,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     // A blend in flight is tied to the outgoing playhead; moving it would leave the two songs
     // overlapping on the wrong beats, so the blend is dropped and this song continues alone.
     mixer.current?.cancel();
-    if (mode === 'full') yt.current?.seekTo(s, true);
+    if (native) engineSend({ op: 'seek', positionMs: Math.round(Math.max(0, s) * 1000) });
+    else if (mode === 'full') yt.current?.seekTo(s, true);
     else if (audio.current) audio.current.currentTime = s;
     meter.current.seeked(s);
     setCur(s);
@@ -621,13 +670,18 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
 
   // A song that plays to its end counts as listened; then the next one starts. A second end of the
   // same playback instance is one replay; beyond that, loops teach nothing new and record nothing.
-  onEndRef.current = () => {
+  /**
+   * A song that played to its end counts as listened (first end) or replayed (second end).
+   * [engineHeard] is what the Android engine heard of it, in seconds: this page may have been asleep
+   * or opened part-way through, so its own meter can be short of what the listener heard.
+   */
+  const recordEnd = (engineHeard = 0) => {
     // The place is spent: this song finished, so reopening the app must not return to it.
     clearResume();
     savedAt.current = 0;
-    const l = meter.current.listened;
-    const coverage = meter.current.coverage;
     const duration = dur > 0 ? Math.round(dur) : playing?.track.duration ?? null;
+    const l = Math.max(meter.current.listened, engineHeard);
+    const coverage = Math.max(meter.current.coverage, Math.min(engineHeard, duration ?? engineHeard));
     const medium = mode === 'full' || mode === 'local' ? 'full' : 'preview';
     if (playing && l >= COMPLETE_S && qualifiesCompletion(medium, coverage, duration)) {
       const meta: ListenTelemetry = {
@@ -640,6 +694,9 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       if (n === 1) onListen('complete', playing.track, l, meta);
       else if (n === 2) onListen('replay', playing.track, l, meta);
     }
+  };
+  onEndRef.current = (engineHeard?: number) => {
+    recordEnd(engineHeard);
     if (repeatRef.current === 'one') {
       // Repeating this song means there is no next song to blend into.
       mixer.current?.cancel();
@@ -647,7 +704,10 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       meter.current.seeked(0);
       ended.current = false;
       setCur(0);
-      if (mode === 'full') {
+      if (native) {
+        // The engine has ended this song; play starts it again from the top.
+        engineSend({ op: 'play' });
+      } else if (mode === 'full') {
         yt.current?.seekTo(0, true);
         yt.current?.playVideo();
       } else if (audio.current) {
@@ -769,7 +829,14 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // pixels taller and read as clutter; and while the mixer is on, a preview is playing *because*
   // of the mixer, so "no full version was found" would be the wrong explanation anyway.
   // No glyph: a 12px shuffle mark read as a stray "x" beside the sentence.
-  const blending = playing && mix > 0 && onDeck && Boolean(mixNote);
+  // In the Android app the note follows from what the engine has been given, and a blend is what
+  // the engine says it is doing; elsewhere the page's own mixer sets both.
+  const nativeNote = !native || mix <= 0 ? null
+    : repeatingOne ? 'Repeating this song — nothing to blend into.'
+    : nextTrack && !nextReady ? 'Downloading the next song so it can be blended in…'
+    : null;
+  const note = native ? nativeNote : mixNote;
+  const blending = native ? Boolean(playing && mix > 0 && engineBlend) : playing && mix > 0 && onDeck && Boolean(mixNote);
 
   const status = !playing ? null : err ? (
     <p className="np__note np__note--bad">
@@ -784,7 +851,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       {loading ? 'Loading the full song…' : localStatus === 'running' ? 'Full song in YouTube’s player while this app downloads it for the equaliser and mixer.' : 'Full song, played by YouTube’s own player.'}
     </p>
   ) : blending ? (
-    <p className="np__note np__note--mix" aria-live="polite">{mixNote}</p>
+    <p className="np__note np__note--mix" aria-live="polite">{note}</p>
   ) : mode === 'local' ? (
     <p className="np__note">{loading ? 'Loading the full song…' : 'Full song, downloaded — through the equaliser and mixer.'}</p>
   ) : src ? (
@@ -834,10 +901,36 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     }
   });
   useEffect(() => () => playbackActive(false), []);
+  useEffect(() => {
+    if (!native) return;
+    return subscribeEngineState((st) => onEngineRef.current(st));
+  }, [native]);
+  // The engine is waiting for this song: hand it the download link as soon as the page learns it
+  // (a lookup can find it after the song was chosen), and again once the file is held. The service
+  // also watches for the file itself, because this page may be asleep when it lands.
+  const heldNow = Boolean(src);
+  useEffect(() => {
+    if (!native || !playing || !localSource) return;
+    const st = engineState();
+    if (st?.id !== key || !st.waiting) return;
+    engineSend({ op: 'load', song: engineSong(playing.track, heldNow, localSource), positionMs: st.positionMs, play: st.playWhenReady, rev: engineRev() });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [native, key, localSource, heldNow]);
+  // The engine's sound follows this app's controls: the EQ, the mixer, how much of each song plays
+  // before it blends, and the volume.
+  useEffect(() => {
+    if (!native) return;
+    const push = () => engineSend({ op: 'settings', eq: eqConfig(), mix: mixSlider(), playThrough: playThrough() });
+    push();
+    return subscribeEngine(push);
+  }, [native]);
+  useEffect(() => {
+    if (native) engineSend({ op: 'settings', volume: isSilent(vol) ? 0 : vol.value });
+  }, [native, vol]);
   // MEDIA-NATIVE-001: the lock screen, Bluetooth and Android Auto drive play/pause/seek through here.
   useEffect(() => {
     if (!mediaNativeAvailable()) return;
-    const isPlayingNow = () => mode === 'full' ? yt.current?.getPlayerState() === 1 : Boolean(audio.current && !audio.current.paused);
+    const isPlayingNow = () => native ? !paused : mode === 'full' ? yt.current?.getPlayerState() === 1 : Boolean(audio.current && !audio.current.paused);
     setMediaHandlers({
       play: () => { if (!isPlayingNow()) toggle(); },
       pause: () => { if (isPlayingNow()) toggle(); },
@@ -859,6 +952,47 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     savedAt.current = t;
     writeResume(playing.track, playing.playback, t, duration);
   };
+  /**
+   * What the engine reports, about the song this page has current. Position drives the progress
+   * bar, the listen meter and the resume point exactly as the <audio> deck's timeupdate does on
+   * Windows; an event is something the engine did itself (a song ended, a blend finished).
+   */
+  useEffect(() => {
+    onEngineRef.current = (st) => {
+      const ev = st.event;
+      if (ev && markEngineEvent(ev.seq)) {
+        if (ev.from.id === key) {
+          const heard = ev.from.heardMs / 1000;
+          if (ev.cause === 'repeat') {
+            // Repeat-one looped inside the engine: the next end of this playback is a replay.
+            recordEnd(heard);
+            meter.current.seeked(0);
+          } else if (ev.cause === 'end' && !ev.advanced) {
+            // Played out, and the engine waits for this page to choose what follows.
+            ended.current = true;
+            setPaused(true);
+            onEndRef.current(heard);
+          } else if (ev.advanced) {
+            // The engine already moved on to the song this page cued: record this one, then follow.
+            if (ev.cause === 'end' || ev.cause === 'blend') recordEnd(heard);
+            if (st.id) onPickUpNext(st.id);
+          }
+        } else if (ev.advanced && st.id && st.id !== key) onPickUpNext(st.id);
+      }
+      if (!st.id || st.id !== key) return;
+      const c = st.positionMs / 1000;
+      const d = st.durationMs > 0 ? st.durationMs / 1000 : 0;
+      // A song that played out shows Play, as the <audio> deck does; pressing it starts it again.
+      setPaused(!st.playWhenReady || st.ended);
+      setLoading(st.buffering);
+      setErr(st.error);
+      setCur(c);
+      if (d > 0) setDur(d);
+      meter.current.tick(c, st.playing);
+      if (st.playing) noteResume(c, d);
+      setEngineBlend(st.blending ?? null);
+    };
+  });
   return (
     <section className={classNames('np', docked ? 'np--docked' : 'np--panel', !playing && 'is-empty')} aria-label="Now playing">
       {/*
@@ -956,7 +1090,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
               */}
               {docked && blending && (
                 <span className="vh" aria-live="polite">
-                  {mixNote}
+                  {note}
                 </span>
               )}
             </div>

@@ -39,13 +39,20 @@ class AudioEngine(
   private val listener: Listener = object : Listener {},
   initialEq: EqConfig = EqConfig.DEFAULTS,
 ) : AutoCloseable {
+  /**
+   * How much of a song was actually heard: frames rendered from it while audible (a seek does not
+   * count the skipped part), out of its length. The page's listen telemetry, and so the taste it
+   * learns, is built from this when it was not awake to measure the song itself.
+   */
+  data class Heard(val key: String, val heardFrames: Long, val durationFrames: Long)
+
   interface Listener {
     /** The active song reached its end and nothing was blended in: the controller decides what's next. */
-    fun onEnded(key: String) {}
+    fun onEnded(key: String, heard: Heard) {}
     /** A blend completed: [key] (already playing for the length of the blend) is now the current song. */
-    fun onAdvanced(key: String) {}
+    fun onAdvanced(key: String, outgoing: Heard) {}
     /** Repeat-one restarted [key]. */
-    fun onRepeated(key: String) {}
+    fun onRepeated(key: String, heard: Heard) {}
     /** A blend into [key] started, [seconds] long. */
     fun onBlendStarted(key: String, seconds: Double, style: TransitionStyle) {}
     fun onError(key: String, error: Throwable) {}
@@ -64,6 +71,8 @@ class AudioEngine(
   private class Deck(val id: String) {
     var key: String? = null
     var source: PcmSource? = null
+    /** Frames of [source] rendered while it was audible, for [Heard]. */
+    var heard = 0L
     val left = FloatArray(QUANTUM)
     val right = FloatArray(QUANTUM)
     val planar = arrayOf(left, right)
@@ -109,6 +118,7 @@ class AudioEngine(
     deck.source?.takeIf { it !== source }?.close()
     deck.key = key
     deck.source = source
+    deck.heard = 0
     source.seekTo(startFrame)
     endedReported = null
     output.flush()
@@ -128,6 +138,7 @@ class AudioEngine(
     if (key == null || source == null) return@post
     spare.key = key
     spare.source = source
+    spare.heard = 0
     next = NextState.READY
   }
 
@@ -227,7 +238,8 @@ class AudioEngine(
     val live = decks.getValue(active)
     val spare = decks.getValue(other)
     val liveRead = fill(live)
-    if (next == NextState.RUNNING) fill(spare) else silence(spare)
+    live.heard += liveRead
+    if (next == NextState.RUNNING) spare.heard += fill(spare) else silence(spare)
     // MixBus.process reads its inputs AND writes its output at the same offset, and the deck buffers
     // are one quantum long, so render at 0 into a quantum-sized scratch and place it in the chunk.
     bus.process(decks.getValue("a").planar, decks.getValue("b").planar, quantumOut, 0)
@@ -283,14 +295,17 @@ class AudioEngine(
     val key = live.key ?: return
     if (repeatOne) {
       cancelBlend()
+      val heard = heardOf(live)
       live.source?.seekTo(0)
-      listener.onRepeated(key)
+      live.heard = 0
+      listener.onRepeated(key, heard)
       return
     }
     val spare = decks.getValue(other)
     val incoming = spare.source
     if (next == NextState.RUNNING && incoming != null && !incoming.ended && incoming.error == null) {
       // Promote: the incoming song keeps its playhead; the old deck is emptied.
+      val outgoing = heardOf(live)
       live.source?.close()
       live.source = null
       live.key = null
@@ -298,7 +313,7 @@ class AudioEngine(
       next = NextState.NONE
       bus.cut(active)
       endedReported = null
-      spare.key?.let { listener.onAdvanced(it) }
+      spare.key?.let { listener.onAdvanced(it, outgoing) }
       return
     }
     if (endedReported == key) return
@@ -306,8 +321,10 @@ class AudioEngine(
     cancelBlend()
     playing = false
     output.pause()
-    listener.onEnded(key)
+    listener.onEnded(key, heardOf(live))
   }
+
+  private fun heardOf(deck: Deck) = Heard(deck.key ?: "", deck.heard, deck.source?.durationFrames ?: PcmSource.UNKNOWN)
 
   /** preview-mixer.ts `cancel`: forget the spare and put all the level back on the live deck. */
   private fun cancelBlend() {

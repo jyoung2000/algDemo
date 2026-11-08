@@ -804,8 +804,11 @@ a.push {
   min-width: 0;
   display: grid;
 }
+/* The owner's rule: a song's title and artist are never cut off. They wrap; the row grows. */
 .track__title,
-.track__artist,
+.track__artist {
+  overflow-wrap: anywhere;
+}
 .track__meta {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2415,6 +2418,15 @@ a.push {
     min-width: 0;
     flex: 1 1 0;
     overflow: hidden;
+  }
+  /* The owner's rule: a title and its artist are never cut off. They wrap, and the strip grows for
+     them; App.tsx measures the strip into --dock-h, so the list still clears it. */
+  .np--docked .np__title,
+  .np--docked .np__artist {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
   }
   .np__dockctl {
     display: grid;

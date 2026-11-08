@@ -26,9 +26,12 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.core.content.ContextCompat
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
+import com.nowplaying.discovery.engine.EngineHub
+import com.nowplaying.discovery.engine.EnginePlayer
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.net.HttpURLConnection
@@ -46,7 +49,10 @@ import java.util.concurrent.Executors
  *    Deezer or YouTube directly (CORS). Only an allow-list of hosts is reachable.
  *  - song identification: the search bar's Mic asks for RECORD_AUDIO when tapped (never at start-up) and
  *    its File button opens the system picker for one audio file. Only the app's own page can get either.
+ *  - playback: the page chooses songs and sets the sound; the service's native engine plays them
+ *    ([EngineHub]), so music carries on with the screen off and after the app is closed.
  */
+@UnstableApi
 class MainActivity : Activity() {
   private lateinit var root: FrameLayout
   private var web: WebView? = null
@@ -59,6 +65,21 @@ class MainActivity : Activity() {
   private var notificationRequested = false
   private var mediaControllerFuture: ListenableFuture<MediaController>? = null
   private var mediaController: MediaController? = null
+
+  /**
+   * The page as the engine sees it. It is the authority on what plays only while it is in front of
+   * the listener: a WebView in the background cannot be relied on to answer (plan ruling 2026-11-07),
+   * so then the service carries on by itself and tells the page what happened when it returns.
+   */
+  private val enginePage = object : EnginePlayer.Page {
+    override val live: Boolean get() = !activityPaused && web != null
+    override fun command(cmd: JSONObject) = mediaCommandSink(cmd)
+    override fun state(json: JSONObject) {
+      val v = web ?: return
+      val text = JSONObject.quote(json.toString())
+      v.post { if (web === v) v.evaluateJavascript("window.__awEngine && window.__awEngine($text)", null) }
+    }
+  }
 
   /** Forwards a native transport command (lock screen, Bluetooth, Android Auto) into the page, where
    *  the Web Audio engine actually acts on it. The page implements `window.__awMediaCmd(jsonString)`. */
@@ -96,6 +117,7 @@ class MainActivity : Activity() {
    */
   private fun startNativeSession() {
     MediaHub.setCommandSink(mediaCommandSink)
+    EngineHub.attachPage(enginePage)
     val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
     val f = MediaController.Builder(this, token).buildAsync()
     mediaControllerFuture = f
@@ -298,6 +320,12 @@ class MainActivity : Activity() {
     @JavascriptInterface
     fun version(): String = BuildConfig.VERSION_NAME
 
+    /** The native engine plays; the page drives it with one JSON command per call (see [EngineHub]). */
+    @JavascriptInterface
+    fun engine(json: String) {
+      if (json.length <= 200_000) EngineHub.fromPage(json)
+    }
+
     /** JS opt-in: AirwaveNative.playbackState(JSON.stringify({playing, title})).
      * The legacy play/pause hint: it keeps the WebView's Web Audio awake in the background and
      * updates the native session's play/pause + title. The richer snapshot (queue, position,
@@ -475,8 +503,15 @@ class MainActivity : Activity() {
   }
 
   override fun onPause() { activityPaused = true; if (!webAudioPlaying && !MediaHub.catalogSearchPending) web?.onPause(); super.onPause() }
-  override fun onResume() { super.onResume(); activityPaused = false; web?.onResume() }
+  override fun onResume() {
+    super.onResume()
+    activityPaused = false
+    web?.onResume()
+    // Back in front: hand the page the engine's state and whatever played while it was away.
+    EngineHub.fromPage("{\"op\":\"hello\"}")
+  }
   override fun onDestroy() {
+    EngineHub.detachPage(enginePage)
     MediaHub.clearCommandSink(mediaCommandSink)
     mediaController?.release()
     mediaControllerFuture?.let { MediaController.releaseFuture(it) }

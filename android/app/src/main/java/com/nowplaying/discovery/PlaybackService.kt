@@ -10,27 +10,35 @@ import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaConstants
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
+import androidx.media3.session.SessionError
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
 import com.google.common.util.concurrent.FutureCallback
 import com.google.common.util.concurrent.MoreExecutors
+import com.nowplaying.discovery.engine.EngineHub
+import com.nowplaying.discovery.engine.EnginePlayer
 
 /**
- * Currently hosts the Activity-backed [WebPlayer] proxy; this is NOT yet a service-owned renderer.
- * Android Auto draws the standard host UI from the browse tree, search support and player commands.
- * Native background playback/cold-start support remains under implementation; this browse surface
- * alone must never be advertised as proof that audio survives Activity destruction.
+ * Owns playback. The session's player is the native [EnginePlayer]: it decodes the songs held on the
+ * phone and renders them through the app's own EQ, crossfade and mixer, so audio carries on with the
+ * screen off and after the app is swiped away, and the lock screen, Bluetooth and Android Auto
+ * control it directly. Android Auto draws the standard host UI from the browse tree, search support
+ * and the player's commands. (Cold start with no page ever opened is plan Task 3.)
  */
 @UnstableApi
 class PlaybackService : MediaLibraryService() {
-  private lateinit var player: WebPlayer
+  private lateinit var player: EnginePlayer
   private var session: MediaLibrarySession? = null
+  private val libraryListener: () -> Unit = { EngineHub.libraryChanged() }
 
   override fun onCreate() {
     super.onCreate()
-    player = WebPlayer(mainLooper)
+    // Playlist rows carry their list in the media id; the player resolves them as the browse tree does.
+    player = EnginePlayer(this, mainLooper, lookup = { id -> scopedSong(id) ?: MediaHub.findSong(id) })
+    EngineHub.attachPlayer(player)
+    MediaHub.addListener(libraryListener)
     val open = PendingIntent.getActivity(
       this,
       0,
@@ -56,6 +64,8 @@ class PlaybackService : MediaLibraryService() {
   }
 
   override fun onDestroy() {
+    MediaHub.removeListener(libraryListener)
+    EngineHub.detachPlayer(player)
     session?.release()
     session = null
     player.release()
@@ -125,7 +135,7 @@ class PlaybackService : MediaLibraryService() {
         else -> MediaHub.findSong(mediaId)?.let { songItem(it) }
       }
       return if (item != null) Futures.immediateFuture(LibraryResult.ofItem(item, null))
-      else Futures.immediateFuture(LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE))
+      else Futures.immediateFuture(LibraryResult.ofError(SessionError.ERROR_BAD_VALUE))
     }
 
     override fun onSearch(
@@ -166,7 +176,7 @@ class PlaybackService : MediaLibraryService() {
           android.os.Handler(mainLooper).post { result.set(value(songs ?: emptyList())) }
         }
         override fun onFailure(error: Throwable) {
-          result.set(LibraryResult.ofError(LibraryResult.RESULT_ERROR_UNKNOWN))
+          result.set(LibraryResult.ofError(SessionError.ERROR_UNKNOWN))
         }
       }, MoreExecutors.directExecutor())
       return result

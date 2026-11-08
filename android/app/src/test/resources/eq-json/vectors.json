@@ -1,0 +1,607 @@
+{
+ "source": "web/src/engine/eq.ts parseEq",
+ "commit": "5a0c6decda6b419c46e0818baa83fd0775380476",
+ "dirty": false,
+ "sha256": "a7b8406f76f7fac1c029793ab3a8b2f2d63ec240c7df2742000cdbdfd59e7268",
+ "generator": "tools/dsp-parity/eq-json-vectors.mjs",
+ "cases": [
+  {
+   "input": "null",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"on\":false,\"presetId\":\"flat\",\"gains\":[0,0,0,0,0,0,0,0,0,0],\"preampDb\":0,\"limiter\":true,\"toneHz\":null,\"toneDb\":6}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"on\":true,\"presetId\":\"rock\",\"gains\":[5,4,3,1,-1,-1,1,3,4,5],\"preampDb\":-3,\"limiter\":true}",
+   "output": {
+    "on": true,
+    "presetId": "rock",
+    "gains": [
+     5,
+     4,
+     3,
+     1,
+     -1,
+     -1,
+     1,
+     3,
+     4,
+     5
+    ],
+    "preampDb": -3,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"on\":true,\"presetId\":\"custom\",\"gains\":[12,-12,12,-12,12,-12,12,-12,12,-12],\"preampDb\":6,\"limiter\":true,\"toneHz\":null,\"toneDb\":6}",
+   "output": {
+    "on": true,
+    "presetId": "custom",
+    "gains": [
+     12,
+     -12,
+     12,
+     -12,
+     12,
+     -12,
+     12,
+     -12,
+     12,
+     -12
+    ],
+    "preampDb": 6,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"on\":true,\"presetId\":\"solfeggio-528\",\"gains\":[0,0,0,0,0,0,0,0,0,0],\"toneHz\":528,\"toneDb\":6}",
+   "output": {
+    "on": true,
+    "presetId": "solfeggio-528",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": 528,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"on\":true,\"toneHz\":527.9,\"toneDb\":6}",
+   "output": {
+    "on": true,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"on\":true,\"toneHz\":\"528\"}",
+   "output": {
+    "on": true,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"on\":true,\"toneHz\":963,\"toneDb\":40}",
+   "output": {
+    "on": true,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": 963,
+    "toneDb": 12
+   }
+  },
+  {
+   "input": "{\"on\":true,\"toneHz\":174,\"toneDb\":-40}",
+   "output": {
+    "on": true,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": 174,
+    "toneDb": -12
+   }
+  },
+  {
+   "input": "{\"on\":\"true\",\"presetId\":\"\",\"limiter\":\"false\"}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"on\":1,\"limiter\":false}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": false,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"gains\":[99,-99,\"3\",\"x\",null,true,false,\"\",\" 2 \",1e+300]}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     12,
+     -12,
+     3,
+     0,
+     0,
+     1,
+     0,
+     0,
+     2,
+     12
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"gains\":[1,2,3]}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     1,
+     2,
+     3,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"gains\":[1,2,3,4,5,6,7,8,9,10,11,12]}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"gains\":\"loud\"}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"gains\":{}}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"preampDb\":13}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 12,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"preampDb\":-13.5}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": -12,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"preampDb\":\"4\"}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 4,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"preampDb\":\"NaN\"}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"preampDb\":null}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"presetId\":7}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"presetId\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}",
+   "output": {
+    "on": false,
+    "presetId": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": null,
+    "toneDb": 6
+   }
+  },
+  {
+   "input": "{\"toneDb\":\"abc\",\"toneHz\":285}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": 285,
+    "toneDb": 0
+   }
+  },
+  {
+   "input": "{\"toneDb\":null,\"toneHz\":396}",
+   "output": {
+    "on": false,
+    "presetId": "flat",
+    "gains": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "preampDb": 0,
+    "limiter": true,
+    "toneHz": 396,
+    "toneDb": 6
+   }
+  }
+ ]
+}

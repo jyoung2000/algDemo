@@ -81,34 +81,6 @@ class AutoBrowseTest {
   }
 
   @Test
-  fun playlistSelectionReachesWebWithItsListContext() {
-    seed()
-    val command = AtomicReference<JSONObject?>()
-    val delivered = CountDownLatch(1)
-    val sink: (JSONObject) -> Unit = { command.set(it); delivered.countDown() }
-    MediaHub.setCommandSink(sink)
-    val browser = AtomicReference<MediaBrowser>()
-    val connected = CountDownLatch(1)
-    instr.runOnMainSync {
-      val token = SessionToken(ctx, ComponentName(ctx, PlaybackService::class.java))
-      val f = MediaBrowser.Builder(ctx, token).buildAsync()
-      f.addListener({ browser.set(f.get()); connected.countDown() }, Runnable::run)
-    }
-    try {
-      assertTrue("browser connected", connected.await(15, TimeUnit.SECONDS))
-      instr.runOnMainSync {
-        browser.get().setMediaItems(listOf(MediaItem.Builder().setMediaId("playlist/p1/track/s3").build()), 0, 0)
-      }
-      assertTrue("MediaBrowser did not deliver selection to player", delivered.await(5, TimeUnit.SECONDS))
-      assertEquals("playId", command.get()?.optString("type"))
-      assertEquals("playlist/p1/track/s3", command.get()?.optString("id"))
-    } finally {
-      MediaHub.clearCommandSink(sink)
-      browser.get()?.let { instr.runOnMainSync { it.release() } }
-    }
-  }
-
-  @Test
   fun browseTreeExposesSongListPlaylistsAndSearch() {
     seed()
     val browser = AtomicReference<MediaBrowser>()

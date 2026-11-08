@@ -109,6 +109,8 @@ dependencies {
   implementation("androidx.media3:media3-common:1.9.3")
   implementation("androidx.media3:media3-exoplayer:1.9.3")
   testImplementation("junit:junit:4.13.2")
+  // android.jar's org.json is a stub on the JVM; the engine's JSON (EqJsonTest) needs the real one.
+  testImplementation("org.json:json:20240303")
   // Instrumented browse-tree test (Android Auto): connects a real MediaBrowser to PlaybackService.
   androidTestImplementation("androidx.test.ext:junit:1.1.5")
   androidTestImplementation("androidx.test:runner:1.5.2")

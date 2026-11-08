@@ -79,6 +79,19 @@ class PlayQueueTest {
     }
   }
 
+  @Test fun refreshTakesFreshCopiesWithoutReshufflingTheRound() {
+    val q = queue(*(0 until 6).map { S("s$it", ready = it != 4) }.toTypedArray(), seed = 3)
+    q.shuffle = true
+    val before = (0 until 5).map { q.advance(false) }
+    val q2 = queue(*(0 until 6).map { S("s$it", ready = it != 4) }.toTypedArray(), seed = 3)
+    q2.shuffle = true
+    q2.advance(false)
+    // s4's file lands: same songs, same places, so the round (and what was already heard) is kept.
+    assertTrue(q2.refresh((0 until 6).map { S("s$it") }))
+    assertEquals("current kept", before[0], q2.index)
+    assertTrue("a different list is refused", !q2.refresh(listOf(S("x"))))
+  }
+
   @Test fun selectingARowMakesItCurrent() {
     val q = queue(S("a"), S("b"), S("c"))
     assertTrue(q.select("c"))

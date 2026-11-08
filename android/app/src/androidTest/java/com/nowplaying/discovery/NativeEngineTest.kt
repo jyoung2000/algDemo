@@ -248,6 +248,7 @@ class NativeEngineTest {
         resolve = { files[it.id] },
         lookup = { id -> songs.firstOrNull { it.id == id } },
         output = out,
+        manageFocus = false,
       )
       p.setMediaItems(songs.map { MediaItem.Builder().setMediaId(it.id).build() }, 0, 0)
       p.prepare()

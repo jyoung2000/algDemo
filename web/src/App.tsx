@@ -15,6 +15,7 @@ import { useCardCache } from './useCardCache';
 import { useKeptKeys } from './useKeptKeys';
 import { savedTracks, playbackRows, preparationTracks } from './engine/queue-context';
 import { decodePlaylistMediaId, mediaNativeAvailable, pushMediaLibrary, pushMediaState, setMediaHandlers, songFromTrack } from './engine/media-native';
+import { engineAvailable, engineSend, listenFromEvent, markEngineEvent, subscribeEngineState } from './engine/native-engine';
 import { SettingsView } from './Settings';
 import { setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
 import { PLAY_THROUGH_DEFAULT } from './engine/crossfade';
@@ -361,13 +362,13 @@ export function App() {
   const nativeReady = (t: Track) => (ready ? ready(t) : false);
   /** The ready song as the native side needs it, including the exact file the native engine plays. */
   const nativeSong = (t: Track) => { const r = nativeReady(t); return songFromTrack(t, r, r ? queueAudio.readyUrl(t) : null); };
-  useEffect(() => {
-    if (!mediaNativeAvailable()) return;
-    setMediaHandlers({
-      next: goNext,
-      prev: goPrev,
-      playIndex: (i) => { const it = activeItems[i]; if (it) play(it, { keepList: true }); },
-      playId: (id) => {
+  /** A song chosen by its id — a car row (playlist-scoped or not), or the song the engine is playing. */
+  const trackById = (id: string): Track | undefined =>
+    activeItems.find((x) => x.track.key === id)?.track
+    ?? lists.flatMap((l) => savedTracks(saved, lists, l.id)).find((t) => t.key === id)
+    ?? (saved ?? []).map((s) => s.track).find((x) => x.key === id)
+    ?? carCatalog.find(id);
+  const playById = (id: string) => {
         const scoped = decodePlaylistMediaId(id);
         if (scoped) {
           const list = lists.find((l) => l.id === scoped.listId);
@@ -383,11 +384,17 @@ export function App() {
         }
         const inActive = activeItems.find((x) => x.track.key === id);
         if (inActive) { play(inActive, { keepList: true }); return; }
-        const fromList = lists.flatMap((l) => savedTracks(saved, lists, l.id)).find((t) => t.key === id);
-        const t = fromList ?? (saved ?? []).map((s) => s.track).find((x) => x.key === id) ?? carCatalog.find(id);
+        const t = trackById(id);
         const row = t ? playbackRows([t])[0] : undefined;
         if (row) play(row, { keepList: true });
-      },
+  };
+  useEffect(() => {
+    if (!mediaNativeAvailable()) return;
+    setMediaHandlers({
+      next: goNext,
+      prev: goPrev,
+      playIndex: (i) => { const it = activeItems[i]; if (it) play(it, { keepList: true }); },
+      playId: playById,
       catalogSearch: query => carCatalog.search(query),
       search: (q) => {
         const ql = q.trim().toLowerCase();
@@ -480,6 +487,36 @@ export function App() {
       })
       .catch(() => undefined);
   };
+  /**
+   * The Android engine played on while this page was closed or asleep. When the page comes back
+   * the engine lists what it did (`pending`): each song it finished or skipped teaches taste by the
+   * same rules a watched song does, and the page then follows the song the engine is on now.
+   */
+  const engineSync = useRef<(st: Parameters<Parameters<typeof subscribeEngineState>[0]>[0]) => void>(() => undefined);
+  useEffect(() => {
+    engineSync.current = (st) => {
+      for (const ev of st.pending ?? []) {
+        if (!markEngineEvent(ev.seq)) continue;
+        const listen = listenFromEvent(ev);
+        const track = listen ? trackById(ev.from.id) : undefined;
+        if (listen && track) {
+          onListen(listen.kind, track, listen.listened, {
+            instance: `engine-${ev.seq}-${Date.now().toString(36)}`,
+            medium: 'full',
+            duration: listen.duration,
+            coverage: listen.coverage,
+          });
+        }
+      }
+      if (st.pending && st.id && st.id !== playingKey) playById(st.mediaId ?? st.id);
+    };
+  });
+  useEffect(() => {
+    if (!engineAvailable()) return;
+    const off = subscribeEngineState((st) => engineSync.current(st));
+    engineSend({ op: 'hello' });
+    return off;
+  }, []);
 
   const wheelStep = (dir: 1 | -1) => {
     if (!items.length) return;

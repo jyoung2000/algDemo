@@ -253,6 +253,12 @@ export function historyBack(history: readonly string[], currentKey: string | nul
   return null;
 }
 
+/** A listen this long, ended by the song finishing, counts as a meaningful completion. */
+export const COMPLETE_S = 20;
+/** A Next press after at least this much (but under SKIP_MAX_S) real listening counts as a skip. */
+export const SKIP_MIN_S = 2;
+export const SKIP_MAX_S = 12;
+
 /**
  * Listening accumulator for a preview. Counts time actually played (timeupdate deltas while not
  * seeking and under ~1.5 s per tick), never the seek position, so scrubbing to the end is not a listen.

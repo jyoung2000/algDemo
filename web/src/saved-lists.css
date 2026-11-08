@@ -131,15 +131,10 @@
 
 /* A long title used to widen the text block until the controls wrapped to a second line, so one
    row's buttons sat lower than its neighbours'. A zero flex-basis makes the text take only the
-   space that is left, and ellipsise instead of pushing. */
+   space that is left; the title then wraps within it (it is never cut off), so the row grows
+   taller rather than pushing the controls. */
 .tracks--saved .track__text {
   flex: 1 1 0;
-}
-.tracks--saved .track__title,
-.tracks--saved .track__artist {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .tracks--saved .track__actions {
   flex: none;
