@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FAMILIES, SUBS } from './genre-table';
 import { classify } from './classify';
-import { chromaOf, deltaE, familyColor, familyHalfBand, familyHue, hueGap, hueOf, PALETTE_FLOORS, subColorOf } from './genre-palette';
+import { chromaOf, readsKhaki, lightnessOf, SUB_DARKER_MAX, toneFamily, deltaE, familyColor, familyHalfBand, familyHue, hueGap, hueOf, PALETTE_FLOORS, subColorOf } from './genre-palette';
 
 // TAGS-COLOR-001: every genre and subgenre colour is clearly its own, and still the Taste Picker's.
 describe('genre palette', () => {
@@ -57,5 +57,20 @@ describe('genre palette', () => {
     // hsl(band centre, 75%, 53%), the Taste Picker's own colour for each family.
     expect(FAMILIES.map((f) => familyColor(f.slug))).toEqual(['#e1712d', '#cbe12d', '#44e12d', '#2de19e', '#2d9ee1', '#442de1', '#cb2de1', '#e12d71']);
     expect(familyColor('rnb-afro-latin')).toBe('#e12d71');
+  });
+  it('makes sister subgenres look alike: every one has its own family’s colour tone, never a neighbour’s', () => {
+    // Owner (0.12.5): "sister subgenres should look alike but distinct". Alike: lightness aside, a
+    // subgenre's tone is nearest its own family's (Rage reads as hip-hop, not Pop). Distinct: the
+    // sibling floor above.
+    for (const s of SUBS) expect(toneFamily(subColorOf(s.key)!), s.name).toBe(s.family);
+  });
+  it('never makes a sister much darker than its family, so a bright family’s sisters do not turn khaki', () => {
+    for (const s of SUBS) {
+      expect(lightnessOf(familyColor(s.family)) - lightnessOf(subColorOf(s.key)!), s.name).toBeLessThanOrEqual(SUB_DARKER_MAX + 0.01);
+    }
+  });
+  it('never gives a genre a dark yellow, which reads khaki or brown', () => {
+    for (const f of FAMILIES) expect(readsKhaki(familyColor(f.slug)), f.name).toBe(false);
+    for (const s of SUBS) expect(readsKhaki(subColorOf(s.key)!), `${s.name} ${subColorOf(s.key)}`).toBe(false);
   });
 });

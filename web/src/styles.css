@@ -1030,7 +1030,8 @@ a.push {
   white-space: nowrap;
 }
 /* SONG-CARD-001: slightly larger, borderless pills retain the song's Taste Picker colour.
-   TAGS-COLOR-001: a 32% tint and an 8px dot, so a subgenre's own colour reads beside its family's. */
+   TAGS-COLOR-001: a 45% tint and a 10px dot. The tint shows the family, the dot the exact sister shade;
+   genre-palette's sisters are close by design ("alike but distinct"), so the dot has to be big enough to read. */
 .genre {
   display: inline-flex;
   align-items: center;
@@ -1043,12 +1044,12 @@ a.push {
   color: var(--ink);
   white-space: nowrap;
   border: 0;
-  background: color-mix(in srgb, var(--tone, var(--accent)) 32%, var(--pearl-2));
+  background: color-mix(in srgb, var(--tone, var(--accent)) 45%, var(--pearl-2));
 }
 .genre::before {
   content: '';
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--tone, var(--accent));
   flex: none;

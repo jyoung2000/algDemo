@@ -28,11 +28,14 @@ const BAND = 45;
 const FAMILY_S = 0.75;
 const FAMILY_HSL_L = 0.53;
 /**
- * Where a family's subgenre colours may come from: lightness 0.32 to 0.86 (bubbles draw the colour as a
- * dot and a 20% tint under dark ink, so text contrast holds at either end), chroma 0.05 to 0.29
- * (gamut-mapped), hue within 95% of the family's half-band.
+ * Where a family's subgenre colours may come from (owner, 0.12.5: "sister subgenres should look alike but
+ * distinct"): hue within 95% of the family's half-band, lightness 0.48 to 0.88 and at most SUB_DARKER_MAX
+ * below the family's own, so no sister goes dark and muddy beside a bright one, chroma 0.05 to 0.29 (gamut-mapped), and only a colour whose tone (OKLab a, b;
+ * lightness aside) is nearer its own family's than any other family's: Rage reads as hip-hop, never Pop.
  */
-const SUB_L = { lo: 0.32, hi: 0.86, steps: 25 } as const;
+const SUB_L = { lo: 0.48, hi: 0.88, steps: 25 } as const;
+/** A sister is never more than this much darker than its family (OKLab L): a dark yellow-green reads khaki. */
+export const SUB_DARKER_MAX = 0.26;
 const SUB_CHROMA = [0.05, 0.09, 0.13, 0.17, 0.21, 0.25, 0.29] as const;
 const SUB_HUE_STEPS = 15;
 const SUB_HUE_REACH = 0.95;
@@ -40,15 +43,16 @@ const SUB_HUE_REACH = 0.95;
  * The family's own colour counts this many times nearer than it is when subgenres are picked: a card
  * always shows the family's general share beside its subgenres, so each subgenre keeps well clear of it.
  */
-const FAMILY_KEEP_OUT = 1.7;
+const FAMILY_KEEP_OUT = 1.2;
 
 /**
  * The floors genre-palette.test.ts holds every pair to (OKLab delta E; about 0.02 is just noticeable),
- * and the least chroma a genre colour may have (below about 0.1 a 20% bubble tint reads as grey). The
+ * and the least chroma a genre colour may have (below about 0.12 a bubble tint reads as khaki or grey). The
  * sibling floor is set by hip-hop: 17 subgenres in a band only about 25 degrees of hue wide, all
- * colourful; every other family's siblings are further apart.
+ * colourful, none dark enough to read khaki; 0.04 is about twice a just-noticeable difference, so sisters
+ * look alike but can be told apart. Every other family's siblings are further apart.
  */
-export const PALETTE_FLOORS = { family: 0.1, subVsFamily: 0.08, sibling: 0.045, chroma: 0.1 } as const;
+export const PALETTE_FLOORS = { family: 0.1, subVsFamily: 0.048, sibling: 0.04, chroma: 0.12 } as const;
 
 // ---------------------------------------------------------------- colour maths (OKLab, sRGB)
 const toLinear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
@@ -101,6 +105,11 @@ function hexToLab(hex: string): Lab {
 
 const dist = (x: Lab, y: Lab) => Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
 
+/** How light a palette colour is (OKLab L: 0 black, 1 white). */
+export function lightnessOf(hex: string): number {
+  return hexToLab(hex)[0];
+}
+
 /** How colourful a palette colour is (OKLCH chroma): 0 is grey. */
 export function chromaOf(hex: string): number {
   const [, a, b] = hexToLab(hex);
@@ -138,20 +147,44 @@ export function hueOf(hex: string): number {
 export const familyHue = (slug: string) => FAMILY_HUE.get(slug)!;
 export { hueGap };
 
+/** The family whose colour tone (OKLab a, b, lightness aside) is nearest a colour's. */
+export function toneFamily(hex: string): string {
+  const [, a, b] = hexToLab(hex);
+  let best = '', bestD = Infinity;
+  for (const f of FAMILIES) {
+    const [, x, y] = hexToLab(FAMILY_HEX.get(f.slug)!);
+    const d = Math.hypot(a - x, b - y);
+    if (d < bestD) { best = f.slug; bestD = d; }
+  }
+  return best;
+}
+/**
+ * A dark or dull yellow reads khaki or brown, not yellow: a yellow-to-lime tone (OKLCH hue 70 to 118) is
+ * used only at OKLab lightness 0.74 or above and chroma 0.15 or above, so hip-hop's sisters stay clean
+ * yellow-greens.
+ */
+export const KHAKI = { hueLo: 70, hueHi: 118, lightMin: 0.74, chromaMin: 0.15 } as const;
+export function readsKhaki(hex: string): boolean {
+  const h = hueOf(hex);
+  return h >= KHAKI.hueLo && h <= KHAKI.hueHi && (hexToLab(hex)[0] < KHAKI.lightMin || chromaOf(hex) < KHAKI.chromaMin);
+}
+const readsAsOwn = (hex: string, slug: string) => toneFamily(hex) === slug;
+
 const SUB_HEX = new Map<string, string>();
 for (const f of FAMILIES) {
   const hue = FAMILY_HUE.get(f.slug)!;
   const reach = familyHalfBand(f.slug) * SUB_HUE_REACH;
   // Every colour the family's subgenres may take (gamut-mapped, deduplicated).
   const pool = new Map<string, Lab>();
+  const lo = Math.max(SUB_L.lo, hexToLab(FAMILY_HEX.get(f.slug)!)[0] - SUB_DARKER_MAX);
   for (let i = 0; i < SUB_L.steps; i++) {
-    const L = SUB_L.lo + ((SUB_L.hi - SUB_L.lo) * i) / (SUB_L.steps - 1);
+    const L = lo + ((SUB_L.hi - lo) * i) / (SUB_L.steps - 1);
     for (const C of SUB_CHROMA) {
       for (let j = 0; j < SUB_HUE_STEPS; j++) {
         const hex = oklchHex(L, C, hue - reach + (2 * reach * j) / (SUB_HUE_STEPS - 1));
         // Rounding to sRGB moves the hue of a pale or dull colour; one that leaves the band is not used.
         // Nor is one gamut mapping has left near grey: the owner's rule is no grey tags.
-        if (!pool.has(hex) && chromaOf(hex) >= PALETTE_FLOORS.chroma && hueGap(hueOf(hex), hue) < familyHalfBand(f.slug)) pool.set(hex, hexToLab(hex));
+        if (!pool.has(hex) && chromaOf(hex) >= PALETTE_FLOORS.chroma && readsAsOwn(hex, f.slug) && !readsKhaki(hex) && hueGap(hueOf(hex), hue) < familyHalfBand(f.slug)) pool.set(hex, hexToLab(hex));
       }
     }
   }

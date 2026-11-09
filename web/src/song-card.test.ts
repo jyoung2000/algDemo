@@ -1,3 +1,5 @@
+import { familyColor, subColorOf } from './engine/genre-palette';
+import { FAMILIES, SUBS } from './engine/genre-table';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,8 +33,19 @@ describe('the song card (SONG-CARD-001)', () => {
     expect(genre).toMatch(/border: 0;/);
     expect(genre).toMatch(/background: color-mix\([^;]+var\(--tone/);
     // TAGS-COLOR-001: enough of the colour that a subgenre reads apart from its family.
-    expect(genre).toMatch(/var\(--tone, var\(--accent\)\) 32%/);
-    expect(/\.genre::before \{([^}]+)\}/.exec(css)?.[1] ?? '').toMatch(/width: 8px;[^}]*height: 8px;/);
+    expect(genre).toMatch(/var\(--tone, var\(--accent\)\) 45%/);
+    expect(/\.genre::before \{([^}]+)\}/.exec(css)?.[1] ?? '').toMatch(/width: 10px;[^}]*height: 10px;/);
+  });
+
+  it('keeps bubble text at 4.5:1 or better on every genre colour at the bubble’s tint (TAGS-COLOR-001)', () => {
+    const tint = Number(/var\(--tone, var\(--accent\)\) (\d+)%/.exec(css)?.[1]) / 100;
+    const rgb = (h: string) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+    const lum = (c: number[]) => { const t = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * t[0]! + 0.7152 * t[1]! + 0.0722 * t[2]!; };
+    const pearl = rgb('#efeee9'), ink = lum(rgb('#161616'));
+    for (const hex of [...FAMILIES.map((f) => familyColor(f.slug)), ...SUBS.map((x) => subColorOf(x.key)!)]) {
+      const bg = lum(rgb(hex).map((v, i) => Math.round(v * tint + pearl[i]! * (1 - tint))));
+      expect((Math.max(ink, bg) + 0.05) / (Math.min(ink, bg) + 0.05), hex).toBeGreaterThanOrEqual(4.5);
+    }
   });
 
   it('puts every control on one line: play, like, dislike, download, remove, why', () => {
