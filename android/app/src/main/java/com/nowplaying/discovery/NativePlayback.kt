@@ -43,7 +43,7 @@ class NativePlayback(private val context: Context) {
     player.setMediaItem(MediaItem.Builder()
       .setMediaId(uri.toString())
       .setUri(uri)
-      .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(artist).build())
+      .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(NowPlayingLabel.artistLine(artist)).build())
       .build())
     player.prepare()
   }

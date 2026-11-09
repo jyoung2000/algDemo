@@ -405,7 +405,8 @@ export function describeTaste(t?: TasteSummary | null): string {
  * the new ranking, and ranks are renumbered so the list reads 1..n.
  */
 export function mergeRerank(prev: RecItem[], next: RecItem[], played: ReadonlySet<string>): RecItem[] {
-  const kept = prev.filter((x) => played.has(x.track.key));
+  // QUEUE-ADD-001: a song the listener added stays where they put it; the ranking never saw it.
+  const kept = prev.filter((x) => played.has(x.track.key) || x.added);
   const keptKeys = new Set(kept.map((x) => x.track.key));
   return [...kept, ...next.filter((x) => !keptKeys.has(x.track.key))].map((x, i) => ({ ...x, rank: i + 1 }));
 }

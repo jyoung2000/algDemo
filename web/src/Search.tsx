@@ -19,12 +19,23 @@ interface LikeProps {
    */
   saving?: string | null;
   onSaving?: (songKey: string | null) => void;
+  /**
+   * QUEUE-ADD-001: the row's add button, in place of the link that opened the song on its own service.
+   * It puts the song into what the listener is listening to: `addLabel` names it (the now playing
+   * queue, or a list), and `addedKeys` are the songs already there.
+   */
+  onQueueAdd?: ((t: Track) => void) | undefined;
+  addLabel?: string | undefined;
+  addedKeys?: ReadonlySet<string> | undefined;
 }
+
+/** SEARCH-QUEUE-001: Play hands over the whole list the row is in, so the skip buttons walk it. */
+type PlayFrom = (t: Track, list: Track[]) => void;
 
 interface Props extends LikeProps {
   seeds: Track[];
   onAdd: (t: Track) => void;
-  onPreview: (t: Track) => void;
+  onPreview: PlayFrom;
   onDownload?: (t: Track) => void;
 }
 
@@ -107,9 +118,9 @@ function useNarrow(): boolean {
  *  - File / Mic: up to 12 s is fingerprinted on the device; only the fingerprint goes to Shazam.
  * A newer request aborts the older one. Searching or identifying is never a preference signal: only Add makes a starting song.
  */
-export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists }: Props) {
+export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys }: Props) {
   const [saving, setSaving] = useState<string | null>(null);
-  const likeProps: LikeProps = { onLike, onRemoveSeed, lists, onLists, saving, onSaving: setSaving };
+  const likeProps: LikeProps = { onLike, onRemoveSeed, lists, onLists, saving, onSaving: setSaving, onQueueAdd, addLabel, addedKeys };
   const [q, setQ] = useState('');
   const [view, setView] = useState<View>({ kind: 'idle' });
   const [artistFix, setArtistFix] = useState('');
@@ -605,18 +616,21 @@ function ResultsView({
   onLists,
   saving,
   onSaving,
+  onQueueAdd,
+  addLabel,
+  addedKeys,
 }: {
   view: Extract<View, { kind: 'results' }>;
   seedKeys: Set<string>;
   onAdd: (t: Track) => void;
-  onPreview: (t: Track) => void;
+  onPreview: PlayFrom;
   onDownload?: ((t: Track) => void) | undefined;
 } & LikeProps) {
   const lyr = view.lyrics;
   const titleKeys = new Set(view.tracks.map((t) => t.key));
   const lyricTracks = lyr?.state === 'ok' ? lyr.tracks.filter((t) => !titleKeys.has(t.key)) : [];
   const lead = lyricsLead(view.query, lyricTracks.length);
-  const common = { seedKeys, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, saving, onSaving } as const;
+  const common = { seedKeys, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, saving, onSaving, onQueueAdd, addLabel, addedKeys } as const;
 
   const titles = view.tracks.length ? (
     <div key="titles">
@@ -680,11 +694,14 @@ function IdentifiedView({
   onLists,
   saving,
   onSaving,
+  onQueueAdd,
+  addLabel,
+  addedKeys,
 }: {
   view: Extract<View, { kind: 'identified' }>;
   seedKeys: Set<string>;
   onAdd: (t: Track) => void;
-  onPreview: (t: Track) => void;
+  onPreview: PlayFrom;
   onDownload?: ((t: Track) => void) | undefined;
 } & LikeProps) {
   const n = view.tracks.length;
@@ -717,6 +734,9 @@ function IdentifiedView({
         onLists={onLists}
         saving={saving}
         onSaving={onSaving}
+        onQueueAdd={onQueueAdd}
+        addLabel={addLabel}
+        addedKeys={addedKeys}
         label={view.origin === 'lyrics' ? `Songs with the words ${view.query}` : 'Songs heard in your clip'}
       />
     </>
@@ -846,12 +866,15 @@ export function TrackList({
   onLists,
   saving: savingProp,
   onSaving,
+  onQueueAdd,
+  addLabel = 'Now playing queue',
+  addedKeys,
   label,
 }: {
   tracks: Track[];
   seedKeys: Set<string>;
   onAdd: (t: Track) => void;
-  onPreview: (t: Track) => void;
+  onPreview: PlayFrom;
   onDownload?: ((t: Track) => void) | undefined;
   /** Teach the algorithm. Called with false when the like is taken back (SEARCH-LIKE-001). */
   onLike?: ((t: Track, like: boolean) => void) | undefined;
@@ -860,6 +883,9 @@ export function TrackList({
   onLists?: ((lists: PlaylistSummary[]) => void) | undefined;
   saving?: string | null | undefined;
   onSaving?: ((songKey: string | null) => void) | undefined;
+  onQueueAdd?: ((t: Track) => void) | undefined;
+  addLabel?: string | undefined;
+  addedKeys?: ReadonlySet<string> | undefined;
   label: string;
 }) {
   // Controlled by Search when it is in charge; the row's own state only when it stands alone.
@@ -901,7 +927,7 @@ export function TrackList({
                 knows how to look a song up, and how to download it when no player here can play it;
                 the row's job is to ask.
               */}
-              <button className="iconbtn" type="button" onClick={() => onPreview(t)} aria-label={`Play ${t.title}`} title="Play">
+              <button className="iconbtn" type="button" onClick={() => onPreview(t, tracks)} aria-label={`Play ${t.title}`} title="Play">
                 <Glyph name="play" size={14} />
               </button>
               {onDownload && (
@@ -909,11 +935,22 @@ export function TrackList({
                   <Glyph name="download" size={14} />
                 </button>
               )}
-              {t.url && (
-                <a className="iconbtn" href={t.url} target="_blank" rel="noreferrer noopener" aria-label={`Open ${t.title} in ${PROVIDER_LABEL[t.provider] ?? t.provider}`} title={`Open in ${PROVIDER_LABEL[t.provider] ?? t.provider}`}>
-                  <Glyph name="share" size={14} />
-                </a>
-              )}
+              {/* QUEUE-ADD-001: the owner replaced the link out to the song's own service with this. */}
+              {onQueueAdd && (() => {
+                const inIt = addedKeys?.has(t.key) ?? false;
+                return (
+                  <button
+                    className={classNames('iconbtn', inIt && 'is-on')}
+                    type="button"
+                    aria-pressed={inIt}
+                    onClick={() => { if (!inIt) onQueueAdd(t); }}
+                    aria-label={inIt ? `${t.title} is in ${addLabel}` : `Add ${t.title} to ${addLabel}`}
+                    title={inIt ? `In ${addLabel}` : `Add to ${addLabel}`}
+                  >
+                    <Glyph name={inIt ? 'check' : 'playlist-add'} size={14} />
+                  </button>
+                );
+              })()}
               {/* SEARCH-LIKE-001: the song list's like button, in place of the old Add pill. One press
                   teaches the algorithm, keeps the song as a starting song, and offers the lists. */}
               <button

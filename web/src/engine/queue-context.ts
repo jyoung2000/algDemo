@@ -28,3 +28,52 @@ export function preparationTracks(current: Track | null, upcoming: Track[], ...l
   });
   return [...new Map([...(current ? [current] : []), ...upcoming, ...rotated.flat()].map(t => [t.key, t])).values()];
 }
+
+/** SEARCH-QUEUE-001: the playing context of a song started from the search list. */
+export const SEARCH_CONTEXT = '@search';
+
+/**
+ * The rows the player's skip buttons walk: the now playing queue (no context), a saved list in its own
+ * order, or the search results in theirs, so a song played from search steps on to the next result.
+ */
+export function contextRows(
+  ctx: string | null,
+  src: { queueRows: RecItem[]; search: Track[]; saved: SavedItem[] | null; lists: PlaylistSummary[] },
+): RecItem[] {
+  if (ctx === null) return src.queueRows;
+  if (ctx === SEARCH_CONTEXT) return playbackRows(src.search);
+  return playbackRows(savedTracks(src.saved, src.lists, ctx));
+}
+
+/** Where the search row's add button puts a song (QUEUE-ADD-001). */
+export type AddTarget = { kind: 'queue' } | { kind: 'list'; id: string; name: string; seed: boolean };
+
+/**
+ * The saved list being played from; else the saved list in the now playing queue, whose songs are all
+ * starting songs (PLAYLIST-QUEUE-001), so an added song becomes one too; else the now playing queue.
+ * "All saved" is not one list, and a list deleted while it played is gone: both fall back to the queue.
+ */
+export function addTargetOf(ctx: string | null, queueList: { id: string; name: string } | null, lists: PlaylistSummary[]): AddTarget {
+  const playingList = ctx && ctx !== SEARCH_CONTEXT && ctx !== 'all' ? lists.find((l) => l.id === ctx) : undefined;
+  if (playingList) return { kind: 'list', id: playingList.id, name: playingList.name, seed: false };
+  if (queueList) return { kind: 'list', id: queueList.id, name: queueList.name, seed: true };
+  return { kind: 'queue' };
+}
+
+/** A now playing queue row for a song the listener added themselves. */
+export function addedRow(track: Track): RecItem {
+  return {
+    ...playbackRows([track])[0]!,
+    reasons: [{ factor: 'added', text: 'You added it to the queue.', weight: 0 }],
+    sources: ['added'],
+    added: true,
+  };
+}
+
+/** The queue with `row` right after `afterKey` (the song playing), or at the top; never twice. */
+export function insertAfter(items: RecItem[], row: RecItem, afterKey: string | null): RecItem[] {
+  const rest = items.filter((x) => x.track.key !== row.track.key);
+  const i = afterKey ? rest.findIndex((x) => x.track.key === afterKey) : -1;
+  const out = [...rest.slice(0, i + 1), row, ...rest.slice(i + 1)];
+  return out.map((x, n) => ({ ...x, rank: n + 1 }));
+}

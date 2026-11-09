@@ -232,8 +232,8 @@ class EnginePlayer(
     val snap = engine.snapshot
     val playlist = queue.items.mapIndexed { i, e ->
       MediaItemData.Builder("${e.mediaId}#$i")
-        .setMediaItem(MediaItem.Builder().setMediaId(e.mediaId).setMediaMetadata(WebPlayer.metadataOf(e.song, playable = true)).build())
-        .setMediaMetadata(WebPlayer.metadataOf(e.song, playable = true))
+        .setMediaItem(MediaItem.Builder().setMediaId(e.mediaId).setMediaMetadata(WebPlayer.metadataOf(e.song, playable = true, nowPlaying = true)).build())
+        .setMediaMetadata(WebPlayer.metadataOf(e.song, playable = true, nowPlaying = true))
         .setDurationUs(durationUs(e.song, snap))
         .setIsSeekable(true)
         .build()

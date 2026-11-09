@@ -133,3 +133,35 @@ describe('a playlist\u2019s mix', () => {
     expect(body).toMatchObject({ songs: 2, placed: 1 });
   });
 });
+
+describe('adding a song to the now playing queue (QUEUE-ADD-001)', () => {
+  const row = (n: number) => ({ rank: 0, track: song(n), score: 0, coverage: 0, tier: 'related', evidence: 'thin', best_seed: null,
+    reasons: [{ factor: 'added', text: 'You added it.', weight: 0 }], uncertainty: [], new_release: false, factors: {}, weights: {}, sources: ['added'],
+    playback: { kind: 'none' }, added: true });
+
+  it('puts it after the song named, keeps it across a reload, and moves it rather than repeating it', async () => {
+    const { api, store } = await open();
+    await store.put('last_result', { items: [row(1), row(2)].map((r) => ({ ...r, added: false })), count: 2, phase: 'final' });
+    const r = await api.handle('POST', '/api/queue/add', { item: row(9), after: song(1).key });
+    expect(r.status).toBe(200);
+    expect(((r.body as { items: { track: { key: string } }[] }).items).map((x) => x.track.key)).toEqual([song(1).key, song(9).key, song(2).key]);
+    await api.handle('POST', '/api/queue/add', { item: row(2), after: song(1).key });
+    const last = (await api.handle('GET', '/api/last')).body as { items: { track: { key: string }; rank: number }[]; count: number };
+    expect(last.items.map((x) => x.track.key)).toEqual([song(1).key, song(2).key, song(9).key]);
+    expect(last.items.map((x) => x.rank)).toEqual([1, 2, 3]);
+    expect(last.count).toBe(3);
+  });
+
+  it('starts a queue when there is none yet', async () => {
+    const { api } = await open();
+    const r = await api.handle('POST', '/api/queue/add', { item: row(5), after: null });
+    expect(r.status).toBe(200);
+    expect(((await api.handle('GET', '/api/last')).body as { items: unknown[] }).items).toHaveLength(1);
+  });
+
+  it('refuses a row with no song', async () => {
+    const { api } = await open();
+    expect((await api.handle('POST', '/api/queue/add', { item: { rank: 0 } })).status).toBe(400);
+  });
+});
+

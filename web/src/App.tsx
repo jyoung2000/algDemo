@@ -14,7 +14,7 @@ import { QueuePreparation } from './QueuePreparation';
 import { ListDownloadBar, ListDownloadButton } from './ListDownloadBar';
 import { useCardCache } from './useCardCache';
 import { useKeptKeys } from './useKeptKeys';
-import { savedTracks, playbackRows, preparationTracks } from './engine/queue-context';
+import { savedTracks, playbackRows, preparationTracks, contextRows, addTargetOf, addedRow, insertAfter, SEARCH_CONTEXT } from './engine/queue-context';
 import { decodePlaylistMediaId, mediaNativeAvailable, pushMediaLibrary, pushMediaState, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { engineAvailable, engineSend, listenFromEvent, markEngineEvent, subscribeEngineState } from './engine/native-engine';
 import { SettingsView } from './Settings';
@@ -97,6 +97,8 @@ export function App() {
    */
   const playingListRef = useRef<string | null>(null);
   const [playingContext, setPlayingContext] = useState<string | null>(null);
+  /** SEARCH-QUEUE-001: the result list a search play came from. Held here, so it outlives the search box. */
+  const [searchList, setSearchList] = useState<Track[]>([]);
   const [visibleSavedList, setVisibleSavedList] = useState('all');
   // Readiness and the ten-minute give-up set change outside React as native downloads finish.
   // Keep the displayed list and committed Up Next in sync without polling or touching kept files.
@@ -361,6 +363,15 @@ export function App() {
     setFocusKey(it.track.key);
   };
   const previewTrack = (t: Track) => setPlaying({ track: t, playback: playbackOfTrack(t) });
+  /** SEARCH-QUEUE-001: a song played from a search list, with that list as what the skip buttons walk. */
+  const playFromSearch = (t: Track, list: Track[]) => {
+    playingListRef.current = null;
+    setSearchList(list.length ? list : [t]);
+    setPlayingContext(SEARCH_CONTEXT);
+    heardRef.current = new Set([t.key]);
+    historyRef.current = [t.key];
+    previewTrack(t);
+  };
   // PLAYLIST-QUEUE-001: with a saved list in the now playing queue, its songs play first, in the list's
   // order, then the songs discovered from them. Otherwise the queue is the discovered songs, as before.
   const queueRows = useMemo(() => {
@@ -368,23 +379,28 @@ export function App() {
     const own = new Set(visibleSeeds.map((t) => t.key));
     return [...playbackRows(visibleSeeds), ...items.filter((x) => !own.has(x.track.key))];
   }, [queueList, items, visibleSeeds]);
-  const activeItems = useMemo(() => playingContext === null ? queueRows : playbackRows(savedTracks(saved, lists, playingContext)), [queueRows, playingContext, saved, lists]);
+  // The rows the skip buttons walk: the queue, the saved list played from, or the search results.
+  const activeItems = useMemo(() => contextRows(playingContext, { queueRows, search: searchList, saved, lists }), [queueRows, playingContext, searchList, saved, lists]);
   const playingKey = playing?.track.key ?? null;
   const inQueue = playingKey != null && activeItems.some((x) => x.track.key === playingKey);
   const ready = readyFilter(queueAudio, downloadsAvailable());
   const readySignature = useMemo(() => ready ? activeItems.filter(x => ready(x.track)).map(x => x.track.key).join('\0') : '', [activeItems, cacheRevision]);
-  const queueOpts = { shuffle, repeat, heard: heardRef.current, ready };
+  // SEARCH-QUEUE-001: search results are rarely downloaded yet, and a song played from a search row is
+  // fetched when it starts (NP-ALWAYS-001). Requiring a finished file here would leave the skip buttons
+  // dead on a search list, so in that one context they step to the next result and the player fetches it.
+  const stepReady = playingContext === SEARCH_CONTEXT ? undefined : ready;
+  const queueOpts = { shuffle, repeat, heard: heardRef.current, ready: stepReady };
   const nextStep = stepQueue(activeItems, inQueue ? playingKey : null, 1, hidden, queueOpts);
-  const back = shuffle ? historyBack(historyRef.current, playingKey, ready ? activeItems.filter(x => ready(x.track)) : activeItems, hidden) : null;
+  const back = shuffle ? historyBack(historyRef.current, playingKey, stepReady ? activeItems.filter(x => stepReady(x.track)) : activeItems, hidden) : null;
   const prevStep = shuffle ? (back ? { item: back.item, wrapped: false } : null) : inQueue ? stepQueue(activeItems, playingKey, -1, hidden, queueOpts) : null;
   const goNext = () => {
     // Recheck the shell's current local-file answer at the moment of transition: eviction can
     // happen after Up Next was rendered. A stale pick must never become a spinner or preview.
     const live = stepQueue(activeItems, inQueue ? playingKey : null, 1, hidden, queueOpts);
-    if (live && (!ready || ready(live.item.track))) play(live.item, { newRound: live.wrapped, keepList: true });
+    if (live && (!stepReady || stepReady(live.item.track))) play(live.item, { newRound: live.wrapped, keepList: true });
   };
   const goPrev = () => {
-    if (!prevStep || (ready && !ready(prevStep.item.track))) return;
+    if (!prevStep || (stepReady && !stepReady(prevStep.item.track))) return;
     if (back) historyRef.current = historyRef.current.slice(0, back.keep);
     play(prevStep.item, { back: Boolean(back), keepList: true });
   };
@@ -405,6 +421,48 @@ export function App() {
   // The first entry is the song that WILL play next — the player cues, downloads and blends into
   // it (SHUFFLE-NEXT-001). Shuffled, that is the committed pick; the rest are the songs still to come.
   const nextKey = nextStep && !nextStep.wrapped ? nextStep.item.track.key : null;
+  /**
+   * QUEUE-ADD-001: the search row's add button puts a song into what the listener is listening to: the
+   * saved list being played from, the saved list in the queue (whose songs are starting songs, so the
+   * added one is too), or the now playing queue, where it goes right after the song playing.
+   */
+  const addTarget = addTargetOf(playingContext, queueList, lists);
+  const addLabel = addTarget.kind === 'queue' ? 'Now playing queue' : `\u201c${addTarget.name}\u201d`;
+  const addedKeys = new Set(addTarget.kind === 'queue' ? queueRows.map((x) => x.track.key) : (lists.find((l) => l.id === addTarget.id)?.items ?? []).map((i) => i.key));
+  const addToListening = (t: Track) => {
+    if (addTarget.kind === 'queue') {
+      const row = addedRow(t);
+      const after = playingKey && queueRows.some((x) => x.track.key === playingKey) ? playingKey : null;
+      setResult((prev) => {
+        if (!prev) return prev;
+        const next = insertAfter(prev.items, row, after);
+        return { ...prev, items: next, count: next.length };
+      });
+      api.queueAdd(row, after).then((r) => setResult((prev) => prev ?? r), (e: Error) => flash(`Could not add that: ${e.message}`));
+      flash(`Added \u201c${t.title}\u201d to your now playing queue.`);
+      return;
+    }
+    const target = addTarget;
+    void (async () => {
+      try {
+        // Saving first lets the list name the song: a list holds keys, and the engine knows a song
+        // from what was saved, queued or started from.
+        await api.feedback('save', t, { event_id: newEventId('save', t.key) });
+        const r = await api.playlistEdit('add', { ids: [target.id], key: t.key });
+        setLists(r.lists);
+        if (target.seed && !seeds.some((x) => x.key === t.key)) {
+          // At the end, in the list's own order (PLAYLIST-QUEUE-001), then discover from it.
+          const next = [...seeds, { ...t, emphasis: t.emphasis ?? 1 }];
+          setSeeds(next);
+          await api.putSeeds(next);
+          void run(true);
+        }
+        flash(`Added \u201c${t.title}\u201d to ${addLabel}.`);
+      } catch (e) {
+        flash(`Could not add that: ${(e as Error).message}`);
+      }
+    })();
+  };
   const upNext = useMemo(() => {
     const i = inQueue ? activeItems.findIndex((x) => x.track.key === playingKey) : -1;
     // A song belongs in the deck queue when this build can play it at all. Inside the apps that is
@@ -749,7 +807,10 @@ export function App() {
               <Search
                 seeds={seeds}
                 onAdd={onAdd}
-                onPreview={previewTrack}
+                onPreview={playFromSearch}
+                onQueueAdd={addToListening}
+                addLabel={addLabel}
+                addedKeys={addedKeys}
                 onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
                 onLike={likeTrack}
                 onRemoveSeed={(t) => saveSeeds(seeds.filter((s) => s.key !== t.key))}

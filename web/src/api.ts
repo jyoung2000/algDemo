@@ -157,6 +157,8 @@ export interface RecItem {
   sources: string[];
   playback: Playback;
   characteristics?: Characteristics;
+  /** QUEUE-ADD-001: the listener added this song to the queue themselves. */
+  added?: boolean;
 }
 
 export interface AudioStats {
@@ -532,6 +534,8 @@ export const api = {
   reset: (clearCache: boolean) => call<{ ok: boolean }>('/api/reset', { method: 'POST', body: json({ clear_cache: clearCache }) }),
   resetTaste: () => call<{ ok: boolean }>('/api/reset/taste', { method: 'POST', body: json({}) }),
   clearQueue: () => call<{ ok: boolean }>('/api/queue/clear', { method: 'POST', body: json({}) }),
+  /** QUEUE-ADD-001: put a row in the now playing queue after `after` (the song playing), or at the top. */
+  queueAdd: (item: RecItem, after: string | null) => call<RecResult>('/api/queue/add', { method: 'POST', body: json({ item, after }) }),
   modelInstall: () => call<{ installed: boolean; downloaded: number }>('/api/model/install', { method: 'POST', body: '{}' }),
   modelSelftest: () => call<CapabilityState & { cosine?: number }>('/api/model/selftest', { method: 'POST', body: '{}' }),
   sample: () => call<RecResult>('/api/sample'),

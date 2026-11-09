@@ -276,6 +276,7 @@ export class LocalApi {
       if (m === 'POST' && path === '/api/queue/clear') return await this.clearQueue();
       if (m === 'POST' && path === '/api/queue/playlist') return await this.queueFromPlaylist(String(body?.['id'] ?? ''));
       if (m === 'POST' && path === '/api/queue/restore') return await this.restoreQueue();
+      if (m === 'POST' && path === '/api/queue/add') return await this.queueAdd(body ?? {});
       if (m === 'GET' && path === '/api/playlists/mix') return this.playlistMixRoute(q.get('id') ?? '');
       if (m === 'POST' && path === '/api/model/install') return ok({ installed: this.encoder !== null, downloaded: 0 });
       if (m === 'POST' && path === '/api/model/selftest') return await this.selftest();
@@ -600,6 +601,26 @@ export class LocalApi {
     return ok({ ...this.seedsView(), missing });
   }
 
+  /**
+   * QUEUE-ADD-001: a song the listener added goes into the now playing queue right after `after` (the
+   * song playing), or at the top, and is kept there: the stored list is what a reload brings back, and a
+   * discovery batch only appends to it. A song already queued is moved, never repeated.
+   */
+  private async queueAdd(body: Dict): Promise<LocalResponse> {
+    const item = body['item'] as Dict | undefined;
+    const track = item?.['track'] as Dict | undefined;
+    if (!item || !track || typeof track['key'] !== 'string' || !track['key']) return fail(400, 'Which song?');
+    const key = String(track['key']);
+    const after = typeof body['after'] === 'string' ? body['after'] : null;
+    const last = this.store.get<Dict>('last_result') ?? { phase: 'final', items: [], count: 0, asked: 0, sources: {}, audio: {}, timings: {}, transfer: {} };
+    const rest = ((last['items'] ?? []) as Dict[]).filter((x) => String((x['track'] as Dict)['key']) !== key);
+    const i = after ? rest.findIndex((x) => String((x['track'] as Dict)['key']) === after) : -1;
+    const items = [...rest.slice(0, i + 1), { ...item, added: true }, ...rest.slice(i + 1)].map((x, n) => ({ ...x, rank: n + 1 }));
+    const next = { ...last, items, count: items.length, saved_at: last['saved_at'] ?? unixNow() };
+    await this.store.put('last_result', next);
+    return ok(next);
+  }
+
   /** Bring back the queue a saved list replaced: its starting songs and the songs discovered for it. */
   private async restoreQueue(): Promise<LocalResponse> {
     const held = this.store.get<{ seeds: Dict[]; last_result: Dict | null }>(QUEUE_SAVED_KEY);
@@ -806,8 +827,11 @@ export class LocalApi {
     const held = [...(this.store.seeds() as Dict[]), ...previous.map((x) => x.track)];
     const limit = Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize);
     const merge = (batch: Dict): Dict => {
-      const items = appendDiscovery(previous, (batch['items'] ?? []) as { track: Dict }[], limit);
-      return { ...batch, items, count: items.length, discovery: { added: items.length - previous.length, limit, trigger } };
+      // QUEUE-ADD-001: append to the queue as it stands now, so a song the listener added while this
+      // batch was being found is kept rather than overwritten by the queue as it was at the start.
+      const now = (this.store.get<Dict>('last_result')?.['items'] ?? previous) as { track: Dict }[];
+      const items = appendDiscovery(now, (batch['items'] ?? []) as { track: Dict }[], limit);
+      return { ...batch, items, count: items.length, discovery: { added: items.length - now.length, limit, trigger } };
     };
     try {
       const cfg = { ...engineWithWeights(settings['weights']), queueSize: Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize) };
