@@ -217,7 +217,7 @@ export class LocalApi {
     this.hearthis = new HearThis(this.http, this.store);
     this.archive = new InternetArchive(this.http, this.store);
     this.apple = new AppleMusic(this.http, this.store);
-    this.albums = new Albums(this.http, this.dz, this.store);
+    this.albums = new Albums(this.http, this.dz, this.store, this.ytm, this.sc);
     this.sp = new Spotify(this.http, this.store);
     this.genius = new Genius(this.http);
     this.shazam = new Shazam(this.http);
@@ -463,7 +463,7 @@ export class LocalApi {
     if (!id && !track) return fail(400, 'id or track required');
     try {
       const a = id ? await this.albums.open(id, { meter }) : await this.albums.openFor(track as never, { meter });
-      if (!a) return fail(404, 'No album for this song was found on Deezer or Apple Music.', { code: 'none' });
+      if (!a) return fail(404, 'No album for this song was found on Deezer, Apple Music, YouTube Music or SoundCloud.', { code: 'none' });
       return ok({ album: { ...a, tracks: a.tracks.map((t) => cleanTrack(t as Dict)) } });
     } catch (e) {
       if (e instanceof ProviderError) return fail(404, e.message, { code: 'none' });

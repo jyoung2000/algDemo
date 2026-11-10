@@ -46,8 +46,8 @@ android {
     applicationId = "com.nowplaying.discovery"
     minSdk = 26
     targetSdk = 35
-    versionCode = 39
-    versionName = "0.15.0"
+    versionCode = 40
+    versionName = "0.16.0"
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     // The embedded Python, yt-dlp and ffmpeg ship per CPU. Phones are arm64; the emulator is x86_64.
     ndk { abiFilters += listOf("arm64-v8a", "x86_64") }

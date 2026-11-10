@@ -207,8 +207,15 @@ describe('genre bubbles follow the Taste Picker', () => {
   });
 
   it('gives a genre the picker has no place for no bubble, so no bubble is grey', () => {
-    const b = genreBubbles({ ...base, genres: ['Gospel', 'Soul'] });
+    const b = genreBubbles({ ...base, genres: ['World', 'Soul'] });
     expect(b).toEqual([{ label: 'Soul', color: pickerColour('soul'), sub: false }]);
+  });
+
+  it('gives a genre placed through its parent its family colour, named as words (GENRE-CLASS-001)', () => {
+    expect(genreBubbles({ ...base, genres: ['Gospel'] })).toEqual([{ label: 'Gospel', color: pickerColour('soul'), sub: false }]);
+    expect(genreBubbles({ ...base, genres: ['deep house'] })).toEqual([{ label: 'Deep house', color: pickerColour('electronic'), sub: false }]);
+    // SoundCloud's joined genre reads as the main genre; the subgenre keeps its own shade.
+    expect(genreBubbles({ ...base, genres: ['R&B & Soul', 'alternative r&b'] }).map((x) => [x.label, x.sub])).toEqual([['R&B', false], ['Alt R&B', true]]);
   });
 });
 

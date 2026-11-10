@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { Glyph } from '@now-playing/aqua-ui/icons';
+import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
 import { api, ApiError, type AlbumView as AlbumData, type PlaylistSummary, type Track } from './api';
 import { Art } from './Art';
-import { ALBUM_KIND } from './AlbumShelf';
+import { ALBUM_KIND, albumFrom } from './AlbumShelf';
+import { markKey } from './util';
 import { ListSaveButton } from './ListSaveButton';
 import { albumFolderName } from './engine/list-save';
 import { TrackList } from './Search';
 
-export { AlbumShelf } from './AlbumShelf';
+export { AlbumShelf, albumSource } from './AlbumShelf';
 
 /** What to open: an album found by a search, or the album a song is on. */
 export type AlbumTarget = { id: string } | { track: Track };
@@ -112,6 +113,9 @@ export function AlbumView({ target, onBack, onPreview, seedKeys, onAdd, onDownlo
                 <h2 id="album-h" className="album__title">{a.title}</h2>
                 <span className="album__artist">{a.artist}</span>
                 <span className="album__meta">{meta}</span>
+                <span className="album__src">
+                  <ProviderMark provider={markKey(a.provider)} size={13} /> {albumFrom(a)}
+                </span>
               </div>
             </div>
             <div className="album__actions">

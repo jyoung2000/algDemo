@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import type { AlbumSummary, Track } from './api';
 import { isBodyOfWork } from './engine/album-key';
+import { PROVIDER_LABEL } from './util';
 import { Art } from './Art';
 import { AlbumGlyph } from './icons';
 
@@ -33,6 +34,18 @@ export function albumMeta(a: Pick<AlbumSummary, 'kind' | 'year' | 'count'>): str
   return [ALBUM_KIND[a.kind], a.year, a.count ? songs(a.count) : null].filter(Boolean).join(' · ');
 }
 
+/** ALBUM-SEARCH-002: the service an album came from; a SoundCloud set by someone else is a fan upload. */
+export function albumSource(a: Pick<AlbumSummary, 'provider' | 'official'>): string {
+  const name = PROVIDER_LABEL[a.provider] ?? a.provider;
+  return a.official === false ? `${name} fan upload` : name;
+}
+
+/** The album page's line: "From YouTube Music", or "Fan upload on SoundCloud". */
+export function albumFrom(a: Pick<AlbumSummary, 'provider' | 'official'>): string {
+  const name = PROVIDER_LABEL[a.provider] ?? a.provider;
+  return a.official === false ? `Fan upload on ${name}` : `From ${name}`;
+}
+
 /**
  * ALBUM-SEARCH-001. The albums a plain search finds, shown with the songs: each row opens the album
  * like a list. Three show at first so the songs stay in reach; the rest unfold on request.
@@ -51,7 +64,9 @@ export function AlbumShelf({ albums, query, onOpen }: { albums: AlbumSummary[]; 
               <span className="track__text">
                 <span className="track__title">{a.title}</span>
                 <span className="track__artist">{a.artist}</span>
-                <span className="track__meta">{albumMeta(a)}</span>
+                <span className="track__meta">
+                  {albumMeta(a)} <span className="album-row__src">· {albumSource(a)}</span>
+                </span>
               </span>
               <Glyph name="chevron-right" size={14} />
             </button>

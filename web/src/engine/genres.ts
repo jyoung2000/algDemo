@@ -8,7 +8,7 @@ import { SUBS } from './genre-table';
 
 // alias -> canonical
 const ALIASES: Record<string, string> = {
-  'r b': 'r&b', rnb: 'r&b', 'r and b': 'r&b', 'rhythm and blues': 'r&b', 'contemporary r b': 'r&b', 'neo soul': 'neo-soul', neosoul: 'neo-soul', motown: 'soul',
+  'r b': 'r&b', rnb: 'r&b', 'r and b': 'r&b', 'rhythm and blues': 'r&b', 'contemporary r b': 'r&b', 'contemporary r and b': 'r&b', 'r and b soul': 'r&b', 'neo soul': 'neo-soul', neosoul: 'neo-soul', motown: 'soul',
   'hip hop': 'hip-hop', 'rap hip hop': 'hip-hop', rap: 'hip-hop', hiphop: 'hip-hop', 'hip hop rap': 'hip-hop', trap: 'trap',
   'boom bap': 'hip-hop', crunk: 'hip-hop', 'g funk': 'hip-hop', 'uk drill': 'drill', drill: 'drill', grime: 'grime', phonk: 'phonk',
   electro: 'electronic', electronica: 'electronic', edm: 'electronic', 'electronic dance music': 'electronic', idm: 'electronic',
@@ -35,6 +35,23 @@ const ALIASES: Record<string, string> = {
   'smooth jazz': 'jazz', bebop: 'jazz', swing: 'jazz',
   christian: 'gospel', worship: 'gospel', 'children s music': 'kids', children: 'kids',
   hyperpop: 'hyperpop',
+  // GENRE-CLASS-001: SoundCloud's own genre menu joins two genres with '&' (fold reads it as 'and'),
+  // and these were dropped. Each names its first genre's family.
+  'hip hop and rap': 'hip-hop', 'r and b and soul': 'r&b', 'dance and edm': 'electronic', 'jazz and blues': 'jazz',
+  'folk and singer songwriter': 'folk', 'drum and bass and jungle': 'drum-and-bass', 'electronic and dance': 'electronic',
+  // Common genre words the services and MusicBrainz send that had no place.
+  'new jack swing': 'r&b', 'quiet storm': 'r&b', 'p funk': 'funk', 'acid jazz': 'jazz', 'jazz fusion': 'jazz', 'delta blues': 'blues',
+  'black metal': 'metal', 'death metal': 'metal', 'doom metal': 'metal', 'thrash metal': 'metal', 'power metal': 'metal', 'stoner rock': 'rock',
+  'post rock': 'post-rock', 'progressive rock': 'rock', 'prog rock': 'rock', 'surf rock': 'rock', 'punk rock': 'punk',
+  'noise rock': 'alternative', 'art rock': 'alternative', 'soft rock': 'rock', 'glam rock': 'rock', 'blues rock': 'rock',
+  psytrance: 'trance', 'psy trance': 'trance', 'progressive trance': 'trance', 'hard dance': 'electronic', gabber: 'hardstyle', 'hardcore techno': 'hardstyle',
+  minimal: 'techno', 'acid house': 'house', 'bass house': 'house', 'future house': 'house', 'afro tech': 'house', glitch: 'electronic', breakcore: 'drum-and-bass',
+  neurofunk: 'drum-and-bass', darkwave: 'synth-pop', 'witch house': 'electronic', 'electro swing': 'electronic', chiptune: 'electronic',
+  'teen pop': 'pop', 'europop': 'pop', 'latin pop': 'latin', 'mandopop': 'pop', 'c pop': 'pop', 'chamber pop': 'indie-pop', 'baroque pop': 'indie-pop',
+  dembow: 'reggaeton', 'corridos tumbados': 'latin', merengue: 'latin', tango: 'latin', 'latin urbano': 'reggaeton', 'musica mexicana': 'latin',
+  'roots reggae': 'reggae', 'lovers rock': 'reggae', soca: 'dancehall', calypso: 'reggae', zouk: 'african', highlife: 'african', alte: 'afrobeats',
+  horrorcore: 'hip-hop', lounge: 'lounge', 'video game music': 'soundtrack', 'game soundtrack': 'soundtrack', 'film score': 'soundtrack', score: 'soundtrack', 'contemporary classical': 'classical',
+  'contemporary christian': 'gospel', ccm: 'gospel', 'christian hip hop': 'hip-hop', blues: 'blues', 'country rock': 'country', 'alt country': 'country', 'outlaw country': 'country',
 };
 
 // child -> parent
@@ -49,6 +66,8 @@ const PARENT: Record<string, string> = {
   shoegaze: 'alternative', grunge: 'rock', psychedelic: 'rock', punk: 'rock', 'pop-punk': 'punk', 'post-punk': 'punk', emo: 'punk',
   afrobeats: 'african', amapiano: 'african', 'singer-songwriter': 'folk',
   ska: 'reggae', dancehall: 'reggae', dub: 'reggae',
+  // GENRE-CLASS-001: families for genres that had none, so the taste map can place them.
+  gospel: 'soul', blues: 'jazz', 'post-rock': 'alternative', soundtrack: 'classical', lounge: 'downtempo',
 };
 
 const KNOWN = new Set<string>([
@@ -73,6 +92,51 @@ for (const s of SUBS) {
   }
 }
 
+/**
+ * GENRE-CLASS-001: the other families' picker subgenres. A word that already had a canonical genre keeps
+ * it (so stored tags, taste and the golden results do not move); a word that was dropped now becomes a
+ * real tag. The tag is the existing canonical one of the same subgenre when there is one ('80s' and 'new
+ * wave' join 'synth-pop'), otherwise the subgenre's own key ('slowcore', 'alt-rnb', 'afro-house'), with a
+ * parent so it counts toward its family in every comparison.
+ */
+const SUB_PARENT: Record<string, string> = {
+  'nu-metal': 'metal', djent: 'metal', metalcore: 'metal', 'midwest-emo': 'emo', 'pop-punk': 'punk', 'hardcore-punk': 'punk', 'post-punk': 'punk',
+  'indie-sleaze': 'alternative', slowcore: 'alternative',
+  'alt-pop': 'pop', 'bedroom-pop': 'indie-pop', 'country-pop': 'country', digicore: 'hyperpop', 'pop-rap': 'hip-hop',
+  'indie-folk': 'folk', 'art-pop': 'indie', 'slacker-rock': 'indie', 'garage-psych': 'psychedelic', 'jangle-pop': 'indie-pop', 'math-rock': 'indie', indietronica: 'indie',
+  'nu-jazz': 'jazz', 'spiritual-jazz': 'jazz', 'jazz-funk': 'funk', boogie: 'funk', 'retro-soul': 'soul', 'nu-disco': 'disco', 'soul-pop': 'soul', bruk: 'jazz', 'uk-soul': 'soul',
+  'melodic-techno': 'techno', 'hard-techno': 'techno', hypertechno: 'techno', 'slap-house': 'house', 'trap-edm': 'electronic', 'liquid-dnb': 'drum-and-bass',
+  neoclassical: 'classical', 'organic-house': 'house', 'dub-techno': 'techno', 'future-garage': 'uk-garage', chillstep: 'dubstep', vaporwave: 'synthwave',
+  'alt-rnb': 'r&b', trapsoul: 'r&b', afroswing: 'afrobeats', moombahton: 'reggaeton', 'afro-house': 'african', gqom: 'african', 'baile-funk': 'brazilian', 'latin-trap': 'reggaeton',
+};
+const FAMILY_WORD: Record<string, string> = {
+  rock: 'rock', pop: 'pop', indie: 'indie', 'soul-jazz-funk': 'soul', electronic: 'electronic', 'ambient-chill': 'ambient', 'rnb-afro-latin': 'r&b',
+};
+const SUB_WORD = new Map<string, string>();
+{
+  const before = (w: string): string | null => {
+    const f = fold(w);
+    if (!f || f.length > 40) return null;
+    if (HIPHOP_SUB.has(f)) return HIPHOP_SUB.get(f)!;
+    const canon = Object.prototype.hasOwnProperty.call(ALIASES, f) ? (ALIASES[f] ?? f) : f.replace(/ /g, '-');
+    return KNOWN.has(canon) ? canon : null;
+  };
+  for (const s of SUBS) {
+    if (s.family === 'hip-hop') continue;
+    const words = [s.key, s.name, ...s.aliases];
+    const existing = words.map(before).find((c): c is string => c !== null);
+    const canon = existing ?? s.key;
+    if (!existing) {
+      KNOWN.add(s.key);
+      if (!Object.prototype.hasOwnProperty.call(PARENT, s.key)) PARENT[s.key] = SUB_PARENT[s.key] ?? FAMILY_WORD[s.family] ?? s.family;
+    }
+    for (const a of words) {
+      const k = fold(a);
+      if (k && before(a) === null && !SUB_WORD.has(k)) SUB_WORD.set(k, canon);
+    }
+  }
+}
+
 const SCOPE_WEIGHT: Record<string, number> = { track: 1.0, album: 0.8, artist: 0.55 };
 
 export interface Tag {
@@ -89,6 +153,8 @@ export function normalize(name: string): string | null {
   if (!f || f.length > 40) return null;
   const sub = HIPHOP_SUB.get(f);
   if (sub) return sub;
+  const other = SUB_WORD.get(f);
+  if (other) return other;
   const canon = Object.prototype.hasOwnProperty.call(ALIASES, f) ? (ALIASES[f] ?? f) : f.replace(/ /g, '-');
   return KNOWN.has(canon) ? canon : null; // free-form uploader tags ("meh", "free download") are dropped
 }

@@ -118,6 +118,11 @@ export class SoundCloud {
     }
   }
 
+  /** ALBUM-SEARCH-002: one api-v2 read (album search, a set, tracks by id) for engine/albums.ts. */
+  api(path: string, c: Ctx = {}): Promise<Json> {
+    return this.get(path, c);
+  }
+
   toTrack(e: Json): Track {
     const userName: string = e.user?.username ?? '';
     const publisher: string = e.publisher_metadata?.artist ?? '';

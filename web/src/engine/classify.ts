@@ -11,7 +11,7 @@ import { CATALOG } from './taste-catalog';
 import { FAMILIES, FAMILY_TAGS, SUBS, type SubDef } from './genre-table';
 import { familyColor, subColorOf } from './genre-palette';
 import { fold } from './identity';
-import type { Tag } from './genres';
+import { ancestors, type Tag } from './genres';
 
 export interface Classification {
   family: string; // family name, e.g. 'Electronic'
@@ -65,8 +65,22 @@ function subFromTags(tags: Tag[]): SubDef | null {
   // Strongest tags first; a subgenre match beats a family match.
   const ordered = [...tags].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
   for (const t of ordered) {
-    const hit = ALIAS.get(fold(t.name)) ?? ALIAS.get(fold(t.label ?? ''));
+    // GENRE-CLASS-001: the word the service sent first. A tag stored under a broader canonical name
+    // ('bedroom pop' kept as indie-pop, 'vaporwave' as synthwave) still names the subgenre it meant.
+    const hit = ALIAS.get(fold(t.label ?? '')) ?? ALIAS.get(fold(t.name));
     if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * The picker family a canonical genre belongs to: its own family word, or the nearest parent that has
+ * one ('deep-house' -> house -> Electronic, 'dancehall' -> reggae -> R&B/Afro/Latin). GENRE-CLASS-001.
+ */
+export function familyOfGenre(name: string): string | null {
+  for (const g of [name, ...ancestors(name)]) {
+    const f = FAMILY_TAGS[g];
+    if (f) return f;
   }
   return null;
 }
@@ -74,7 +88,7 @@ function subFromTags(tags: Tag[]): SubDef | null {
 function familyFromTags(tags: Tag[]): string | null {
   const ordered = [...tags].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
   for (const t of ordered) {
-    const f = FAMILY_TAGS[t.name];
+    const f = familyOfGenre(t.name);
     if (f) return f;
   }
   return null;

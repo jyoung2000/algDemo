@@ -29,6 +29,10 @@ const SONGS_FILTER = 'EgWKAQIIAWoMEA4QChADEAQQCRAF';
  * see them at any number of retries (SOURCE-VIDEO-001).
  */
 const VIDEOS_FILTER = 'EgWKAQIQAWoMEA4QChADEAQQCRAF';
+/** ALBUM-SEARCH-002: the albums tab of a search (ytmusicapi's filter 'albums'). */
+export const ALBUMS_FILTER = 'EgWKAQIYAWoMEA4QChADEAQQCRAF';
+/** A YouTube Music album page id. */
+export const YT_ALBUM = /^MPREb_[A-Za-z0-9_-]{6,40}$/;
 const YT_ID = /^[A-Za-z0-9_-]{11}$/;
 const MAX_BYTES = 4_000_000;
 
@@ -307,8 +311,19 @@ export class YouTubeMusic {
       url: `https://music.youtube.com/watch?v=${x.videoId}`, rel,
       artistIds: { ytmusic: x.artists.find((a) => a.id)?.id ?? '' },
       explicit: x.isExplicit, kind: kind ?? (['MUSIC_VIDEO_TYPE_ATV', 'MUSIC_VIDEO_TYPE_OMV', ''].includes(vtype) ? 'song' : 'video'),
-      extra: { video_type: vtype },
+      // ALBUM-SEARCH-002: a song that names its album page can open that album itself.
+      extra: { video_type: vtype, ...(x.album?.id && YT_ALBUM.test(x.album.id) ? { album_id: `yt:${x.album.id}` } : {}) },
     });
+  }
+
+  /** ALBUM-SEARCH-002: the raw albums tab of a search, and an album page, for engine/albums.ts. */
+  albumSearch(q: string, c: Ctx = {}): Promise<Json> {
+    return this.post('search', { query: q, params: ALBUMS_FILTER }, c);
+  }
+
+  albumPage(browseId: string, c: Ctx = {}): Promise<Json> {
+    if (!YT_ALBUM.test(browseId)) return Promise.reject(new ProviderError('That is not a YouTube Music album.'));
+    return this.post('browse', { browseId }, c);
   }
 
   search(q: string, limit = 15, c: Ctx = {}): Promise<Track[]> {

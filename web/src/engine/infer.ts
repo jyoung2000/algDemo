@@ -11,6 +11,7 @@
  */
 import { type Tag, makeTag, tagStrength } from './genres';
 import { FAMILY_TAGS, SUBS } from './genre-table';
+import { familyOfGenre } from './classify';
 import { fold } from './identity';
 import type { Store } from './store';
 import type { Dict } from './shape';
@@ -167,7 +168,8 @@ export function subsFromArtist(body: Dict, artist: string): Tag[] {
     const tag = makeTag(String(t['name'] ?? ''), MB_ARTIST_SOURCE, 'artist', 0.5);
     // Any known subgenre, or a family word that names one of the picker's families: a tag that
     // means nothing to the catalogue is still ignored, so nothing is invented from noise.
-    if (!tag || !(SUB_KEYS.has(tag.name) || FAMILY_TAGS[tag.name])) continue;
+    // GENRE-CLASS-001: or any genre with a picker family through its parents ('singer-songwriter').
+    if (!tag || !(SUB_KEYS.has(tag.name) || FAMILY_TAGS[tag.name] || familyOfGenre(tag.name))) continue;
     votes.set(tag.name, (votes.get(tag.name) ?? 0) + Math.max(1, Number(t['count'] ?? 1)));
     if (!label.has(tag.name)) label.set(tag.name, tag.label);
   }

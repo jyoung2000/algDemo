@@ -44,9 +44,15 @@ const DISPLAY: Record<string, string> = {
   'j-pop': 'J-pop',
   'drum-and-bass': 'Drum & bass',
   'uk-garage': 'UK garage',
+  'lo-fi': 'Lo-fi',
+  'synth-pop': 'Synth-pop',
+  'pop-punk': 'Pop-punk',
+  'post-punk': 'Post-punk',
+  'trip-hop': 'Trip-hop',
 };
 
-const display = (canon: string) => DISPLAY[canon] ?? canon.charAt(0).toUpperCase() + canon.slice(1);
+/** GENRE-CLASS-001: a joined canonical name reads as words ('deep-house' is "Deep house"). */
+const display = (canon: string) => DISPLAY[canon] ?? (canon.charAt(0).toUpperCase() + canon.slice(1)).replace(/-/g, ' ');
 const tag = (name: string, label: string) => [{ name, label, confidence: 1 }] as unknown as Tag[];
 
 function ofSub(s: SubDef): GenreIdentity | null {

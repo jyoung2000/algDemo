@@ -41,6 +41,8 @@ describe('car albums (ALBUM-CAR-001)', () => {
     expect(decodeCarAlbumId(id)).toEqual({ albumId: 'dz:1', key: 'ken carson|green room|' });
     expect(decodeCarAlbumId('playlist/a/track/b')).toBeNull();
     expect(decodeCarAlbumId('calbum/a%2Fb/track/c')).toEqual({ albumId: 'a/b', key: 'c' });
+    // ALBUM-SEARCH-002: YouTube Music and SoundCloud album ids read back whole too.
+    for (const albumId of ['yt:MPREb_QqGdeeXXgBz', 'sc:1843556490']) expect(decodeCarAlbumId(carAlbumTrackId(albumId, 'k'))).toEqual({ albumId, key: 'k' });
   });
 
   it('marks saved albums in the library so the car lists them under Albums', () => {

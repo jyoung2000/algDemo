@@ -3724,6 +3724,16 @@ html {
   flex: none;
   color: var(--ink-2);
 }
+/* ALBUM-SEARCH-002: the line naming the service wraps on a phone instead of losing the service. */
+.album-row .track__meta {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+/* The separator and the service name move to the next line together, never split. */
+.album-row__src {
+  white-space: nowrap;
+}
 .albums__more {
   justify-self: start;
   min-height: 44px;
@@ -3766,6 +3776,14 @@ html {
   overflow-wrap: anywhere;
 }
 .album__meta {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+/* ALBUM-SEARCH-002: which service the album came from. */
+.album__src {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--ink-2);
   font-size: 12px;
 }

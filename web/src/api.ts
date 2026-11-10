@@ -78,10 +78,13 @@ export interface SearchResponse {
   bytes: number;
 }
 
-/** ALBUM-SEARCH-001: an album found by a search, from Deezer (`dz:`) or Apple Music (`ap:`). */
+/**
+ * ALBUM-SEARCH-001 / ALBUM-SEARCH-002: an album found by a search, from Deezer (`dz:`), Apple Music
+ * (`ap:`), YouTube Music (`yt:`) or SoundCloud (`sc:`).
+ */
 export interface AlbumSummary {
   id: string;
-  provider: 'deezer' | 'apple';
+  provider: 'deezer' | 'apple' | 'ytmusic' | 'soundcloud';
   title: string;
   artist: string;
   artwork: string | null;
@@ -89,6 +92,8 @@ export interface AlbumSummary {
   kind: 'album' | 'ep' | 'mixtape' | 'compilation' | 'single';
   count: number | null;
   url: string;
+  /** False for a SoundCloud set uploaded by someone other than the artist. */
+  official?: boolean;
 }
 
 /** ALBUM-OPEN-001: a whole album, its songs in album order. */
