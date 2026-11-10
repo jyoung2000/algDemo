@@ -361,6 +361,7 @@ object Downloads {
     "cancel" -> JSONObject().put("ok", cancel(req.optString("id")))
     "forget" -> { val id = req.optString("id"); cancel(id); order.remove(id); JSONObject().put("ok", jobs.remove(id) != null) }
     "reveal" -> JSONObject().put("ok", reveal(context, req.optString("id")))
+    "open-list" -> ListFolder.open(context, req)
     "local" -> {
       val url = req.optString("url")
       require(urlAllowed(url)) { "Not a link this app downloads from." }

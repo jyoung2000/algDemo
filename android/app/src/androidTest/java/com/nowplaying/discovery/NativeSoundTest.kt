@@ -230,6 +230,43 @@ class NativeSoundTest {
     assertEquals("a live EQ change takes effect within half a second", -12.0 + makeup2, db(after / before), 0.15)
   }
 
+  /** eq.ts `solfeggioGains`: the preset's gentle lift on the band centres either side of its tone. */
+  private fun solfeggioGains(hz: Double) = DoubleArray(10) { i ->
+    val octaves = kotlin.math.abs(StrictMath.log(hz / EqMath.BANDS_HZ[i]) / StrictMath.log(2.0))
+    if (octaves <= 0.5) 2.0 else if (octaves <= 1.2) 1.0 else 0.0
+  }
+
+  /**
+   * SOLFEGGIO-001 on the native player, every preset. Owner: "ensure the solfeggio frequency presets
+   * work on the native player eq". Each preset is sent exactly as the page sends it (its ten band
+   * gains plus its tone) and a sine at the tone's frequency is played through the service. Against
+   * the same bands without the tone, the tone must add its own +6 dB at its centre (the peaking
+   * filter's exact gain there), less the extra headroom trim the tone costs.
+   */
+  @Test fun everySolfeggioPresetLiftsItsOwnFrequencyOnTheNativePlayer() {
+    for (hz in EqMath.SOLFEGGIO_HZ) {
+      val file = wav("solf-${hz.toInt()}.wav", hz, 3.0, 0.25)
+      fun run(e: JSONObject) = level(play(listOf("s${hz.toInt()}" to file), JSONObject().put("eq", e).put("mix", 0)).first, hz)
+      val gains = solfeggioGains(hz)
+      val preset = eq(on = true, gains = gains, toneHz = hz)
+      val bandsOnly = eq(on = true, gains = gains)
+      val flat = run(eq(on = false))
+      val withTone = run(preset)
+      val without = run(bandsOnly)
+      val want = EqMath.SOLFEGGIO_DB + EqMath.headroomTrimDb(EqJson.parse(preset)) - EqMath.headroomTrimDb(EqJson.parse(bandsOnly))
+      val got = db(withTone / without)
+      android.util.Log.i("NativeSoundTest", "solfeggio ${hz.toInt()} Hz: tone adds $got dB (want $want), preset vs EQ off ${db(withTone / flat)} dB")
+      assertEquals("the ${hz.toInt()} Hz preset's tone on the native player", want, got, 0.15)
+      // The EQ lowers everything by the curve's peak so a boost cannot clip (as eq.ts does), so the
+      // preset is heard as its frequency standing out: music the preset leaves alone (bands at 0 dB)
+      // gets only that trim plus the limiter's makeup, and the tone must stand 6 dB or more above it.
+      val makeupDb = 0.6 * (1.0 - 1.0 / EqMath.LIMITER_RATIO) * -EqMath.LIMITER_THRESHOLD_DB
+      val standsOut = db(withTone / flat) - (EqMath.headroomTrimDb(EqJson.parse(preset)) + makeupDb)
+      android.util.Log.i("NativeSoundTest", "solfeggio ${hz.toInt()} Hz stands $standsOut dB above untouched music")
+      assertTrue("the ${hz.toInt()} Hz preset makes ${hz.toInt()} Hz stand out ($standsOut dB)", standsOut > 6.0 - 0.15)
+    }
+  }
+
   /** Where each tone is: the first and last 10 ms hop with its amplitude above -40 dBFS. */
   private fun span(pcm: FloatArray, hz: Double): IntRange {
     var first = -1; var last = -1

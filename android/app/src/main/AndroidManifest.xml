@@ -29,6 +29,12 @@
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
+      <!-- VOICE-SEARCH-001: "Play <song> on Airwave Discovery" from Google Assistant; Android Auto's
+           voice actions require it too. -->
+      <intent-filter>
+        <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
+        <category android:name="android.intent.category.DEFAULT" />
+      </intent-filter>
     </activity>
     <!-- Native music player: a Media3 MediaLibraryService whose Player (WebPlayer) proxies the
          WebView's Web Audio engine. The OS lock screen, quick-panel media card, Bluetooth/headset
@@ -54,6 +60,18 @@
         <action android:name="android.intent.action.MEDIA_BUTTON" />
       </intent-filter>
     </receiver>
+    <!-- LIST-FOLDER-001: the "Airwave Discovery" place in the Files app, holding the song list the
+         owner opened from the app (read-only; only the system file manager may bind it). -->
+    <provider
+      android:name=".ListFolderProvider"
+      android:authorities="com.nowplaying.discovery.listfolder"
+      android:exported="true"
+      android:grantUriPermissions="true"
+      android:permission="android.permission.MANAGE_DOCUMENTS">
+      <intent-filter>
+        <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+      </intent-filter>
+    </provider>
     <!-- Points Android Auto at res/xml/automotive_app_desc.xml so it treats this as a media app. -->
     <meta-data
       android:name="com.google.android.gms.car.application"

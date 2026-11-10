@@ -55,6 +55,18 @@ Other candidates were looked at and not used. `yassinsolim/soundalike` was not c
 encoder. `asg017/sqlite-vec` was not needed, because brute-force cosine over a short list of at
 most a few hundred vectors is enough.
 
+## Speech to text (voice search)
+
+| Item | Detail |
+| --- | --- |
+| Model | Whisper tiny.en (OpenAI), quantized ONNX export `Xenova/whisper-tiny.en` revision `79fb389`: `encoder_model_quantized.onnx` (10,124,913 bytes, SHA-256 `8cc3c6f8…1b90`), `decoder_model_quantized.onnx` (30,459,718 bytes, SHA-256 `62b1761a…41f1`), `vocab.json`, `generation_config.json` |
+| Source | <https://huggingface.co/Xenova/whisper-tiny.en>, from <https://huggingface.co/openai/whisper-tiny.en> |
+| License | **Apache-2.0** (both model cards) |
+| Code | `web/src/engine/speech/` runs it with onnxruntime-web. `mel.ts` ports the log-mel steps of Hugging Face transformers' `WhisperFeatureExtractor` (Apache-2.0). |
+
+Install: put the four files in `discovery-demo/.data/models/whisper-tiny.en/`. Both apps ship them,
+and speech is written down on the device: no sound or words leave it except the search itself.
+
 ## Song identification (audio and lyrics search)
 
 | Item | Detail |

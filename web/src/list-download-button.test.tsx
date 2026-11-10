@@ -94,7 +94,7 @@ it('rests its arrow during a booked retry and spins only while a source or downl
 
 it('sits next to Clear list in the list header, not inside the availability card', () => {
   // Both list headers that offer Clear list must offer the download icon in the same row.
-  const headers = appSource.match(/<div className="queue__head">[\s\S]{0,900}?<\/div>/g) ?? [];
+  const headers = appSource.match(/<div className="queue__head">[\s\S]{0,1300}?<\/div>/g) ?? [];
   const withClear = headers.filter((h) => /Clear now playing queue/.test(h));
   expect(withClear.length, 'no queue header with Clear list found').toBeGreaterThan(0);
   for (const h of withClear) expect(h).toMatch(/<ListDownloadButton/);

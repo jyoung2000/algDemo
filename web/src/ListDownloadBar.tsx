@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Track } from './api';
-import { downloadsAvailable } from './engine/downloads';
+import { dl, downloadsAvailable } from './engine/downloads';
 import { queueAudio } from './engine/queue-audio';
 import { ListAvailability } from './ListAvailability';
 import { Glyph } from '@now-playing/aqua-ui/icons';
@@ -68,5 +68,50 @@ export function ListDownloadButton({ tracks, label }: { tracks: Track[]; label?:
     >
       <Glyph name="download" size={14} />
     </button>
+  );
+}
+
+/**
+ * LIST-FOLDER-001. Owner: "add a button where the user can open the local folder with the current song
+ * list / queue". The shell puts the list's downloaded songs in one folder named after the list,
+ * numbered in play order (Windows: Music\Airwave Discovery\Song lists; Android: an "Airwave
+ * Discovery" place in the Files app), and opens it. Songs not downloaded yet are left out, and the
+ * tooltip says how many are in.
+ */
+export function ListFolderButton({ tracks, name, label }: { tracks: Track[]; name: string; label?: string }) {
+  const status = useListStatus(tracks);
+  const [note, setNote] = useState<string | null>(null);
+  if (!downloadsAvailable() || !tracks.length) return null;
+  const where = label ?? 'this list';
+  const songs = tracks.flatMap((t) => {
+    const url = queueAudio.readyUrl(t);
+    return url ? [{ url, title: t.title, artist: t.artist ?? '' }] : [];
+  });
+  const title = songs.length
+    ? `Open the folder with ${where}. ${songs.length} of ${tracks.length} songs are downloaded.`
+    : `No song in ${where} is downloaded yet, so there is no folder to open.`;
+  const open = async () => {
+    try {
+      const r = await dl.openList(name, songs);
+      setNote(r.ok ? null : 'The folder could not be opened.');
+    } catch (e) {
+      setNote(`The folder could not be opened: ${(e as Error).message}`);
+    }
+  };
+  return (
+    <>
+      <button
+        type="button"
+        className="iconbtn"
+        onClick={() => void open()}
+        disabled={!songs.length}
+        aria-label={`Open the folder with ${where}`}
+        title={title}
+        data-ready={status.ready}
+      >
+        <Glyph name="folder" size={14} />
+      </button>
+      {note && <span className="list-folder__note" role="status">{note}</span>}
+    </>
   );
 }

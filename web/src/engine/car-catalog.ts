@@ -1,4 +1,4 @@
-import { api, type SearchResponse, type Track } from '../api';
+import { api, type IdentifyResponse, type SearchResponse, type Track } from '../api';
 import { songFromTrack, type NativeSong } from './media-native';
 
 /** Bounded catalogue search for car queries. Search is metadata discovery, never automatic queue
@@ -10,6 +10,8 @@ export class CarCatalog {
   constructor(
     private readonly lookup: (query: string) => Promise<SearchResponse> = api.search,
     private readonly ready: (track: Track) => boolean = () => false,
+    /** VOICE-SEARCH-001: the car asks for lyrics too, as the phone's search box does. */
+    private readonly lyrics: ((query: string) => Promise<IdentifyResponse>) | null = null,
   ) {}
   find(id: string): Track | undefined { return this.tracks.get(id); }
   async search(raw: string): Promise<NativeSong[]> {
@@ -21,12 +23,14 @@ export class CarCatalog {
     this.latest = query;
     await new Promise(resolve => setTimeout(resolve, 350));
     if (this.latest !== query && this.latest.startsWith(query)) return [];
-    const result = await this.lookup(query);
+    // Titles and lyrics are asked together; a lyrics failure never hides the title matches.
+    const words = this.lyrics ? this.lyrics(query).then(r => r.results, () => [] as Track[]) : Promise.resolve([] as Track[]);
+    const [result, byWords] = await Promise.all([this.lookup(query), words]);
     const states = Object.values(result.sources ?? {});
-    if (!result.results.length && states.length && !states.some(s => s.state === 'ok')) {
+    if (!result.results.length && !byWords.length && states.length && !states.some(s => s.state === 'ok')) {
       throw new Error('Music search is unavailable. Check your connection and try again.');
     }
-    const rows = [...new Map(result.results.filter(t => t.key && t.title).map(t => [t.key, t])).values()].slice(0, 25);
+    const rows = [...new Map([...result.results, ...byWords].filter(t => t.key && t.title).map(t => [t.key, t])).values()].slice(0, 25);
     for (const track of rows) {
       this.tracks.delete(track.key);
       this.tracks.set(track.key, track);

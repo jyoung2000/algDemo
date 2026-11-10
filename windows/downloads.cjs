@@ -573,6 +573,8 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
         const failed = [...jobs.values()].reverse().find((j) => j.url === url && j.state === 'failed');
         return { file: p ? { name: path.basename(p), bytes: fs.statSync(p).size } : null, kept: Boolean(keptPath), cached: Boolean(cachedPath), running, error: !p && !running ? failed?.error || null : null };
       }
+      case 'open-list':
+        return openList(req);
       case 'reveal': {
         const j = jobs.get(String(req.id));
         const f = j && j.files[0];
@@ -583,6 +585,54 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
       default:
         throw new Error('Unknown request.');
     }
+  }
+
+  /**
+   * LIST-FOLDER-001. Owner: "add a button where the user can open the local folder with the current
+   * song list / queue". The list's downloaded songs go in <music folder>\Song lists\<list name>,
+   * numbered in play order, with an .m3u8 so any player plays them in that order, and the folder is
+   * opened. Each file is a hard link to the download (no second copy on the same drive; a copy when
+   * the drives differ). The folder's .airwave-list.json names what the app put there, so opening the
+   * list again replaces only those and leaves anything the owner added.
+   */
+  function openList(req) {
+    const name = safeName(String(req.name || 'Now playing queue')).slice(0, 80).replace(/^\.+/, '') || 'Now playing queue';
+    const songs = Array.isArray(req.songs) ? req.songs.slice(0, 5000) : [];
+    const root = path.join(saveDir, 'Song lists');
+    const folder = path.join(root, name);
+    if (path.dirname(folder) !== root) throw new Error('Bad list name.');
+    fs.mkdirSync(folder, { recursive: true });
+    const manifest = path.join(folder, '.airwave-list.json');
+    let before = [];
+    try { before = JSON.parse(fs.readFileSync(manifest, 'utf8')).files || []; } catch { /* first time */ }
+    for (const f of before) {
+      if (typeof f === 'string' && f === path.basename(f) && !f.startsWith('.')) {
+        try { fs.rmSync(path.join(folder, f), { force: true }); } catch { /* in use: left as it is */ }
+      }
+    }
+    const files = [];
+    const lines = ['#EXTM3U'];
+    for (const song of songs) {
+      const link = String((song && song.url) || '');
+      if (!urlAllowedFor('yt-dlp', link) && !urlAllowedFor('spotdl', link)) continue;
+      const src = library.get(link) || cachedFile(link);
+      if (!src) continue;
+      const title = String(song.title || 'Song').slice(0, 120);
+      const artist = String(song.artist || '').slice(0, 80);
+      const label = artist ? `${title} - ${artist}` : title;
+      const file = safeName(`${String(files.length + 1).padStart(2, '0')} ${label}`).slice(0, 150) + path.extname(src);
+      const dest = path.join(folder, file);
+      try {
+        try { fs.linkSync(src, dest); } catch (e) { if (e.code === 'EEXIST') { fs.rmSync(dest, { force: true }); fs.linkSync(src, dest); } else fs.copyFileSync(src, dest); }
+      } catch { continue; }
+      files.push(file);
+      lines.push(`#EXTINF:-1,${artist ? `${artist} - ` : ''}${title}`.replace(/[\r\n]/g, ' '), file);
+    }
+    const playlist = `${name}.m3u8`;
+    fs.writeFileSync(path.join(folder, playlist), lines.join('\r\n') + '\r\n', 'utf8');
+    fs.writeFileSync(manifest, JSON.stringify({ files: [...files, playlist] }), 'utf8');
+    if (cfg.openFolder) cfg.openFolder(folder);
+    return { ok: true, held: files.length, total: songs.length, folder };
   }
 
   function shutdown() {

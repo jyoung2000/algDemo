@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
+import { RefreshGlyph } from './icons';
 import { api, ApiError, type Evidence, type IdentifyResponse, type PlaylistSummary, type ResolveResponse, type SearchResponse, type SourceState, type Track } from './api';
 import { Art } from './Art';
 import { SaveMenu } from './SaveMenu';
@@ -52,7 +53,7 @@ type View =
   | { kind: 'loading'; what: 'search' | 'link' }
   | { kind: 'results'; tracks: Track[]; sources: Record<string, SourceState>; query: string; ms: number; lyrics?: LyricPart | undefined }
   | { kind: 'identified'; origin: Origin; tracks: Track[]; query: string; named: number; unplayable: number; heard?: { title: string; artist: string } | undefined }
-  | { kind: 'audio'; phase: AudioPhase; name?: string; elapsed?: number; level?: number; device?: string; quiet?: boolean }
+  | { kind: 'audio'; phase: AudioPhase; name?: string; elapsed?: number; level?: number; device?: string; quiet?: boolean; voice?: boolean }
   | { kind: 'help'; code: HelpCode; origin: Origin; detail?: string | undefined }
   | { kind: 'choice'; res: Extract<ResolveResponse, { kind: 'choice' }> }
   | { kind: 'error'; message: string };
@@ -74,6 +75,8 @@ const isAbort = (e: unknown): boolean => (e as { name?: string } | null)?.name =
 const offline = (): boolean => typeof navigator !== 'undefined' && navigator.onLine === false;
 // Loaded on first use of File or Mic, so the fingerprint code stays out of the startup bundle.
 const listen = () => import('./engine/listen');
+// VOICE-SEARCH-001: speech to text for the same mic, loaded only when the mic is used.
+const speech = () => import('./engine/speech');
 
 /**
  * Whether the words are enough to ask Genius while the person is still typing. One word matches half the
@@ -262,6 +265,44 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
     }
   };
 
+  /**
+   * VOICE-SEARCH-001. Owner: "a user should be able to search via song name or song lyric" with the
+   * same mic. One tap does both (owner's choice): the clip is fingerprinted for music playing and
+   * written down for speech at the same time. A fingerprint match wins; otherwise the words go into the
+   * search box and run as an ordinary search, which asks for titles and lyrics together. A name is
+   * often said in under 3 seconds, too short to fingerprint, so a short clip is only written down.
+   */
+  const listenAndSearch = async (samples: Float32Array, c: AbortController) => {
+    const L = await listen();
+    const S = await speech();
+    if (c.signal.aborted) return;
+    setView({ kind: 'audio', phase: 'analysing', voice: true });
+    const words = S.transcribe(samples, c.signal).then(S.queryFromSpeech, () => '');
+    const music = samples.length >= MIN_CLIP_S * L.SAMPLE_RATE && !offline();
+    if (music) {
+      try {
+        const sig = await L.makeSignature(L.pickWindow(samples), c.signal);
+        if (c.signal.aborted) return;
+        if (L.peakCount(sig) >= 20) {
+          const r = await api.identifyAudio(L.signatureUri(sig), L.signatureMillis(sig), c.signal);
+          if (c.signal.aborted) return;
+          if (r.results.length) return showIdentified(r, 'audio');
+        }
+      } catch (e) {
+        if (c.signal.aborted || isAbort(e)) return;
+        // Shazam failing must not lose what was said: fall through to the words.
+      }
+    }
+    const said = await words;
+    if (c.signal.aborted) return;
+    if (said) {
+      setQ(said);
+      return void run(said);
+    }
+    // Nothing said: what the mic always did.
+    await identify(samples, c);
+  };
+
   /** Fingerprint on the device, then ask Shazam about the fingerprint only. */
   const identify = async (samples: Float32Array, c: AbortController) => {
     const L = await listen();
@@ -295,6 +336,7 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
     setView({ kind: 'audio', phase: 'permission' });
     try {
       const L = await listen();
+      void speech().then((S) => S.prepareSpeech());
       let loudest = 0;
       const r = await L.recordMic((elapsed, level) => {
         loudest = Math.max(loudest, level);
@@ -317,7 +359,7 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
       setView({ kind: 'audio', phase: 'listening', elapsed: 0, level: 0, device: r.device });
       const samples = await r.done;
       rec.current = null;
-      await identify(samples, c);
+      await listenAndSearch(samples, c);
     } catch (e) {
       rec.current = null;
       captureFailed(e, c, 'mic');
@@ -475,7 +517,7 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
             <button ref={fileBtn} className="find__act find__act--file" type="button" disabled={busyAudio} onClick={() => fileInput.current?.click()} aria-label="Identify a song from an audio file" title="Identify a song from an audio file">
               <FolderGlyph />
             </button>
-            <button ref={micBtn} className="find__act find__act--mic" type="button" disabled={busyAudio} onClick={() => void startMic()} aria-label="Identify a song with the microphone" title="Identify a song with the microphone">
+            <button ref={micBtn} className="find__act find__act--mic" type="button" disabled={busyAudio} onClick={() => void startMic()} aria-label="Search by voice: say a song name or lyrics, or let it hear the song" title="Search by voice: say a song name or lyrics, or let it hear the song">
               <MicGlyph />
             </button>
           </span>
@@ -517,10 +559,12 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
                 {view.phase === 'permission'
                   ? 'Waiting for microphone permission…'
                   : view.phase === 'listening'
-                    ? 'Listening. Stops after 12 seconds.'
+                    ? 'Listening. Say a song name or lyrics, or let it hear the song. Stops after 12 seconds.'
                     : view.phase === 'reading'
                       ? `Reading “${view.name ?? 'your file'}”…`
-                      : 'Identifying your clip…'}
+                      : view.voice
+                        ? 'Working out what you said or what is playing…'
+                        : 'Identifying your clip…'}
               </p>
               {view.phase === 'listening' && (
                 <span className="listen__bars" ref={bars} aria-hidden="true">
@@ -549,7 +593,7 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
             </div>
             <span className="listen__actions">
               {view.phase === 'listening' && (
-                <button ref={stopBtn} className="push push--default" type="button" onClick={() => rec.current?.stop()} aria-label="Stop listening and identify">
+                <button ref={stopBtn} className="push push--default" type="button" onClick={() => rec.current?.stop()} aria-label="Stop listening and search">
                   Stop
                 </button>
               )}
@@ -846,7 +890,7 @@ function RefreshSources({ onRefresh, refreshing }: { onRefresh: () => void; refr
       aria-label="Refresh sources"
       title="Ask every source again"
     >
-      <Glyph name="refresh" size={14} />
+      <RefreshGlyph size={16} />
     </button>
   );
 }

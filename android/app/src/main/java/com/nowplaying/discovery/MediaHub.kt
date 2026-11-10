@@ -88,7 +88,10 @@ object MediaHub {
   /** Set by [MainActivity] to forward a native transport command into the page's command handler. */
   @Volatile private var sink: ((JSONObject) -> Unit)? = null
 
-  fun setCommandSink(s: (JSONObject) -> Unit) { sink = s }
+  /** True once the page behind the current command sink has pushed its first state: it can answer. */
+  @Volatile var pageAnswering: Boolean = false; private set
+
+  fun setCommandSink(s: (JSONObject) -> Unit) { sink = s; pageAnswering = false }
   fun clearCommandSink(s: (JSONObject) -> Unit) {
     if (sink !== s) return
     sink = null
@@ -107,6 +110,7 @@ object MediaHub {
 
   /** Replace the snapshot from a page push and wake the session on the main thread. */
   fun apply(json: JSONObject) {
+    pageAnswering = true
     json.optJSONObject("state")?.let { state = parseState(it) }
     json.optJSONObject("library")?.let { lib ->
       lib.optJSONArray("songs")?.let { songs = parseSongs(it) }

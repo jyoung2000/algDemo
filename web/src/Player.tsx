@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
+import { ShuffleGlyph } from './icons';
 import { api, type Playback, type Track } from './api';
 import { PREVIEW_ROUTE } from './engine/shape';
 import { Art } from './Art';
@@ -757,7 +758,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
         aria-label="Shuffle"
         title={shuffle ? 'Shuffle is on: songs play in a random order' : 'Shuffle is off'}
       >
-        <Glyph name="shuffle" size={16} />
+        <ShuffleGlyph size={16} />
       </button>
       <button className="tbtn" type="button" onClick={onPrev} disabled={!canPrev} aria-label="Previous song">
         <Glyph name="previous" size={16} />

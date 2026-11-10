@@ -171,6 +171,12 @@ export const dl = {
   cancel: (id: string) => call<{ ok: boolean }>({ op: 'cancel', id }),
   forget: (id: string) => call<{ ok: boolean }>({ op: 'forget', id }),
   reveal: (id: string) => call<{ ok: boolean }>({ op: 'reveal', id }),
+  /**
+   * LIST-FOLDER-001: lay a list's downloaded songs out in one folder named after it, numbered in play
+   * order, and open that folder in the system's file manager. `held` is how many songs it holds.
+   */
+  openList: (name: string, songs: { url: string; title: string; artist: string }[]) =>
+    call<{ ok: boolean; held: number; total: number; folder?: string }>({ op: 'open-list', name, songs }, 120_000),
   /** Whether the shell holds a finished download for a link (indexed by link, kept across restarts), or is fetching it. */
   /** `kept` is a permanent Music-folder copy; `cached` is the evictable queue cache. `file` is either. */
   local: (url: string) => call<{ file: DlFile | null; kept?: boolean; cached?: boolean; running: boolean; error?: string | null }>({ op: 'local', url }),

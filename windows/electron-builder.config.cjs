@@ -33,6 +33,8 @@ module.exports = {
   extraResources: [
     { from: '../web/dist', to: 'web', filter: ['**/*'] },
     { from: '../.data/models', to: 'models', filter: ['model_epoch_36.onnx', 'model_epoch_36.onnx.data'] },
+    // VOICE-SEARCH-001: speech to text for the search bar's mic (Whisper tiny.en, Apache-2.0).
+    { from: '../.data/models/whisper-tiny.en', to: 'models/whisper-tiny.en', filter: ['encoder_model_quantized.onnx', 'decoder_model_quantized.onnx', 'vocab.json', 'generation_config.json'] },
     { from: '../docs/LICENSES.md', to: 'web/licenses/LICENSES.md' },
     // The downloaders, run as separate programs by downloads.cjs: yt-dlp, spotDL and ffmpeg.
     { from: '../.data/tools', to: 'tools', filter: ['yt-dlp.exe', 'spotdl.exe', 'ffmpeg.exe'] },

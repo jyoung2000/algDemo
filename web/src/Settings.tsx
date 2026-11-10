@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
+import { ProviderMark } from '@now-playing/aqua-ui/icons';
+import { RefreshGlyph } from './icons';
 import { api, type Health, type Settings as S, type Status } from './api';
 import { parseHistoryFile, type ImportSummary } from './engine/import';
 import { MicSettings } from './MicSettings';
@@ -372,7 +373,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, sour
               title="Put the app back to how it shipped. Songs kept in your Music folder stay."
               onClick={() => (setConfirmTaste(false), setConfirm(true))}
             >
-              <Glyph name="refresh" size={13} /> Reset the app to defaults
+              <RefreshGlyph size={13} /> Reset the app to defaults
             </button>
           )}
         </div>

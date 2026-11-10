@@ -59,6 +59,8 @@ const dl = () =>
       return result.filePaths[0];
     },
     reveal: (file) => shell.showItemInFolder(file),
+    // LIST-FOLDER-001: the folder a song list was laid out in, opened in Explorer.
+    openFolder: (folder) => void shell.openPath(folder),
   }));
 
 const trusted = (event) => event.sender === win?.webContents && event.senderFrame === event.sender.mainFrame && (() => {

@@ -105,6 +105,46 @@ class MainActivity : Activity() {
     Downloads.warmUp(this) // unpacks yt-dlp, Python and ffmpeg in the background
     open()
     startNativeSession()
+    playFromSearch(intent)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    playFromSearch(intent)
+  }
+
+  /**
+   * VOICE-SEARCH-001: "Play <song> on Airwave Discovery" from Google Assistant (MEDIA_PLAY_FROM_SEARCH,
+   * which Android Auto's voice actions also require the app to declare). The words go through the
+   * session's own play-from-search path, the one Android Auto's voice requests take: the catalogue
+   * search with titles and lyrics, then the best match plays. A request with no words resumes. It
+   * waits for the page to answer, since the catalogue search runs there.
+   */
+  private fun playFromSearch(intent: Intent?) {
+    if (intent?.action != android.provider.MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH) return
+    val query = intent.getStringExtra(android.app.SearchManager.QUERY).orEmpty().trim().take(200)
+    intent.action = null // handled once, not again when the Activity is recreated
+    val f = mediaControllerFuture ?: return
+    val go = Runnable {
+      val c = runCatching { f.get() }.getOrNull() ?: return@Runnable
+      if (query.isEmpty()) { c.play(); return@Runnable }
+      val item = androidx.media3.common.MediaItem.Builder()
+        .setMediaId("search:$query")
+        .setRequestMetadata(androidx.media3.common.MediaItem.RequestMetadata.Builder().setSearchQuery(query).build())
+        .build()
+      c.setMediaItem(item)
+      c.prepare()
+      c.play()
+    }
+    val main = ContextCompat.getMainExecutor(this)
+    if (MediaHub.pageAnswering) { f.addListener(go, main); return }
+    var done = false
+    lateinit var ready: () -> Unit
+    val once = Runnable { if (!done) { done = true; MediaHub.removeListener(ready); f.addListener(go, main) } }
+    ready = { if (MediaHub.pageAnswering) root.post(once) }
+    MediaHub.addListener(ready)
+    root.postDelayed(once, 20_000)
   }
 
   /**

@@ -15,6 +15,8 @@ val syncWebAssets by tasks.registering(Sync::class) {
   from(modelDir) {
     into("web/models")
     include("model_epoch_36.onnx", "model_epoch_36.onnx.data")
+    // VOICE-SEARCH-001: speech to text for the search bar's mic (Whisper tiny.en, Apache-2.0).
+    include("whisper-tiny.en/encoder_model_quantized.onnx", "whisper-tiny.en/decoder_model_quantized.onnx", "whisper-tiny.en/vocab.json", "whisper-tiny.en/generation_config.json")
   }
   from(layout.projectDirectory.dir("../../docs")) {
     into("web/licenses")
@@ -24,6 +26,7 @@ val syncWebAssets by tasks.registering(Sync::class) {
   doFirst {
     check(webDist.file("index.html").asFile.exists()) { "Build the web app first: pnpm --dir discovery-demo/web build" }
     check(modelDir.file("model_epoch_36.onnx.data").asFile.exists()) { "The audio model is missing from discovery-demo/.data/models" }
+    check(modelDir.file("whisper-tiny.en/decoder_model_quantized.onnx").asFile.exists()) { "The speech model is missing from discovery-demo/.data/models/whisper-tiny.en (see docs/LICENSES.md)" }
   }
 }
 
@@ -43,8 +46,8 @@ android {
     applicationId = "com.nowplaying.discovery"
     minSdk = 26
     targetSdk = 35
-    versionCode = 36
-    versionName = "0.12.9"
+    versionCode = 37
+    versionName = "0.13.0"
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     // The embedded Python, yt-dlp and ffmpeg ship per CPU. Phones are arm64; the emulator is x86_64.
     ndk { abiFilters += listOf("arm64-v8a", "x86_64") }

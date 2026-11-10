@@ -59,3 +59,32 @@ it('does not cancel the visible query when the car concurrently refreshes anothe
   expect(refresh[0]?.id).toBe('Wallpaper');
   expect(search).toHaveBeenCalledTimes(2);
 });
+
+/**
+ * VOICE-SEARCH-001 in the car. Owner: "a user should be able to search via song name or song lyric and
+ * have this work on android, android auto, and windows". The car's search box and "play ..." voice
+ * requests ask for titles and lyrics together, as the phone's search box does: title matches first,
+ * then songs whose words match, never the same song twice.
+ */
+it('answers a car search with title matches, then the songs whose lyrics match', async () => {
+  const lyric = { ...track, key: 'catalog:lyric', title: 'Bohemian Rhapsody', artist: 'Queen' } as Track;
+  const search = vi.fn().mockResolvedValue(response([track]));
+  const lyrics = vi.fn().mockResolvedValue({ results: [lyric, track], query: 'is this the real life', named: 1, unplayable: 0 });
+  const catalog = new CarCatalog(search, () => false, lyrics);
+  const songs = await catalog.search('is this the real life');
+  expect(lyrics).toHaveBeenCalledWith('is this the real life');
+  expect(songs.map((s) => s.id)).toEqual(['catalog:one', 'catalog:lyric']);
+  expect(catalog.find('catalog:lyric')).toBe(lyric);
+});
+
+it('still answers with title matches when the lyrics service fails', async () => {
+  const catalog = new CarCatalog(vi.fn().mockResolvedValue(response([track])), () => false, vi.fn().mockRejectedValue(new Error('busy')));
+  expect((await catalog.search('Wallpaper')).map((s) => s.id)).toEqual(['catalog:one']);
+});
+
+it('finds a song by its lyrics alone when no title matches', async () => {
+  const lyric = { ...track, key: 'catalog:lyric', title: 'Bohemian Rhapsody', artist: 'Queen' } as Track;
+  const none = { results: [], sources: { deezer: { state: 'ok', count: 0 } }, ms: 0, bytes: 0 };
+  const catalog = new CarCatalog(vi.fn().mockResolvedValue(none), () => false, vi.fn().mockResolvedValue({ results: [lyric], query: 'x', named: 1, unplayable: 0 }));
+  expect((await catalog.search('is this the real life')).map((s) => s.id)).toEqual(['catalog:lyric']);
+});

@@ -11,7 +11,7 @@ import { listMixNote } from './list-mix-note';
 import { ProfileView } from './Profile';
 import { SavedView } from './SavedView';
 import { QueuePreparation } from './QueuePreparation';
-import { ListDownloadBar, ListDownloadButton } from './ListDownloadBar';
+import { ListDownloadBar, ListDownloadButton, ListFolderButton } from './ListDownloadBar';
 import { useCardCache } from './useCardCache';
 import { useKeptKeys } from './useKeptKeys';
 import { savedTracks, playbackRows, preparationTracks, contextRows, addTargetOf, addedRow, insertAfter, SEARCH_CONTEXT } from './engine/queue-context';
@@ -119,7 +119,7 @@ export function App() {
   // PLAYLIST-MIX-001: that list's own listening mix.
   const [listMix, setListMix] = useState<PlaylistMix | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
-  const [carCatalog] = useState(() => new CarCatalog(api.search, track => queueAudio.isReady(track)));
+  const [carCatalog] = useState(() => new CarCatalog(api.search, track => queueAudio.isReady(track), api.searchLyrics));
 
   // ---------------------------------------------------------------- load persisted state
   useEffect(() => {
@@ -943,6 +943,7 @@ export function App() {
                          siblings wrapped onto separate lines, because .push takes margin-left:auto. */
                       <div className="queue__actions">
                         <ListDownloadButton tracks={queueTracks} label="now playing queue" />
+                        <ListFolderButton tracks={queueTracks} name={queueList?.name ?? 'Now playing queue'} label="the now playing queue" />
                         {/* CLEAR-ICON-001: the same icon-button shape as the download action beside it, so the
                             pair reads as one set of list controls rather than two unrelated widgets. */}
                         <button className="iconbtn" type="button" aria-label="Clear now playing queue" title="Clear now playing queue. Your listening history and settings are kept." onClick={clearList}>
@@ -1007,6 +1008,7 @@ export function App() {
                     {/* LIST-METER-003: same pairing on the seeds-only header. */}
                     <div className="queue__actions">
                       <ListDownloadButton tracks={queueTracks} label="now playing queue" />
+                      <ListFolderButton tracks={queueTracks} name={queueList?.name ?? 'Now playing queue'} label="the now playing queue" />
                       {/* CLEAR-ICON-001: matches the download icon beside it. */}
                       <button className="iconbtn" type="button" aria-label="Clear now playing queue" title="Clear now playing queue. Your listening history and settings are kept." onClick={clearList}>
                         <Glyph name="clear" size={14} />

@@ -3,7 +3,7 @@ import { Glyph } from '@now-playing/aqua-ui/icons';
 
 import { api, type PlaylistMix, type PlaylistSummary, type SavedItem, type Track } from './api';
 import { Art } from './Art';
-import { ListDownloadBar } from './ListDownloadBar';
+import { ListDownloadBar, ListFolderButton } from './ListDownloadBar';
 import { SaveMenu } from './SaveMenu';
 import { SoundCard } from './SoundCard';
 import { listMixNote } from './list-mix-note';
@@ -255,6 +255,7 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
                   </button>
                 )
               )}
+              {current.count > 0 && <ListFolderButton tracks={rows.map((r) => r.track)} name={current.name} label={`“${current.name}”`} />}
               <button className="linkbtn" type="button" onClick={() => { setRenaming(true); setName(current.name); setError(null); }}>
                 Rename
               </button>
