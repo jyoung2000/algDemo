@@ -163,11 +163,13 @@ describe('opening an album (ALBUM-OPEN-001)', () => {
     const { albums } = albumsWith({ 'api.deezer.com/album/498395131': DZ_ALBUM });
     const a = await albums.open('dz:498395131');
     expect([a.title, a.artist, a.kind, a.year, a.count]).toEqual(['A Great Chaos', 'Ken Carson', 'album', '2023', 3]);
-    // The unreadable song is left out: no service here can play it.
-    expect(a.tracks.map((t) => t.title)).toEqual(['Green Room', 'Jennifer\u2019s Body']);
+    // ALBUM-ALL-SONGS-001: every song on the album loads, including one Deezer cannot stream in this
+    // region ("readable: false"): the player finds the full song on YouTube Music, SoundCloud and the rest.
+    expect(a.tracks.map((t) => t.title)).toEqual(['Green Room', 'Jennifer\u2019s Body', 'Fighting My Demons']);
+    expect(a.tracks.length).toBe(a.count);
     expect(a.tracks[0]).toMatchObject({ album: 'A Great Chaos', album_id: '498395131', artists: ['Ken Carson'], provider: 'deezer' });
     expect(a.tracks[0]!.tags.map((t) => t.name)).not.toHaveLength(0);
-    expect(a.duration).toBe(338);
+    expect(a.duration).toBe(520);
   });
 
   it('opens an Apple album in disc and track order', async () => {

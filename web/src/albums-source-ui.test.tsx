@@ -68,3 +68,14 @@ it('says a SoundCloud set by someone else is a fan upload, in plain words', asyn
   await act(async () => undefined);
   expect(host.querySelector('.album__src')?.textContent?.trim()).toBe('Fan upload on SoundCloud');
 });
+
+it('lays the album row’s line out as text, so it wraps between words, not into columns', async () => {
+  // .track__meta is a flex row elsewhere; there the service name became its own column at 320 px
+  // and "30 songs" split across lines (served-surface gate, 2026-11-10).
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(`${process.cwd()}/src/styles.css`, 'utf8').replace(/\r/g, '');
+  const rule = /\.album-row \.track__meta \{([^}]*)\}/.exec(css)?.[1] ?? '';
+  expect(rule).toMatch(/display: block;/);
+  expect(rule).toMatch(/white-space: normal;/);
+  expect(/\.album-row__src \{([^}]*)\}/.exec(css)?.[1]).toMatch(/white-space: nowrap;/);
+});

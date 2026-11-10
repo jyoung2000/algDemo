@@ -3726,6 +3726,7 @@ html {
 }
 /* ALBUM-SEARCH-002: the line naming the service wraps on a phone instead of losing the service. */
 .album-row .track__meta {
+  display: block;
   white-space: normal;
   overflow: visible;
   text-overflow: clip;

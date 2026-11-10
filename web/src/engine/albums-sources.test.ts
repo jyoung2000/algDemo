@@ -218,12 +218,18 @@ describe('opening YouTube Music and SoundCloud albums', () => {
     expect([a.title, a.artist, a.count, a.year]).toEqual(['A Great Chaos (Deluxe)', 'Ken Carson', 25, '2024']);
   });
 
-  it('leaves out a song the uploader allows only as a preview, so the album never plays a 30-second clip', async () => {
+  it('keeps a song the uploader allows only as a preview, at its real length and with no SoundCloud link, so the full song is found elsewhere and the 30-second clip never plays (ALBUM-ALL-SONGS-001)', async () => {
     const album = structuredClone(SC_ALBUM);
-    album.tracks[1].policy = 'SNIP';
+    Object.assign(album.tracks[1], { policy: 'SNIP', duration: 30000, full_duration: 158563 });
     const { albums } = world({ 'api-v2.soundcloud.com/playlists/1843556490': album, 'api-v2.soundcloud.com/tracks': SC_IDS });
     const a = await albums.open('sc:1843556490');
-    expect(a.tracks.map((t) => t.title)).toEqual(['Green Room', 'Hardcore', 'Me N My Kup']);
+    expect(a.tracks.map((t) => t.title)).toEqual(['Green Room', 'Jennifer\u2019s Body', 'Hardcore', 'Me N My Kup']);
+    const snip = a.tracks[1]!;
+    expect(snip.duration).toBe(159);
+    expect(snip.url).toBe('');
+    expect(snip).toMatchObject({ album: 'A Great Chaos (Deluxe)', album_id: 'sc:1843556490' });
+    // A song SoundCloud plays whole keeps its own link.
+    expect(a.tracks[0]!.url).toMatch(/^https:\/\/soundcloud\.com\//);
   });
 
   it('refuses ids it did not make', async () => {

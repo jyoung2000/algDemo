@@ -379,7 +379,8 @@ export class Albums {
   private openSc(sid: string, c: Ctx): Promise<AlbumView> {
     const sc = this.sc;
     if (!sc) return Promise.reject(new ProviderError('SoundCloud is not available here.'));
-    return cached(this.store, `sc:albumview:${sid}`, 'album', 7 * DAY, async () => {
+    // v2: views cached before ALBUM-ALL-SONGS-001 left out preview-only songs.
+    return cached(this.store, `sc:albumview2:${sid}`, 'album', 7 * DAY, async () => {
       const d = await sc.api(`/playlists/${sid}?representation=full`, c);
       if (!d || d['kind'] !== 'playlist') throw new ProviderError('SoundCloud has no album with that id.');
       const rows = ((d['tracks'] as Json[] | undefined) ?? []).filter((t) => t && t['id']);
@@ -391,17 +392,25 @@ export class Albums {
         for (const t of (Array.isArray(got) ? got : []) as Json[]) if (t?.['id']) full.set(String(t['id']), t);
       }
       const s = scSummary(d);
-      // Songs the uploader made previews-only (SNIP) cannot be played whole here, so they are left out.
+      // ALBUM-ALL-SONGS-001: every song on the album loads. One SoundCloud only offers as a 30-second
+      // preview (SNIP) or not at all here (BLOCK) keeps its real length and loses its SoundCloud link,
+      // so the player finds the full song elsewhere and can never fall back to the clip.
       const tracks = rows
         .map((r) => full.get(String(r['id'])))
-        .filter((t): t is Json => !!t && t['policy'] !== 'SNIP' && t['policy'] !== 'BLOCK')
-        .map((t) => ({ ...sc.toTrack(t), album: s.title, album_id: s.id }) as Track);
+        .filter((t): t is Json => !!t && !!t['title'])
+        .map((t) => {
+          const track = { ...sc.toTrack(t), album: s.title, album_id: s.id } as Track;
+          if (t['policy'] !== 'SNIP' && t['policy'] !== 'BLOCK') return track;
+          const whole = Number(t['full_duration']);
+          return { ...track, url: '', duration: whole > 0 ? Math.round(whole / 1000) : track.duration } as Track;
+        });
       return { ...s, count: s.count ?? tracks.length, tracks, duration: sumDuration(tracks), genres: d['genre'] ? [String(d['genre'])] : [] };
     });
   }
 
   private openDeezer(aid: string, c: Ctx): Promise<AlbumView> {
-    return cached(this.store, `dz:albumview:${aid}`, 'album', 7 * DAY, async () => {
+    // v2: views cached before ALBUM-ALL-SONGS-001 left out songs Deezer cannot stream here.
+    return cached(this.store, `dz:albumview2:${aid}`, 'album', 7 * DAY, async () => {
       const d = await this.get(`${DZ}/album/${aid}`, c, 'metadata', 1_500_000);
       let rows = ((d['tracks']?.['data'] as Json[] | undefined) ?? []);
       if (typeof d['nb_tracks'] === 'number' && d['nb_tracks'] > rows.length) {
@@ -409,7 +418,9 @@ export class Albums {
         rows = (more['data'] as Json[] | undefined) ?? rows;
       }
       const alb = { id: d['id'], title: d['title'], cover_medium: d['cover_medium'], release_date: d['release_date'], genres: d['genres'] };
-      const tracks = rows.filter((x) => x['readable'] ?? true).map((x) => this.dz.toTrack(x, alb));
+      // ALBUM-ALL-SONGS-001: every song on the album, even one Deezer cannot stream in this region;
+      // the player finds the full song elsewhere, as for any search result.
+      const tracks = rows.filter((x) => x && x['title']).map((x) => this.dz.toTrack(x, alb));
       const title = String(d['title'] ?? '');
       const count = typeof d['nb_tracks'] === 'number' ? d['nb_tracks'] : tracks.length;
       return {
