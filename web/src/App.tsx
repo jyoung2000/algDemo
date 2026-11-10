@@ -808,6 +808,7 @@ export function App() {
                 seeds={seeds}
                 onAdd={onAdd}
                 onPreview={playFromSearch}
+                onOpenSettings={() => setTab('settings')}
                 onQueueAdd={addToListening}
                 addLabel={addLabel}
                 addedKeys={addedKeys}

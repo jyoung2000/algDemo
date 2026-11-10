@@ -33,6 +33,8 @@ interface LikeProps {
 type PlayFrom = (t: Track, list: Track[]) => void;
 
 interface Props extends LikeProps {
+  /** SRC-BUDGET-001: opens Settings, where the daily download allowance is set. */
+  onOpenSettings?: (() => void) | undefined;
   seeds: Track[];
   onAdd: (t: Track) => void;
   onPreview: PlayFrom;
@@ -118,7 +120,7 @@ function useNarrow(): boolean {
  *  - File / Mic: up to 12 s is fingerprinted on the device; only the fingerprint goes to Shazam.
  * A newer request aborts the older one. Searching or identifying is never a preference signal: only Add makes a starting song.
  */
-export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys }: Props) {
+export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys, onOpenSettings }: Props) {
   const [saving, setSaving] = useState<string | null>(null);
   const likeProps: LikeProps = { onLike, onRemoveSeed, lists, onLists, saving, onSaving: setSaving, onQueueAdd, addLabel, addedKeys };
   const [q, setQ] = useState('');
@@ -587,7 +589,7 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
           </div>
         )}
         {view.kind === 'results' && (
-          <ResultsView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} onRefresh={() => void run(view.query, false, true)} refreshing={refreshing} />
+          <ResultsView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} onRefresh={() => void run(view.query, false, true)} refreshing={refreshing} onOpenSettings={onOpenSettings} />
         )}
         {view.kind === 'identified' && (
           <IdentifiedView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} />
@@ -600,7 +602,7 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
 const LYRIC_NOTE: Record<string, string> = {
   busy: 'Genius is busy, so lyric matches are missing. Keep typing or press Search to try again.',
   offline: 'No connection for the lyric search.',
-  budget: 'Today’s transfer allowance is used up, so lyrics were not searched.',
+  budget: 'Today’s download allowance is all used up, so lyrics were not searched.',
   refused: 'Genius refused the lyric search.',
 };
 
@@ -622,6 +624,7 @@ function ResultsView({
   addedKeys,
   onRefresh,
   refreshing = false,
+  onOpenSettings,
 }: {
   view: Extract<View, { kind: 'results' }>;
   seedKeys: Set<string>;
@@ -630,16 +633,21 @@ function ResultsView({
   onDownload?: ((t: Track) => void) | undefined;
   onRefresh?: (() => void) | undefined;
   refreshing?: boolean | undefined;
+  onOpenSettings?: (() => void) | undefined;
 } & LikeProps) {
   const lyr = view.lyrics;
   const titleKeys = new Set(view.tracks.map((t) => t.key));
   const lyricTracks = lyr?.state === 'ok' ? lyr.tracks.filter((t) => !titleKeys.has(t.key)) : [];
   const lead = lyricsLead(view.query, lyricTracks.length);
   const common = { seedKeys, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, saving, onSaving, onQueueAdd, addLabel, addedKeys } as const;
+  const spent = Object.values(view.sources).some((x) => x.state === 'budget');
+  // Asking again cannot help when every source that did not answer was refused for the allowance.
+  const canRefresh = !Object.values(view.sources).every((x) => x.state === 'ok' || x.state === 'skipped' || x.state === 'budget') || !spent;
 
   const titles = view.tracks.length ? (
     <div key="titles">
-      <SourceLine sources={view.sources} onRefresh={onRefresh} refreshing={refreshing} />
+      <SourceLine sources={view.sources} onRefresh={canRefresh ? onRefresh : undefined} refreshing={refreshing} />
+      {spent && <BudgetNote onOpenSettings={onOpenSettings} />}
       <TrackList tracks={view.tracks} {...common} label={`Results for ${view.query}`} />
     </div>
   ) : null;
@@ -674,14 +682,20 @@ function ResultsView({
           <Glyph name="info" size={14} /> {LYRIC_NOTE[lyr.code] ?? 'The lyric search failed.'}
         </p>
       )}
-      {none && lyr?.state !== 'pending' && (
+      {none && lyr?.state !== 'pending' && spent && !(lyr?.state === 'ok' && lyr.named > 0) && (
+        <>
+          <p className="state">No songs found for “{view.query}”.</p>
+          <BudgetNote onOpenSettings={onOpenSettings} />
+        </>
+      )}
+      {none && lyr?.state !== 'pending' && !(spent && !(lyr?.state === 'ok' && lyr.named > 0)) && (
         <p className="state">
           {lyr?.state === 'ok' && lyr.named > 0
             ? `No songs found for “${view.query}”. Genius found songs with these words, but none is on a service Airwave plays from.`
             // SRC-WARN-001: which provider was quiet is reported in Settings, not here. The listener
             // still gets the actionable half - an incomplete run is worth retrying.
             : `No songs found for “${view.query}”.${Object.values(view.sources).some((x) => x.state !== 'ok') ? ' The search ran short; try again in a moment.' : ' Try the artist and title together, or a different line of the lyrics.'}`}
-          {onRefresh && Object.values(view.sources).some((x) => x.state !== 'ok') && <RefreshSources onRefresh={onRefresh} refreshing={refreshing} />}
+          {onRefresh && canRefresh && Object.values(view.sources).some((x) => x.state !== 'ok') && <RefreshSources onRefresh={onRefresh} refreshing={refreshing} />}
         </p>
       )}
     </>
@@ -760,7 +774,7 @@ const HELP: Record<HelpCode, { title: string; body: string }> = {
   short: { title: 'That clip was too short.', body: 'Let it listen for at least 3 seconds while the music plays.' },
   busy: { title: 'Shazam is busy.', body: 'Wait a moment, then try again.' },
   offline: { title: 'You are offline.', body: 'Connect to the internet, then try again.' },
-  budget: { title: 'Today’s transfer allowance is used up.', body: 'It resets tomorrow, or raise it in Settings.' },
+  budget: { title: 'Today’s download allowance is all used up.', body: 'It resets tomorrow, or raise it in Settings.' },
   refused: { title: 'Shazam refused the request.', body: 'The service may have changed. Search by title or lyrics instead.' },
   failed: { title: 'Identification failed.', body: 'Try again, or search by title.' },
 };
@@ -837,6 +851,27 @@ function RefreshSources({ onRefresh, refreshing }: { onRefresh: () => void; refr
   );
 }
 
+/**
+ * SRC-BUDGET-001. Owner: say the allowance was all used up. The sources were refused before being asked
+ * because today's download allowance (Settings) is spent; it resets tomorrow.
+ */
+function BudgetNote({ onOpenSettings }: { onOpenSettings?: (() => void) | undefined }) {
+  return (
+    // The button gets its own row: inside the flex .state line it was squeezed beside the text and
+    // its label ran out of the button and off a 390px screen.
+    <div className="budget-note" role="status">
+      <p className="state">
+        <Glyph name="info" size={14} /> Today’s download allowance is all used up, so those sources could not be asked. It resets tomorrow.
+      </p>
+      {onOpenSettings && (
+        <button className="push" type="button" onClick={onOpenSettings} aria-label="Raise the allowance in Settings">
+          Raise the allowance in Settings
+        </button>
+      )}
+    </div>
+  );
+}
+
 function SourceLine({ sources, onRefresh, refreshing = false }: { sources: Record<string, SourceState>; onRefresh?: (() => void) | undefined; refreshing?: boolean }) {
   const entries = Object.entries(sources);
   if (!entries.length) return null;
@@ -846,7 +881,7 @@ function SourceLine({ sources, onRefresh, refreshing = false }: { sources: Recor
         <span key={p} className="srcline__item" title={s.detail ?? ''}>
           <span className={classNames('sdot', s.state === 'ok' ? 'sdot--ok' : s.state === 'skipped' ? '' : 'sdot--warn')} aria-hidden="true" />
           {PROVIDER_LABEL[p] ?? p}
-          {s.state === 'ok' ? ` · ${s.count ?? 0}` : s.state === 'skipped' ? ' · skipped' : ' · unavailable'}
+          {s.state === 'ok' ? ` · ${s.count ?? 0}` : s.state === 'skipped' ? ' · skipped' : s.state === 'budget' ? ' · allowance used up' : ' · unavailable'}
         </span>
   ));
   if (!onRefresh) return <p className="srcline">{items}</p>;

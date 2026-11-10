@@ -125,3 +125,42 @@ it('draws the button as a full 44px target and dims the list on screen while it 
   expect(css).toMatch(/\.is-refreshing \.tracks,\s*\.is-refreshing \.srcline \{\s*opacity: 0\.55/);
   expect(css).not.toMatch(/\.is-refreshing > \.tracks/);
 });
+
+/**
+ * SRC-BUDGET-001. Owner: say the allowance was all used up. Sources refused because today's download
+ * allowance is spent read as such, one line says why and how to change it, and the refresh is not
+ * offered, because asking again cannot help until tomorrow or a higher allowance.
+ */
+it('says the allowance is all used up, offers Settings, and no refresh', async () => {
+  const openSettings = vi.fn();
+  answers.push({ query: 'k', results: [track('a')], sources: { ytmusic: { state: 'budget' }, deezer: { state: 'budget' }, spotify: { state: 'ok', count: 1 } }, ms: 10, bytes: 0 } as unknown as SearchResponse);
+  await act(async () => root.render(<Search seeds={[]} onAdd={() => {}} onPreview={() => {}} onOpenSettings={openSettings} />));
+  await typeAndSearch('Ken Carson');
+  expect(line()).toMatch(/YouTube Music · allowance used up/);
+  expect(line()).toMatch(/Deezer · allowance used up/);
+  expect(line()).toMatch(/Spotify · 1/);
+  expect(host.textContent).toMatch(/Today’s download allowance is all used up/);
+  expect(refresh()).toBeNull();
+  const go = host.querySelector<HTMLButtonElement>('button[aria-label="Raise the allowance in Settings"]')!;
+  expect(go).toBeTruthy();
+  await act(async () => go.click());
+  expect(openSettings).toHaveBeenCalled();
+});
+
+it('still offers the refresh when only some failures are the allowance', async () => {
+  answers.push({ query: 'k', results: [track('a')], sources: { ytmusic: { state: 'budget' }, deezer: { state: 'failed', detail: 'HTTP 503' } }, ms: 10, bytes: 0 } as unknown as SearchResponse);
+  await act(async () => root.render(<Search seeds={[]} onAdd={() => {}} onPreview={() => {}} />));
+  await typeAndSearch('Ken Carson');
+  expect(refresh()).toBeTruthy();
+  expect(host.textContent).toMatch(/all used up/);
+});
+
+it('says the allowance is used up, not "try again", when nothing could be searched', async () => {
+  answers.push({ query: 'k', results: [], sources: { ytmusic: { state: 'budget' }, deezer: { state: 'budget' } }, ms: 10, bytes: 0 } as unknown as SearchResponse);
+  await act(async () => root.render(<Search seeds={[]} onAdd={() => {}} onPreview={() => {}} onOpenSettings={() => {}} />));
+  await typeAndSearch('Ken Carson');
+  expect(host.textContent).toMatch(/Today’s download allowance is all used up/);
+  expect(host.textContent).not.toMatch(/try again in a moment/i);
+  expect(refresh()).toBeNull();
+  expect(host.querySelector('button[aria-label="Raise the allowance in Settings"]')).toBeTruthy();
+});

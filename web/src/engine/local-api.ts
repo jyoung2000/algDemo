@@ -408,7 +408,10 @@ export class LocalApi {
           status[name] = { state: 'ok', count: res.length, ms: Math.trunc(performance.now() - t) };
           return res;
         } catch (e) {
-          status[name] = { state: 'failed', detail: `${(e as Error).name}: ${String((e as Error).message).slice(0, 120)}`, ms: Math.trunc(performance.now() - t) };
+          // SRC-BUDGET-001: refused because the DAY's allowance is spent (not this search's own cap), so
+          // the search line can say the allowance is all used up and not offer a refresh that cannot help.
+          const spent = e instanceof BudgetExceeded && meter.daily - meter.total <= 0;
+          status[name] = { state: spent ? 'budget' : 'failed', detail: `${(e as Error).name}: ${String((e as Error).message).slice(0, 120)}`, ms: Math.trunc(performance.now() - t) };
           return [] as Dict[];
         }
       }),
