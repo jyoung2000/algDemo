@@ -192,7 +192,8 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
     else setView({ kind: 'loading', what });
   };
 
-  const run = async (text: string, live = false) => {
+  /** `force` skips the remembered answer: SRC-REFRESH-001 asks every source again. */
+  const run = async (text: string, live = false, force = false) => {
     const s = text.trim();
     if (!s) {
       cancel();
@@ -202,7 +203,7 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
     const link = looksLikeUrl(s);
     const key = s.toLowerCase().replace(/\s+/g, ' ');
     const hit = cache.current.get(key);
-    if (hit && !link && Date.now() - hit.at < CACHE_MS) {
+    if (hit && !link && !force && Date.now() - hit.at < CACHE_MS) {
       cancel();
       setView(hit.view);
       return;
@@ -586,7 +587,7 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
           </div>
         )}
         {view.kind === 'results' && (
-          <ResultsView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} />
+          <ResultsView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} onRefresh={() => void run(view.query, false, true)} refreshing={refreshing} />
         )}
         {view.kind === 'identified' && (
           <IdentifiedView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} />
@@ -619,12 +620,16 @@ function ResultsView({
   onQueueAdd,
   addLabel,
   addedKeys,
+  onRefresh,
+  refreshing = false,
 }: {
   view: Extract<View, { kind: 'results' }>;
   seedKeys: Set<string>;
   onAdd: (t: Track) => void;
   onPreview: PlayFrom;
   onDownload?: ((t: Track) => void) | undefined;
+  onRefresh?: (() => void) | undefined;
+  refreshing?: boolean | undefined;
 } & LikeProps) {
   const lyr = view.lyrics;
   const titleKeys = new Set(view.tracks.map((t) => t.key));
@@ -634,7 +639,7 @@ function ResultsView({
 
   const titles = view.tracks.length ? (
     <div key="titles">
-      <SourceLine sources={view.sources} />
+      <SourceLine sources={view.sources} onRefresh={onRefresh} refreshing={refreshing} />
       <TrackList tracks={view.tracks} {...common} label={`Results for ${view.query}`} />
     </div>
   ) : null;
@@ -676,6 +681,7 @@ function ResultsView({
             // SRC-WARN-001: which provider was quiet is reported in Settings, not here. The listener
             // still gets the actionable half - an incomplete run is worth retrying.
             : `No songs found for “${view.query}”.${Object.values(view.sources).some((x) => x.state !== 'ok') ? ' The search ran short; try again in a moment.' : ' Try the artist and title together, or a different line of the lyrics.'}`}
+          {onRefresh && Object.values(view.sources).some((x) => x.state !== 'ok') && <RefreshSources onRefresh={onRefresh} refreshing={refreshing} />}
         </p>
       )}
     </>
@@ -810,7 +816,28 @@ function MicGlyph({ size = 18 }: { size?: number }) {
   );
 }
 
-function SourceLine({ sources }: { sources: Record<string, SourceState> }) {
+/**
+ * SRC-REFRESH-001: ask every source again, now, for the words on screen. A source shown as unavailable
+ * only failed that one request, and the search remembers an answer for five minutes, so retyping the
+ * words showed the same failure. The list stays, dimmed, until the new answer lands.
+ */
+function RefreshSources({ onRefresh, refreshing }: { onRefresh: () => void; refreshing: boolean }) {
+  return (
+    <button
+      className={classNames('iconbtn', 'srcline__refresh', refreshing && 'is-busy')}
+      type="button"
+      onClick={onRefresh}
+      disabled={refreshing}
+      aria-busy={refreshing}
+      aria-label="Refresh sources"
+      title="Ask every source again"
+    >
+      <Glyph name="refresh" size={14} />
+    </button>
+  );
+}
+
+function SourceLine({ sources, onRefresh, refreshing = false }: { sources: Record<string, SourceState>; onRefresh?: (() => void) | undefined; refreshing?: boolean }) {
   const entries = Object.entries(sources);
   if (!entries.length) return null;
   return (
@@ -822,6 +849,7 @@ function SourceLine({ sources }: { sources: Record<string, SourceState> }) {
           {s.state === 'ok' ? ` · ${s.count ?? 0}` : s.state === 'skipped' ? ' · skipped' : ' · unavailable'}
         </span>
       ))}
+      {onRefresh && <RefreshSources onRefresh={onRefresh} refreshing={refreshing} />}
     </p>
   );
 }

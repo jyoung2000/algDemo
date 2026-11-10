@@ -234,13 +234,14 @@ body {
 .state--bad {
   color: var(--danger);
 }
-/* A newer answer is on its way: the list on screen is the last one, so it stays and only softens. No layout change. */
-.is-refreshing > .tracks,
-.is-refreshing > .srcline {
+/* A newer answer is on its way: the list on screen is the last one, so it stays and only softens. No layout change.
+   Descendant, not child: the title results sit in their own wrapper, and a child selector never matched them. */
+.is-refreshing .tracks,
+.is-refreshing .srcline {
   opacity: 0.55;
   transition: opacity 120ms ease;
 }
-.is-refreshing > .tracks {
+.is-refreshing .tracks {
   pointer-events: none;
 }
 .empty {
@@ -758,6 +759,40 @@ a.push {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+}
+/* SRC-REFRESH-001: the quick refresh sits at the end of the source line, a full 44px target. */
+.srcline {
+  align-items: center;
+}
+.srcline__refresh {
+  /* A 36px circle in a 44px box, as the rows' buttons are drawn, so the target is real both ways. */
+  box-sizing: content-box;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 4px solid transparent;
+  background-clip: content-box;
+  box-shadow: inset 0 0 0 1px var(--hair);
+  margin-left: auto;
+  /* Clear of the results box below, which it otherwise nearly touches. */
+  margin-bottom: 4px;
+}
+.state > .srcline__refresh {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.srcline__refresh.is-busy svg {
+  animation: srcline-spin 900ms linear infinite;
+}
+@keyframes srcline-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .srcline__refresh.is-busy svg {
+    animation: none;
+  }
 }
 .choice {
   margin-top: 12px;
