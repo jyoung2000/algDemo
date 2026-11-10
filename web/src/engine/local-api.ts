@@ -16,6 +16,7 @@ import {
   deletePlaylist,
   parsePlaylists,
   playlistFullyPlayed,
+  saveAlbum,
   playlistsHolding,
   removeFromPlaylists,
   renamePlaylist,
@@ -51,6 +52,7 @@ import { Job, Pipeline, pmap, type Embedder } from './pipeline';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
 import { Albums } from './albums';
+import { albumKeyOf } from './album-key';
 import { SoundCloud } from './soundcloud';
 import { Bandcamp } from './bandcamp';
 import { Audius } from './audius';
@@ -143,7 +145,6 @@ function withAlbumOf(t: Dict, from: Dict | undefined): Dict {
   for (const f of ALBUM_FIELDS) if ((out[f] === undefined || out[f] === null || out[f] === '') && from[f]) out[f] = from[f];
   return out;
 }
-const LIST_TRACKS_MAX = 3000;
 const QUEUE_SAVED_KEY = 'queue_saved';
 const SEED_CURSOR_KEY = 'seed_cursor';
 const CAPS = ['search', 'resolve_link', 'related_candidates', 'artist_candidates', 'recent_candidates', 'playback_link'];
@@ -915,7 +916,7 @@ export class LocalApi {
       job.phase = 'gathering';
       job.progress = 'Asking the music services for related songs';
       // Feedback and impressions are ready before gathering so the first wave can be scored honestly.
-      const fb = settings['rank_v2'] !== false ? E.buildFeedback2(this.store.feedback() as never, unixNow(), cfg) : E.buildFeedback(this.store.feedback() as never, unixNow(), cfg);
+      const fb = settings['rank_v2'] !== false ? E.withSavedAlbums(E.buildFeedback2(this.store.feedback() as never, unixNow(), cfg), this.savedAlbumKeys()) : E.buildFeedback(this.store.feedback() as never, unixNow(), cfg);
       const imps = this.store.impressions(unixNow() - cfg.exposureWindowDays * 86400);
       const v2 = settings['rank_v2'] !== false;
       const taste = this.taste();
@@ -1116,7 +1117,7 @@ export class LocalApi {
     const ctx: E.Context = {
       ...pool.ctx,
       cfg: { ...cfg, queueSize: Math.max(pool.cands.length, 1) },
-      feedback: v2 ? E.buildFeedback2(this.store.feedback() as never, unixNow(), cfg) : E.buildFeedback(this.store.feedback() as never, unixNow(), cfg),
+      feedback: v2 ? E.withSavedAlbums(E.buildFeedback2(this.store.feedback() as never, unixNow(), cfg), this.savedAlbumKeys()) : E.buildFeedback(this.store.feedback() as never, unixNow(), cfg),
       impressions: this.store.impressions(unixNow() - cfg.exposureWindowDays * 86400),
       taste: this.taste(),
       rankV2: v2,
@@ -1336,6 +1337,7 @@ export class LocalApi {
         count: l.entries.length,
         unplayed: unplayedCount(l, played),
         discovery_ready: playlistFullyPlayed(l, played),
+        album: l.album ?? null,
         items: l.entries.map((e) => ({ key: e.key, added: e.added, track: byKey.get(e.key) ?? null, played: played.has(e.key) })),
       })),
     };
@@ -1343,6 +1345,19 @@ export class LocalApi {
 
   private async savePlaylists(lists: Playlist[]): Promise<void> {
     await this.store.put('playlists', lists);
+    // The copies of songs held for lists are kept exactly as long as some list holds the song.
+    const held = this.store.get<Record<string, Dict>>(LIST_TRACKS_KEY) ?? {};
+    const wanted = new Set(lists.flatMap((l) => l.entries.map((e) => e.key)));
+    const kept = Object.fromEntries(Object.entries(held).filter(([k]) => wanted.has(k)));
+    if (Object.keys(kept).length !== Object.keys(held).length) await this.store.put(LIST_TRACKS_KEY, kept);
+  }
+
+  /** ALBUM-SAVE-001: the saved albums as album-taste keys (primary artist and title, folded). */
+  private savedAlbumKeys(): { key: string; name: string }[] {
+    return this.storedPlaylists().flatMap((l) => {
+      const key = l.album ? albumKeyOf({ album: l.name, artists: [l.album.artist], title: '' }) : null;
+      return key ? [{ key, name: l.name }] : [];
+    });
   }
 
   /** The songs a list was made with, newest kept when the store would grow past its bound. */
@@ -1353,8 +1368,6 @@ export class LocalApi {
       delete held[k];
       held[k] = cleanTrack(t);
     }
-    const keys = Object.keys(held);
-    for (const k of keys.slice(0, Math.max(0, keys.length - LIST_TRACKS_MAX))) delete held[k];
     await this.store.put(LIST_TRACKS_KEY, held);
   }
 
@@ -1379,6 +1392,21 @@ export class LocalApi {
           for (const t of tracks) lists = addToPlaylists(lists, [id], String(t['key']), unixNow());
           await this.rememberListTracks(tracks);
         }
+      } else if (action === 'save_album') {
+        // ALBUM-SAVE-001: keep a whole album in Saved, its songs in album order, found again by its id.
+        const a = (body['album'] && typeof body['album'] === 'object' ? body['album'] : {}) as Dict;
+        const tracks = (Array.isArray(a['tracks']) ? (a['tracks'] as unknown[]) : [])
+          .filter((t): t is Dict => Boolean(t) && typeof t === 'object' && typeof (t as Dict)['key'] === 'string' && Boolean((t as Dict)['key']))
+          .slice(0, PLAYLIST_TRACKS_MAX);
+        const id = typeof a['id'] === 'string' ? a['id'].slice(0, 80) : '';
+        if (!id) return fail(400, 'Which album?');
+        if (!tracks.length) return fail(400, 'None of this album\u2019s songs can be saved.');
+        const str = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
+        lists = saveAlbum(lists, {
+          id, title: a['title'], provider: str(a['provider'], 20) ?? 'deezer', artist: str(a['artist'], 200) ?? '',
+          artwork: str(a['artwork'], 500), year: str(a['year'], 10), kind: str(a['kind'], 20) ?? 'album', url: str(a['url'], 500) ?? '',
+        }, tracks.map((t) => String(t['key'])), unixNow(), newId());
+        await this.rememberListTracks(tracks);
       } else if (action === 'rename') {
         lists = renamePlaylist(lists, ids[0] ?? '', body['name']);
       } else if (action === 'delete') {

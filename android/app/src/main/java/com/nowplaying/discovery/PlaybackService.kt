@@ -106,14 +106,20 @@ class PlaybackService : MediaLibraryService() {
       params: LibraryParams?,
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
       val items: List<MediaItem> = when {
-        parentId == ROOT -> listOf(
+        parentId == ROOT -> listOfNotNull(
           folderItem(FOLDER_SONGS, "Now playing queue", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Your playback queue"),
           folderItem(FOLDER_PLAYLISTS, "Playlists", MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS, "Your saved playlists"),
+          // ALBUM-SAVE-001: saved albums have their own section, shown once one is saved.
+          if (MediaHub.savedAlbums().isNotEmpty()) folderItem(FOLDER_ALBUMS, "Albums", MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS, "Your saved albums") else null,
         )
         parentId == FOLDER_SONGS -> MediaHub.songs.map { songItem(it) }
-        parentId == FOLDER_PLAYLISTS -> MediaHub.playlists.map {
+        parentId == FOLDER_PLAYLISTS -> MediaHub.savedLists().map {
           folderItem("$PLAYLIST_PREFIX${Uri.encode(it.id)}", it.title, MediaMetadata.MEDIA_TYPE_PLAYLIST)
         }
+        parentId == FOLDER_ALBUMS -> MediaHub.savedAlbums().map { albumItem(it) }
+        // ALBUM-CAR-001: an album a car search found, its songs in album order.
+        parentId.startsWith(CAR_ALBUM_PREFIX) && !parentId.contains("/track/") ->
+          MediaHub.catalogAlbum(Uri.decode(parentId.removePrefix(CAR_ALBUM_PREFIX)))?.songs?.map { songItem(it) } ?: emptyList()
         parentId.startsWith(PLAYLIST_PREFIX) -> {
           val listId = Uri.decode(parentId.removePrefix(PLAYLIST_PREFIX))
           MediaHub.playlist(listId)?.songs?.map { songItem(it, playlistTrackId(listId, it.id)) } ?: emptyList()
@@ -132,10 +138,13 @@ class PlaybackService : MediaLibraryService() {
         mediaId == ROOT -> folderItem(ROOT, "Airwave Discovery", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
         mediaId == FOLDER_SONGS -> folderItem(FOLDER_SONGS, "Now playing queue", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Your playback queue")
         mediaId == FOLDER_PLAYLISTS -> folderItem(FOLDER_PLAYLISTS, "Playlists", MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS, "Your saved playlists")
+        mediaId == FOLDER_ALBUMS -> folderItem(FOLDER_ALBUMS, "Albums", MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS, "Your saved albums")
         mediaId.startsWith(PLAYLIST_PREFIX) && mediaId.contains("/track/") ->
           scopedSong(mediaId)?.let { songItem(it, mediaId) }
         mediaId.startsWith(PLAYLIST_PREFIX) ->
-          MediaHub.playlist(Uri.decode(mediaId.removePrefix(PLAYLIST_PREFIX)))?.let { folderItem(mediaId, it.title, MediaMetadata.MEDIA_TYPE_PLAYLIST) }
+          MediaHub.playlist(Uri.decode(mediaId.removePrefix(PLAYLIST_PREFIX)))?.let { if (it.album) albumItem(it) else folderItem(mediaId, it.title, MediaMetadata.MEDIA_TYPE_PLAYLIST) }
+        mediaId.startsWith(CAR_ALBUM_PREFIX) && !mediaId.contains("/track/") ->
+          MediaHub.catalogAlbum(Uri.decode(mediaId.removePrefix(CAR_ALBUM_PREFIX)))?.let { albumItem(it) }
         else -> MediaHub.findSong(mediaId)?.let { songItem(it) }
       }
       return if (item != null) Futures.immediateFuture(LibraryResult.ofItem(item, null))
@@ -152,7 +161,8 @@ class PlaybackService : MediaLibraryService() {
       // Notify on BOTH success and failure; otherwise an offline/timeout query spins forever.
       Futures.addCallback(MediaHub.searchCatalog(query), object : FutureCallback<List<MediaHub.Song>> {
         override fun onSuccess(songs: List<MediaHub.Song>?) {
-          android.os.Handler(mainLooper).post { session.notifySearchResultChanged(browser, query, songs?.size ?: 0, params) }
+          val count = (songs?.size ?: 0) + MediaHub.albumsFor(query).size
+          android.os.Handler(mainLooper).post { session.notifySearchResultChanged(browser, query, count, params) }
         }
         override fun onFailure(error: Throwable) {
           android.os.Handler(mainLooper).post { session.notifySearchResultChanged(browser, query, 0, params) }
@@ -170,7 +180,9 @@ class PlaybackService : MediaLibraryService() {
       params: LibraryParams?,
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
       searchResult(query) { songs ->
-        LibraryResult.ofItemList(ImmutableList.copyOf(page(songs.map { songItem(it) }, page, pageSize)), params)
+        // ALBUM-CAR-001: the albums the words found come first, as folders the driver can open.
+        val albums = MediaHub.albumsFor(query).map { albumItem(it) }
+        LibraryResult.ofItemList(ImmutableList.copyOf(page(albums + songs.map { songItem(it) }, page, pageSize)), params)
       }
 
     private fun <T : Any> searchResult(query: String, value: (List<MediaHub.Song>) -> LibraryResult<T>): ListenableFuture<LibraryResult<T>> {
@@ -209,11 +221,18 @@ class PlaybackService : MediaLibraryService() {
 
     private fun resolveAsync(item: MediaItem): ListenableFuture<MediaItem> {
       val query = item.requestMetadata.searchQuery
-      if (!query.isNullOrBlank()) return Futures.transform(MediaHub.searchCatalog(query), { hits ->
-        val song = hits?.firstOrNull { it.ready } ?: hits?.firstOrNull()
-          ?: throw IllegalArgumentException("No songs found")
-        songItem(song)
-      }, MoreExecutors.directExecutor())
+      if (!query.isNullOrBlank()) {
+        val album = asksForAlbum(item.requestMetadata.extras)
+        return Futures.transform(MediaHub.searchCatalog(query, album = album), { hits ->
+          // ALBUM-CAR-001: "play the album …", or words naming an album, play that album from its start.
+          MediaHub.albumToPlay(query, album)?.let { id ->
+            (scopedSong(id) ?: MediaHub.findSong(id))?.let { return@transform songItem(it, id) }
+          }
+          val song = hits?.firstOrNull { it.ready } ?: hits?.firstOrNull()
+            ?: throw IllegalArgumentException("No songs found")
+          songItem(song)
+        }, MoreExecutors.directExecutor())
+      }
       val scoped = scopedSong(item.mediaId)
       if (scoped != null) return Futures.immediateFuture(songItem(scoped, item.mediaId))
       val song = MediaHub.findSong(item.mediaId)
@@ -244,6 +263,26 @@ class PlaybackService : MediaLibraryService() {
       )
       .build()
 
+  /** A saved album or one a car search found, as a browsable album with its artist and cover. */
+  private fun albumItem(album: MediaHub.Folder): MediaItem {
+    val id = if (MediaHub.playlist(album.id) === album) "$PLAYLIST_PREFIX${Uri.encode(album.id)}" else "$CAR_ALBUM_PREFIX${Uri.encode(album.id)}"
+    return MediaItem.Builder()
+      .setMediaId(id)
+      .setMediaMetadata(
+        MediaMetadata.Builder()
+          .setTitle(album.title)
+          .setSubtitle(album.artist)
+          .setArtist(album.artist)
+          .setAlbumTitle(album.title)
+          .setArtworkUri(album.artwork?.let(Uri::parse))
+          .setIsBrowsable(true)
+          .setIsPlayable(false)
+          .setMediaType(MediaMetadata.MEDIA_TYPE_ALBUM)
+          .build(),
+      )
+      .build()
+  }
+
   private fun playlistTrackId(listId: String, songId: String) =
     "$PLAYLIST_PREFIX${Uri.encode(listId)}/track/${Uri.encode(songId)}"
 
@@ -266,5 +305,22 @@ class PlaybackService : MediaLibraryService() {
     const val FOLDER_SONGS = "songs"
     const val FOLDER_PLAYLISTS = "playlists"
     const val PLAYLIST_PREFIX = "playlist/"
+    const val FOLDER_ALBUMS = "albums"
+    const val CAR_ALBUM_PREFIX = "calbum/"
+
+    fun asksForAlbum(extras: android.os.Bundle?): Boolean = extras != null && VoiceRequest.asksForAlbum(
+      extras.getString(android.provider.MediaStore.EXTRA_MEDIA_FOCUS),
+      extras.getString(android.provider.MediaStore.EXTRA_MEDIA_ALBUM),
+      extras.getString(android.provider.MediaStore.EXTRA_MEDIA_TITLE),
+    )
   }
+}
+
+/**
+ * ALBUM-CAR-001: a voice request asks for an album when the assistant says so (the album focus), or
+ * names an album and no song. Android Auto and Google Assistant pass these as MEDIA_PLAY_FROM_SEARCH extras.
+ */
+object VoiceRequest {
+  fun asksForAlbum(focus: String?, album: String?, title: String?): Boolean =
+    focus == android.provider.MediaStore.Audio.Albums.ENTRY_CONTENT_TYPE || (!album.isNullOrBlank() && title.isNullOrBlank())
 }

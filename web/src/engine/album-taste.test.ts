@@ -28,6 +28,25 @@ const cand = (title: string, album: string): E.Track => ({
 });
 const CHAOS = albumKeyOf(song('x', 'A Great Chaos'))!;
 
+describe('a saved album is taste (ALBUM-SAVE-001 / ALBUM-TASTE-001)', () => {
+  it('counts a saved album as liked before any of its songs is played, and fetches it whole', () => {
+    const fb = E.withSavedAlbums(E.buildFeedback2([], NOW_TS), [{ key: CHAOS, name: 'A Great Chaos' }]);
+    expect(fb.album?.[CHAOS]).toBe(E.ALBUM_SAVED);
+    expect(E.ALBUM_SAVED).toBeGreaterThanOrEqual(E.ALBUM_DEEP_MIN);
+    expect(fb.albumNames?.[CHAOS]).toBe('A Great Chaos');
+    // On top of listening, never instead of it.
+    const played = E.buildFeedback2([ev('complete', 'Green Room', 'A Great Chaos'), ev('complete', 'Singapore', 'A Great Chaos')], NOW_TS);
+    expect(E.withSavedAlbums(played, [{ key: CHAOS, name: 'A Great Chaos' }]).album![CHAOS]).toBeCloseTo(played.album![CHAOS]! + E.ALBUM_SAVED);
+  });
+
+  it('leaves the v1 ranker and an empty shelf alone', () => {
+    const v1 = E.buildFeedback([ev('complete', 'Green Room', 'A Great Chaos')], NOW_TS);
+    expect(E.withSavedAlbums(v1, [{ key: CHAOS, name: 'A Great Chaos' }])).toBe(v1);
+    const v2 = E.buildFeedback2([], NOW_TS);
+    expect(E.withSavedAlbums(v2, [])).toBe(v2);
+  });
+});
+
 describe('album taste from listening (ALBUM-TASTE-001)', () => {
   it('counts an album once several of its songs are played, with diminishing returns', () => {
     const two = E.buildFeedback2([ev('complete', 'Green Room', 'A Great Chaos'), ev('complete', 'Singapore', 'A Great Chaos')], NOW_TS);

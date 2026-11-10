@@ -60,10 +60,14 @@ it('is disabled, and says why, while no song in the list is downloaded', async (
   expect(b.title).toMatch(/No song in the now playing queue is downloaded yet/);
 });
 
-it('sits in both queue headers and the saved list header, beside the download action', () => {
+it('sits in both queue headers, beside the download action; a saved list opens its own folder', () => {
   const app = readFileSync(join(process.cwd(), 'src', 'App.tsx'), 'utf8');
   const groups = app.match(/<div className="queue__actions">[\s\S]*?<\/div>/g) ?? [];
   expect(groups.length).toBe(2);
   for (const g of groups) expect(g).toMatch(/<ListDownloadButton[\s\S]*<ListFolderButton/);
-  expect(readFileSync(join(process.cwd(), 'src', 'SavedView.tsx'), 'utf8')).toMatch(/<ListFolderButton/);
+  // LIST-SAVE-FOLDER-001: a saved list or album downloads into a folder of its own, and its folder
+  // button (part of ListSaveButton) opens that folder.
+  const saved = readFileSync(join(process.cwd(), 'src', 'SavedView.tsx'), 'utf8');
+  expect(saved).toMatch(/<ListSaveButton.*kind="list"/);
+  expect(saved).toMatch(/<ListSaveButton.*kind="album"/);
 });

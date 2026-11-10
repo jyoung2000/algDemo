@@ -177,6 +177,14 @@ export const dl = {
    */
   openList: (name: string, songs: { url: string; title: string; artist: string }[]) =>
     call<{ ok: boolean; held: number; total: number; folder?: string }>({ op: 'open-list', name, songs }, 120_000),
+  /**
+   * LIST-SAVE-FOLDER-001: put a saved list's or album's held songs in its own folder (Albums\<name> or
+   * Lists\<name> in the music folder), numbered by `n`. Adds only what is new; removes nothing.
+   */
+  saveList: (kind: 'album' | 'list', name: string, songs: { url: string; title: string; artist: string; n: number }[], total: number) =>
+    call<{ ok: boolean; held: number; total: number; folder: string }>({ op: 'save-list', kind, name, songs, total }, 300_000),
+  /** Opens that folder in the system's file manager; `ok` is false while nothing was saved there. */
+  openSaved: (kind: 'album' | 'list', name: string) => call<{ ok: boolean; folder: string }>({ op: 'open-saved', kind, name }),
   /** Whether the shell holds a finished download for a link (indexed by link, kept across restarts), or is fetching it. */
   /** `kept` is a permanent Music-folder copy; `cached` is the evictable queue cache. `file` is either. */
   local: (url: string) => call<{ file: DlFile | null; kept?: boolean; cached?: boolean; running: boolean; error?: string | null }>({ op: 'local', url }),

@@ -12,7 +12,7 @@ import './save-menu.css';
 export function SaveMenu({
   songKey,
   title,
-  lists,
+  lists: allLists,
   onLists,
   onClose,
 }: {
@@ -22,6 +22,8 @@ export function SaveMenu({
   onLists: (lists: PlaylistSummary[]) => void;
   onClose: () => void;
 }) {
+  // ALBUM-SAVE-001: a saved album holds the album's songs only, so it is never offered here.
+  const lists = allLists.filter((l) => !l.album);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(lists.length === 0);

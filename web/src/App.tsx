@@ -16,7 +16,7 @@ import { ListDownloadBar, ListDownloadButton, ListFolderButton } from './ListDow
 import { useCardCache } from './useCardCache';
 import { useKeptKeys } from './useKeptKeys';
 import { savedTracks, playbackRows, preparationTracks, contextRows, addTargetOf, addedRow, insertAfter, SEARCH_CONTEXT } from './engine/queue-context';
-import { decodePlaylistMediaId, mediaNativeAvailable, pushMediaLibrary, pushMediaState, setMediaHandlers, songFromTrack } from './engine/media-native';
+import { decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pushMediaLibrary, pushMediaState, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { engineAvailable, engineSend, listenFromEvent, markEngineEvent, subscribeEngineState } from './engine/native-engine';
 import { SettingsView } from './Settings';
 import { setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
@@ -137,7 +137,7 @@ export function App() {
   // PLAYLIST-MIX-001: that list's own listening mix.
   const [listMix, setListMix] = useState<PlaylistMix | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
-  const [carCatalog] = useState(() => new CarCatalog(api.search, track => queueAudio.isReady(track), api.searchLyrics));
+  const [carCatalog] = useState(() => new CarCatalog(api.search, track => queueAudio.isReady(track), api.searchLyrics, api.searchAlbums, (id) => api.album({ id })));
 
   // ---------------------------------------------------------------- load persisted state
   useEffect(() => {
@@ -521,6 +521,12 @@ export function App() {
     ?? (saved ?? []).map((s) => s.track).find((x) => x.key === id)
     ?? carCatalog.find(id);
   const playById = (id: string) => {
+        // ALBUM-CAR-001: an album's song from a car search plays the album around it, in album order.
+        if (decodeCarAlbumId(id)) {
+          const hit = carCatalog.albumOf(id);
+          if (hit) playFromSearch(hit.track, hit.tracks);
+          return; // A stale/forged car id must not play an unrelated song.
+        }
         const scoped = decodePlaylistMediaId(id);
         if (scoped) {
           const list = lists.find((l) => l.id === scoped.listId);
@@ -547,7 +553,7 @@ export function App() {
       prev: goPrev,
       playIndex: (i) => { const it = activeItems[i]; if (it) play(it, { keepList: true }); },
       playId: playById,
-      catalogSearch: query => carCatalog.search(query),
+      catalogSearch: (query, opts) => carCatalog.searchAll(query, opts),
       search: (q) => {
         const ql = q.trim().toLowerCase();
         if (!ql) return;
@@ -587,7 +593,11 @@ export function App() {
     if (!mediaNativeAvailable()) return;
     pushMediaLibrary(
       activeItems.map((x) => nativeSong(x.track)),
-      lists.map((l) => ({ id: l.id, title: l.name, songs: savedTracks(saved, lists, l.id).map((t) => nativeSong(t)) })),
+      lists.map((l) => ({
+        id: l.id, title: l.name, songs: savedTracks(saved, lists, l.id).map((t) => nativeSong(t)),
+        // ALBUM-SAVE-001: saved albums are listed under Albums in the car.
+        ...(l.album ? { album: true, artist: l.album.artist, artwork: l.album.artwork } : {}),
+      })),
     );
   }, [activeItems, lists, saved, readySignature]);
 
@@ -1107,6 +1117,7 @@ export function App() {
             onUseAsQueue={useListAsQueue}
             queueListId={queueList?.id ?? null}
             onOpenAlbum={(t) => openAlbum({ track: t })}
+            onOpenAlbumId={(id) => openAlbum({ id })}
           />
           </div>
         )}

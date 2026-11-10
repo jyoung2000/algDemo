@@ -53,6 +53,53 @@ class CarSearchTest {
       assertNull(MediaHub.findSong("forged"))
     } finally { MediaHub.clearCommandSink(sink) }
   }
+  /** ALBUM-CAR-001: a car search answers with albums the page opened; a voice album request plays one. */
+  @Test fun albumRepliesAreBrowsableAndOnlyTheirOwnSongCanBePlayed() {
+    seed()
+    var asked: JSONObject? = null
+    val sink: (JSONObject) -> Unit = { cmd ->
+      asked = cmd
+      MediaHub.apply(JSONObject().put("search", JSONObject("""{
+        "requestId":"${cmd.getString("requestId")}","query":"${cmd.getString("query")}",
+        "songs":[{"id":"k1","title":"Green Room","artist":"Ken Carson"}],
+        "albums":[
+          {"id":"dz:1","title":"A Great Chaos","artist":"Ken Carson","artwork":"https://cdn.example/c.jpg","songs":[
+            {"id":"calbum/dz%3A1/track/k1","title":"Green Room","artist":"Ken Carson"},
+            {"id":"calbum/dz%3A1/track/k2","title":"Jennifer's Body","artist":"Ken Carson"},
+            {"id":"elsewhere","title":"Not this album's"}
+          ]},
+          {"id":"dz:2","title":"Empty","songs":[]}
+        ],
+        "play":"calbum/dz%3A1/track/k1"
+      }""")))
+    }
+    MediaHub.setCommandSink(sink)
+    try {
+      MediaHub.searchCatalog("ken carson chaos", album = true).get(2, TimeUnit.SECONDS)
+      assertTrue("the album request is passed to the page", asked!!.getBoolean("album"))
+      val albums = MediaHub.albumsFor("ken carson chaos", album = true)
+      assertEquals(listOf("dz:1"), albums.map { it.id })
+      assertEquals(listOf("calbum/dz%3A1/track/k1", "calbum/dz%3A1/track/k2"), albums.single().songs.map { it.id })
+      assertEquals("calbum/dz%3A1/track/k1", MediaHub.albumToPlay("ken carson chaos", true))
+      assertEquals("Jennifer's Body", MediaHub.findSong("calbum/dz%3A1/track/k2")?.title)
+      assertNull("a song outside the album is not taken in", MediaHub.findSong("elsewhere"))
+    } finally { MediaHub.clearCommandSink(sink) }
+  }
+
+  @Test fun aForgedPlayIdIsIgnored() {
+    seed()
+    val sink: (JSONObject) -> Unit = { cmd ->
+      MediaHub.apply(JSONObject().put("search", JSONObject()
+        .put("requestId", cmd.getString("requestId")).put("query", cmd.getString("query"))
+        .put("songs", org.json.JSONArray()).put("play", "playlist/p1/track/p1s1")))
+    }
+    MediaHub.setCommandSink(sink)
+    try {
+      MediaHub.searchCatalog("forged album play", album = true).get(2, TimeUnit.SECONDS)
+      assertNull(MediaHub.albumToPlay("forged album play", true))
+    } finally { MediaHub.clearCommandSink(sink) }
+  }
+
   @Test fun newestTypedQueryIsNotStarvedByPendingPrefixes() {
     seed()
     var last: JSONObject? = null

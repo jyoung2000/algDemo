@@ -5,7 +5,7 @@ import { api, ApiError, type AlbumSummary, type Evidence, type IdentifyResponse,
 import { Art } from './Art';
 import { SaveMenu } from './SaveMenu';
 import { AlbumShelf, AlbumSlot } from './AlbumShelf';
-import { fold } from './engine/identity';
+import { namesAlbum } from './engine/album-key';
 import { PROVIDER_LABEL, artistOf, classNames, fmtDuration, fmtRelease, looksLikeUrl, markKey } from './util';
 
 /** What a result row's like button needs, shared by every list of results (SEARCH-LIKE-001). */
@@ -103,9 +103,7 @@ export function liveLyricsReady(text: string): boolean {
  */
 /** ALBUM-SEARCH-001: the search names the top album (or begins its title), so albums lead. */
 export function albumsLead(query: string, albums: readonly Pick<AlbumSummary, 'title'>[]): boolean {
-  const q = fold(query);
-  const t = fold(albums[0]?.title ?? '');
-  return q.length >= 3 && t.length >= 3 && (q.includes(t) || t.startsWith(q));
+  return namesAlbum(query, albums[0]?.title ?? '');
 }
 
 export function lyricsLead(query: string, lyricMatches: number): boolean {

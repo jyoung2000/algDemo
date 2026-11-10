@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  carAlbumTrackId,
+  decodeCarAlbumId,
   decodePlaylistMediaId,
   installMediaCommands,
   mediaNativeAvailable,
@@ -16,6 +18,38 @@ const win = () => window as unknown as Win;
 
 const track = (over: Partial<Track> = {}): Track =>
   ({ id: 'i', provider: 'deezer', platform_id: 'p', key: 'k1', title: 'Plant Island', artist: 'My Singing Monsters', duration: 219, artwork: 'https://cdn/art.jpg', ...over }) as Track;
+
+describe('car albums (ALBUM-CAR-001)', () => {
+  beforeEach(() => { installMediaCommands(); });
+  afterEach(() => { delete win().AirwaveNative; });
+
+  it('passes the album request on, and answers with the albums and the song to play', async () => {
+    const media = vi.fn();
+    win().AirwaveNative = { media };
+    const song = songFromTrack(track(), false);
+    const ask = vi.fn(async () => ({ songs: [song], albums: [{ id: 'dz:1', title: 'A', artist: 'B', artwork: null, songs: [song] }], play: 'calbum/dz%3A1/track/k1' }));
+    setMediaHandlers({ catalogSearch: ask });
+    (win().__awMediaCmd as (s: string) => void)(JSON.stringify({ type: 'catalogSearch', requestId: 'r', query: 'a', album: true }));
+    await vi.waitFor(() => expect(media).toHaveBeenCalled());
+    expect(ask).toHaveBeenCalledWith('a', { album: true });
+    expect(JSON.parse(media.mock.calls.at(-1)![0]).search).toEqual({ requestId: 'r', query: 'a', songs: [song], albums: [{ id: 'dz:1', title: 'A', artist: 'B', artwork: null, songs: [song] }], play: 'calbum/dz%3A1/track/k1' });
+  });
+
+  it('names an album\u2019s song by the album and the song, and reads that back', () => {
+    const id = carAlbumTrackId('dz:1', 'ken carson|green room|');
+    expect(id).toBe('calbum/dz%3A1/track/ken%20carson%7Cgreen%20room%7C');
+    expect(decodeCarAlbumId(id)).toEqual({ albumId: 'dz:1', key: 'ken carson|green room|' });
+    expect(decodeCarAlbumId('playlist/a/track/b')).toBeNull();
+    expect(decodeCarAlbumId('calbum/a%2Fb/track/c')).toEqual({ albumId: 'a/b', key: 'c' });
+  });
+
+  it('marks saved albums in the library so the car lists them under Albums', () => {
+    const media = vi.fn();
+    win().AirwaveNative = { media };
+    pushMediaLibrary([], [{ id: 'A1', title: 'Lost Files', songs: [], album: true, artist: 'Ken Carson', artwork: 'https://cdn/l.jpg' }]);
+    expect(JSON.parse(media.mock.calls.at(-1)![0]).library.playlists[0]).toEqual({ id: 'A1', title: 'Lost Files', songs: [], album: true, artist: 'Ken Carson', artwork: 'https://cdn/l.jpg' });
+  });
+});
 
 describe('media-native bridge', () => {
   let media: ReturnType<typeof vi.fn>;

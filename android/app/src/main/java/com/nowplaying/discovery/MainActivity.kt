@@ -124,6 +124,7 @@ class MainActivity : Activity() {
   private fun playFromSearch(intent: Intent?) {
     if (intent?.action != android.provider.MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH) return
     val query = intent.getStringExtra(android.app.SearchManager.QUERY).orEmpty().trim().take(200)
+    val extras = intent.extras?.let { android.os.Bundle(it) }
     intent.action = null // handled once, not again when the Activity is recreated
     val f = mediaControllerFuture ?: return
     val go = Runnable {
@@ -131,7 +132,8 @@ class MainActivity : Activity() {
       if (query.isEmpty()) { c.play(); return@Runnable }
       val item = androidx.media3.common.MediaItem.Builder()
         .setMediaId("search:$query")
-        .setRequestMetadata(androidx.media3.common.MediaItem.RequestMetadata.Builder().setSearchQuery(query).build())
+        // ALBUM-CAR-001: the request's extras say whether it asked for an album.
+        .setRequestMetadata(androidx.media3.common.MediaItem.RequestMetadata.Builder().setSearchQuery(query).setExtras(extras).build())
         .build()
       c.setMediaItem(item)
       c.prepare()

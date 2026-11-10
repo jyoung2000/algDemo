@@ -3,7 +3,8 @@ import { Glyph } from '@now-playing/aqua-ui/icons';
 import { api, ApiError, type AlbumView as AlbumData, type PlaylistSummary, type Track } from './api';
 import { Art } from './Art';
 import { ALBUM_KIND } from './AlbumShelf';
-import { ListDownloadButton, ListFolderButton } from './ListDownloadBar';
+import { ListSaveButton } from './ListSaveButton';
+import { albumFolderName } from './engine/list-save';
 import { TrackList } from './Search';
 
 export { AlbumShelf } from './AlbumShelf';
@@ -41,7 +42,7 @@ function length(sec: number | null): string | null {
 /**
  * ALBUM-OPEN-001. Owner: "open albums like i would playlist or song list". The album's songs in album
  * order, each playable as the full song; Play album hands the player the whole album so the skip
- * buttons walk it; Save as a list keeps it in Saved with every song; download and folder work as on
+ * buttons walk it; Save album keeps it in Saved, under Albums (ALBUM-SAVE-001); download and folder work as on
  * any list. Playing it teaches the album taste (ALBUM-TASTE-001) like any other listening.
  */
 export function AlbumView({ target, onBack, onPreview, seedKeys, onAdd, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys, playingKey }: Props) {
@@ -65,23 +66,18 @@ export function AlbumView({ target, onBack, onPreview, seedKeys, onAdd, onDownlo
     return () => c.abort();
   }, [target]);
 
-  const save = async (a: AlbumData) => {
+  /** ALBUM-SAVE-001: the saved album for this album, if it is in Saved. */
+  const savedOf = (a: AlbumData) => lists?.find((l) => l.album?.id === a.id) ?? null;
+  const toggleSave = async (a: AlbumData) => {
     setSaving(true);
     setNote(null);
-    const names = [a.title, `${a.title} \u2013 ${a.artist}`];
+    const held = savedOf(a);
     try {
-      for (const [i, name] of names.entries()) {
-        try {
-          const r = await api.playlistEdit('create', { name, tracks: a.tracks });
-          onLists?.(r.lists);
-          setNote(`Saved as the list \u201c${name}\u201d. It is in Saved, with every song.`);
-          return;
-        } catch (e) {
-          if (!(e instanceof ApiError && /already have a list/i.test(e.message)) || i === names.length - 1) throw e;
-        }
-      }
+      const r = held ? await api.playlistEdit('delete', { id: held.id }) : await api.playlistEdit('save_album', { album: a });
+      onLists?.(r.lists);
+      setNote(held ? 'Removed from Saved.' : 'Saved. Find it in Saved, under Albums.');
     } catch (e) {
-      setNote(e instanceof ApiError ? e.message : 'The list could not be saved.');
+      setNote(e instanceof ApiError ? e.message : held ? 'The album could not be removed.' : 'The album could not be saved.');
     } finally {
       setSaving(false);
     }
@@ -122,11 +118,23 @@ export function AlbumView({ target, onBack, onPreview, seedKeys, onAdd, onDownlo
               <button className="push push--default" type="button" disabled={!a.tracks.length} onClick={() => onPreview(a.tracks[0]!, a.tracks)}>
                 <Glyph name="play" size={14} /> Play album
               </button>
-              <button className="push" type="button" disabled={saving || !a.tracks.length} onClick={() => void save(a)}>
-                Save as a list
-              </button>
-              <ListDownloadButton tracks={a.tracks} label={a.title} />
-              <ListFolderButton tracks={a.tracks} name={a.title} label={`the album ${a.title}`} />
+              {(() => {
+                const held = savedOf(a);
+                return (
+                  <button
+                    className={held ? 'push is-on' : 'push'}
+                    type="button"
+                    aria-pressed={Boolean(held)}
+                    aria-label={held ? `Saved. Remove ${a.title} from Saved` : `Save album ${a.title}`}
+                    disabled={saving || !a.tracks.length}
+                    onClick={() => void toggleSave(a)}
+                  >
+                    <Glyph name="heart" size={14} /> {held ? 'Saved' : 'Save album'}
+                  </button>
+                );
+              })()}
+              {/* LIST-SAVE-FOLDER-001: the whole album, downloaded into a folder of its own. */}
+              <ListSaveButton tracks={a.tracks} kind="album" name={albumFolderName(a.title, a.artist)} label={`the album ${a.title}`} />
             </div>
             {note && (
               <p className="state album__note" role="status">

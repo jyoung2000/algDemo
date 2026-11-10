@@ -258,3 +258,44 @@
 .banner--list > .push {
   min-height: 44px;
 }
+
+/* ALBUM-SAVE-001: saved albums, in their own row under the lists. A chip carries the cover, and the
+   title and artist wrap rather than being cut off. */
+.lists--albums {
+  margin-top: -2px;
+}
+.lists__h {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.lists__tab.lists__album {
+  min-height: 52px;
+  padding: 6px 12px 6px 6px;
+  gap: 8px;
+  border-radius: 14px;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: min(100%, 300px);
+  text-align: left;
+}
+.lists__album .art {
+  flex: none;
+  border-radius: 6px;
+}
+.lists__album-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+.lists__album-artist {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.lists__album.is-on .lists__album-artist {
+  color: var(--accent);
+}

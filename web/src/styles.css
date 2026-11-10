@@ -2367,6 +2367,11 @@ a.push {
 }
 
 /* ------------------------------------------------------------------ mobile and tablet: one column, docked player */
+/* The docked player is fixed at the bottom: a control reached by keyboard, or scrolled into view, stops
+   above it rather than under it (the phone rule adds the tab bar). */
+html {
+  scroll-padding-bottom: calc(var(--dock-h) + 16px);
+}
 @media (max-width: 899px) {
   .app {
     grid-template-columns: minmax(0, 1fr);
@@ -2379,6 +2384,10 @@ a.push {
     padding: 24px 12px 24px;
   }
   /* Phone: the tabs are a fixed bottom bar; the docked player sits above it (--tab-h + --dock-h). */
+  /* A control reached by keyboard, or scrolled into view, stops above both rather than under them. */
+  html {
+    scroll-padding-bottom: calc(var(--tab-h) + var(--dock-h) + 16px + env(safe-area-inset-bottom));
+  }
   .app {
     padding-bottom: calc(var(--tab-h) + 24px + env(safe-area-inset-bottom));
   }
@@ -3801,4 +3810,39 @@ a.push {
   .card .album__title {
     font-size: 18px;
   }
+}
+
+/* ALBUM-SAVE-001: Save album shows when the album is in Saved. */
+.album__actions .push[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/*
+ * LIST-SAVE-FOLDER-001: a running download counts up. It is progress, not an unavailable button, so its
+ * text keeps full ink, and its digits keep one width so the button does not jump as the count grows.
+ */
+.push[aria-busy='true'] {
+  font-variant-numeric: tabular-nums;
+  cursor: progress;
+}
+.push[aria-busy='true'][aria-disabled='true'] {
+  color: var(--ink);
+}
+/* LIST-SAVE-FOLDER-001: the busy button keeps the push look; aria-disabled only blocks a second press. */
+.push[aria-disabled='true'] {
+  pointer-events: auto;
+}
+/* The folder button beside it is a full 44px target at every width (the desktop icon button is 30px). */
+.list-save__folder {
+  min-width: 44px;
+  min-height: 44px;
+}
+/* LIST-SAVE-FOLDER-001: where the songs went, on its own line under the list's buttons. */
+.list-save__note {
+  flex-basis: 100%;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.4;
 }

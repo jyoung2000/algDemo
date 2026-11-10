@@ -258,6 +258,19 @@ object Downloads {
     return "Selected folder: ${safeName(label).take(80)}"
   }
 
+  /**
+   * LIST-SAVE-FOLDER-001: a song copied into a saved list's folder becomes its kept copy when it had
+   * none, so it plays offline and the cache limit never removes it.
+   */
+  fun keepAt(context: Context, url: String, uri: Uri) = synchronized(libraryLock) {
+    if (urlAllowed(url) && libraryGet(context, url) == null) librarySet(context, url, uri)
+  }
+
+  /** The folder the owner chose for downloads, as (tree, its top document), or null for the Music folder. */
+  fun chosenTreeDir(context: Context): Pair<Uri, Uri>? = chosenFolder(context)?.let { tree ->
+    runCatching { tree to DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree)) }.getOrNull()
+  }
+
   private fun libraryGet(context: Context, url: String): Uri? = synchronized(libraryLock) {
     val prefs = context.getSharedPreferences(LIBRARY, Context.MODE_PRIVATE)
     val raw = prefs.getString(url, null) ?: return null
@@ -362,6 +375,8 @@ object Downloads {
     "forget" -> { val id = req.optString("id"); cancel(id); order.remove(id); JSONObject().put("ok", jobs.remove(id) != null) }
     "reveal" -> JSONObject().put("ok", reveal(context, req.optString("id")))
     "open-list" -> ListFolder.open(context, req)
+    "save-list" -> ListSave.save(context, req)
+    "open-saved" -> ListSave.open(context, req)
     "local" -> {
       val url = req.optString("url")
       require(urlAllowed(url)) { "Not a link this app downloads from." }

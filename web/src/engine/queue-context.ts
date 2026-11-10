@@ -54,9 +54,10 @@ export type AddTarget = { kind: 'queue' } | { kind: 'list'; id: string; name: st
  * "All saved" is not one list, and a list deleted while it played is gone: both fall back to the queue.
  */
 export function addTargetOf(ctx: string | null, queueList: { id: string; name: string } | null, lists: PlaylistSummary[]): AddTarget {
-  const playingList = ctx && ctx !== SEARCH_CONTEXT && ctx !== 'all' ? lists.find((l) => l.id === ctx) : undefined;
+  // ALBUM-SAVE-001: a saved album keeps the album's songs only, so a song added while it plays goes to the queue.
+  const playingList = ctx && ctx !== SEARCH_CONTEXT && ctx !== 'all' ? lists.find((l) => l.id === ctx && !l.album) : undefined;
   if (playingList) return { kind: 'list', id: playingList.id, name: playingList.name, seed: false };
-  if (queueList) return { kind: 'list', id: queueList.id, name: queueList.name, seed: true };
+  if (queueList && !lists.find((l) => l.id === queueList.id)?.album) return { kind: 'list', id: queueList.id, name: queueList.name, seed: true };
   return { kind: 'queue' };
 }
 

@@ -75,6 +75,29 @@ it('saves an album as a list that keeps every song, even songs the listener neve
   expect((bad.body as { lists: { name: string; count: number }[] }).lists.find((l) => l.name === 'Odd')!.count).toBe(0);
 });
 
+it('saves an album in Saved by its id, with every song, and forgets its songs when it is removed', async () => {
+  const api = await open();
+  const a = ((await api.handle('POST', '/api/album', { id: 'dz:498395131' })).body as { album: Record<string, unknown> & { tracks: Record<string, unknown>[] } }).album;
+  const r = await api.handle('POST', '/api/playlists', { action: 'save_album', album: a });
+  expect(r.status).toBe(200);
+  type L = { id: string; name: string; count: number; album: Record<string, unknown> | null; items: { track: { title: string; album?: string } | null }[] };
+  const saved = (r.body as { lists: L[] }).lists[0]!;
+  expect(saved).toMatchObject({ name: 'A Great Chaos', count: 2, album: { id: 'dz:498395131', artist: 'Ken Carson', kind: 'album', year: '2023', artwork: 'https://cdn/c.jpg' } });
+  expect(saved.items.map((i) => i.track?.title)).toEqual(['Green Room', 'Jennifer\u2019s Body']);
+  // Saving it again changes nothing.
+  const again = (await api.handle('POST', '/api/playlists', { action: 'save_album', album: a })).body as { lists: L[] };
+  expect(again.lists).toHaveLength(1);
+  // A plain list still sees albums as nothing to do with it.
+  const mine = (await api.handle('POST', '/api/playlists', { action: 'create', name: 'A Great Chaos' })).body as { lists: L[] };
+  expect(mine.lists.map((l) => [l.name, l.album === null])).toEqual([['A Great Chaos', false], ['A Great Chaos', true]]);
+  // Removing the album removes the copies of its songs held only for it.
+  await api.handle('POST', '/api/playlists', { action: 'delete', id: saved.id });
+  expect(Object.keys(api.store.get<Record<string, unknown>>('list_tracks') ?? {})).toEqual([]);
+  // An album with no id, or no songs, is refused.
+  expect((await api.handle('POST', '/api/playlists', { action: 'save_album', album: { title: 'x', tracks: a.tracks } })).status).toBe(400);
+  expect((await api.handle('POST', '/api/playlists', { action: 'save_album', album: { ...a, tracks: [] } })).status).toBe(400);
+});
+
 it('keeps the album when the song was played from a copy that does not name it', async () => {
   // Found on the packaged app: the full song came from SoundCloud, whose copy has no album, so the saved
   // album list lost its album button and album taste lost the play. Same key, so the album carries over.

@@ -58,7 +58,11 @@ class AutoBrowseTest {
             {"id":"s2","title":"Wallpaper","artist":"Kevin MacLeod","durationMs":180000,"ready":true}
           ],
           "playlists":[
-            {"id":"p1","title":"Chill","songs":[{"id":"s3","title":"Aria Math","artist":"C418","durationMs":200000,"ready":true}]}
+            {"id":"p1","title":"Chill","songs":[{"id":"s3","title":"Aria Math","artist":"C418","durationMs":200000,"ready":true}]},
+            {"id":"A1","title":"A Great Chaos","album":true,"artist":"Ken Carson","artwork":"https://cdn.example/c.jpg","songs":[
+              {"id":"g1","title":"Green Room","artist":"Ken Carson","durationMs":189000,"ready":true},
+              {"id":"g2","title":"Jennifer's Body","artist":"Ken Carson","durationMs":160000,"ready":true}
+            ]}
           ]
         }}
         """.trimIndent(),
@@ -97,8 +101,8 @@ class AutoBrowseTest {
       val root = rootResult.value!!
       assertTrue("car host can offer search", rootResult.params?.extras?.getBoolean("android.media.browse.SEARCH_SUPPORTED") == true)
       val sections = await { b.getChildren(root.mediaId, 0, 10, null) }.value!!
-      assertEquals(listOf("songs", "playlists"), sections.map { it.mediaId })
-      assertEquals(listOf("Now playing queue", "Playlists"), sections.map { it.mediaMetadata.title.toString() })
+      assertEquals(listOf("songs", "playlists", "albums"), sections.map { it.mediaId })
+      assertEquals(listOf("Now playing queue", "Playlists", "Albums"), sections.map { it.mediaMetadata.title.toString() })
       assertTrue("top-level sections are browsable, not dead-end play buttons", sections.all { it.mediaMetadata.isBrowsable == true && it.mediaMetadata.isPlayable == false })
       assertEquals("Your playback queue", sections[0].mediaMetadata.subtitle?.toString())
       assertEquals("Your saved playlists", sections[1].mediaMetadata.subtitle?.toString())
@@ -121,6 +125,17 @@ class AutoBrowseTest {
       val playlists = await { b.getChildren("playlists", 0, 50, null) }.value!!
       assertEquals(listOf("playlist/p1"), playlists.map { it.mediaId })
       assertTrue("playlist folder is browsable", playlists.first().mediaMetadata.isBrowsable == true)
+
+      // ALBUM-SAVE-001: a saved album is under Albums, not Playlists, with its artist and cover, songs in order.
+      val albums = await { b.getChildren("albums", 0, 50, null) }.value!!
+      assertEquals(listOf("playlist/A1"), albums.map { it.mediaId })
+      assertEquals("Ken Carson", albums.single().mediaMetadata.subtitle?.toString())
+      assertEquals("https://cdn.example/c.jpg", albums.single().mediaMetadata.artworkUri?.toString())
+      assertEquals(androidx.media3.common.MediaMetadata.MEDIA_TYPE_ALBUM, albums.single().mediaMetadata.mediaType)
+      assertEquals(listOf("playlist/A1/track/g1", "playlist/A1/track/g2"), ids(await { b.getChildren("playlist/A1", 0, 50, null) }))
+      // ALBUM-CAR-001: the car's search shows the saved album the words name, above its songs.
+      await { b.search("a great chaos", null) }
+      assertEquals("playlist/A1", ids(await { b.getSearchResult("a great chaos", 0, 50, null) }).first())
 
       val plSongs = await { b.getChildren("playlist/p1", 0, 50, null) }.value!!
       assertEquals(listOf("playlist/p1/track/s3"), plSongs.map { it.mediaId })

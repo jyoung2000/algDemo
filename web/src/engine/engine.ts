@@ -193,6 +193,23 @@ export interface FeedbackView {
 
 /** An album this liked is worth fetching whole for a starting song on it (about two finished songs). */
 export const ALBUM_DEEP_MIN = 1.0;
+/** ALBUM-SAVE-001: saving an album says as much as finishing about two of its songs. */
+export const ALBUM_SAVED = 1.0;
+
+/**
+ * ALBUM-SAVE-001 / ALBUM-TASTE-001: albums the listener saved count as liked, on top of what their
+ * listening says. v2 only (the v1 view has no album part), so the v1 ranker never moves.
+ */
+export function withSavedAlbums(fb: FeedbackView, saved: readonly { key: string; name: string }[]): FeedbackView {
+  if (!fb.album || !saved.length) return fb;
+  const album = { ...fb.album };
+  const albumNames = { ...(fb.albumNames ?? {}) };
+  for (const s of saved) {
+    album[s.key] = (album[s.key] ?? 0) + ALBUM_SAVED;
+    albumNames[s.key] ??= s.name;
+  }
+  return { ...fb, album, albumNames };
+}
 
 export function decay(ts: number, nowTs: number, halfLifeDays: number): number {
   const age = Math.max(0, (nowTs - ts) / 86400.0);

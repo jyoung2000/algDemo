@@ -29,6 +29,27 @@ export interface NativeFolder {
   id: string;
   title: string;
   songs: NativeSong[];
+  /** ALBUM-SAVE-001: a saved album, listed under Albums in the car rather than Playlists. */
+  album?: boolean;
+  artist?: string;
+  artwork?: string | null;
+}
+
+/** ALBUM-CAR-001: an album found by a car search, opened, its songs carrying the album as context. */
+export interface NativeAlbum {
+  id: string;
+  title: string;
+  artist: string;
+  artwork: string | null;
+  songs: NativeSong[];
+}
+
+/** What the page answers a car search with: songs, albums, and the song to play for a voice request. */
+export interface CatalogAnswer {
+  songs: NativeSong[];
+  albums?: NativeAlbum[];
+  /** Set when the words name an album (or the request asked for one): play the album from this song. */
+  play?: string | null;
 }
 
 export interface NativeState {
@@ -63,7 +84,7 @@ export interface MediaHandlers {
   /** A raw search query (voice), when the native side could not resolve it to a song itself. */
   search?: (query: string) => void;
   /** Catalogue lookup for typed/voice car search; results are metadata, not automatic queue adds. */
-  catalogSearch?: (query: string) => Promise<NativeSong[]> | NativeSong[];
+  catalogSearch?: (query: string, opts: { album: boolean }) => Promise<NativeSong[] | CatalogAnswer> | NativeSong[] | CatalogAnswer;
   shuffle?: (on: boolean) => void;
   repeat?: (mode: number) => void;
 }
@@ -74,6 +95,19 @@ const nativeMedia = (): NativeMedia | undefined =>
 
 /** True only inside the Android shell, where a native MediaSession and Android Auto exist. */
 export const mediaNativeAvailable = (): boolean => typeof nativeMedia()?.media === 'function';
+
+/** ALBUM-CAR-001: an album song's car id names the album, so a tap plays the album around it. */
+export const carAlbumTrackId = (albumId: string, key: string): string => `calbum/${encodeURIComponent(albumId)}/track/${encodeURIComponent(key)}`;
+
+export function decodeCarAlbumId(id: string): { albumId: string; key: string } | null {
+  const match = /^calbum\/([^/]+)\/track\/([^/]+)$/.exec(id);
+  if (!match) return null;
+  try {
+    return { albumId: decodeURIComponent(match[1]!), key: decodeURIComponent(match[2]!) };
+  } catch {
+    return null;
+  }
+}
 
 /** Playlist rows carry context in their Android Auto mediaId; a plain track key has none. */
 export function decodePlaylistMediaId(id: string): { listId: string; key: string } | null {
@@ -126,7 +160,7 @@ export function pushMediaLibrary(songs: NativeSong[], playlists: NativeFolder[])
   send({ state: lastState, library: lastLibrary });
 }
 
-function send(payload: { state: NativeState; library?: { songs: NativeSong[]; playlists: NativeFolder[] }; search?: { requestId: string; query: string; songs: NativeSong[]; error?: string } }): void {
+function send(payload: { state: NativeState; library?: { songs: NativeSong[]; playlists: NativeFolder[] }; search?: { requestId: string; query: string; songs: NativeSong[]; albums?: NativeAlbum[]; play?: string; error?: string } }): void {
   const n = nativeMedia();
   if (typeof n?.media !== 'function') return;
   try {
@@ -154,7 +188,7 @@ export function songFromTrack(track: Track, ready: boolean, source?: string | nu
 export function installMediaCommands(): void {
   if (typeof window === 'undefined') return;
   (window as unknown as { __awMediaCmd?: (json: string) => void }).__awMediaCmd = (json: string) => {
-    let cmd: { type?: string; requestId?: string; positionMs?: number; index?: number; id?: string; query?: string; on?: boolean; mode?: number };
+    let cmd: { type?: string; requestId?: string; positionMs?: number; index?: number; id?: string; query?: string; on?: boolean; mode?: number; album?: boolean };
     try {
       cmd = JSON.parse(json);
     } catch {
@@ -176,8 +210,11 @@ export function installMediaCommands(): void {
         void (async () => {
           try {
             if (!handlers.catalogSearch) throw new Error('Open Airwave on your phone to search music.');
-            const songs = await handlers.catalogSearch(query);
-            send({ state: lastState, search: { requestId, query, songs: songs.slice(0, 25) } });
+            const answer = await handlers.catalogSearch(query, { album: cmd.album === true });
+            const songs = (Array.isArray(answer) ? answer : answer.songs).slice(0, 25);
+            const albums = Array.isArray(answer) ? [] : (answer.albums ?? []).slice(0, 5);
+            const play = Array.isArray(answer) ? null : answer.play ?? null;
+            send({ state: lastState, search: { requestId, query, songs, ...(albums.length ? { albums } : {}), ...(play ? { play } : {}) } });
           } catch (e) {
             send({ state: lastState, search: { requestId, query, songs: [], error: String((e as Error)?.message ?? 'Music search failed').slice(0, 200) } });
           }

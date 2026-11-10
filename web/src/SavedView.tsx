@@ -1,11 +1,13 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 
-import { api, type PlaylistMix, type PlaylistSummary, type SavedItem, type Track } from './api';
+import { api, type AlbumSummary, type PlaylistMix, type PlaylistSummary, type SavedItem, type Track } from './api';
 import { Art } from './Art';
-import { ListDownloadBar, ListFolderButton } from './ListDownloadBar';
+import { ListDownloadBar } from './ListDownloadBar';
+import { ListSaveButton } from './ListSaveButton';
+import { albumFolderName } from './engine/list-save';
 import { SaveMenu } from './SaveMenu';
-import { AlbumSlot } from './AlbumShelf';
+import { ALBUM_KIND, AlbumSlot } from './AlbumShelf';
 import { SoundCard } from './SoundCard';
 import { listMixNote } from './list-mix-note';
 import { PLAYLIST_NAME_MAX } from './engine/playlists';
@@ -31,6 +33,8 @@ interface Props {
   queueListId?: string | null;
   /** ALBUM-OPEN-001: open the album a song is on. */
   onOpenAlbum?: ((t: Track) => void) | undefined;
+  /** ALBUM-SAVE-001: open a saved album's full album page. */
+  onOpenAlbumId?: ((id: string) => void) | undefined;
 }
 
 const ALL = 'all';
@@ -43,7 +47,7 @@ const ALL = 'all';
  * and the owner asked for that control to go. A whole list can become the now playing queue instead,
  * and then every song in it is a starting song (PLAYLIST-QUEUE-001).
  */
-export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onDownload, cacheOf, onVisibleList, onUseAsQueue, queueListId, onOpenAlbum }: Props) {
+export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onDownload, cacheOf, onVisibleList, onUseAsQueue, queueListId, onOpenAlbum, onOpenAlbumId }: Props) {
   const [view, setView] = useState<string>(ALL);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -52,10 +56,21 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
   const [error, setError] = useState<string | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement | null>(null);
+  /** A chip pressed at the edge of a sideways row is brought fully into view, so the open list or
+   *  album is never half off the card (ALBUM-SAVE-001; the lists row had the same flaw). */
+  const open = (id: string, chip: HTMLElement) => {
+    setView(id);
+    const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    chip.scrollIntoView?.({ inline: 'nearest', block: 'nearest', behavior: still ? 'auto' : 'smooth' });
+  };
   const newId = useId();
   const renameId = useId();
 
   const current = lists.find((l) => l.id === view) ?? null;
+  // ALBUM-SAVE-001: saved albums have their own row; the listener's own lists keep theirs.
+  const ownLists = lists.filter((l) => !l.album);
+  const albums = lists.filter((l) => l.album);
+  const albumOf = current?.album ?? null;
   // PLAYLIST-MIX-001: the open list's own sound, read again when its songs change.
   const [mix, setMix] = useState<PlaylistMix | null>(null);
   const mixSig = current ? `${current.id}:${current.items.map((i) => i.key).join(',')}` : '';
@@ -148,13 +163,13 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
             <Glyph name="heart" size={13} /> All saved
             <span className="lists__count">{saved?.length ?? 0}</span>
           </button>
-          {lists.map((l) => (
+          {ownLists.map((l) => (
             <button
               key={l.id}
               className={classNames('lists__tab', view === l.id && 'is-on')}
               type="button"
               aria-pressed={view === l.id}
-              onClick={() => setView(l.id)}
+              onClick={(e) => open(l.id, e.currentTarget)}
             >
               {l.name}
               <span className="lists__count">{l.count}</span>
@@ -167,6 +182,31 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
           )}
         </div>
       </div>
+
+      {albums.length > 0 && (
+        <div className="lists lists--albums" role="group" aria-label="Your saved albums">
+          <h3 className="lists__h">Albums</h3>
+          <div className="lists__scroll">
+            {albums.map((l) => (
+              <button
+                key={l.id}
+                className={classNames('lists__tab lists__album', view === l.id && 'is-on')}
+                type="button"
+                aria-pressed={view === l.id}
+                aria-label={`${l.name} by ${l.album!.artist}, ${l.count} ${l.count === 1 ? 'song' : 'songs'}`}
+                onClick={(e) => open(l.id, e.currentTarget)}
+              >
+                <Art src={l.album!.artwork} size={30} />
+                <span className="lists__album-text">
+                  <span className="lists__album-title">{l.name}</span>
+                  <span className="lists__album-artist">{l.album!.artist}</span>
+                </span>
+                <span className="lists__count">{l.count}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {creating && (
         <div className="lists__create">
@@ -209,7 +249,38 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
         </p>
       )}
 
-      {current && (
+      {current && albumOf && (
+        <div className="lists__bar lists__bar--album">
+          <p className="lists__state">
+            {[ALBUM_KIND[albumOf.kind as AlbumSummary['kind']] ?? 'Album', albumOf.artist, albumOf.year].filter(Boolean).join(' · ')}
+          </p>
+          {rows.length > 0 && (
+            <button className="push push--default" type="button" onClick={() => onPreview(rows[0]!.track, current.id)}>
+              <Glyph name="play" size={12} /> Play album
+            </button>
+          )}
+          {onUseAsQueue && current.count > 0 && (
+            queueListId === current.id ? (
+              <span className="lists__inqueue">In your now playing queue</span>
+            ) : (
+              <button className="push" type="button" title="Replace your now playing queue with this album. Every song in it becomes a starting song, and new music is found from them. You can bring your queue back." onClick={() => onUseAsQueue(current.id)}>
+                Play as my queue
+              </button>
+            )
+          )}
+          {current.count > 0 && <ListSaveButton tracks={rows.map((r) => r.track)} kind="album" name={albumFolderName(current.name, albumOf.artist)} label={`the album ${current.name}`} />}
+          {onOpenAlbumId && (
+            <button className="linkbtn" type="button" onClick={() => onOpenAlbumId(albumOf.id)}>
+              Open album
+            </button>
+          )}
+          <button className="linkbtn linkbtn--bad" type="button" disabled={busy} onClick={() => void remove()}>
+            Remove album
+          </button>
+        </div>
+      )}
+
+      {current && !albumOf && (
         <div className="lists__bar">
           {renaming ? (
             <>
@@ -258,7 +329,8 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
                   </button>
                 )
               )}
-              {current.count > 0 && <ListFolderButton tracks={rows.map((r) => r.track)} name={current.name} label={`“${current.name}”`} />}
+              {/* LIST-SAVE-FOLDER-001: the whole list, downloaded into a folder of its own. */}
+              {current.count > 0 && <ListSaveButton tracks={rows.map((r) => r.track)} kind="list" name={current.name} label={`“${current.name}”`} />}
               <button className="linkbtn" type="button" onClick={() => { setRenaming(true); setName(current.name); setError(null); }}>
                 Rename
               </button>
@@ -334,7 +406,8 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
                 >
                   <Glyph name="folder" size={14} />
                 </button>
-                <button
+                {/* A saved album keeps the album's songs (ALBUM-SAVE-001); it is removed whole. */}
+                {!albumOf && <button
                   className="iconbtn"
                   type="button"
                   aria-label={current ? `Remove ${track.title} from ${current.name}` : `Remove ${track.title} from Saved`}
@@ -345,7 +418,7 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
                   }}
                 >
                   <Glyph name="close" size={14} />
-                </button>
+                </button>}
               </span>
               {menuFor === track.key && (
                 <div className="track__savemenu">

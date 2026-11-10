@@ -29,6 +29,16 @@ export function albumKeyOf(t: AlbumOf): string | null {
   return `${artist}|${album}`;
 }
 
+/**
+ * ALBUM-SEARCH-001 / ALBUM-CAR-001: the words name this album ("a great chaos", "ken carson a great
+ * chaos", or the start of its title), so the album is what was asked for, not a song.
+ */
+export function namesAlbum(query: string, title: string): boolean {
+  const q = fold(query);
+  const t = fold(cleanAlbumTitle(title));
+  return q.length >= 3 && t.length >= 3 && (q.includes(t) || t.startsWith(q));
+}
+
 /** The song row's album button shows only for a song on an album, EP or mixtape. */
 export function isBodyOfWork(t: AlbumOf): boolean {
   return albumKeyOf(t) !== null;

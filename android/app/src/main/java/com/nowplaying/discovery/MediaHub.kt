@@ -50,8 +50,16 @@ object MediaHub {
     val source: String? = null,
   )
 
-  /** A browsable folder in the Android Auto tree: the now playing queue, or one playlist. */
-  data class Folder(val id: String, val title: String, val songs: List<Song>)
+  /** A browsable folder in the Android Auto tree: the now playing queue, one playlist, or one album
+   *  (ALBUM-SAVE-001: a saved album; ALBUM-CAR-001: an album a car search found, songs in album order). */
+  data class Folder(
+    val id: String,
+    val title: String,
+    val songs: List<Song>,
+    val album: Boolean = false,
+    val artist: String? = null,
+    val artwork: String? = null,
+  )
 
   /** The playback snapshot the session renders. [queue] is the current up-next order including the
    *  song now playing at [queueIndex]; next/previous and the car's "now playing" queue read it. */
@@ -142,9 +150,53 @@ object MediaHub {
     state.queue.firstOrNull { it.id == id }
       ?: songs.firstOrNull { it.id == id }
       ?: playlists.firstNotNullOfOrNull { f -> f.songs.firstOrNull { it.id == id } }
-      ?: synchronized(catalogLock) { catalogResults.values.flatMap { it.songs }.firstOrNull { it.id == id } }
+      ?: synchronized(catalogLock) {
+        catalogResults.values.flatMap { it.songs }.firstOrNull { it.id == id }
+          ?: catalogAlbums.values.firstNotNullOfOrNull { a -> a.songs.firstOrNull { it.id == id } }
+      }
 
   fun playlist(id: String): Folder? = playlists.firstOrNull { it.id == id }
+
+  /** ALBUM-SAVE-001: saved albums, listed under Albums in the car; the rest are playlists. */
+  fun savedAlbums(): List<Folder> = playlists.filter { it.album }
+  fun savedLists(): List<Folder> = playlists.filter { !it.album }
+
+  /** ALBUM-CAR-001: an album a car search opened (its songs carry `calbum/<album>/track/<song>` ids). */
+  fun catalogAlbum(id: String): Folder? = synchronized(catalogLock) { catalogAlbums[id] }
+
+  /** The words name this album: its title holds them all, or they hold its whole title. */
+  private fun namesAlbum(query: String, album: Folder): Boolean {
+    val q = normalizeText(query)
+    val t = normalizeText(album.title)
+    if (q.length < 3 || t.length < 3) return false
+    return q.contains(t) || t.startsWith(q) || normalizeText("${album.artist ?: ""} ${album.title}").contains(q)
+  }
+
+  /**
+   * The albums a car search shows, above its songs: the saved albums the words name, then the albums
+   * the page found for them.
+   */
+  fun albumsFor(rawQuery: String, album: Boolean = false): List<Folder> {
+    val query = rawQuery.trim().take(200)
+    if (query.isBlank()) return emptyList()
+    val found = synchronized(catalogLock) { catalogResults[catalogKey(query, album)]?.albums ?: catalogResults[catalogKey(query, false)]?.albums }.orEmpty()
+    return (savedAlbums().filter { namesAlbum(query, it) } + found).distinctBy { it.id }
+  }
+
+  /**
+   * The song a voice request plays when it asked for an album, or its words name one: the first song of
+   * a saved album (`playlist/<id>/track/<song>`), else the first song of the album the page found.
+   * Null when the request is for a song.
+   */
+  fun albumToPlay(rawQuery: String, album: Boolean): String? {
+    val query = rawQuery.trim().take(200)
+    savedAlbums().firstOrNull { namesAlbum(query, it) && it.songs.isNotEmpty() }?.let { a ->
+      return "playlist/${android.net.Uri.encode(a.id)}/track/${android.net.Uri.encode(a.songs.first().id)}"
+    }
+    return synchronized(catalogLock) { catalogResults[catalogKey(query, album)]?.play }
+  }
+
+  private fun catalogKey(query: String, album: Boolean) = normalizeText(query) + if (album) "\u0000album" else ""
 
   private fun normalizeText(text: String): String = Normalizer.normalize(text, Normalizer.Form.NFD)
     .replace(Regex("\\p{M}+"), "").lowercase(Locale.ROOT).trim().replace(Regex("\\s+"), " ")
@@ -161,7 +213,9 @@ object MediaHub {
     }
   }
 
-  private data class CatalogResult(val songs: List<Song>, val at: Long)
+  private data class CatalogResult(val songs: List<Song>, val at: Long, val albums: List<Folder> = emptyList(), val play: String? = null)
+  /** ALBUM-CAR-001: albums opened by recent car searches, by album id, newest last (bounded). */
+  private val catalogAlbums = LinkedHashMap<String, Folder>()
   private data class PendingSearch(val query: String, val key: String, val future: SettableFuture<List<Song>>)
   private val catalogLock = Any()
   private val catalogResults = LinkedHashMap<String, CatalogResult>()
@@ -173,12 +227,13 @@ object MediaHub {
   /** Local matches are immediate. New songs use the same catalogue as the phone UI, not a fake
    * empty result. Bounded requests/replies/timeouts prevent stuck car search and cross-query races.
    * This bridge still requires the Activity; service-owned cold-start acquisition remains separate. */
-  fun searchCatalog(rawQuery: String, timeoutMs: Long = 24000): ListenableFuture<List<Song>> {
+  fun searchCatalog(rawQuery: String, timeoutMs: Long = 24000, album: Boolean = false): ListenableFuture<List<Song>> {
     val query = rawQuery.trim().take(200)
     if (query.isBlank()) return Futures.immediateFuture(emptyList())
     val local = search(query)
-    if (local.isNotEmpty()) return Futures.immediateFuture(local)
-    val key = normalizeText(query)
+    // A request for an album asks the page unless a saved album already answers it (ALBUM-CAR-001).
+    if (local.isNotEmpty() && (!album || savedAlbums().any { namesAlbum(query, it) })) return Futures.immediateFuture(local)
+    val key = catalogKey(query, album)
     synchronized(catalogLock) {
       val now = android.os.SystemClock.elapsedRealtime()
       catalogResults.entries.removeAll { now - it.value.at > 60000 }
@@ -209,7 +264,7 @@ object MediaHub {
           android.util.Log.w("AirwaveCarSearch", "request $id timed out")
         }
       } }, timeoutMs.coerceIn(50, 30000))
-      try { target(JSONObject().put("type", "catalogSearch").put("requestId", id).put("query", query)) }
+      try { target(JSONObject().put("type", "catalogSearch").put("requestId", id).put("query", query).put("album", album)) }
       catch (e: Exception) { pendingSearches.remove(id); future.setException(e) }
       return future
     }
@@ -230,10 +285,18 @@ object MediaHub {
         return
       }
       val results = parseSongs(reply.optJSONArray("songs") ?: JSONArray()).distinctBy { it.id }.take(25)
-      catalogResults[pending.key] = CatalogResult(results, android.os.SystemClock.elapsedRealtime())
+      // ALBUM-CAR-001: the albums found, each opened; their songs' ids name the album they play in.
+      val albums = parseFolders(reply.optJSONArray("albums") ?: JSONArray(), album = true).take(5)
+        .map { a -> a.copy(songs = a.songs.filter { it.id.startsWith(albumTrackPrefix(a.id)) }.take(100)) }
+        .filter { it.songs.isNotEmpty() }
+      for (a in albums) { catalogAlbums.remove(a.id); catalogAlbums[a.id] = a }
+      while (catalogAlbums.size > 20) catalogAlbums.remove(catalogAlbums.keys.first())
+      // Only a song of an album in this answer may be played for it; a forged id plays nothing.
+      val play = reply.optStringOrNull("play")?.takeIf { p -> albums.any { a -> a.songs.any { it.id == p } } }
+      catalogResults[pending.key] = CatalogResult(results, android.os.SystemClock.elapsedRealtime(), albums, play)
       while (catalogResults.size > 8) catalogResults.remove(catalogResults.keys.first())
       pending.future.set(results)
-      android.util.Log.i("AirwaveCarSearch", "request $id completed: ${results.size} results")
+      android.util.Log.i("AirwaveCarSearch", "request $id completed: ${results.size} results, ${albums.size} albums")
     }
   }
 
@@ -280,12 +343,22 @@ object MediaHub {
     return out
   }
 
-  private fun parseFolders(a: JSONArray): List<Folder> {
+  /** The id prefix of an album's songs from a car search (the page's `carAlbumTrackId`). */
+  fun albumTrackPrefix(albumId: String) = "calbum/${android.net.Uri.encode(albumId)}/track/"
+
+  private fun parseFolders(a: JSONArray, album: Boolean = false): List<Folder> {
     val out = ArrayList<Folder>(a.length())
     for (i in 0 until a.length()) {
       val o = a.optJSONObject(i) ?: continue
       val id = o.optStringOrNull("id") ?: continue
-      out.add(Folder(id, o.optString("title", "Playlist").take(200), parseSongs(o.optJSONArray("songs") ?: JSONArray())))
+      out.add(
+        Folder(
+          id, o.optString("title", if (album) "Album" else "Playlist").take(200), parseSongs(o.optJSONArray("songs") ?: JSONArray()),
+          album = album || o.optBoolean("album", false),
+          artist = o.optStringOrNull("artist")?.take(200),
+          artwork = o.optStringOrNull("artwork")?.takeIf { it.startsWith("https://") || it.startsWith("http://") },
+        ),
+      )
     }
     return out
   }

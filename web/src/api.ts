@@ -433,6 +433,17 @@ export interface PlaylistMix {
   placed: number;
 }
 
+/** ALBUM-SAVE-001: the album a saved album came from. */
+export interface AlbumRef {
+  id: string;
+  provider: string;
+  artist: string;
+  artwork: string | null;
+  year: string | null;
+  kind: string;
+  url: string;
+}
+
 export interface PlaylistSummary {
   id: string;
   name: string;
@@ -441,9 +452,11 @@ export interface PlaylistSummary {
   unplayed: number;
   discovery_ready: boolean;
   items: PlaylistItem[];
+  /** Set on a saved album (ALBUM-SAVE-001); a list the listener made has none. */
+  album?: AlbumRef | null;
 }
 
-export type PlaylistAction = 'create' | 'rename' | 'delete' | 'add' | 'remove' | 'set';
+export type PlaylistAction = 'create' | 'rename' | 'delete' | 'add' | 'remove' | 'set' | 'save_album';
 
 export type FeedbackKind = 'like' | 'dislike' | 'hide' | 'save' | 'replay' | 'complete' | 'skip' | 'unlike' | 'unsave' | 'undislike' | 'unhide';
 
@@ -559,7 +572,7 @@ export const api = {
   saved: () => call<{ items: SavedItem[] }>('/api/saved'),
   playlists: () => call<{ lists: PlaylistSummary[] }>('/api/playlists'),
   /** Every list edit goes through one call and answers with the lists as they now stand. */
-  playlistEdit: (action: PlaylistAction, opts: { ids?: string[]; id?: string; name?: string; key?: string; tracks?: Track[] } = {}) =>
+  playlistEdit: (action: PlaylistAction, opts: { ids?: string[]; id?: string; name?: string; key?: string; tracks?: Track[]; album?: AlbumView } = {}) =>
     call<{ lists: PlaylistSummary[] }>('/api/playlists', { method: 'POST', body: json({ action, ...opts }) }),
   health: (refresh = false) => call<Health>(`/api/health${refresh ? '?refresh=1' : ''}`),
   status: () => call<Status>('/api/status'),

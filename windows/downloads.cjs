@@ -575,6 +575,14 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
       }
       case 'open-list':
         return openList(req);
+      case 'save-list':
+        return saveList(req);
+      case 'open-saved': {
+        const folder = savedFolder(req);
+        const ok = fs.existsSync(folder);
+        if (ok && cfg.openFolder) cfg.openFolder(folder);
+        return { ok, folder };
+      }
       case 'reveal': {
         const j = jobs.get(String(req.id));
         const f = j && j.files[0];
@@ -633,6 +641,70 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
     fs.writeFileSync(manifest, JSON.stringify({ files: [...files, playlist] }), 'utf8');
     if (cfg.openFolder) cfg.openFolder(folder);
     return { ok: true, held: files.length, total: songs.length, folder };
+  }
+
+  /**
+   * LIST-SAVE-FOLDER-001: where one saved list or album lives on disk — <music folder>\Albums\<name> or
+   * <music folder>\Lists\<name>. The name cannot leave that folder.
+   */
+  function savedFolder(req) {
+    const kind = String(req.kind || '');
+    if (kind !== 'album' && kind !== 'list') throw new Error('Save an album or a list.');
+    const root = path.join(saveDir, kind === 'album' ? 'Albums' : 'Lists');
+    const name = safeName(String(req.name || '')).slice(0, 120).replace(/^\.+/, '') || (kind === 'album' ? 'Album' : 'List');
+    const folder = path.join(root, name);
+    if (path.dirname(folder) !== root) throw new Error('Bad list name.');
+    return folder;
+  }
+
+  /**
+   * LIST-SAVE-FOLDER-001. Owner: "quick download entire saved playlist / album and download into
+   * seperated folder for just those tracks". The page asks for every song and calls this again as more
+   * finish: each held song is linked (or copied across drives) into the list's own folder, numbered by
+   * its place in the list, and the .m3u8 is rewritten in that order. A song already in the folder is
+   * never removed or replaced. The folder copy becomes the kept copy when the song had none, so it plays
+   * offline and the cache limit cannot take it away.
+   */
+  function saveList(req) {
+    const folder = savedFolder(req);
+    fs.mkdirSync(folder, { recursive: true });
+    const manifest = path.join(folder, '.airwave-list.json');
+    let held = {};
+    try {
+      const m = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+      if (m && typeof m.songs === 'object' && !Array.isArray(m.songs)) held = m.songs;
+    } catch { /* first time */ }
+    // What is still on disk: a file the owner deleted is simply fetched into place again.
+    for (const [u, e] of Object.entries(held)) {
+      if (!e || typeof e.file !== 'string' || e.file !== path.basename(e.file) || !fs.existsSync(path.join(folder, e.file))) delete held[u];
+    }
+    const songs = Array.isArray(req.songs) ? req.songs.slice(0, 5000) : [];
+    for (const song of songs) {
+      const link = String((song && song.url) || '');
+      if (held[link] || (!urlAllowedFor('yt-dlp', link) && !urlAllowedFor('spotdl', link))) continue;
+      const src = library.get(link) || cachedFile(link);
+      if (!src) continue;
+      const n = Math.max(1, Math.min(9999, Math.floor(Number(song.n)) || 1));
+      const title = String(song.title || 'Song').slice(0, 120);
+      const artist = String(song.artist || '').slice(0, 80);
+      const label = artist ? `${title} - ${artist}` : title;
+      const file = safeName(`${String(n).padStart(2, '0')} ${label}`).slice(0, 150) + path.extname(src);
+      const dest = path.join(folder, file);
+      try {
+        if (!fs.existsSync(dest)) {
+          try { fs.linkSync(src, dest); } catch { fs.copyFileSync(src, dest); }
+        }
+      } catch { continue; }
+      held[link] = { file, n, title, artist };
+      if (!library.get(link)) library.set(link, dest);
+    }
+    const order = Object.values(held).sort((a, b) => a.n - b.n || a.file.localeCompare(b.file));
+    const lines = ['#EXTM3U'];
+    for (const e of order) lines.push(`#EXTINF:-1,${e.artist ? `${e.artist} - ` : ''}${e.title}`.replace(/[\r\n]/g, ' '), e.file);
+    fs.writeFileSync(path.join(folder, `${path.basename(folder)}.m3u8`), lines.join('\r\n') + '\r\n', 'utf8');
+    fs.writeFileSync(manifest, JSON.stringify({ songs: held }), 'utf8');
+    const total = Number.isFinite(Number(req.total)) ? Math.max(0, Math.floor(Number(req.total))) : songs.length;
+    return { ok: true, held: order.length, total, folder };
   }
 
   function shutdown() {

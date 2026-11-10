@@ -80,7 +80,7 @@ it('lists albums found by a search, opens one, and folds a long list', async () 
   expect(host.querySelectorAll('[aria-label="Albums for ken carson"] li')).toHaveLength(4);
 });
 
-it('opens an album like a list: its songs in order, played as one list, and saved as a list', async () => {
+it('opens an album like a list: its songs in order, played as one list, and saved', async () => {
   albumCall.mockResolvedValue({ album: full });
   editCall.mockResolvedValue({ lists: [{ id: 'L9', name: 'Lost Files', count: 2 }] });
   const play = vi.fn();
@@ -105,22 +105,12 @@ it('opens an album like a list: its songs in order, played as one list, and save
   expect(host.querySelector('button[aria-label^="Open the album"]')).toBeNull();
   await act(async () => byText('Play album')!.click());
   expect(play).toHaveBeenCalledWith(full.tracks[0], full.tracks);
-  await act(async () => byText('Save as a list')!.click());
-  expect(editCall).toHaveBeenCalledWith('create', { name: 'Lost Files', tracks: full.tracks });
+  // ALBUM-SAVE-001 replaced “Save as a list”: the album is saved as an album (saved-albums-ui.test.tsx).
+  await act(async () => byText('Save album')!.click());
+  expect(editCall).toHaveBeenCalledWith('save_album', { album: full });
   expect(lists).toHaveBeenCalledWith([{ id: 'L9', name: 'Lost Files', count: 2 }]);
-  expect(host.textContent).toContain('Saved as the list “Lost Files”');
   await act(async () => button('Back')!.click());
   expect(back).toHaveBeenCalled();
-});
-
-it('names the album after its artist too when a list already has its name', async () => {
-  albumCall.mockResolvedValue({ album: full });
-  const { ApiError } = await import('./api');
-  editCall.mockRejectedValueOnce(new ApiError('You already have a list called “Lost Files”.', 400, null)).mockResolvedValueOnce({ lists: [] });
-  await draw(<AlbumView target={{ id: 'dz:2' }} onBack={() => {}} onPreview={() => {}} onLists={() => {}} seedKeys={new Set()} onAdd={() => {}} />);
-  await act(async () => undefined);
-  await act(async () => byText('Save as a list')!.click());
-  expect(editCall).toHaveBeenLastCalledWith('create', { name: 'Lost Files \u2013 Ken Carson', tracks: full.tracks });
 });
 
 it('opens the album of a song, and says so plainly when none is found', async () => {

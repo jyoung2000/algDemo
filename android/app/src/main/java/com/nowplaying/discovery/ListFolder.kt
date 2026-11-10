@@ -50,10 +50,32 @@ object ListFolder {
         .put("name", entryName(entries.size + 1, s.optString("title"), s.optString("artist"), ext))
         .put("uri", uri.toString()).put("mime", type).put("size", size)
     }
+    record(context, name, entries)
+    return JSONObject().put("ok", show(context)).put("held", entries.size).put("total", songs.length()).put("folder", "Files › Airwave Discovery › $name")
+  }
+
+  /**
+   * LIST-SAVE-FOLDER-001: shows a saved list's own folder (songs already copied there, as `uri` + `name`)
+   * in the same Files-app place, for phones whose Files app cannot open the Music folder directly.
+   */
+  fun showSaved(context: Context, name: String, songs: JSONArray): Boolean {
+    val entries = ArrayList<JSONObject>()
+    for (i in 0 until minOf(songs.length(), MAX_SONGS)) {
+      val s = songs.optJSONObject(i) ?: continue
+      val uri = Uri.parse(s.optString("uri"))
+      val size = runCatching { context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } }.getOrNull() ?: continue
+      entries += JSONObject().put("name", s.optString("name")).put("uri", uri.toString())
+        .put("mime", context.contentResolver.getType(uri) ?: "audio/*").put("size", size)
+    }
+    if (entries.isEmpty()) return false
+    record(context, listName(name), entries)
+    return show(context)
+  }
+
+  private fun record(context: Context, name: String, entries: List<JSONObject>) {
     File(context.filesDir, FILE).writeText(JSONObject().put("name", name).put("songs", JSONArray(entries)).toString())
     context.contentResolver.notifyChange(DocumentsContract.buildRootsUri(AUTHORITY), null)
     context.contentResolver.notifyChange(DocumentsContract.buildChildDocumentsUri(AUTHORITY, DIR), null)
-    return JSONObject().put("ok", show(context)).put("held", entries.size).put("total", songs.length()).put("folder", "Files › Airwave Discovery › $name")
   }
 
   /** What [open] last recorded, or null before any list was opened. */
