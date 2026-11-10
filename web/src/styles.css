@@ -760,9 +760,21 @@ a.push {
   align-items: center;
   gap: 5px;
 }
-/* SRC-REFRESH-001: the quick refresh sits at the end of the source line, a full 44px target. */
-.srcline {
+/* SRC-REFRESH-001: the quick refresh sits at the end of the source line, a full 44px target. The labels
+   wrap in their own group (same gaps as a plain source line) and the button stays beside them. */
+.srcline--refresh {
+  flex-wrap: nowrap;
   align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.srcline__items {
+  display: flex;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 4px 12px;
+  margin: 0;
 }
 .srcline__refresh {
   /* A 36px circle in a 44px box, as the rows' buttons are drawn, so the target is real both ways. */
@@ -774,8 +786,6 @@ a.push {
   background-clip: content-box;
   box-shadow: inset 0 0 0 1px var(--hair);
   margin-left: auto;
-  /* Clear of the results box below, which it otherwise nearly touches. */
-  margin-bottom: 4px;
 }
 .state > .srcline__refresh {
   margin-left: 8px;

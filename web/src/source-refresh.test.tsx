@@ -67,6 +67,9 @@ it('asks every source again for the same words, past the five-minute memory', as
   const b = refresh()!;
   expect(b).toBeTruthy();
   expect(b.title).toBe('Ask every source again');
+  // Beside the wrapping labels, not among them: inside, the 44px button made its wrapped row taller than the rest.
+  expect(b.closest('.srcline__items')).toBeNull();
+  expect(b.parentElement!.querySelector(':scope > .srcline__items')).toBeTruthy();
   await act(async () => {
     b.click();
     await new Promise((r) => setTimeout(r, 20));

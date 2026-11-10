@@ -840,17 +840,21 @@ function RefreshSources({ onRefresh, refreshing }: { onRefresh: () => void; refr
 function SourceLine({ sources, onRefresh, refreshing = false }: { sources: Record<string, SourceState>; onRefresh?: (() => void) | undefined; refreshing?: boolean }) {
   const entries = Object.entries(sources);
   if (!entries.length) return null;
-  return (
-    <p className="srcline">
-      {entries.map(([p, s]) => (
+  // The labels wrap in their own group and the refresh sits beside it, so a 44px button never makes
+  // one wrapped row taller than the others (seen at 390px: an uneven gap above the last row).
+  const items = entries.map(([p, s]) => (
         <span key={p} className="srcline__item" title={s.detail ?? ''}>
           <span className={classNames('sdot', s.state === 'ok' ? 'sdot--ok' : s.state === 'skipped' ? '' : 'sdot--warn')} aria-hidden="true" />
           {PROVIDER_LABEL[p] ?? p}
           {s.state === 'ok' ? ` · ${s.count ?? 0}` : s.state === 'skipped' ? ' · skipped' : ' · unavailable'}
         </span>
-      ))}
-      {onRefresh && <RefreshSources onRefresh={onRefresh} refreshing={refreshing} />}
-    </p>
+  ));
+  if (!onRefresh) return <p className="srcline">{items}</p>;
+  return (
+    <div className="srcline srcline--refresh">
+      <p className="srcline__items">{items}</p>
+      <RefreshSources onRefresh={onRefresh} refreshing={refreshing} />
+    </div>
   );
 }
 
