@@ -5,6 +5,7 @@ import { api, type PlaylistMix, type PlaylistSummary, type SavedItem, type Track
 import { Art } from './Art';
 import { ListDownloadBar, ListFolderButton } from './ListDownloadBar';
 import { SaveMenu } from './SaveMenu';
+import { AlbumSlot } from './AlbumShelf';
 import { SoundCard } from './SoundCard';
 import { listMixNote } from './list-mix-note';
 import { PLAYLIST_NAME_MAX } from './engine/playlists';
@@ -28,6 +29,8 @@ interface Props {
   onUseAsQueue?: (id: string) => void;
   /** The list now in the now playing queue, if any. */
   queueListId?: string | null;
+  /** ALBUM-OPEN-001: open the album a song is on. */
+  onOpenAlbum?: ((t: Track) => void) | undefined;
 }
 
 const ALL = 'all';
@@ -40,7 +43,7 @@ const ALL = 'all';
  * and the owner asked for that control to go. A whole list can become the now playing queue instead,
  * and then every song in it is a starting song (PLAYLIST-QUEUE-001).
  */
-export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onDownload, cacheOf, onVisibleList, onUseAsQueue, queueListId }: Props) {
+export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onDownload, cacheOf, onVisibleList, onUseAsQueue, queueListId, onOpenAlbum }: Props) {
   const [view, setView] = useState<string>(ALL);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -320,6 +323,7 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
                     <Glyph name="download" size={14} />
                   </button>
                 )}
+                {onOpenAlbum && <AlbumSlot track={track} onOpen={onOpenAlbum} />}
                 <button
                   className={classNames('iconbtn', menuFor === track.key && 'is-on')}
                   type="button"

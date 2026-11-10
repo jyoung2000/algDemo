@@ -53,3 +53,14 @@ export function RefreshGlyph({ size = 14 }: Props) {
     </svg>
   );
 }
+
+/** ALBUM-OPEN-001: a record, for the album button on song rows (the kit has no album glyph). */
+export function AlbumGlyph({ size = 14 }: Props) {
+  return (
+    <svg className="glyph glyph--stroke" {...svg(size)}>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="2.5" />
+      <path d="M7.4 9.6a5.2 5.2 0 0 1 2.2-2.2" />
+    </svg>
+  );
+}

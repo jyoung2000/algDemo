@@ -9,6 +9,7 @@ import * as A from './audio';
 import { type EngineConfig, TRANSFER } from './config';
 import { decodeToMono48k } from './decode';
 import { type Ctx, type Deezer, ProviderError, cached } from './deezer';
+import { albumKeyOf } from './album-key';
 import { fold, matchRecordings } from './identity';
 import { needsSub, tagsFromMusicBrainz } from './infer';
 import { ARTIST_SUBS_KEY, MUSICBRAINZ_UA, artistName, artistsToAsk, lookupArtistSubs, type ArtistSubsMap } from './artist-subs';
@@ -177,6 +178,8 @@ export class Pipeline {
     fresh: boolean,
     /** Called at most once, as soon as enough candidates exist for a provisional first wave. */
     onPartial?: (cands: Dict[], related: Map<string, Set<string>>) => void,
+    /** ALBUM-TASTE-001: album keys the listener keeps playing; a starting song on one fetches the rest of it. */
+    deepAlbums: ReadonlySet<string> = new Set(),
   ): Promise<{ cands: Dict[]; related: Map<string, Set<string>> }> {
     const n = Math.max(1, seeds.length);
     const perSeed = Math.max(6, Math.ceil(cfg.perSourceCap / n));
@@ -203,6 +206,13 @@ export class Pipeline {
       if (term.trim() && spotify) add('spotify-search', s, async () => rel(await spotify(term, perSeed), 'search_match'));
       if (s['provider'] === 'soundcloud') {
         add('soundcloud-recommended', s, async () => rel(await this.sc.related(s as never, Math.min(perSeed, 20), c), 'sc_recommended'));
+      }
+      const dzAlbum = dz?.['album_id'] ? String(dz['album_id']) : '';
+      if (/^\d{1,15}$/.test(dzAlbum) && deepAlbums.has(albumKeyOf(dz as never) ?? '')) {
+        add('deezer-album', s, async () => {
+          const alb = await this.dz.album(dzAlbum, c);
+          return rel(((alb['tracks'] as Dict[] | undefined) ?? []).filter((t) => t['readable'] ?? true).map((t) => this.dz.toTrack(t, alb)), 'same_album');
+        });
       }
       const dzArtist = (dz?.['artist_ids'] as Dict | undefined)?.['deezer'] as string | undefined;
       if (dzArtist) {

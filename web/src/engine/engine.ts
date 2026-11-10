@@ -9,6 +9,7 @@ import { splitArtists } from './identity';
 import { TASTE_WEIGHT, tasteFit, type TasteProfile } from './taste';
 import { tasteFit2, type TasteBlend } from './taste2';
 import { SEED_GUESS_SOURCE, SOUND_GUESS_SOURCE } from './infer';
+import { albumKeyOf, cleanAlbumTitle, type AlbumOf } from './album-key';
 
 export const SEED_FACTORS = ['audio', 'genre', 'artist', 'provider', 'tempo'] as const;
 export const GLOBAL_FACTORS = ['feedback', 'freshness', 'novelty'] as const;
@@ -26,6 +27,8 @@ export const RELATION: Record<string, [number, string, boolean]> = {
   genre_chart: [0.0, 'From the Deezer genre chart matching', false], // exploration pool, not relatedness
   // Apple's search for the seed's own title and artist: the same catalogue, not a platform's view of relatedness.
   search_match: [0.5, 'Apple Music’s catalogue turns it up for', false],
+  // ALBUM-TASTE-001: the rest of an album the listener keeps playing, fetched for a starting song on it.
+  same_album: [0.6, 'From the album you keep playing, like', true],
 };
 export const EXPLORATION_RELATIONS = new Set(['genre_chart']);
 
@@ -67,6 +70,7 @@ export interface Track {
   unavailable?: boolean;
   artist_from_url?: boolean;
   emphasis?: number;
+  album?: string | null;
 }
 
 export interface Reason {
@@ -171,6 +175,8 @@ export interface FeedbackEvent {
   session?: string | null; // player session id
   origin?: string | null; // 'queue' | 'manual' | 'import:<source>'
   confidence?: number | null; // telemetry confidence 0..1 (imports < live playback)
+  /** The stored track (album, title, artists); album taste reads it. Absent on old and bare events. */
+  track?: AlbumOf | null;
 }
 
 export interface FeedbackView {
@@ -180,7 +186,13 @@ export interface FeedbackView {
   hidden: Set<string>;
   likedArtists: Set<string>;
   events: number;
+  /** ALBUM-TASTE-001 (v2 only): album key -> affinity, and the album's name for the reasons. */
+  album?: Record<string, number>;
+  albumNames?: Record<string, string>;
 }
+
+/** An album this liked is worth fetching whole for a starting song on it (about two finished songs). */
+export const ALBUM_DEEP_MIN = 1.0;
 
 export function decay(ts: number, nowTs: number, halfLifeDays: number): number {
   const age = Math.max(0, (nowTs - ts) / 86400.0);
@@ -246,6 +258,10 @@ export function buildFeedback2(events: FeedbackEvent[], nowTs: number, cfg: Engi
   const hidden = new Set<string>();
   const perDay = new Map<string, number>(); // `${key}|${day}` -> behavioral events already counted
   const skipStreak = new Map<string, { n: number; ts: number }>(); // consecutive skips with no positive in between
+  const albumPos = new Map<string, Map<string, number>>(); // album -> key -> best positive weight
+  const albumNeg: Record<string, number> = {};
+  const skippedByAlbum = new Map<string, Set<string>>();
+  const albumNames: Record<string, string> = {};
   const sorted = [...events].sort((x, y) => x.ts - y.ts || (x.event_id < y.event_id ? -1 : x.event_id > y.event_id ? 1 : 0));
   for (const e of sorted) {
     if (seen.has(e.event_id) || !(e.kind in FEEDBACK_WEIGHTS) || e.kind === 'seed') continue;
@@ -278,6 +294,20 @@ export function buildFeedback2(events: FeedbackEvent[], nowTs: number, cfg: Engi
     const a = e.artist ?? '';
     if (e.kind === 'like' || e.kind === 'dislike' || e.kind === 'hide') latest.set(e.key, [e.ts, e.kind]);
     if (e.kind === 'hide' && nowTs - e.ts < 30 * 86400) hidden.add(e.key);
+    const ak = e.track ? albumKeyOf(e.track) : null;
+    if (ak) {
+      albumNames[ak] ??= cleanAlbumTitle(String(e.track!.album));
+      if (e.kind === 'skip') {
+        if (!skippedByAlbum.has(ak)) skippedByAlbum.set(ak, new Set());
+        skippedByAlbum.get(ak)!.add(e.key);
+      } else if (w > 0) {
+        const m = albumPos.get(ak) ?? new Map<string, number>();
+        albumPos.set(ak, m);
+        m.set(e.key, Math.max(m.get(e.key) ?? 0, w));
+      } else {
+        albumNeg[ak] = (albumNeg[ak] ?? 0) + w * 0.25;
+      }
+    }
     if (!a) continue;
     if (e.kind === 'skip') {
       if (!skippedByArtist.has(a)) skippedByArtist.set(a, new Set());
@@ -306,7 +336,30 @@ export function buildFeedback2(events: FeedbackEvent[], nowTs: number, cfg: Engi
   // Three consecutive skips with no renewed interest rest the song for 30 days.
   for (const [k, s] of skipStreak) if (s.n >= 3 && nowTs - s.ts < 30 * 86400) excluded2.add(k);
   const liked2 = new Set(Object.keys(artist).filter((a) => artist[a]! > 1.0));
-  return { track, artist, excluded: excluded2, hidden, likedArtists: liked2, events: seen.size };
+  // ALBUM-TASTE-001: an album counts once two or more of its songs were endorsed (one song is the
+  // artist's signal), with the artist's sqrt breadth at a smaller scale; skipping through three of its
+  // songs lowers it as three skipped songs lower an artist.
+  const album: Record<string, number> = { ...albumNeg };
+  for (const [k, m] of albumPos) {
+    if (m.size < 2) continue;
+    let sum = 0;
+    for (const v of m.values()) sum += v;
+    album[k] = (album[k] ?? 0) + 0.4 * (sum / m.size) * Math.sqrt(m.size);
+  }
+  for (const [k, keys] of skippedByAlbum) {
+    if (keys.size >= cfg.artistSkipThreshold) album[k] = (album[k] ?? 0) - 0.4 * keys.size;
+  }
+  for (const k of Object.keys(album)) if (!album[k]) delete album[k];
+  for (const k of Object.keys(albumNames)) if (!(k in album)) delete albumNames[k];
+  return { track, artist, excluded: excluded2, hidden, likedArtists: liked2, events: seen.size, album, albumNames };
+}
+
+/** The album part of a song's feedback, with the album's name; null when the listener has none for it. */
+export function albumAffinity(t: AlbumOf, fb: FeedbackView): { score: number; name: string } | null {
+  if (!fb.album) return null;
+  const k = albumKeyOf(t);
+  if (!k || !(k in fb.album)) return null;
+  return { score: fb.album[k]!, name: fb.albumNames?.[k] ?? cleanAlbumTitle(String(t.album ?? '')) };
 }
 
 export function feedbackFit(t: Track, fb: FeedbackView): number | null {
@@ -321,6 +374,11 @@ export function feedbackFit(t: Track, fb: FeedbackView): number | null {
       s += fb.artist[a]!;
       found = true;
     }
+  }
+  const al = albumAffinity(t, fb);
+  if (al) {
+    s += al.score;
+    found = true;
   }
   if (!found) return null;
   return 0.5 + 0.5 * Math.tanh(s / 8.0);
@@ -745,7 +803,11 @@ export function explain(s: Scored, ctx: Context): [Reason[], string[]] {
     if (sb) reasons.push({ factor: 'tempo', text: `Similar tempo: ${Math.round(t.bpm)} vs ${Math.round(sb)} BPM (Deezer).`, weight: contrib.tempo ?? 0 });
   }
   if (f.feedback !== null && f.feedback !== undefined) {
-    const txt = f.feedback > 0.55 ? 'You liked songs by this artist.' : 'Your earlier feedback lowered it.';
+    const al = albumAffinity(t, ctx.feedback);
+    const txt =
+      al && al.score > 0.5 && f.feedback > 0.55 ? `You keep playing the album ${al.name}.`
+      : al && al.score < -0.5 && f.feedback < 0.45 ? `You skipped through the album ${al.name}, so it ranks lower.`
+      : f.feedback > 0.55 ? 'You liked songs by this artist.' : 'Your earlier feedback lowered it.';
     reasons.push({ factor: 'feedback', text: txt, weight: contrib.feedback ?? 0 });
   }
   const rel = t.release;

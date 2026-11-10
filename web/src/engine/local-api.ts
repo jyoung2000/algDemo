@@ -9,6 +9,7 @@ import { EQ_DEFAULTS, parseEq } from './eq';
 import { PLAY_THROUGH_DEFAULT, clampPlayThrough, clampSlider } from './crossfade';
 import { appendDiscovery, needsListeningDiscovery, newDiscoveryTracks } from './discovery';
 import {
+  PLAYLIST_TRACKS_MAX,
   PlaylistError,
   addToPlaylists,
   createPlaylist,
@@ -49,6 +50,7 @@ import { localAudioUrl } from './local-audio';
 import { Job, Pipeline, pmap, type Embedder } from './pipeline';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
+import { Albums } from './albums';
 import { SoundCloud } from './soundcloud';
 import { Bandcamp } from './bandcamp';
 import { Audius } from './audius';
@@ -125,6 +127,23 @@ export const QUEUE_SIZE_MAX = 60;
 const FEEDBACK_KINDS = new Set(['like', 'dislike', 'hide', 'save', 'replay', 'complete', 'skip', 'unlike', 'unsave', 'undislike', 'unhide']);
 /** PLAYLIST-QUEUE-001 store keys: the list now in the queue, the queue it replaced, the seed window. */
 const QUEUE_PLAYLIST_KEY = 'queue_playlist';
+/** Songs saved lists were made with (ALBUM-OPEN-001), by key, so a list made from an album shows every song. */
+const LIST_TRACKS_KEY = 'list_tracks';
+/** What says which album a song is on; a copy that leaves these out keeps them from another copy. */
+const ALBUM_FIELDS = ['album', 'album_id', 'release'] as const;
+
+/**
+ * ALBUM-OPEN-001 / ALBUM-TASTE-001: the copy of a song that was played (often SoundCloud or YouTube) may
+ * not name its album, though another copy with the same key does. Fill only what is missing, and only
+ * when the copy names no album of its own, so a copy that says otherwise is never overwritten.
+ */
+function withAlbumOf(t: Dict, from: Dict | undefined): Dict {
+  if (!from || t['album'] || !from['album']) return t;
+  const out = { ...t };
+  for (const f of ALBUM_FIELDS) if ((out[f] === undefined || out[f] === null || out[f] === '') && from[f]) out[f] = from[f];
+  return out;
+}
+const LIST_TRACKS_MAX = 3000;
 const QUEUE_SAVED_KEY = 'queue_saved';
 const SEED_CURSOR_KEY = 'seed_cursor';
 const CAPS = ['search', 'resolve_link', 'related_candidates', 'artist_candidates', 'recent_candidates', 'playback_link'];
@@ -168,6 +187,7 @@ export class LocalApi {
   readonly hearthis: HearThis;
   readonly archive: InternetArchive;
   readonly apple: AppleMusic;
+  readonly albums: Albums;
   readonly sp: Spotify;
   readonly genius: Genius;
   readonly shazam: Shazam;
@@ -196,6 +216,7 @@ export class LocalApi {
     this.hearthis = new HearThis(this.http, this.store);
     this.archive = new InternetArchive(this.http, this.store);
     this.apple = new AppleMusic(this.http, this.store);
+    this.albums = new Albums(this.http, this.dz, this.store);
     this.sp = new Spotify(this.http, this.store);
     this.genius = new Genius(this.http);
     this.shazam = new Shazam(this.http);
@@ -253,6 +274,8 @@ export class LocalApi {
       if (m === 'GET' && path === '/api/health') return ok(await this.healthRoute(q.get('refresh') === '1' || q.get('refresh') === 'true'));
       if (m === 'GET' && path === '/api/search') return ok(await this.search(q.get('q') ?? '', q.get('sources') ?? 'ytmusic,deezer,soundcloud,apple', Number(q.get('limit') ?? 12)));
       if (m === 'GET' && path === '/api/search/lyrics') return await this.searchLyrics(q.get('q') ?? '');
+      if (m === 'GET' && path === '/api/search/albums') return ok(await this.searchAlbums(q.get('q') ?? ''));
+      if (m === 'POST' && path === '/api/album') return await this.album(body ?? {});
       if (m === 'POST' && path === '/api/identify/audio') return await this.identifyAudio(body ?? {});
       if (m === 'POST' && path === '/api/resolve') return await this.resolve(String(body?.['url'] ?? ''));
       if (m === 'POST' && path === '/api/complete-spotify') return ok(await this.completeSpotify(String(body?.['title'] ?? ''), String(body?.['artist'] ?? '')));
@@ -421,9 +444,35 @@ export class LocalApi {
     return { query: q, results, sources: status, ms: Math.round(ms), bytes: meter.total };
   }
 
+  // ---- albums (ALBUM-SEARCH-001, ALBUM-OPEN-001) ------------------------------------------
+  private async searchAlbums(raw: string): Promise<Dict> {
+    const q = raw.trim().replace(/\s+/g, ' ').slice(0, 200);
+    if (!q || looksLikeUrl(q)) return { query: q, albums: [], sources: {} };
+    const t0 = performance.now();
+    const meter = this.searchMeter();
+    const r = await this.albums.search(q, 12, { meter });
+    return { query: q, albums: r.albums, sources: r.sources, ms: Math.round(performance.now() - t0), bytes: meter.total };
+  }
+
+  /** `{ id }` opens that album; `{ track }` opens the album the song sits on. */
+  private async album(body: Dict): Promise<LocalResponse> {
+    const meter = this.searchMeter();
+    const id = typeof body['id'] === 'string' ? body['id'] : '';
+    const track = body['track'] && typeof body['track'] === 'object' ? (body['track'] as Dict) : null;
+    if (!id && !track) return fail(400, 'id or track required');
+    try {
+      const a = id ? await this.albums.open(id, { meter }) : await this.albums.openFor(track as never, { meter });
+      if (!a) return fail(404, 'No album for this song was found on Deezer or Apple Music.', { code: 'none' });
+      return ok({ album: { ...a, tracks: a.tracks.map((t) => cleanTrack(t as Dict)) } });
+    } catch (e) {
+      if (e instanceof ProviderError) return fail(404, e.message, { code: 'none' });
+      return this.identifyFailure(e, 'album');
+    }
+  }
+
   // ---- identify by lyrics / audio ------------------------------------------------------
   /** What went wrong with a Genius/Shazam call, in terms the UI has copy for. */
-  private identifyFailure(e: unknown, what: 'lyrics' | 'audio'): LocalResponse {
+  private identifyFailure(e: unknown, what: 'lyrics' | 'audio' | 'album'): LocalResponse {
     const msg = String((e as Error)?.message ?? e);
     if (e instanceof BudgetExceeded) return fail(429, 'The daily transfer allowance is used up.', { code: 'budget' });
     if (/HTTP (429|5\d\d)/.test(msg)) return fail(503, `The ${what} service is busy.`, { code: 'busy' });
@@ -564,11 +613,14 @@ export class LocalApi {
   /** Every track the engine holds a copy of, by key: feedback rows, the list, starting songs. */
   private knownTracks(): Map<string, Dict> {
     const byKey = new Map<string, Dict>();
-    for (const r of this.store.feedback()) if (r.track) byKey.set(r.key, r.track as Dict);
+    // Songs a list was made with (an album saved as a list); any fresher copy below replaces them.
+    for (const [k, t] of Object.entries(this.store.get<Record<string, Dict>>(LIST_TRACKS_KEY) ?? {})) byKey.set(k, t);
+    const put = (k: string, t: Dict) => byKey.set(k, withAlbumOf(t, byKey.get(k)));
+    for (const r of this.store.feedback()) if (r.track) put(r.key, r.track as Dict);
     for (const it of (this.store.get<Dict>('last_result')?.['items'] ?? []) as { track: Dict }[]) {
-      if (it.track) byKey.set(String(it.track['key']), it.track);
+      if (it.track) put(String(it.track['key']), it.track);
     }
-    for (const s of this.store.seeds() as Dict[]) byKey.set(String(s['key']), s);
+    for (const s of this.store.seeds() as Dict[]) put(String(s['key']), s);
     return byKey;
   }
 
@@ -888,7 +940,9 @@ export class LocalApi {
           /* a failed provisional wave never fails the request */
         }
       };
-      const gathered = await p.gather(job, gatherViews, profiles, cfg, es.fresh, onPartial);
+      // ALBUM-TASTE-001: albums the listener keeps playing are fetched whole for a starting song on them.
+      const deepAlbums = new Set(Object.entries(fb.album ?? {}).filter(([, v]) => v >= E.ALBUM_DEEP_MIN).map(([k]) => k));
+      const gathered = await p.gather(job, gatherViews, profiles, cfg, es.fresh, onPartial, deepAlbums);
       const related = gathered.related;
       // Only songs the list does not already hold can take a slot in this batch.
       const cands = newDiscoveryTracks(gathered.cands, held);
@@ -1153,7 +1207,8 @@ export class LocalApi {
       confidence: num(body['confidence'], 0, 1),
     };
     const hasMeta = Object.values(meta).some((v) => v !== null);
-    const added = await this.store.addFeedback(eventId, key, kind, artist, cleanTrack(t), listened === null ? null : Number(listened), undefined, hasMeta ? meta : undefined);
+    const stored = t['album'] ? cleanTrack(t) : cleanTrack(withAlbumOf(t, this.knownTracks().get(String(key))));
+    const added = await this.store.addFeedback(eventId, key, kind, artist, stored, listened === null ? null : Number(listened), undefined, hasMeta ? meta : undefined);
     return ok({ recorded: added, duplicate: !added });
   }
 
@@ -1290,6 +1345,19 @@ export class LocalApi {
     await this.store.put('playlists', lists);
   }
 
+  /** The songs a list was made with, newest kept when the store would grow past its bound. */
+  private async rememberListTracks(tracks: Dict[]): Promise<void> {
+    const held = { ...(this.store.get<Record<string, Dict>>(LIST_TRACKS_KEY) ?? {}) };
+    for (const t of tracks) {
+      const k = String(t['key']);
+      delete held[k];
+      held[k] = cleanTrack(t);
+    }
+    const keys = Object.keys(held);
+    for (const k of keys.slice(0, Math.max(0, keys.length - LIST_TRACKS_MAX))) delete held[k];
+    await this.store.put(LIST_TRACKS_KEY, held);
+  }
+
   /** One POST for every list edit, so the engine keeps its flat exact-path routing. */
   private async playlistAction(body: Dict): Promise<LocalResponse> {
     const action = String(body['action'] ?? '');
@@ -1301,6 +1369,16 @@ export class LocalApi {
         lists = createPlaylist(lists, body['name'], unixNow(), newId());
         // Creating a list straight from the like menu puts the song in it in the same step.
         if (key) lists = addToPlaylists(lists, [lists[lists.length - 1]!.id], key, unixNow());
+        // ALBUM-OPEN-001: a list made from an album brings its songs, kept so the list can show and
+        // play every one of them, not only the songs the listener has already played.
+        const tracks = (Array.isArray(body['tracks']) ? (body['tracks'] as unknown[]) : [])
+          .filter((t): t is Dict => Boolean(t) && typeof t === 'object' && typeof (t as Dict)['key'] === 'string' && Boolean((t as Dict)['key']))
+          .slice(0, PLAYLIST_TRACKS_MAX);
+        if (tracks.length) {
+          const id = lists[lists.length - 1]!.id;
+          for (const t of tracks) lists = addToPlaylists(lists, [id], String(t['key']), unixNow());
+          await this.rememberListTracks(tracks);
+        }
       } else if (action === 'rename') {
         lists = renamePlaylist(lists, ids[0] ?? '', body['name']);
       } else if (action === 'delete') {

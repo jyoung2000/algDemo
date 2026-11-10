@@ -78,6 +78,32 @@ export interface SearchResponse {
   bytes: number;
 }
 
+/** ALBUM-SEARCH-001: an album found by a search, from Deezer (`dz:`) or Apple Music (`ap:`). */
+export interface AlbumSummary {
+  id: string;
+  provider: 'deezer' | 'apple';
+  title: string;
+  artist: string;
+  artwork: string | null;
+  year: string | null;
+  kind: 'album' | 'ep' | 'mixtape' | 'compilation' | 'single';
+  count: number | null;
+  url: string;
+}
+
+/** ALBUM-OPEN-001: a whole album, its songs in album order. */
+export interface AlbumView extends AlbumSummary {
+  tracks: Track[];
+  duration: number | null;
+  genres: string[];
+}
+
+export interface AlbumSearchResponse {
+  query: string;
+  albums: AlbumSummary[];
+  sources: Record<string, SourceState>;
+}
+
 export type ResolveResponse =
   | { kind: 'track'; track: Track; ms: number; warning?: string }
   | { kind: 'choice'; choice: 'playlist' | 'artist' | string; message: string; track?: Track; tracks: Track[]; title?: string; count?: number; bounded?: number }
@@ -225,6 +251,8 @@ export interface Profile {
     genres: { name: string; label: string; score: number; plays: number; skips: number }[];
   };
   artists: { name: string; score: number; liked: boolean }[];
+  /** ALBUM-TASTE-001: albums the listener keeps playing (or skips through). */
+  albums?: { key: string; name: string; artist: string; score: number }[];
   songs: { key: string; title: string; artist: string; score: number; excluded: boolean; hidden: boolean }[];
   excluded: number;
   hidden: number;
@@ -473,6 +501,10 @@ export const api = {
   search: (q: string, signal?: AbortSignal) =>
     call<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}&sources=ytmusic,deezer,soundcloud,apple,spotify`, signal ? { signal } : {}),
   searchLyrics: (q: string, signal?: AbortSignal) => call<IdentifyResponse>(`/api/search/lyrics?q=${encodeURIComponent(q)}`, signal ? { signal } : {}),
+  searchAlbums: (q: string, signal?: AbortSignal) => call<AlbumSearchResponse>(`/api/search/albums?q=${encodeURIComponent(q)}`, signal ? { signal } : {}),
+  /** `{ id }` opens that album; `{ track }` opens the album the song is on (404 `code: 'none'` when there is none). */
+  album: (target: { id: string } | { track: Track }, signal?: AbortSignal) =>
+    call<{ album: AlbumView }>('/api/album', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
   identifyAudio: (signature: string, ms: number, signal?: AbortSignal) =>
     call<IdentifyResponse>('/api/identify/audio', { method: 'POST', body: json({ signature, ms }), ...(signal ? { signal } : {}) }),
   resolve: async (url: string, signal?: AbortSignal): Promise<ResolveResponse> => {
@@ -527,7 +559,7 @@ export const api = {
   saved: () => call<{ items: SavedItem[] }>('/api/saved'),
   playlists: () => call<{ lists: PlaylistSummary[] }>('/api/playlists'),
   /** Every list edit goes through one call and answers with the lists as they now stand. */
-  playlistEdit: (action: PlaylistAction, opts: { ids?: string[]; id?: string; name?: string; key?: string } = {}) =>
+  playlistEdit: (action: PlaylistAction, opts: { ids?: string[]; id?: string; name?: string; key?: string; tracks?: Track[] } = {}) =>
     call<{ lists: PlaylistSummary[] }>('/api/playlists', { method: 'POST', body: json({ action, ...opts }) }),
   health: (refresh = false) => call<Health>(`/api/health${refresh ? '?refresh=1' : ''}`),
   status: () => call<Status>('/api/status'),

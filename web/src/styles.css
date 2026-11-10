@@ -3663,3 +3663,142 @@ a.push {
   /* No motion allowed: fall back to a full, quiet bar that simply means "working". */
   .rec__dl[data-indeterminate] .rec__dl-rail { width: 100%; animation: none; opacity: 0.45; }
 }
+
+/* ALBUM-SEARCH-001 / ALBUM-OPEN-001: albums in search, the album view, and its numbered songs.
+   A tab's own view stays mounted behind an open album; the pane adds no box of its own to .main's grid. */
+.tabpane {
+  display: contents;
+}
+.tabpane[hidden] {
+  display: none;
+}
+.albums {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+/* A song with no album keeps the album button's place empty, so the row's columns still line up. */
+.album-gap {
+  visibility: hidden;
+}
+.albums__h {
+  font-size: 12px;
+  margin: 0;
+  color: var(--ink-2);
+}
+.album-row {
+  padding: 0;
+}
+.album-row__open {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 7px 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.album-row__open:hover {
+  background: var(--accent-soft);
+}
+.album-row__open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.album-row__open > .glyph {
+  flex: none;
+  color: var(--ink-2);
+}
+.albums__more {
+  justify-self: start;
+  min-height: 44px;
+}
+.album__bar {
+  display: flex;
+}
+.album__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+}
+.album__head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  align-items: end;
+}
+.album__text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.album__kind {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+/* The owner's rule for titles and artists holds here too: they wrap, never cut off. */
+.card .album__title {
+  font-size: 22px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.album__artist {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.album__meta {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+.album__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.album__actions .push {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+}
+.album .tracks {
+  max-height: none;
+}
+/* The song the player has, marked in an album or search list the way the queue marks it. */
+.track.is-playing {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.track__num {
+  flex: none;
+  min-width: 1.6em;
+  text-align: right;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+/* On a phone the cover stays beside the title, smaller, so the songs start above the player. */
+@media (max-width: 480px) {
+  .album__head {
+    gap: 12px;
+    align-items: center;
+  }
+  .album__head > .art {
+    width: 76px !important;
+    height: 76px !important;
+  }
+  .card .album__title {
+    font-size: 18px;
+  }
+}

@@ -7,7 +7,8 @@
  * Pure: every input is passed in, so it is tested without a store or the network.
  */
 import { AFFINITY_FACTORS, DEFAULT_ENGINE, FACTORS, FEEDBACK_WEIGHTS, type EngineConfig } from './config';
-import { buildFeedback, modeWeights, normaliseSettings, tierShares, type FeedbackEvent } from './engine';
+import { buildFeedback, buildFeedback2, modeWeights, normaliseSettings, tierShares, type FeedbackEvent } from './engine';
+import { albumKeyOf } from './album-key';
 import type { Dict } from './shape';
 import { TASTE_EVENT_WEIGHTS, TASTE_HALF_LIFE_DAYS, TASTE_WEIGHT, buildTaste, type TasteRow } from './taste';
 
@@ -79,6 +80,17 @@ export function buildProfile(inp: ProfileInput): Dict {
   const songScores = Object.entries(fb.track)
     .map(([key, score]) => ({ key, title: titleOf(byKey.get(key), key), artist: artistOf(byKey.get(key)), score: r2(score), excluded: fb.excluded.has(key), hidden: fb.hidden.has(key) }))
     .sort((a, b) => Math.abs(b.score) - Math.abs(a.score));
+  // ALBUM-TASTE-001: the albums the listener keeps playing (or skips through), as the v2 ranker counts them.
+  const fb2 = buildFeedback2(events as FeedbackEvent[], inp.nowTs, cfg);
+  const albumArtist = new Map<string, string>();
+  for (const e of events) {
+    const k = e.track ? albumKeyOf(e.track as never) : null;
+    // An album is credited to its primary artist, not every name on the first song heard from it.
+    if (k && !albumArtist.has(k)) albumArtist.set(k, String((e.track as Dict | null)?.['artists']?.[0] ?? e.artist ?? ''));
+  }
+  const albumScores = Object.entries(fb2.album ?? {})
+    .map(([key, score]) => ({ key, name: fb2.albumNames?.[key] ?? key, artist: albumArtist.get(key) ?? '', score: r2(score) }))
+    .sort((a, b) => b.score - a.score);
 
   // ---- how the algorithm uses it ----------------------------------------------------------
   const es = normaliseSettings({ adventurous: inp.settings['adventurous'], fresh: Boolean(inp.settings['fresh']) });
@@ -209,6 +221,7 @@ export function buildProfile(inp: ProfileInput): Dict {
       genres,
     },
     artists: artistScores,
+    albums: albumScores,
     songs: songScores,
     excluded: fb.excluded.size,
     hidden: fb.hidden.size,

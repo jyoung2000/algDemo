@@ -6,6 +6,7 @@ import { Player, type ListenTelemetry, type Playing } from './Player';
 import { Results, rowId, type FeedbackFlags } from './Results';
 import { DownloadsView, useDownloads } from './Downloads';
 import { Search } from './Search';
+import { AlbumView, albumTargetKey, type AlbumTarget } from './Albums';
 import { SoundCard } from './SoundCard';
 import { listMixNote } from './list-mix-note';
 import { ProfileView } from './Profile';
@@ -69,6 +70,23 @@ function writeFlag(key: string, value: string): void {
 
 export function App() {
   const [tab, setTab] = useState<Tab>('discover');
+  // ALBUM-OPEN-001: an album open over the tab it was opened from; the tab's own view stays mounted
+  // (hidden) so its search, results and scroll come back unchanged with Back.
+  const [album, setAlbum] = useState<{ target: AlbumTarget; tab: Tab; scroll: number; opener: HTMLElement | null } | null>(null);
+  const albumOpen = album !== null && album.tab === tab;
+  const openAlbum = (target: AlbumTarget) => {
+    setAlbum({ target, tab, scroll: window.scrollY, opener: document.activeElement instanceof HTMLElement ? document.activeElement : null });
+    window.scrollTo?.({ top: 0 });
+  };
+  const closeAlbum = () => {
+    const y = album?.scroll ?? 0;
+    const opener = album?.opener ?? null;
+    setAlbum(null);
+    requestAnimationFrame(() => {
+      window.scrollTo?.({ top: y });
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    });
+  };
   const [seeds, setSeeds] = useState<Track[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -776,7 +794,7 @@ export function App() {
             ] as const
           ).map(([id, label, g]) => (
             <li key={id}>
-              <button className={classNames('side__item', tab === id && 'is-on')} type="button" aria-label={label} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>
+              <button className={classNames('side__item', tab === id && 'is-on')} type="button" aria-label={label} aria-current={tab === id ? 'page' : undefined} onClick={() => { setAlbum(null); setTab(id); }}>
                 <Glyph name={g} size={15} />
                 <span>{label}</span>
                 {id === 'downloads' && dls.activeCount > 0 && <span className="count">{dls.activeCount}</span>}
@@ -801,8 +819,28 @@ export function App() {
           </p>
         )}
 
+        {albumOpen && (
+          <AlbumView
+            key={albumTargetKey(album.target)}
+            target={album.target}
+            onBack={closeAlbum}
+            onPreview={playFromSearch}
+            seedKeys={new Set(seeds.map((s) => s.key))}
+            onAdd={onAdd}
+            onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
+            onLike={likeTrack}
+            onRemoveSeed={(t) => saveSeeds(seeds.filter((s) => s.key !== t.key))}
+            lists={lists}
+            onLists={setLists}
+            onQueueAdd={addToListening}
+            addLabel={addLabel}
+            addedKeys={addedKeys}
+            playingKey={playingKey}
+          />
+        )}
+
         {tab === 'discover' && (
-          <>
+          <div className="tabpane" hidden={albumOpen}>
             <div ref={searchRef}>
               <Search
                 seeds={seeds}
@@ -817,6 +855,8 @@ export function App() {
                 onRemoveSeed={(t) => saveSeeds(seeds.filter((s) => s.key !== t.key))}
                 lists={lists}
                 onLists={setLists}
+                onOpenAlbumTarget={openAlbum}
+                playingKey={playingKey}
               />
             </div>
 
@@ -983,6 +1023,7 @@ export function App() {
                       cacheOf={cardCache}
                       lists={lists}
                       onLists={setLists}
+                      onOpenAlbum={(t) => openAlbum({ track: t })}
                     />
                     </>
                   ) : (
@@ -1041,10 +1082,11 @@ export function App() {
                 </div>
               )}
             </section>
-          </>
+          </div>
         )}
 
         {tab === 'saved' && (
+          <div className="tabpane" hidden={albumOpen}>
           <SavedView
             saved={saved}
             lists={lists}
@@ -1064,7 +1106,9 @@ export function App() {
             cacheOf={cardCache}
             onUseAsQueue={useListAsQueue}
             queueListId={queueList?.id ?? null}
+            onOpenAlbum={(t) => openAlbum({ track: t })}
           />
+          </div>
         )}
 
         {tab === 'profile' && <ProfileView />}

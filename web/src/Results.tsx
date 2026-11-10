@@ -4,6 +4,7 @@ import type { FeedbackKind, PlaylistSummary, RecItem, Track } from './api';
 import type { CardCache } from './engine/queue-controls';
 import { Art } from './Art';
 import { SaveMenu } from './SaveMenu';
+import { AlbumSlot } from './AlbumShelf';
 import { PROVIDER_LABEL, TIER_LABEL, artistOf, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreBubbles, markKey, playbackOfTrack, toneLabel } from './util';
 
 export interface FeedbackFlags {
@@ -33,6 +34,8 @@ interface Props {
   /** The listener's saved lists, for the menu that opens when a song is liked. */
   lists?: PlaylistSummary[];
   onLists?: (lists: PlaylistSummary[]) => void;
+  /** ALBUM-OPEN-001: open the album a song is on. */
+  onOpenAlbum?: ((t: Track) => void) | undefined;
 }
 
 /**
@@ -40,7 +43,7 @@ interface Props {
  * diversified order; nothing here re-sorts it.
  * Arrow keys / j k move between rows; Enter plays; the row keeps focus when results refresh.
  */
-export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload, cacheOf, lists, onLists }: Props) {
+export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload, cacheOf, lists, onLists, onOpenAlbum }: Props) {
   const [open, setOpen] = useState<string | null>(null);
   /** Which row's save menu is showing, by song key. Only one opens at a time. */
   const [saving, setSaving] = useState<string | null>(null);
@@ -248,6 +251,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                   <Glyph name="download" size={14} />
                 </button>
               )}
+              {onOpenAlbum && <AlbumSlot track={t} onOpen={onOpenAlbum} />}
               <button className="iconbtn" type="button" onClick={() => onFeedback(it, 'hide')} aria-label={`Hide ${t.title}`} title="Hide">
                 <Glyph name="close" size={14} />
               </button>

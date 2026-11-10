@@ -173,6 +173,8 @@ export function ProfileView() {
     else notPlaced.push(s.title);
   }
   const aMax = Math.max(0.01, ...p.artists.map((a) => Math.abs(a.score)));
+  const albums = p.albums ?? [];
+  const alMax = Math.max(0.01, ...albums.map((a) => Math.abs(a.score)));
   const sMax = Math.max(0.01, ...p.songs.map((s) => Math.abs(s.score)));
   const run = p.last_run;
 
@@ -354,10 +356,10 @@ export function ProfileView() {
         )}
       </section>
 
-      {(p.artists.length > 0 || p.songs.length > 0) && (
+      {(p.artists.length > 0 || albums.length > 0 || p.songs.length > 0) && (
         <section className="card" aria-labelledby="pf-fb">
-          <h2 id="pf-fb">Artists and songs</h2>
-          <p className="note">Feedback scores. A song carries its own score; half of it also goes to the artist. One skip never marks an artist, three skipped songs do.</p>
+          <h2 id="pf-fb">Artists, albums and songs</h2>
+          <p className="note">Feedback scores. A song carries its own score; half of it also goes to the artist. One skip never marks an artist, three skipped songs do. An album counts once you play two or more of its songs, and lifts the rest of it.</p>
           {p.artists.length > 0 && (
             <table className="ptable">
               <caption>Artists</caption>
@@ -371,6 +373,27 @@ export function ProfileView() {
                     <td className="ptable__bar">
                       <div className="pcell">
                       <SignedBar value={a.score} max={aMax} label={`${a.name} score ${a.score}`} />
+                      <span className="num">{a.score > 0 ? `+${a.score}` : a.score}</span>
+                    </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {albums.length > 0 && (
+            <table className="ptable">
+              <caption>Albums</caption>
+              <tbody>
+                {albums.slice(0, 12).map((a) => (
+                  <tr key={a.key}>
+                    <th scope="row">
+                      <span className="ptable__title">{a.name}</span>
+                      <span className="ptable__sub">{a.artist}</span>
+                    </th>
+                    <td className="ptable__bar">
+                      <div className="pcell">
+                      <SignedBar value={a.score} max={alMax} label={`${a.name} score ${a.score}`} />
                       <span className="num">{a.score > 0 ? `+${a.score}` : a.score}</span>
                     </div>
                     </td>

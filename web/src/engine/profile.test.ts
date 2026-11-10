@@ -126,3 +126,13 @@ describe('profile snapshot', () => {
     expect(f.coverage.floor).toBe(DEFAULT_ENGINE.coverageFloor);
   });
 });
+
+describe('album taste in the profile (ALBUM-TASTE-001)', () => {
+  it('lists the albums the listener keeps playing, with the album and artist names', () => {
+    const onAlbum = (key: string, title: string) => ({ ...song(key, 'Ken Carson', 'rap', 140), title, album: 'A Great Chaos' });
+    const p = base({ events: [ev('complete', onAlbum('g', 'Green Room'), 30, 188), ev('complete', onAlbum('s', 'Singapore'), 25, 170), ev('complete', a, 20, 200)] });
+    expect(p['albums']).toEqual([{ key: 'ken carson|a great chaos', name: 'A Great Chaos', artist: 'Ken Carson', score: expect.any(Number) }]);
+    expect((p['albums'] as { score: number }[])[0]!.score).toBeGreaterThan(0);
+    expect(base()['albums']).toEqual([]);
+  });
+});

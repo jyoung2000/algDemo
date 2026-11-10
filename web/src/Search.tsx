@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
 import { RefreshGlyph } from './icons';
-import { api, ApiError, type Evidence, type IdentifyResponse, type PlaylistSummary, type ResolveResponse, type SearchResponse, type SourceState, type Track } from './api';
+import { api, ApiError, type AlbumSummary, type Evidence, type IdentifyResponse, type PlaylistSummary, type ResolveResponse, type SearchResponse, type SourceState, type Track } from './api';
 import { Art } from './Art';
 import { SaveMenu } from './SaveMenu';
+import { AlbumShelf, AlbumSlot } from './AlbumShelf';
+import { fold } from './engine/identity';
 import { PROVIDER_LABEL, artistOf, classNames, fmtDuration, fmtRelease, looksLikeUrl, markKey } from './util';
 
 /** What a result row's like button needs, shared by every list of results (SEARCH-LIKE-001). */
@@ -28,6 +30,10 @@ interface LikeProps {
   onQueueAdd?: ((t: Track) => void) | undefined;
   addLabel?: string | undefined;
   addedKeys?: ReadonlySet<string> | undefined;
+  /** ALBUM-OPEN-001: the row's album button, for a song on an album, EP or mixtape. */
+  onOpenAlbum?: ((t: Track) => void) | undefined;
+  /** The song the player has, marked in the list as the queue marks it. */
+  playingKey?: string | null | undefined;
 }
 
 /** SEARCH-QUEUE-001: Play hands over the whole list the row is in, so the skip buttons walk it. */
@@ -40,6 +46,8 @@ interface Props extends LikeProps {
   onAdd: (t: Track) => void;
   onPreview: PlayFrom;
   onDownload?: (t: Track) => void;
+  /** ALBUM-SEARCH-001 / ALBUM-OPEN-001: open an album found by the search, or the album a song is on. */
+  onOpenAlbumTarget?: ((target: { id: string } | { track: Track }) => void) | undefined;
 }
 
 type Origin = 'lyrics' | 'audio';
@@ -47,11 +55,13 @@ type HelpCode = 'denied' | 'no_mic' | 'mic_failed' | 'no_capture' | 'unsupported
 type AudioPhase = 'permission' | 'listening' | 'reading' | 'analysing';
 /** The lyric half of a plain-text search, which arrives after (and independently of) the title half. */
 type LyricPart = { state: 'pending' } | { state: 'ok'; tracks: Track[]; named: number; unplayable: number } | { state: 'failed'; code: string };
+/** ALBUM-SEARCH-001: the album part of a plain-text search; it never holds up or hides the songs. */
+type AlbumPart = { state: 'pending' } | { state: 'ok'; albums: AlbumSummary[] } | { state: 'failed' };
 
 type View =
   | { kind: 'idle' }
   | { kind: 'loading'; what: 'search' | 'link' }
-  | { kind: 'results'; tracks: Track[]; sources: Record<string, SourceState>; query: string; ms: number; lyrics?: LyricPart | undefined }
+  | { kind: 'results'; tracks: Track[]; sources: Record<string, SourceState>; query: string; ms: number; lyrics?: LyricPart | undefined; albums?: AlbumPart | undefined }
   | { kind: 'identified'; origin: Origin; tracks: Track[]; query: string; named: number; unplayable: number; heard?: { title: string; artist: string } | undefined }
   | { kind: 'audio'; phase: AudioPhase; name?: string; elapsed?: number; level?: number; device?: string; quiet?: boolean; voice?: boolean }
   | { kind: 'help'; code: HelpCode; origin: Origin; detail?: string | undefined }
@@ -91,6 +101,13 @@ export function liveLyricsReady(text: string): boolean {
  * Which half of a plain-text answer leads. Four words or more is a line of a song, so its lyric matches go
  * first; a short query is almost always a title or an artist.
  */
+/** ALBUM-SEARCH-001: the search names the top album (or begins its title), so albums lead. */
+export function albumsLead(query: string, albums: readonly Pick<AlbumSummary, 'title'>[]): boolean {
+  const q = fold(query);
+  const t = fold(albums[0]?.title ?? '');
+  return q.length >= 3 && t.length >= 3 && (q.includes(t) || t.startsWith(q));
+}
+
 export function lyricsLead(query: string, lyricMatches: number): boolean {
   return lyricMatches > 0 && query.trim().split(/\s+/).filter(Boolean).length >= 4;
 }
@@ -123,9 +140,10 @@ function useNarrow(): boolean {
  *  - File / Mic: up to 12 s is fingerprinted on the device; only the fingerprint goes to Shazam.
  * A newer request aborts the older one. Searching or identifying is never a preference signal: only Add makes a starting song.
  */
-export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys, onOpenSettings }: Props) {
+export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys, onOpenSettings, onOpenAlbumTarget, playingKey }: Props) {
   const [saving, setSaving] = useState<string | null>(null);
-  const likeProps: LikeProps = { onLike, onRemoveSeed, lists, onLists, saving, onSaving: setSaving, onQueueAdd, addLabel, addedKeys };
+  const onOpenAlbum = onOpenAlbumTarget ? (t: Track) => onOpenAlbumTarget({ track: t }) : undefined;
+  const likeProps: LikeProps = { onLike, onRemoveSeed, lists, onLists, saving, onSaving: setSaving, onQueueAdd, addLabel, addedKeys, onOpenAlbum, playingKey };
   const [q, setQ] = useState('');
   const [view, setView] = useState<View>({ kind: 'idle' });
   const [artistFix, setArtistFix] = useState('');
@@ -228,9 +246,10 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
       // Titles and lyrics are asked together. Neither waits for the other to be shown, and a failed half never hides the other.
       let songs: SearchResponse | null = null;
       let lyrics: LyricPart | undefined = liveLyricsReady(s) && !offline() ? { state: 'pending' } : undefined;
+      let albums: AlbumPart | undefined = onOpenAlbumTarget && !offline() ? { state: 'pending' } : undefined;
       const show = (final: boolean) => {
         if (c.signal.aborted) return;
-        const v: View = { kind: 'results', tracks: songs?.results ?? [], sources: songs?.sources ?? {}, query: s, ms: songs?.ms ?? 0, lyrics };
+        const v: View = { kind: 'results', tracks: songs?.results ?? [], sources: songs?.sources ?? {}, query: s, ms: songs?.ms ?? 0, lyrics, albums };
         if (final && lyrics?.state !== 'failed') land(key, v);
         else {
           setView(v);
@@ -239,8 +258,21 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
       };
       const songsP = api.search(s, c.signal).then((r) => {
         songs = r;
-        if (lyrics?.state === 'pending') show(false);
+        if (lyrics?.state === 'pending' || albums?.state === 'pending') show(false);
       });
+      // ALBUM-SEARCH-001: albums are asked alongside, a little after the titles while typing.
+      const albumsP = albums
+        ? (live ? wait(LYRIC_LAG_MS, c.signal) : Promise.resolve()).then(() => api.searchAlbums(s, c.signal)).then(
+            (r) => {
+              albums = { state: 'ok', albums: r.albums };
+              if (songs) show(false);
+            },
+            (e) => {
+              if (c.signal.aborted || isAbort(e)) return;
+              albums = { state: 'failed' };
+            },
+          )
+        : Promise.resolve();
       const lyricsP = lyrics
         ? (live ? wait(LYRIC_LAG_MS, c.signal) : Promise.resolve()).then(() => api.searchLyrics(s, c.signal)).then(
             (r) => {
@@ -252,7 +284,7 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
             },
           )
         : Promise.resolve();
-      const [sr] = await Promise.allSettled([songsP, lyricsP]);
+      const [sr] = await Promise.allSettled([songsP, lyricsP, albumsP]);
       if (c.signal.aborted) return;
       if (sr.status === 'rejected' && (isAbort(sr.reason) || (lyrics as LyricPart | undefined)?.state !== 'ok')) throw sr.reason;
       show(true);
@@ -633,7 +665,7 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
           </div>
         )}
         {view.kind === 'results' && (
-          <ResultsView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} onRefresh={() => void run(view.query, false, true)} refreshing={refreshing} onOpenSettings={onOpenSettings} />
+          <ResultsView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} onRefresh={() => void run(view.query, false, true)} refreshing={refreshing} onOpenSettings={onOpenSettings} onOpenAlbumId={onOpenAlbumTarget ? (a) => onOpenAlbumTarget({ id: a.id }) : undefined} />
         )}
         {view.kind === 'identified' && (
           <IdentifiedView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} />
@@ -669,6 +701,9 @@ function ResultsView({
   onRefresh,
   refreshing = false,
   onOpenSettings,
+  onOpenAlbum,
+  onOpenAlbumId,
+  playingKey,
 }: {
   view: Extract<View, { kind: 'results' }>;
   seedKeys: Set<string>;
@@ -678,12 +713,15 @@ function ResultsView({
   onRefresh?: (() => void) | undefined;
   refreshing?: boolean | undefined;
   onOpenSettings?: (() => void) | undefined;
+  onOpenAlbumId?: ((a: AlbumSummary) => void) | undefined;
 } & LikeProps) {
   const lyr = view.lyrics;
   const titleKeys = new Set(view.tracks.map((t) => t.key));
   const lyricTracks = lyr?.state === 'ok' ? lyr.tracks.filter((t) => !titleKeys.has(t.key)) : [];
   const lead = lyricsLead(view.query, lyricTracks.length);
-  const common = { seedKeys, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, saving, onSaving, onQueueAdd, addLabel, addedKeys } as const;
+  const common = { seedKeys, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, saving, onSaving, onQueueAdd, addLabel, addedKeys, onOpenAlbum, playingKey } as const;
+  const found = view.albums?.state === 'ok' ? view.albums.albums : [];
+  const albumBlock = found.length && onOpenAlbumId ? <AlbumShelf key="albums" albums={found} query={view.query} onOpen={onOpenAlbumId} /> : null;
   const spent = Object.values(view.sources).some((x) => x.state === 'budget');
   // Asking again cannot help when every source that did not answer was refused for the allowance.
   const canRefresh = !Object.values(view.sources).every((x) => x.state === 'ok' || x.state === 'skipped' || x.state === 'budget') || !spent;
@@ -710,6 +748,9 @@ function ResultsView({
   ) : null;
 
   const blocks = lead ? [lyricBlock, titles] : [titles, lyricBlock];
+  // ALBUM-SEARCH-001: a search that names an album shows the albums first; otherwise after the songs.
+  if (albumsLead(view.query, found)) blocks.unshift(albumBlock);
+  else blocks.push(albumBlock);
   const none = !view.tracks.length && !lyricTracks.length;
 
   return (
@@ -980,6 +1021,9 @@ export function TrackList({
   onQueueAdd,
   addLabel = 'Now playing queue',
   addedKeys,
+  onOpenAlbum,
+  numbered = false,
+  playingKey = null,
   label,
 }: {
   tracks: Track[];
@@ -997,6 +1041,11 @@ export function TrackList({
   onQueueAdd?: ((t: Track) => void) | undefined;
   addLabel?: string | undefined;
   addedKeys?: ReadonlySet<string> | undefined;
+  /** ALBUM-OPEN-001: shown only on a song that sits on an album, EP or mixtape. */
+  onOpenAlbum?: ((t: Track) => void) | undefined;
+  /** An album's own songs carry their place on it. */
+  numbered?: boolean | undefined;
+  playingKey?: string | null | undefined;
   label: string;
 }) {
   // Controlled by Search when it is in charge; the row's own state only when it stands alone.
@@ -1005,11 +1054,16 @@ export function TrackList({
   const setSaving = onSaving ?? setOwnSaving;
   return (
     <ul className="well tracks" aria-label={label}>
-      {tracks.map((t) => {
+      {tracks.map((t, i) => {
         const added = seedKeys.has(t.key);
-        const meta = [t.album, fmtRelease(t.release)].filter(Boolean).join(' · ');
+        const meta = numbered ? '' : [t.album, fmtRelease(t.release)].filter(Boolean).join(' · ');
         return (
-          <li key={`${t.provider}:${t.platform_id}`} className={classNames('track', added && 'is-added')}>
+          <li
+            key={`${t.provider}:${t.platform_id}`}
+            className={classNames('track', added && 'is-added', numbered && 'track--numbered', t.key === playingKey && 'is-playing')}
+            aria-current={t.key === playingKey ? 'true' : undefined}
+          >
+            {numbered && <span className="track__num" aria-hidden="true">{i + 1}</span>}
             <Art src={t.artwork} size={44} />
             <div className="track__text">
               <span className="track__title">
@@ -1046,6 +1100,7 @@ export function TrackList({
                   <Glyph name="download" size={14} />
                 </button>
               )}
+              {onOpenAlbum && <AlbumSlot track={t} onOpen={onOpenAlbum} />}
               {/* QUEUE-ADD-001: the owner replaced the link out to the song's own service with this. */}
               {onQueueAdd && (() => {
                 const inIt = addedKeys?.has(t.key) ?? false;
