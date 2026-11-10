@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
 import { RefreshGlyph } from './icons';
-import { api, ApiError, type AlbumSummary, type Evidence, type IdentifyResponse, type PlaylistSummary, type ResolveResponse, type SearchResponse, type SourceState, type Track } from './api';
+import { api, ApiError, type AlbumSummary, type ArtistSummary, type ArtistTarget, type Evidence, type IdentifyResponse, type PlaylistSummary, type ResolveResponse, type SearchResponse, type SourceState, type Track } from './api';
 import { Art } from './Art';
 import { SaveMenu } from './SaveMenu';
 import { AlbumShelf, AlbumSlot } from './AlbumShelf';
+import { ArtistCard, ArtistNames, namesArtist } from './ArtistLinks';
 import { namesAlbum } from './engine/album-key';
 import { PROVIDER_LABEL, artistOf, classNames, fmtDuration, fmtRelease, looksLikeUrl, markKey } from './util';
 
@@ -32,6 +33,8 @@ interface LikeProps {
   addedKeys?: ReadonlySet<string> | undefined;
   /** ALBUM-OPEN-001: the row's album button, for a song on an album, EP or mixtape. */
   onOpenAlbum?: ((t: Track) => void) | undefined;
+  /** ARTIST-PAGE-001: each artist named on a row opens that artist's page. */
+  onOpenArtist?: ((t: ArtistTarget) => void) | undefined;
   /** The song the player has, marked in the list as the queue marks it. */
   playingKey?: string | null | undefined;
 }
@@ -57,11 +60,13 @@ type AudioPhase = 'permission' | 'listening' | 'reading' | 'analysing';
 type LyricPart = { state: 'pending' } | { state: 'ok'; tracks: Track[]; named: number; unplayable: number } | { state: 'failed'; code: string };
 /** ALBUM-SEARCH-001: the album part of a plain-text search; it never holds up or hides the songs. */
 type AlbumPart = { state: 'pending' } | { state: 'ok'; albums: AlbumSummary[] } | { state: 'failed' };
+/** ARTIST-PAGE-001: the artist a plain-text search names, if any; it never holds up the songs either. */
+type ArtistPart = { state: 'ok'; artist: ArtistSummary };
 
 type View =
   | { kind: 'idle' }
   | { kind: 'loading'; what: 'search' | 'link' }
-  | { kind: 'results'; tracks: Track[]; sources: Record<string, SourceState>; query: string; ms: number; lyrics?: LyricPart | undefined; albums?: AlbumPart | undefined }
+  | { kind: 'results'; tracks: Track[]; sources: Record<string, SourceState>; query: string; ms: number; lyrics?: LyricPart | undefined; albums?: AlbumPart | undefined; artist?: ArtistPart | undefined }
   | { kind: 'identified'; origin: Origin; tracks: Track[]; query: string; named: number; unplayable: number; heard?: { title: string; artist: string } | undefined }
   | { kind: 'audio'; phase: AudioPhase; name?: string; elapsed?: number; level?: number; device?: string; quiet?: boolean; voice?: boolean }
   | { kind: 'help'; code: HelpCode; origin: Origin; detail?: string | undefined }
@@ -138,10 +143,10 @@ function useNarrow(): boolean {
  *  - File / Mic: up to 12 s is fingerprinted on the device; only the fingerprint goes to Shazam.
  * A newer request aborts the older one. Searching or identifying is never a preference signal: only Add makes a starting song.
  */
-export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys, onOpenSettings, onOpenAlbumTarget, playingKey }: Props) {
+export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys, onOpenSettings, onOpenAlbumTarget, onOpenArtist, playingKey }: Props) {
   const [saving, setSaving] = useState<string | null>(null);
   const onOpenAlbum = onOpenAlbumTarget ? (t: Track) => onOpenAlbumTarget({ track: t }) : undefined;
-  const likeProps: LikeProps = { onLike, onRemoveSeed, lists, onLists, saving, onSaving: setSaving, onQueueAdd, addLabel, addedKeys, onOpenAlbum, playingKey };
+  const likeProps: LikeProps = { onLike, onRemoveSeed, lists, onLists, saving, onSaving: setSaving, onQueueAdd, addLabel, addedKeys, onOpenAlbum, onOpenArtist, playingKey };
   const [q, setQ] = useState('');
   const [view, setView] = useState<View>({ kind: 'idle' });
   const [artistFix, setArtistFix] = useState('');
@@ -245,9 +250,10 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
       let songs: SearchResponse | null = null;
       let lyrics: LyricPart | undefined = liveLyricsReady(s) && !offline() ? { state: 'pending' } : undefined;
       let albums: AlbumPart | undefined = onOpenAlbumTarget && !offline() ? { state: 'pending' } : undefined;
+      let artist: ArtistPart | undefined;
       const show = (final: boolean) => {
         if (c.signal.aborted) return;
-        const v: View = { kind: 'results', tracks: songs?.results ?? [], sources: songs?.sources ?? {}, query: s, ms: songs?.ms ?? 0, lyrics, albums };
+        const v: View = { kind: 'results', tracks: songs?.results ?? [], sources: songs?.sources ?? {}, query: s, ms: songs?.ms ?? 0, lyrics, albums, artist };
         if (final && lyrics?.state !== 'failed') land(key, v);
         else {
           setView(v);
@@ -271,6 +277,18 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
             },
           )
         : Promise.resolve();
+      // ARTIST-PAGE-001: asked alongside the albums; shown only when the search is an artist's name.
+      const artistsP = onOpenArtist && !offline()
+        ? (live ? wait(LYRIC_LAG_MS, c.signal) : Promise.resolve()).then(() => api.searchArtists(s, c.signal)).then(
+            (r) => {
+              const hit = r.artists.find((a) => namesArtist(s, a));
+              if (!hit) return;
+              artist = { state: 'ok', artist: hit };
+              if (songs) show(false);
+            },
+            () => undefined,
+          )
+        : Promise.resolve();
       const lyricsP = lyrics
         ? (live ? wait(LYRIC_LAG_MS, c.signal) : Promise.resolve()).then(() => api.searchLyrics(s, c.signal)).then(
             (r) => {
@@ -282,7 +300,7 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
             },
           )
         : Promise.resolve();
-      const [sr] = await Promise.allSettled([songsP, lyricsP, albumsP]);
+      const [sr] = await Promise.allSettled([songsP, lyricsP, albumsP, artistsP]);
       if (c.signal.aborted) return;
       if (sr.status === 'rejected' && (isAbort(sr.reason) || (lyrics as LyricPart | undefined)?.state !== 'ok')) throw sr.reason;
       show(true);
@@ -701,6 +719,7 @@ function ResultsView({
   onOpenSettings,
   onOpenAlbum,
   onOpenAlbumId,
+  onOpenArtist,
   playingKey,
 }: {
   view: Extract<View, { kind: 'results' }>;
@@ -717,7 +736,7 @@ function ResultsView({
   const titleKeys = new Set(view.tracks.map((t) => t.key));
   const lyricTracks = lyr?.state === 'ok' ? lyr.tracks.filter((t) => !titleKeys.has(t.key)) : [];
   const lead = lyricsLead(view.query, lyricTracks.length);
-  const common = { seedKeys, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, saving, onSaving, onQueueAdd, addLabel, addedKeys, onOpenAlbum, playingKey } as const;
+  const common = { seedKeys, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, saving, onSaving, onQueueAdd, addLabel, addedKeys, onOpenAlbum, onOpenArtist, playingKey } as const;
   const found = view.albums?.state === 'ok' ? view.albums.albums : [];
   const albumBlock = found.length && onOpenAlbumId ? <AlbumShelf key="albums" albums={found} query={view.query} onOpen={onOpenAlbumId} /> : null;
   const spent = Object.values(view.sources).some((x) => x.state === 'budget');
@@ -749,6 +768,11 @@ function ResultsView({
   // ALBUM-SEARCH-001: a search that names an album shows the albums first; otherwise after the songs.
   if (albumsLead(view.query, found)) blocks.unshift(albumBlock);
   else blocks.push(albumBlock);
+  // ARTIST-PAGE-001: a search that is an artist's name leads with that artist's page.
+  if (view.artist && onOpenArtist) {
+    const a = view.artist.artist;
+    blocks.unshift(<ArtistCard key="artist" artist={a} onOpen={() => onOpenArtist({ id: a.id, name: a.name })} />);
+  }
   const none = !view.tracks.length && !lyricTracks.length;
 
   return (
@@ -1020,6 +1044,7 @@ export function TrackList({
   addLabel = 'Now playing queue',
   addedKeys,
   onOpenAlbum,
+  onOpenArtist,
   numbered = false,
   playingKey = null,
   label,
@@ -1041,6 +1066,8 @@ export function TrackList({
   addedKeys?: ReadonlySet<string> | undefined;
   /** ALBUM-OPEN-001: shown only on a song that sits on an album, EP or mixtape. */
   onOpenAlbum?: ((t: Track) => void) | undefined;
+  /** ARTIST-PAGE-001: each artist named on the row opens that artist's page. */
+  onOpenArtist?: ((t: ArtistTarget) => void) | undefined;
   /** An album's own songs carry their place on it. */
   numbered?: boolean | undefined;
   playingKey?: string | null | undefined;
@@ -1072,7 +1099,7 @@ export function TrackList({
                   </span>
                 ))}
               </span>
-              <span className="track__artist">{artistOf(t)}</span>
+              {onOpenArtist ? <ArtistNames track={t} onOpen={onOpenArtist} /> : <span className="track__artist">{artistOf(t)}</span>}
               {meta && <span className="track__meta">{meta}</span>}
               {t.evidence && <EvidenceLine e={t.evidence} />}
               {t.warning && <span className="track__warn">{t.warning}</span>}

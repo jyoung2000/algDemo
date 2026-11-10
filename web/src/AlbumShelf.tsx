@@ -50,13 +50,22 @@ export function albumFrom(a: Pick<AlbumSummary, 'provider' | 'official'>): strin
  * ALBUM-SEARCH-001. The albums a plain search finds, shown with the songs: each row opens the album
  * like a list. Three show at first so the songs stay in reach; the rest unfold on request.
  */
-export function AlbumShelf({ albums, query, onOpen }: { albums: AlbumSummary[]; query: string; onOpen: (a: AlbumSummary) => void }) {
+export function AlbumShelf({ albums, query, onOpen, title = 'Albums', label, folded = SHELF_FOLDED, noun = 'albums' }: {
+  albums: AlbumSummary[];
+  query: string;
+  onOpen: (a: AlbumSummary) => void;
+  /** ARTIST-PAGE-001: the artist page lists "Albums and EPs" and "Singles" with the same rows. */
+  title?: string;
+  label?: string;
+  folded?: number;
+  noun?: string;
+}) {
   const [all, setAll] = useState(false);
-  const shown = all ? albums : albums.slice(0, SHELF_FOLDED);
+  const shown = all ? albums : albums.slice(0, folded);
   return (
     <div className="albums">
-      <h3 className="albums__h">Albums</h3>
-      <ul className="well tracks albums__list" aria-label={`Albums for ${query}`}>
+      <h3 className="albums__h">{title}</h3>
+      <ul className="well tracks albums__list" aria-label={label ?? `Albums for ${query}`}>
         {shown.map((a) => (
           <li key={a.id} className="track album-row">
             <button type="button" className="album-row__open" onClick={() => onOpen(a)} aria-label={`Open the album ${a.title} by ${a.artist}`}>
@@ -73,9 +82,9 @@ export function AlbumShelf({ albums, query, onOpen }: { albums: AlbumSummary[]; 
           </li>
         ))}
       </ul>
-      {!all && albums.length > SHELF_FOLDED && (
+      {!all && albums.length > folded && (
         <button type="button" className="linkbtn albums__more" onClick={() => setAll(true)}>
-          Show all {albums.length} albums
+          Show all {albums.length} {noun}
         </button>
       )}
     </div>

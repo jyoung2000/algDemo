@@ -46,6 +46,8 @@ export interface EngineState {
   buffering: boolean;
   /** The chosen song's file is not on the phone yet; it starts when it is. */
   waiting: boolean;
+  /** STREAM-DL-001: the engine plays this song from its source while the file downloads. */
+  streaming?: boolean;
   ended: boolean;
   error: string | null;
   positionMs: number;

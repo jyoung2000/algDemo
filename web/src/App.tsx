@@ -7,6 +7,7 @@ import { Results, rowId, type FeedbackFlags } from './Results';
 import { DownloadsView, useDownloads } from './Downloads';
 import { Search } from './Search';
 import { AlbumView, albumTargetKey, type AlbumTarget } from './Albums';
+import { ArtistView, artistTargetKey, type ArtistTarget } from './Artists';
 import { SoundCard } from './SoundCard';
 import { listMixNote } from './list-mix-note';
 import { ProfileView } from './Profile';
@@ -68,20 +69,31 @@ function writeFlag(key: string, value: string): void {
   }
 }
 
+/** ARTIST-PAGE-001: what can open over a tab. */
+type DetailPage = { kind: 'album'; target: AlbumTarget } | { kind: 'artist'; target: ArtistTarget };
+/** Pages kept for Back; going deeper than this forgets the oldest. */
+const MAX_PAGES = 12;
+
 export function App() {
   const [tab, setTab] = useState<Tab>('discover');
   // ALBUM-OPEN-001: an album open over the tab it was opened from; the tab's own view stays mounted
   // (hidden) so its search, results and scroll come back unchanged with Back.
-  const [album, setAlbum] = useState<{ target: AlbumTarget; tab: Tab; scroll: number; opener: HTMLElement | null } | null>(null);
-  const albumOpen = album !== null && album.tab === tab;
-  const openAlbum = (target: AlbumTarget) => {
-    setAlbum({ target, tab, scroll: window.scrollY, opener: document.activeElement instanceof HTMLElement ? document.activeElement : null });
+  // ARTIST-PAGE-001: artist and album pages open from each other, so they stack; Back returns to the
+  // page before, with its scroll and the button that opened the next one focused again.
+  const [pages, setPages] = useState<{ page: DetailPage; tab: Tab; scroll: number; opener: HTMLElement | null }[]>([]);
+  const top = pages.length ? pages[pages.length - 1]! : null;
+  const albumOpen = top !== null && top.tab === tab;
+  const openPage = (page: DetailPage) => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setPages((p) => [...p.filter((x) => x.tab === tab), { page, tab, scroll: window.scrollY, opener }].slice(-MAX_PAGES));
     window.scrollTo?.({ top: 0 });
   };
+  const openAlbum = (target: AlbumTarget) => openPage({ kind: 'album', target });
+  const openArtist = (target: ArtistTarget) => openPage({ kind: 'artist', target });
   const closeAlbum = () => {
-    const y = album?.scroll ?? 0;
-    const opener = album?.opener ?? null;
-    setAlbum(null);
+    const y = top?.scroll ?? 0;
+    const opener = top?.opener ?? null;
+    setPages((p) => p.slice(0, -1));
     requestAnimationFrame(() => {
       window.scrollTo?.({ top: y });
       if (opener?.isConnected) opener.focus({ preventScroll: true });
@@ -804,7 +816,7 @@ export function App() {
             ] as const
           ).map(([id, label, g]) => (
             <li key={id}>
-              <button className={classNames('side__item', tab === id && 'is-on')} type="button" aria-label={label} aria-current={tab === id ? 'page' : undefined} onClick={() => { setAlbum(null); setTab(id); }}>
+              <button className={classNames('side__item', tab === id && 'is-on')} type="button" aria-label={label} aria-current={tab === id ? 'page' : undefined} onClick={() => { setPages([]); setTab(id); }}>
                 <Glyph name={g} size={15} />
                 <span>{label}</span>
                 {id === 'downloads' && dls.activeCount > 0 && <span className="count">{dls.activeCount}</span>}
@@ -829,10 +841,32 @@ export function App() {
           </p>
         )}
 
-        {albumOpen && (
+        {albumOpen && top.page.kind === 'artist' && (
+          <ArtistView
+            key={`${pages.length}:${artistTargetKey(top.page.target)}`}
+            target={top.page.target}
+            onBack={closeAlbum}
+            onPreview={playFromSearch}
+            onOpenAlbum={(a) => openAlbum({ id: a.id })}
+            onOpenArtist={openArtist}
+            seedKeys={new Set(seeds.map((s) => s.key))}
+            onAdd={onAdd}
+            onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
+            onLike={likeTrack}
+            onRemoveSeed={(t) => saveSeeds(seeds.filter((s) => s.key !== t.key))}
+            lists={lists}
+            onLists={setLists}
+            onQueueAdd={addToListening}
+            addLabel={addLabel}
+            addedKeys={addedKeys}
+            playingKey={playingKey}
+          />
+        )}
+        {albumOpen && top.page.kind === 'album' && (
           <AlbumView
-            key={albumTargetKey(album.target)}
-            target={album.target}
+            key={`${pages.length}:${albumTargetKey(top.page.target)}`}
+            target={top.page.target}
+            onOpenArtist={openArtist}
             onBack={closeAlbum}
             onPreview={playFromSearch}
             seedKeys={new Set(seeds.map((s) => s.key))}
@@ -866,6 +900,7 @@ export function App() {
                 lists={lists}
                 onLists={setLists}
                 onOpenAlbumTarget={openAlbum}
+                onOpenArtist={openArtist}
                 playingKey={playingKey}
               />
             </div>
@@ -1034,6 +1069,7 @@ export function App() {
                       lists={lists}
                       onLists={setLists}
                       onOpenAlbum={(t) => openAlbum({ track: t })}
+                    onOpenArtist={openArtist}
                     />
                     </>
                   ) : (
@@ -1118,15 +1154,17 @@ export function App() {
             queueListId={queueList?.id ?? null}
             onOpenAlbum={(t) => openAlbum({ track: t })}
             onOpenAlbumId={(id) => openAlbum({ id })}
+            onOpenArtist={openArtist}
           />
           </div>
         )}
 
-        {tab === 'profile' && <ProfileView />}
+        {tab === 'profile' && <div className="tabpane" hidden={albumOpen}><ProfileView /></div>}
 
-        {tab === 'downloads' && <DownloadsView d={dls} />}
+        {tab === 'downloads' && <div className="tabpane" hidden={albumOpen}><DownloadsView d={dls} /></div>}
 
         {tab === 'settings' && (
+          <div className="tabpane" hidden={albumOpen}>
           <SettingsView
             settings={settings}
             sources={Object.fromEntries(srcEntries)}
@@ -1165,6 +1203,7 @@ export function App() {
               })
             }
           />
+          </div>
         )}
       </main>
 
@@ -1172,6 +1211,7 @@ export function App() {
         <QueuePreparation tracks={cacheTracks} parallel={settings?.dl_parallel ?? 0}
           preload={{ target: settings?.preload_target ?? 'all', count: settings?.preload_count ?? 20 }} />
         <Player
+          onOpenArtist={openArtist}
           playing={playing}
           upNext={upNext}
           docked={docked}

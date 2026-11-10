@@ -103,6 +103,32 @@ export interface AlbumView extends AlbumSummary {
   genres: string[];
 }
 
+/** ARTIST-PAGE-001: `dz:<deezer id>` or `yt:<UC channel id>`; a name alone is looked up exactly. */
+export type ArtistTarget = { id?: string; name?: string };
+
+export interface ArtistSummary {
+  id: string;
+  provider: 'deezer' | 'ytmusic';
+  name: string;
+  picture: string | null;
+  detail: string | null;
+  url: string;
+  alt?: string;
+}
+
+export interface ArtistView {
+  id: string;
+  name: string;
+  picture: string | null;
+  detail: string | null;
+  /** The most played songs. */
+  songs: Track[];
+  albums: AlbumSummary[];
+  singles: AlbumSummary[];
+  links: { deezer?: string; ytmusic?: string };
+  sources: Record<string, { state: 'ok' | 'none' | 'failed'; count?: number; detail?: string }>;
+}
+
 export interface AlbumSearchResponse {
   query: string;
   albums: AlbumSummary[];
@@ -520,6 +546,12 @@ export const api = {
     call<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}&sources=ytmusic,deezer,soundcloud,apple,spotify`, signal ? { signal } : {}),
   searchLyrics: (q: string, signal?: AbortSignal) => call<IdentifyResponse>(`/api/search/lyrics?q=${encodeURIComponent(q)}`, signal ? { signal } : {}),
   searchAlbums: (q: string, signal?: AbortSignal) => call<AlbumSearchResponse>(`/api/search/albums?q=${encodeURIComponent(q)}`, signal ? { signal } : {}),
+  /** ARTIST-PAGE-001: artists named by a search; an artist's page; every song on their albums and singles. */
+  searchArtists: (q: string, signal?: AbortSignal) => call<{ query: string; artists: ArtistSummary[] }>(`/api/search/artists?q=${encodeURIComponent(q)}`, signal ? { signal } : {}),
+  artist: (target: ArtistTarget, signal?: AbortSignal) =>
+    call<{ artist: ArtistView }>('/api/artist', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
+  artistSongs: (target: ArtistTarget, signal?: AbortSignal) =>
+    call<{ songs: Track[]; opened: number; failed: number }>('/api/artist/songs', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
   /** `{ id }` opens that album; `{ track }` opens the album the song is on (404 `code: 'none'` when there is none). */
   album: (target: { id: string } | { track: Track }, signal?: AbortSignal) =>
     call<{ album: AlbumView }>('/api/album', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
@@ -564,7 +596,7 @@ export const api = {
    * analysed answers `embedded: false, already: true` instead of running again.
    */
   embedLocal: (track: Track, sourceUrl: string) =>
-    call<{ embedded: boolean; already: boolean; source: string; segments: number | null; seconds: number | null }>('/api/embed-local', {
+    call<{ embedded: boolean; already: boolean; skipped?: 'long' | 'large'; source: string | null; segments: number | null; seconds: number | null }>('/api/embed-local', {
       method: 'POST',
       body: json({ track, source_url: sourceUrl }),
     }),

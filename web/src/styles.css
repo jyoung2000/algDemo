@@ -3865,3 +3865,71 @@ html {
   font-size: 12px;
   line-height: 1.4;
 }
+/* ARTIST-PAGE-001: an artist named on a song opens their page. The name still reads as part of the
+   line (it wraps, never cuts off); the hit area reaches 6px above and below without moving the text,
+   and the keyboard focus ring is the app's accent outline. */
+.artistlink {
+  appearance: none;
+  display: inline;
+  margin: -6px 0;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+}
+.artistlink:hover {
+  color: var(--accent);
+  text-decoration-color: currentColor;
+}
+.artistlink:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+/* The album page's artist: a full 44px target, as its other buttons are. */
+.artistlink--head {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-self: start;
+  min-height: 44px;
+  margin: -6px 0;
+  padding: 0;
+  text-align: left;
+}
+/* An artist's picture is round, which tells it apart from an album cover at a glance. */
+.artist-pic {
+  display: inline-flex;
+  flex: none;
+}
+.artist-pic .art {
+  border-radius: 50%;
+  /* A hairline ring keeps a picture on a white background from melting into the card. */
+  box-shadow: 0 0 0 1px var(--hair);
+}
+/* Each part of the artist's line ("148 songs") stays whole; the line breaks between parts. */
+.artist__part {
+  white-space: nowrap;
+}
+/* On a phone the picture gives the name and its line the room: 72px, not 112px. */
+@media (max-width: 480px) {
+  .artist .album__head .artist-pic .art {
+    width: 72px !important;
+    height: 72px !important;
+  }
+}
+.artist__more {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+.artist__more:empty {
+  display: none;
+}

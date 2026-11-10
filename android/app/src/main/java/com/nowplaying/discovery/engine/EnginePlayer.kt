@@ -24,6 +24,7 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.nowplaying.discovery.Downloads
 import com.nowplaying.discovery.MediaHub
+import com.nowplaying.discovery.Streams
 import com.nowplaying.discovery.WebPlayer
 import com.nowplaying.discovery.dsp.EqConfig
 import com.nowplaying.discovery.dsp.TransitionStyle
@@ -65,6 +66,8 @@ class EnginePlayer(
   private val manageFocus: Boolean = true,
   /** Subscribes to "this link's file is now held"; returns the unsubscribe. */
   landed: ((String) -> Unit) -> () -> Unit = Downloads::onLanded,
+  /** STREAM-DL-001: the song's audio file at its source, for playing while the download runs. */
+  private val stream: (MediaHub.Song) -> Streams.Stream? = { song -> song.source?.let { Streams.resolve(it) } },
 ) : SimpleBasePlayer(looper) {
 
   /** The page, when there is one. All calls are made on the player's looper. */
@@ -81,6 +84,10 @@ class EnginePlayer(
 
   private val main = Handler(looper)
   private val opener = Executors.newSingleThreadExecutor { r -> Thread(r, "AirwaveOpen").apply { isDaemon = true } }
+  /** Asks yt-dlp for a stream; seconds per song, so it never holds up opening a file. */
+  private val streamer = Executors.newSingleThreadExecutor { r -> Thread(r, "AirwaveStream").apply { isDaemon = true } }
+  /** The song now playing from its source rather than from a file (STREAM-DL-001). */
+  private var streamingKey: String? = null
 
   /** A queue entry: the song, and the id it was chosen under (a playlist-scoped car id keeps its context). */
   data class Entry(val song: MediaHub.Song, val mediaId: String = song.id)
@@ -367,6 +374,7 @@ class EnginePlayer(
     abandonFocus()
     engine.close()
     opener.shutdownNow()
+    streamer.shutdownNow()
     return Futures.immediateVoidFuture()
   }
 
@@ -432,6 +440,7 @@ class EnginePlayer(
     val gen = ++loadGeneration
     loadedKey = null
     waitingFor = null
+    streamingKey = null
     preparedNextKey = null
     pendingStartMs = startMs
     ended = false
@@ -452,6 +461,7 @@ class EnginePlayer(
             waitingFor = song.id
             Log.i(TAG, "waiting for the file of ${song.id.take(60)} (link=${song.source != null})")
             watchForFile()
+            playFromSource(song, gen)
             invalidateState()
             emit(null)
             return@post
@@ -468,6 +478,42 @@ class EnginePlayer(
         Log.i(TAG, "opened ${song.id.take(60)} at ${startMs} ms")
         engine.load(song.id, source, startMs * SAMPLE_RATE / 1000, play = playWhenReady)
         loadedKey = song.id
+        invalidateState()
+        prepareNext()
+        emitSoon()
+      }
+    }
+  }
+
+  /**
+   * STREAM-DL-001. While the chosen song's file downloads, play it from its source through the same
+   * decoder, EQ and mixer. Whichever is playable first wins: a file that lands before the stream
+   * opens is played instead ([waitingFor] is cleared then), and once the stream plays it plays to
+   * the end of the song, because moving to the file would restart it. A stream that cannot be had
+   * leaves the song waiting for its file, as before.
+   */
+  private fun playFromSource(song: MediaHub.Song, gen: Int) {
+    if (!Streams.streamable(song.source)) return
+    // Lookup and opening both stay on the stream's own thread: opening over the network takes
+    // seconds, and the file opener must stay free for a download that lands first.
+    streamer.execute {
+      if (gen != loadGeneration) return@execute
+      val s = runCatching { stream(song) }.onFailure { Log.w(TAG, "no stream for ${song.id.take(60)}", it) }.getOrNull() ?: return@execute
+      if (gen != loadGeneration || waitingFor != song.id) return@execute
+      val t0 = SystemClock.elapsedRealtime()
+      val source = runCatching { DecodedSource(context, Uri.parse(s.url), s.headers) }
+        .onFailure { Log.w(TAG, "could not open the stream of ${song.id.take(60)}", it) }
+        .getOrNull()
+      Log.i(TAG, "stream open ${if (source != null) "ok" else "failed"} in ${SystemClock.elapsedRealtime() - t0} ms")
+      main.post {
+        if (gen != loadGeneration || waitingFor != song.id) { source?.close(); return@post }
+        if (source == null) return@post
+        waitingFor = null
+        main.removeCallbacks(fileWatch)
+        Log.i(TAG, "streaming ${song.id.take(60)} while it downloads, from ${pendingStartMs} ms")
+        engine.load(song.id, source, pendingStartMs * SAMPLE_RATE / 1000, play = playWhenReady)
+        loadedKey = song.id
+        streamingKey = song.id
         invalidateState()
         prepareNext()
         emitSoon()
@@ -629,6 +675,7 @@ class EnginePlayer(
       .put("playWhenReady", playWhenReady)
       .put("buffering", state == Player.STATE_BUFFERING)
       .put("waiting", waitingFor != null)
+      .put("streaming", streamingKey != null && streamingKey == loadedKey)
       .put("ended", ended)
       .put("error", error?.message ?: JSONObject.NULL)
       .put("positionMs", positionMs(snap))

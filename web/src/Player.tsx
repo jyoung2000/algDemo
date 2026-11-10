@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
 import { ShuffleGlyph } from './icons';
-import { api, type Playback, type Track } from './api';
+import { api, type ArtistTarget, type Playback, type Track } from './api';
+import { ArtistNames } from './ArtistLinks';
 import { PREVIEW_ROUTE } from './engine/shape';
 import { Art } from './Art';
 import { Volume } from './Volume';
@@ -11,6 +12,7 @@ import { loadYouTube, youtubeEmbedUrl, type YTPlayer } from './youtube';
 import { attachElement, bus as audioBus, eqConfig, mixSlider, playThrough, resumeEngine, setUnprocessable, subscribeEngine } from './audio-engine';
 import { localLibrary, sourceUrlFor } from './engine/local-audio';
 import { rescueSource } from './engine/rescue';
+import { pickStream } from './engine/stream-pick';
 import { downloadsAvailable, playbackActive } from './engine/downloads';
 import { mediaNativeAvailable, pushMediaState, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { engineAvailable, engineRev, engineSend, engineSong, engineState, markEngineEvent, subscribeEngineState, type EngineState } from './engine/native-engine';
@@ -69,6 +71,8 @@ interface Props {
   onSelect: () => void;
   onMenu: () => void;
   onPickUpNext: (key: string) => void;
+  /** ARTIST-PAGE-001: the full-size player's artist line opens the artist's page. */
+  onOpenArtist?: ((t: ArtistTarget) => void) | undefined;
 }
 
 
@@ -130,7 +134,7 @@ type Mode = 'full' | 'local' | 'preview' | 'embed' | 'none';
  * A song with no YouTube Music version falls back to its 30-second Deezer preview in an <audio>
  * element. SoundCloud songs play in SoundCloud's widget, whose progress and volume Airwave cannot reach.
  */
-export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, repeat, cacheGb = 1, actions, onShuffle, onRepeat, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext }: Props) {
+export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, repeat, cacheGb = 1, actions, onShuffle, onRepeat, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext, onOpenArtist }: Props) {
   // Two decks, because a crossfade needs both songs audible at once: the outgoing song keeps
   // playing on its own element while the incoming one starts on the other. Both elements live for
   // the player's lifetime — a MediaElementAudioSourceNode can be made only once per element.
@@ -213,6 +217,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const knownId = knownVideoId(playing);
   const scEmbed = playing?.playback.embed?.provider === 'soundcloud' ? playing.playback.embed : null;
   const [found, setFound] = useState<{ key: string; id: string | null; url?: string } | null>(null);
+  // STREAM-DL-001: this song's stream from its source while its download runs (engine/stream-pick.ts).
+  const [streamOf, setStreamOf] = useState<{ key: string; url: string | null; started: boolean; failed: boolean } | null>(null);
   const [badVideo, setBadVideo] = useState<string | null>(null);
   const previewSrc = playing?.playback.preview ?? null;
   // Songs the mixer blended into. They are already playing, as the preview they were blended as,
@@ -305,12 +311,22 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const askingLocal = localSource !== null && !latched && (localStatus === 'unknown' || (localStatus === 'ready' && localSrc === null));
   const fetchingLocal = canLocal && localSource !== null && localStatus === 'running';
   const localError = localSource !== null && localStatus === 'missing' ? localLibrary.error(localSource) : null;
-  const src = localSrc ?? previewPick;
+  // STREAM-DL-001: the song plays from its source while it downloads, on this page's own deck (the
+  // Android engine streams for itself). Whichever is playable first wins; a stream that has started
+  // plays to the end, since moving to the file then would restart the song.
+  // Only what the deck reported is kept (it started; it failed); the choice itself is worked out here.
+  // YouTube's own player is never used where songs download, so a stream never meets it.
+  const streamNow = streamOf?.key === key ? streamOf : null;
+  const streamSrc = native || !key ? null : pickStream({ canStream: canLocal && localLibrary.canStream(), source: localSource, localStatus, localSrc, current: streamNow });
+  // In the Android app the engine streams for itself and says so in its state.
+  const [engineStreams, setEngineStreams] = useState<string | null>(null);
+  const streaming = Boolean(streamSrc) || (native && engineStreams !== null && engineStreams === key);
+  const src = streamSrc ?? localSrc ?? previewPick;
   const embed = embedPick;
-  const mode: Mode = localSrc ? 'local' : canLocal ? 'none' : askingLocal || fetchingLocal ? 'none' : videoId ? 'full' : src ? 'preview' : embed ? 'embed' : 'none';
+  const mode: Mode = localSrc || streaming ? 'local' : canLocal ? 'none' : askingLocal || fetchingLocal ? 'none' : videoId ? 'full' : src ? 'preview' : embed ? 'embed' : 'none';
   const hasSound = mode === 'full' || mode === 'local' || mode === 'preview';
   const onDeck = mode === 'local' || mode === 'preview';
-  const pending = lookingUp || askingLocal || fetchingLocal;
+  const pending = lookingUp || ((askingLocal || fetchingLocal) && !streaming);
 
   useEffect(() => {
     if (!playing || !needsLookup) return;
@@ -853,6 +869,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     </p>
   ) : blending ? (
     <p className="np__note np__note--mix" aria-live="polite">{note}</p>
+  ) : mode === 'local' && streaming ? (
+    <p className="np__note">{loading ? 'Starting the full song from its source…' : localStatus === 'ready' ? 'Full song, streamed from its source — through the equaliser and mixer. The download has finished.' : 'Full song, streaming from its source while it downloads — through the equaliser and mixer.'}</p>
   ) : mode === 'local' ? (
     <p className="np__note">{loading ? 'Loading the full song…' : 'Full song, downloaded — through the equaliser and mixer.'}</p>
   ) : src ? (
@@ -960,6 +978,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
    */
   useEffect(() => {
     onEngineRef.current = (st) => {
+      setEngineStreams(st.streaming && st.id ? st.id : null);
       const ev = st.event;
       if (ev && markEngineEvent(ev.seq)) {
         if (ev.from.id === key) {
@@ -1016,7 +1035,12 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
           crossOrigin="anonymous"
           data-deck={id}
           onPlay={() => { if (id === deck) setPaused(false); syncPlayback(); }}
-          onPlaying={() => id === deck && setLoading(false)}
+          onPlaying={(e) => {
+            if (id !== deck) return;
+            setLoading(false);
+            // STREAM-DL-001: once the stream sounds, it is this song's source to the end.
+            if (streamSrc && e.currentTarget.src.endsWith(streamSrc) && key && !streamNow?.started) setStreamOf({ key, url: streamSrc, started: true, failed: false });
+          }}
           onPause={() => { if (id === deck) setPaused(true); syncPlayback(); }}
           onWaiting={() => id === deck && setLoading(true)}
           onLoadedMetadata={(e) => id === deck && setDur(e.currentTarget.duration || 0)}
@@ -1037,7 +1061,13 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
             syncPlayback();
             onEndRef.current();
           }}
-          onError={() => {
+          onError={(e) => {
+            // STREAM-DL-001: a stream that fails gives way to the download, quietly; only a file
+            // that fails is an error the listener needs to hear about.
+            if (id === deck && streamSrc && e.currentTarget.src.endsWith(streamSrc) && key) {
+              setStreamOf({ key, url: null, started: false, failed: true });
+              return;
+            }
             if (id === deck && src) {
               setLoading(false);
               setErr(mode === 'local' ? 'This local full song could not play. Try another source.' : 'This preview could not play. Deezer may no longer offer it.');
@@ -1080,7 +1110,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
             )}
             <div className="np__text">
               <span className="np__title">{t!.title}</span>
-              <span className="np__artist">{artistOf(t!)}</span>
+              {onOpenArtist && !docked ? <ArtistNames track={t!} onOpen={onOpenArtist} className="np__artist" /> : <span className="np__artist">{artistOf(t!)}</span>}
               {!docked && status}
               {/*
                 The docked strip is deliberately compact, so it carries no note lines — the same

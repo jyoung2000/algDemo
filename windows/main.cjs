@@ -9,6 +9,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { request } = require('./bridge.cjs');
 const { createDownloads } = require('./downloads.cjs');
+const { createStreams } = require('./streams.cjs');
 
 const APP_HOST = 'appassets.androidplatform.net';
 const ROOT = app.isPackaged ? path.join(process.resourcesPath, 'web') : path.join(__dirname, '..', 'web', 'dist');
@@ -45,9 +46,18 @@ function savedMusicFolder() {
   return path.join(app.getPath('music'), 'Airwave Discovery');
 }
 let downloads = null;
+// STREAM-DL-001: a chosen song plays from its source while its download runs.
+let streams = null;
+const stream = () =>
+  (streams ||= createStreams({
+    toolsDir: TOOLS,
+    // Past this app's own https handler, which would otherwise receive the request again.
+    fetchImpl: (url, init) => net.fetch(url, { ...init, bypassCustomProtocolHandlers: true }),
+  }));
 const dl = () =>
   (downloads ||= createDownloads({
     toolsDir: TOOLS,
+    streams: true,
     saveDir: savedMusicFolder(),
     libraryDir: path.join(app.getPath('music'), 'Airwave Discovery'),
     cacheDir: path.join(app.getPath('userData'), 'queue-audio'),
@@ -179,6 +189,8 @@ app.whenReady().then(() => {
     // Audio (a cross-origin element without CORS is silent there). Range requests, because an
     // <audio> element seeks with them and will not report a duration without them.
     if (url.pathname === '/local-audio') return serveLocalAudio(req, url.searchParams.get('u') || '');
+    // STREAM-DL-001: the same song from its source, while the download is still running.
+    if (url.pathname === '/stream-audio') return stream().serve(req, url.searchParams.get('u') || '');
     let file = fileFor(url.pathname);
     if (!file) return new Response('Forbidden', { status: 403 });
     if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {

@@ -1,13 +1,14 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 
-import { api, type AlbumSummary, type PlaylistMix, type PlaylistSummary, type SavedItem, type Track } from './api';
+import { api, type AlbumSummary, type ArtistTarget, type PlaylistMix, type PlaylistSummary, type SavedItem, type Track } from './api';
 import { Art } from './Art';
 import { ListDownloadBar } from './ListDownloadBar';
 import { ListSaveButton } from './ListSaveButton';
 import { albumFolderName } from './engine/list-save';
 import { SaveMenu } from './SaveMenu';
 import { ALBUM_KIND, AlbumSlot } from './AlbumShelf';
+import { ArtistNames } from './ArtistLinks';
 import { SoundCard } from './SoundCard';
 import { listMixNote } from './list-mix-note';
 import { PLAYLIST_NAME_MAX } from './engine/playlists';
@@ -35,6 +36,8 @@ interface Props {
   onOpenAlbum?: ((t: Track) => void) | undefined;
   /** ALBUM-SAVE-001: open a saved album's full album page. */
   onOpenAlbumId?: ((id: string) => void) | undefined;
+  /** ARTIST-PAGE-001: each artist named on a song opens that artist's page. */
+  onOpenArtist?: ((t: ArtistTarget) => void) | undefined;
 }
 
 const ALL = 'all';
@@ -47,7 +50,7 @@ const ALL = 'all';
  * and the owner asked for that control to go. A whole list can become the now playing queue instead,
  * and then every song in it is a starting song (PLAYLIST-QUEUE-001).
  */
-export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onDownload, cacheOf, onVisibleList, onUseAsQueue, queueListId, onOpenAlbum, onOpenAlbumId }: Props) {
+export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onDownload, cacheOf, onVisibleList, onUseAsQueue, queueListId, onOpenAlbum, onOpenAlbumId, onOpenArtist }: Props) {
   const [view, setView] = useState<string>(ALL);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -379,7 +382,7 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
               <Art src={track.artwork} size={44} />
               <div className="track__text">
                 <span className="track__title">{track.title}</span>
-                <span className="track__artist">{artistOf(track)}</span>
+                {onOpenArtist ? <ArtistNames track={track} onOpen={onOpenArtist} /> : <span className="track__artist">{artistOf(track)}</span>}
               </div>
               {current && (
                 <span className={classNames('track__played', played && 'is-on')}>

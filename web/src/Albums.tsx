@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
-import { api, ApiError, type AlbumView as AlbumData, type PlaylistSummary, type Track } from './api';
+import { api, ApiError, type AlbumView as AlbumData, type ArtistTarget, type PlaylistSummary, type Track } from './api';
 import { Art } from './Art';
 import { ALBUM_KIND, albumFrom } from './AlbumShelf';
 import { markKey } from './util';
@@ -30,6 +30,8 @@ interface Props {
   addLabel?: string | undefined;
   addedKeys?: ReadonlySet<string> | undefined;
   playingKey?: string | null | undefined;
+  /** ARTIST-PAGE-001: the album's artist, and each artist on its songs, open their pages. */
+  onOpenArtist?: ((t: ArtistTarget) => void) | undefined;
 }
 
 type State = { state: 'loading' } | { state: 'ready'; album: AlbumData } | { state: 'failed'; message: string };
@@ -46,7 +48,7 @@ function length(sec: number | null): string | null {
  * buttons walk it; Save album keeps it in Saved, under Albums (ALBUM-SAVE-001); download and folder work as on
  * any list. Playing it teaches the album taste (ALBUM-TASTE-001) like any other listening.
  */
-export function AlbumView({ target, onBack, onPreview, seedKeys, onAdd, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys, playingKey }: Props) {
+export function AlbumView({ target, onBack, onPreview, seedKeys, onAdd, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys, playingKey, onOpenArtist }: Props) {
   const [st, setSt] = useState<State>({ state: 'loading' });
   const [note, setNote] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -111,7 +113,13 @@ export function AlbumView({ target, onBack, onPreview, seedKeys, onAdd, onDownlo
               <div className="album__text">
                 <span className="album__kind">{ALBUM_KIND[a.kind]}</span>
                 <h2 id="album-h" className="album__title">{a.title}</h2>
-                <span className="album__artist">{a.artist}</span>
+                {onOpenArtist && a.artist && !/^various artists$/i.test(a.artist) ? (
+                  <button type="button" className="album__artist artistlink artistlink--head" onClick={() => onOpenArtist({ name: a.artist })} aria-label={`Open the artist ${a.artist}`}>
+                    {a.artist} <Glyph name="chevron-right" size={12} />
+                  </button>
+                ) : (
+                  <span className="album__artist">{a.artist}</span>
+                )}
                 <span className="album__meta">{meta}</span>
                 <span className="album__src">
                   <ProviderMark provider={markKey(a.provider)} size={13} /> {albumFrom(a)}
@@ -161,6 +169,7 @@ export function AlbumView({ target, onBack, onPreview, seedKeys, onAdd, onDownlo
                 addLabel={addLabel}
                 addedKeys={addedKeys}
                 playingKey={playingKey}
+                onOpenArtist={onOpenArtist}
                 label={`Songs on ${a.title}`}
               />
             ) : (

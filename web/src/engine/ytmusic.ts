@@ -33,8 +33,11 @@ const VIDEOS_FILTER = 'EgWKAQIQAWoMEA4QChADEAQQCRAF';
 export const ALBUMS_FILTER = 'EgWKAQIYAWoMEA4QChADEAQQCRAF';
 /** A YouTube Music album page id. */
 export const YT_ALBUM = /^MPREb_[A-Za-z0-9_-]{6,40}$/;
+/** ytmusicapi's search filter for artists. */
+const ARTISTS_FILTER = 'EgWKAQIgAWoMEA4QChADEAQQCRAF';
 const YT_ID = /^[A-Za-z0-9_-]{11}$/;
 const MAX_BYTES = 4_000_000;
+const LIST_BYTES = 12_000_000;
 
 export interface Artist {
   name: string;
@@ -277,11 +280,11 @@ export class YouTubeMusic {
 
   constructor(private readonly http: Http, private readonly store?: Store) {}
 
-  private async post(endpoint: string, body: Json, c: Ctx): Promise<Json> {
+  private async post(endpoint: string, body: Json, c: Ctx, maxBytes = MAX_BYTES): Promise<Json> {
     const context = { context: { client: { clientName: 'WEB_REMIX', clientVersion: `1.${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.01.00` }, user: {} } };
     const o: Parameters<Http['getJson']>[1] = {
       category: 'metadata',
-      maxBytes: MAX_BYTES,
+      maxBytes,
       method: 'POST',
       body: JSON.stringify({ ...body, ...context }),
       headers: { 'user-agent': UA, 'content-type': 'application/json', origin: 'https://music.youtube.com' },
@@ -324,6 +327,22 @@ export class YouTubeMusic {
   albumPage(browseId: string, c: Ctx = {}): Promise<Json> {
     if (!YT_ALBUM.test(browseId)) return Promise.reject(new ProviderError('That is not a YouTube Music album.'));
     return this.post('browse', { browseId }, c);
+  }
+
+  /** ARTIST-PAGE-001: the artists tab of a search, an artist page or their songs list, and its next page. */
+  artistSearch(q: string, c: Ctx = {}): Promise<Json> {
+    return this.post('search', { query: q, params: ARTISTS_FILTER }, c);
+  }
+
+  browse(browseId: string, c: Ctx = {}): Promise<Json> {
+    if (!/^(UC[A-Za-z0-9_-]{22}|VL[A-Za-z0-9_-]{10,80})$/.test(browseId)) return Promise.reject(new ProviderError('That is not a YouTube Music artist.'));
+    // An artist's songs list runs about 40 KB a song as sent (4.0 MB for 100 on 2026-11-10).
+    return this.post('browse', { browseId }, c, browseId.startsWith('VL') ? LIST_BYTES : MAX_BYTES);
+  }
+
+  continueBrowse(token: string, c: Ctx = {}): Promise<Json> {
+    if (!/^[A-Za-z0-9_%=-]{20,2000}$/.test(token)) return Promise.reject(new ProviderError('That is not a YouTube Music page.'));
+    return this.post('browse', { continuation: token }, c, LIST_BYTES);
   }
 
   search(q: string, limit = 15, c: Ctx = {}): Promise<Track[]> {

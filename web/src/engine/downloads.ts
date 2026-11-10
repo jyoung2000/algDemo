@@ -94,6 +94,8 @@ export interface DlHealth {
   cache_bytes?: number;
   /** The size limit that cache is held under, in bytes. */
   cache_limit_bytes?: number;
+  /** STREAM-DL-001: the shell serves /stream-audio. Absent on shells that cannot stream. */
+  stream?: boolean;
 }
 
 declare global {

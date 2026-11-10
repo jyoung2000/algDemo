@@ -1,10 +1,11 @@
 import { useState, type CSSProperties } from 'react';
 import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
-import type { FeedbackKind, PlaylistSummary, RecItem, Track } from './api';
+import type { ArtistTarget, FeedbackKind, PlaylistSummary, RecItem, Track } from './api';
 import type { CardCache } from './engine/queue-controls';
 import { Art } from './Art';
 import { SaveMenu } from './SaveMenu';
 import { AlbumSlot } from './AlbumShelf';
+import { ArtistNames } from './ArtistLinks';
 import { PROVIDER_LABEL, TIER_LABEL, artistOf, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreBubbles, markKey, playbackOfTrack, toneLabel } from './util';
 
 export interface FeedbackFlags {
@@ -36,6 +37,8 @@ interface Props {
   onLists?: (lists: PlaylistSummary[]) => void;
   /** ALBUM-OPEN-001: open the album a song is on. */
   onOpenAlbum?: ((t: Track) => void) | undefined;
+  /** ARTIST-PAGE-001: each artist named on a card opens that artist's page. */
+  onOpenArtist?: ((t: ArtistTarget) => void) | undefined;
 }
 
 /**
@@ -43,7 +46,7 @@ interface Props {
  * diversified order; nothing here re-sorts it.
  * Arrow keys / j k move between rows; Enter plays; the row keeps focus when results refresh.
  */
-export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload, cacheOf, lists, onLists, onOpenAlbum }: Props) {
+export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload, cacheOf, lists, onLists, onOpenAlbum, onOpenArtist }: Props) {
   const [open, setOpen] = useState<string | null>(null);
   /** Which row's save menu is showing, by song key. Only one opens at a time. */
   const [saving, setSaving] = useState<string | null>(null);
@@ -185,7 +188,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                 ))}
                 {it.new_release && <span className="vtag vtag--new">New</span>}
               </span>
-              <span className="rec__artist">{artistOf(t)}</span>
+              {onOpenArtist ? <ArtistNames track={t} onOpen={onOpenArtist} className="rec__artist" /> : <span className="rec__artist">{artistOf(t)}</span>}
             </div>
             <div className="rec__sub">
               <span className="rec__why1">{it.reasons[0]?.text ?? 'Found from your starting songs.'}</span>

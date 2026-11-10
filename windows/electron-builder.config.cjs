@@ -28,7 +28,7 @@ module.exports = {
   productName: 'Airwave Discovery',
   directories: { output: 'release', app: __dirname },
   electronVersion: '44.1.1',
-  files: ['main.cjs', 'preload.cjs', 'bridge.cjs', 'hosts.cjs', 'downloads.cjs', 'package.json', '../launcher/airwave-discovery.ico'],
+  files: ['main.cjs', 'preload.cjs', 'bridge.cjs', 'hosts.cjs', 'downloads.cjs', 'streams.cjs', 'package.json', '../launcher/airwave-discovery.ico'],
   asar: true,
   extraResources: [
     { from: '../web/dist', to: 'web', filter: ['**/*'] },

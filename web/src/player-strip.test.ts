@@ -74,7 +74,8 @@ describe('the player strip (NP-STRIP-001)', () => {
     // no progress bar, on a song that then played fine a second later. That was the moment the
     // app asks the shell whether it holds the download: a pending state, not a missing player.
     const player = readFileSync(new URL('./Player.tsx', import.meta.url), 'utf8');
-    expect(player).toMatch(/const pending = lookingUp \|\| askingLocal \|\| fetchingLocal;/);
+    expect(player).toMatch(/const pending = lookingUp \|\| \(\(askingLocal \|\| fetchingLocal\) && !streaming\);/);
+    // STREAM-DL-001: a song already playing from its source while it downloads is not pending.
     // The bar is no longer conditional at all (NP-ALWAYS-001 made the stronger promise).
     expect(player).toMatch(/const progress = playing \? \(/);
     expect(player).toMatch(/askingLocal \? 'Loading the full song…'/);

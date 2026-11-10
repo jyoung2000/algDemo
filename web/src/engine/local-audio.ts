@@ -39,12 +39,15 @@ export interface LocalApi {
   /** What the shell holds for a link: a finished file, or whether a download for it is in flight. */
   local: (url: string) => Promise<{ file: DlFile | null; running: boolean; error?: string | null }>;
   start: (url: string, label: string, background?: boolean) => Promise<unknown>;
+  /** STREAM-DL-001: whether the shell serves /stream-audio. Absent: it does not. */
+  streams?: () => Promise<boolean>;
 }
 
 const shellApi: LocalApi = {
   local: (url) => dl.local(url),
   // 'original' keeps the source bytes (Opus from YouTube Music) — the only format that cannot lose quality.
   start: (url, label, background) => dl.start(url, 'yt-dlp', 'original', label, true, background),
+  streams: () => dl.health().then((h) => h.stream === true),
 };
 
 /**
@@ -154,6 +157,29 @@ export class LocalLibrary {
     } finally {
       this.blobbing.delete(url);
     }
+  }
+
+  private streamAnswer: boolean | null = null;
+  private streamAsked = false;
+  /**
+   * STREAM-DL-001: whether a song may play from its source while it downloads. False until the
+   * shell has answered; listeners hear when it does.
+   */
+  canStream(): boolean {
+    if (!this.streamAsked) {
+      this.streamAsked = true;
+      const ask = this.api.streams;
+      if (ask) {
+        void ask().then(
+          (yes) => {
+            this.streamAnswer = yes;
+            for (const l of [...this.listeners]) l();
+          },
+          () => { this.streamAsked = false; },
+        );
+      }
+    }
+    return this.streamAnswer === true;
   }
 
   subscribe(fn: () => void): () => void {

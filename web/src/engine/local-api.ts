@@ -52,6 +52,7 @@ import { Job, Pipeline, pmap, type Embedder } from './pipeline';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
 import { Albums } from './albums';
+import { Artists } from './artists';
 import { albumKeyOf } from './album-key';
 import { SoundCloud } from './soundcloud';
 import { Bandcamp } from './bandcamp';
@@ -177,6 +178,37 @@ export function addNewCandidates(pool: Dict[], incoming: Dict[]): Dict[] {
   return out;
 }
 
+/** TASTE-FULL-BOUND-001: the longest song, and the largest file, the page decodes to learn its sound. */
+export const FULL_SONG_MAX_SECONDS = 600;
+export const FULL_SONG_MAX_BYTES = 16 * 1024 * 1024;
+
+/** The body, or null as soon as it is known to be over `max` bytes (the rest is never read). */
+async function readAtMost(res: Response, max: number): Promise<Uint8Array | null> {
+  const told = Number(res.headers.get('content-length'));
+  if (Number.isFinite(told) && told > max) {
+    await res.body?.cancel().catch(() => {});
+    return null;
+  }
+  if (!res.body) return new Uint8Array(await res.arrayBuffer());
+  const reader = res.body.getReader();
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    parts.push(value);
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.byteLength; }
+  return out;
+}
+
 export class LocalApi {
   readonly store: Store;
   readonly http: Http;
@@ -189,6 +221,7 @@ export class LocalApi {
   readonly archive: InternetArchive;
   readonly apple: AppleMusic;
   readonly albums: Albums;
+  readonly artists: Artists;
   readonly sp: Spotify;
   readonly genius: Genius;
   readonly shazam: Shazam;
@@ -218,6 +251,7 @@ export class LocalApi {
     this.archive = new InternetArchive(this.http, this.store);
     this.apple = new AppleMusic(this.http, this.store);
     this.albums = new Albums(this.http, this.dz, this.store, this.ytm, this.sc);
+    this.artists = new Artists(this.http, this.dz, this.ytm, this.store, this.albums);
     this.sp = new Spotify(this.http, this.store);
     this.genius = new Genius(this.http);
     this.shazam = new Shazam(this.http);
@@ -277,6 +311,9 @@ export class LocalApi {
       if (m === 'GET' && path === '/api/search/lyrics') return await this.searchLyrics(q.get('q') ?? '');
       if (m === 'GET' && path === '/api/search/albums') return ok(await this.searchAlbums(q.get('q') ?? ''));
       if (m === 'POST' && path === '/api/album') return await this.album(body ?? {});
+      if (m === 'GET' && path === '/api/search/artists') return ok(await this.searchArtists(q.get('q') ?? ''));
+      if (m === 'POST' && path === '/api/artist') return await this.artist(body ?? {}, false);
+      if (m === 'POST' && path === '/api/artist/songs') return await this.artist(body ?? {}, true);
       if (m === 'POST' && path === '/api/identify/audio') return await this.identifyAudio(body ?? {});
       if (m === 'POST' && path === '/api/resolve') return await this.resolve(String(body?.['url'] ?? ''));
       if (m === 'POST' && path === '/api/complete-spotify') return ok(await this.completeSpotify(String(body?.['title'] ?? ''), String(body?.['artist'] ?? '')));
@@ -455,6 +492,33 @@ export class LocalApi {
     return { query: q, albums: r.albums, sources: r.sources, ms: Math.round(performance.now() - t0), bytes: meter.total };
   }
 
+  // ---- artists (ARTIST-PAGE-001) ----------------------------------------------------------
+  private async searchArtists(raw: string): Promise<Dict> {
+    const q = raw.trim().replace(/\s+/g, ' ').slice(0, 200);
+    if (!q || looksLikeUrl(q)) return { query: q, artists: [] };
+    const meter = this.searchMeter();
+    return { query: q, artists: await this.artists.search(q, 6, { meter }), bytes: meter.total };
+  }
+
+  /** `{ id?, name? }` opens that artist; with `every`, the songs on all their albums and singles too. */
+  private async artist(body: Dict, every: boolean): Promise<LocalResponse> {
+    const meter = this.searchMeter();
+    const id = typeof body['id'] === 'string' ? body['id'].slice(0, 80) : '';
+    const name = typeof body['name'] === 'string' ? body['name'].trim().slice(0, 200) : '';
+    if (!id && !name) return fail(400, 'id or name required');
+    try {
+      const target = { ...(id ? { id } : {}), ...(name ? { name } : {}) };
+      const a = await this.artists.open(target, { meter });
+      const clean = (list: readonly object[]) => list.map((t) => cleanTrack(t as Dict));
+      if (!every) return ok({ artist: { ...a, songs: clean(a.songs) } });
+      const all = await this.artists.everySong(a, { meter });
+      return ok({ songs: clean(all.songs), opened: all.opened, failed: all.failed });
+    } catch (e) {
+      if (e instanceof ProviderError) return fail(404, e.message, { code: 'none' });
+      return this.identifyFailure(e, 'artist');
+    }
+  }
+
   /** `{ id }` opens that album; `{ track }` opens the album the song sits on. */
   private async album(body: Dict): Promise<LocalResponse> {
     const meter = this.searchMeter();
@@ -473,7 +537,7 @@ export class LocalApi {
 
   // ---- identify by lyrics / audio ------------------------------------------------------
   /** What went wrong with a Genius/Shazam call, in terms the UI has copy for. */
-  private identifyFailure(e: unknown, what: 'lyrics' | 'audio' | 'album'): LocalResponse {
+  private identifyFailure(e: unknown, what: 'lyrics' | 'audio' | 'album' | 'artist'): LocalResponse {
     const msg = String((e as Error)?.message ?? e);
     if (e instanceof BudgetExceeded) return fail(429, 'The daily transfer allowance is used up.', { code: 'budget' });
     if (/HTTP (429|5\d\d)/.test(msg)) return fail(503, `The ${what} service is busy.`, { code: 'busy' });
@@ -1466,14 +1530,21 @@ export class LocalApi {
     const rec = songVectorKey(key);
     const had = this.store.vectorSource(rec, A.MODEL_ID, A.PREPROCESS_ID);
     if (had) return ok({ embedded: false, already: true, source: had, segments: null, seconds: null });
-    let data: Uint8Array;
+    // TASTE-FULL-BOUND-001: the whole file is decoded to raw audio in the page (~0.8 MB a second of
+    // song) before its few segments are picked, so a long song is left out rather than risk the page.
+    const seconds = Number(t['duration']);
+    if (Number.isFinite(seconds) && seconds > FULL_SONG_MAX_SECONDS) {
+      return ok({ embedded: false, already: false, skipped: 'long', source: null, segments: null, seconds: null });
+    }
+    let data: Uint8Array | null;
     try {
       const res = await fetch(localAudioUrl(url));
       if (!res.ok) return fail(404, `That song is not in the queue cache yet (HTTP ${res.status}).`);
-      data = new Uint8Array(await res.arrayBuffer());
+      data = await readAtMost(res, FULL_SONG_MAX_BYTES);
     } catch (e) {
       return fail(502, `The queue cache could not be read: ${(e as Error).message}`);
     }
+    if (data === null) return ok({ embedded: false, already: false, skipped: 'large', source: null, segments: null, seconds: null });
     const job = new Job('embed-local');
     const r = await this.pipeline.embedFullSong(job, rec, data);
     if (!r) return fail(422, 'That song could not be analysed.', { audio: job.audio });

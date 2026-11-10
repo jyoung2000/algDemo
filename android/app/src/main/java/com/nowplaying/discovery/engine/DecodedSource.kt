@@ -29,7 +29,8 @@ import kotlin.math.roundToLong
  * Only mono and stereo are expected (the downloader writes music files); a file with more channels
  * plays its first two (front left/right in every standard layout) rather than failing.
  */
-class DecodedSource(context: Context, uri: Uri) : PcmSource {
+/** [headers]: sent with a network [uri] (STREAM-DL-001: a song played from its source while it downloads). */
+class DecodedSource(context: Context, uri: Uri, headers: Map<String, String>? = null) : PcmSource {
   private val extractor = MediaExtractor()
   private val codec: MediaCodec
   private val trackFormat: MediaFormat
@@ -52,7 +53,7 @@ class DecodedSource(context: Context, uri: Uri) : PcmSource {
 
   init {
     try {
-      extractor.setDataSource(context, uri, null)
+      extractor.setDataSource(context, uri, headers)
       val track = (0 until extractor.trackCount).firstOrNull {
         extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
       } ?: throw IllegalArgumentException("No audio track in $uri")
