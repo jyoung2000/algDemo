@@ -110,6 +110,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, sour
    * Re-read just the storage figures for the live meter. Deliberately silent: it sets no checking
    * flag and clears no error, so a poll never flickers the panel or blanks a real message.
    */
+  const [freed, setFreed] = useState<number | null>(null);
   const refreshStorage = () =>
     api.status()
       .then((s) => setStatus(s))
@@ -118,10 +119,15 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, sour
   const load = (refresh = false) => {
     setChecking(refresh);
     setErr(null);
+    // ALLOWANCE-REFRESH-001: Check again also gives the day's allowance back; say how much it freed
+    // so the listener can see why searching and discovery work again.
     Promise.all([api.health(refresh), api.status()])
       .then(([h, s]) => {
         setHealth(h);
         setStatus(s);
+        const freed = h.allowance_refreshed;
+        if (freed) setFreed(freed.cleared_bytes);
+        return api.status().then(setStatus, () => undefined);
       })
       .catch((e: Error) => setErr(e.message))
       .finally(() => setChecking(false));
@@ -387,6 +393,13 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, sour
           </button>
         </div>
         {err && <p className="state state--bad">{err}</p>}
+        {freed !== null && (
+          <p className="note" role="status">
+            {freed > 0
+              ? `Allowance refreshed: ${fmtBytes(freed)} of today\u2019s downloads cleared, so searching and discovery have room again.`
+              : 'Allowance refreshed: today\u2019s allowance was not used up.'}
+          </p>
+        )}
         {quietSources.length > 0 && (
           // SRC-WARN-001: moved here from above the song list. The run still used every source
           // that did answer, so this is a status note, not a failure the listener must act on.

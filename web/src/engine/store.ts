@@ -353,6 +353,20 @@ export class Store {
     }
     return out;
   }
+  /**
+   * ALLOWANCE-REFRESH-001: forget what today spent, so the day's allowance is usable again at once
+   * instead of at midnight. Other days are kept. Returns the bytes forgotten.
+   */
+  clearTransfer(d: string = day()): number {
+    let cleared = 0;
+    for (const [k, n] of [...this.transfer]) {
+      if (k.split('\u0000')[0] !== d) continue;
+      cleared += n;
+      this.transfer.delete(k);
+      this.write(() => this.be.del('transfer', k));
+    }
+    return cleared;
+  }
 
   // ---- export / reset ----
   export(): Record<string, unknown> {

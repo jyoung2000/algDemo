@@ -163,6 +163,8 @@ export const songVectorKey = (key: string): string => `song:${key}`;
 const ok = (body: unknown, status = 200): LocalResponse => ({ status, body });
 const fail = (status: number, message: string, extra: Dict = {}): LocalResponse => ({ status, body: { message, detail: message, ...extra } });
 const unixNow = (): number => Date.now() / 1000;
+/** The day the transfer counter is keyed by, same shape the store uses. */
+const today = (): string => new Date().toISOString().slice(0, 10);
 const newId = (): string => Math.random().toString(16).slice(2, 14).padEnd(12, '0');
 
 /** The songs in `incoming` whose key the pool does not hold yet, in their original order. */
@@ -411,11 +413,15 @@ export class LocalApi {
   }
 
   private async healthRoute(refresh: boolean): Promise<Dict> {
+    // ALLOWANCE-REFRESH-001: "Check again" also gives the day's download allowance back, before the
+    // probes run, so the very next search, discovery or genre read has room. A plain read (the
+    // Settings screen opening) never clears anything.
+    const refreshed = refresh ? { cleared_bytes: this.store.clearTransfer(), day: today() } : null;
     if (refresh || !Object.keys(this.health).length || unixNow() - this.healthAt > 600) {
       this.healthRun ??= this.refreshHealth().finally(() => (this.healthRun = null));
       await this.healthRun;
     }
-    return { providers: this.health, checked_at: this.healthAt, audio: this.audioState() };
+    return { providers: this.health, checked_at: this.healthAt, audio: this.audioState(), ...(refreshed ? { allowance_refreshed: refreshed } : {}) };
   }
 
   private audioState(): Dict {

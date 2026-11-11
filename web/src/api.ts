@@ -409,6 +409,8 @@ export interface Health {
     vectors: number;
   };
   checked_at?: number;
+  /** ALLOWANCE-REFRESH-001: present when this read also cleared the day's download allowance. */
+  allowance_refreshed?: { cleared_bytes: number; day: string };
 }
 
 export interface Status {
