@@ -4,11 +4,12 @@ import { RefreshGlyph } from './icons';
 import { api, ApiError, type AlbumSummary, type ArtistSummary, type ArtistTarget, type Evidence, type IdentifyResponse, type PlaylistSummary, type ResolveResponse, type SearchResponse, type SourceState, type Track } from './api';
 import { Art } from './Art';
 import { SaveMenu } from './SaveMenu';
-import { AlbumShelf, AlbumSlot } from './AlbumShelf';
-import { ArtistCard, ArtistNames, namesArtist } from './ArtistLinks';
+import { AlbumShelf } from './AlbumShelf';
+import { SongCredits } from './SongCredits';
+import { ArtistCard, namesArtist } from './ArtistLinks';
 import { warmer } from './engine/warm-shell';
 import { namesAlbum } from './engine/album-key';
-import { PROVIDER_LABEL, artistOf, classNames, fmtDuration, fmtRelease, looksLikeUrl, markKey } from './util';
+import { PROVIDER_LABEL, classNames, fmtDuration, fmtRelease, looksLikeUrl, markKey } from './util';
 
 /** What a result row's like button needs, shared by every list of results (SEARCH-LIKE-001). */
 interface LikeProps {
@@ -1136,7 +1137,7 @@ export function TrackList({
     <ul className="well tracks" aria-label={label}>
       {tracks.map((t, i) => {
         const added = seedKeys.has(t.key);
-        const meta = numbered ? '' : [t.album, fmtRelease(t.release)].filter(Boolean).join(' · ');
+        const meta = numbered ? '' : fmtRelease(t.release);
         return (
           <li
             key={`${t.provider}:${t.platform_id}`}
@@ -1157,7 +1158,7 @@ export function TrackList({
                   </span>
                 ))}
               </span>
-              {onOpenArtist ? <ArtistNames track={t} onOpen={onOpenArtist} /> : <span className="track__artist">{artistOf(t)}</span>}
+              <SongCredits track={t} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} hideAlbum={numbered} />
               {meta && <span className="track__meta">{meta}</span>}
               {t.evidence && <EvidenceLine e={t.evidence} />}
               {t.warning && <span className="track__warn">{t.warning}</span>}
@@ -1183,7 +1184,6 @@ export function TrackList({
                   <Glyph name="download" size={14} />
                 </button>
               )}
-              {onOpenAlbum && <AlbumSlot track={t} onOpen={onOpenAlbum} />}
               {/* QUEUE-ADD-001: the owner replaced the link out to the song's own service with this. */}
               {onQueueAdd && (() => {
                 const inIt = addedKeys?.has(t.key) ?? false;

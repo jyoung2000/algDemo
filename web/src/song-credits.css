@@ -1,0 +1,45 @@
+/* SONG-CREDITS-001: stacked album/artist lines are readable links, not another action icon.
+   Never extend a link's hit box into its neighbouring line: each receives its own full line. */
+.song-credits__album-line {
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.song-credits__album {
+  color: inherit;
+  font: inherit;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+button.song-credits__album {
+  appearance: none;
+  display: inline;
+  max-width: 100%;
+  margin: 0;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--hair);
+  text-underline-offset: 2px;
+}
+button.song-credits__album:hover {
+  color: var(--accent);
+  text-decoration-color: currentColor;
+}
+button.song-credits__album:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+/* Existing artist links use negative margins. Stacked credits use non-overlapping link targets. */
+.rec__text > .rec__artist .artistlink,
+.track__text > .track__artist .artistlink {
+  margin: 0;
+  padding: 2px 0;
+}

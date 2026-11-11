@@ -4,9 +4,8 @@ import type { ArtistTarget, FeedbackKind, PlaylistSummary, RecItem, Track } from
 import type { CardCache } from './engine/queue-controls';
 import { Art } from './Art';
 import { SaveMenu } from './SaveMenu';
-import { AlbumSlot } from './AlbumShelf';
-import { ArtistNames } from './ArtistLinks';
-import { PROVIDER_LABEL, TIER_LABEL, artistOf, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreBubbles, markKey, playbackOfTrack, toneLabel } from './util';
+import { SongCredits } from './SongCredits';
+import { PROVIDER_LABEL, TIER_LABEL, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreBubbles, markKey, playbackOfTrack, toneLabel } from './util';
 
 export interface FeedbackFlags {
   like?: boolean;
@@ -88,7 +87,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               <span className="rec__title" title={s.title}>
                 {s.title}
               </span>
-              <span className="rec__artist">{artistOf(s)}</span>
+              <SongCredits track={s} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} artistClassName="rec__artist" />
             </div>
             <div className="rec__sub">
               <span className="rec__why1">Starting song{strong ? ' · counts double' : ''}</span>
@@ -188,7 +187,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                 ))}
                 {it.new_release && <span className="vtag vtag--new">New</span>}
               </span>
-              {onOpenArtist ? <ArtistNames track={t} onOpen={onOpenArtist} className="rec__artist" /> : <span className="rec__artist">{artistOf(t)}</span>}
+              <SongCredits track={t} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} artistClassName="rec__artist" />
             </div>
             <div className="rec__sub">
               <span className="rec__why1">{it.reasons[0]?.text ?? 'Found from your starting songs.'}</span>
@@ -254,7 +253,6 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                   <Glyph name="download" size={14} />
                 </button>
               )}
-              {onOpenAlbum && <AlbumSlot track={t} onOpen={onOpenAlbum} />}
               <button className="iconbtn" type="button" onClick={() => onFeedback(it, 'hide')} aria-label={`Hide ${t.title}`} title="Hide">
                 <Glyph name="close" size={14} />
               </button>

@@ -7,13 +7,13 @@ import { ListDownloadBar } from './ListDownloadBar';
 import { ListSaveButton } from './ListSaveButton';
 import { albumFolderName } from './engine/list-save';
 import { SaveMenu } from './SaveMenu';
-import { ALBUM_KIND, AlbumSlot } from './AlbumShelf';
-import { ArtistNames } from './ArtistLinks';
+import { ALBUM_KIND } from './AlbumShelf';
+import { SongCredits } from './SongCredits';
 import { SoundCard } from './SoundCard';
 import { listMixNote } from './list-mix-note';
 import { PLAYLIST_NAME_MAX } from './engine/playlists';
 import type { CardCache } from './engine/queue-controls';
-import { artistOf, classNames } from './util';
+import { classNames } from './util';
 import './save-menu.css';
 import './saved-lists.css';
 
@@ -382,7 +382,7 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
               <Art src={track.artwork} size={44} />
               <div className="track__text">
                 <span className="track__title">{track.title}</span>
-                {onOpenArtist ? <ArtistNames track={track} onOpen={onOpenArtist} /> : <span className="track__artist">{artistOf(track)}</span>}
+                <SongCredits track={track} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} />
               </div>
               {current && (
                 <span className={classNames('track__played', played && 'is-on')}>
@@ -398,7 +398,6 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
                     <Glyph name="download" size={14} />
                   </button>
                 )}
-                {onOpenAlbum && <AlbumSlot track={track} onOpen={onOpenAlbum} />}
                 <button
                   className={classNames('iconbtn', menuFor === track.key && 'is-on')}
                   type="button"

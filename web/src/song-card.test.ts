@@ -119,8 +119,8 @@ describe('the song card (SONG-CARD-001)', () => {
     }
     expect(results).toContain('{s.title}');
     expect(results).toContain('{t.title}');
-    expect(results).toContain('{artistOf(s)}');
-    expect(results).toContain('{artistOf(t)}');
+    expect(results).toContain('<SongCredits track={s}');
+    expect(results).toContain('<SongCredits track={t}');
   });
 
   it('levels the artwork with the title and artist, not with the whole row', () => {

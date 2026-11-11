@@ -1,30 +1,11 @@
 import { useState } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
-import type { AlbumSummary, Track } from './api';
-import { isBodyOfWork } from './engine/album-key';
+import type { AlbumSummary } from './api';
 import { PROVIDER_LABEL } from './util';
 import { Art } from './Art';
-import { AlbumGlyph } from './icons';
 
 /** What a body of work is called on screen (ALBUM-SEARCH-001). */
 export const ALBUM_KIND: Record<AlbumSummary['kind'], string> = { album: 'Album', ep: 'EP', mixtape: 'Mixtape', compilation: 'Compilation', single: 'Single' };
-
-/** ALBUM-OPEN-001: the song row's album button, shared by every song list. */
-export function AlbumButton({ album, onClick }: { album: string; onClick: () => void }) {
-  return (
-    <button className="iconbtn" type="button" onClick={onClick} aria-label={`Open the album ${album}`} title="Open the album">
-      <AlbumGlyph size={14} />
-    </button>
-  );
-}
-
-/**
- * The album button's place in a row: the button for a song on an album, EP or mixtape, otherwise an
- * empty slot the same size, so the duration and source columns line up down the list.
- */
-export function AlbumSlot({ track, onOpen }: { track: Track; onOpen: (t: Track) => void }) {
-  return isBodyOfWork(track) ? <AlbumButton album={track.album!} onClick={() => onOpen(track)} /> : <span className="iconbtn album-gap" aria-hidden="true" />;
-}
 
 const SHELF_FOLDED = 3;
 

@@ -52,19 +52,27 @@ const draw = async (el: React.ReactElement) => act(async () => root.render(el));
 const button = (label: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
 const byText = (t: string) => [...host.querySelectorAll('button')].find((b) => b.textContent?.trim().startsWith(t));
 
-it('gives a search row the album button only when the song is on an album, EP or mixtape', async () => {
+it('opens albums and same-title singles from album text beneath the search song title', async () => {
   const open = vi.fn();
-  await draw(<TrackList tracks={[onAlbum, single]} seedKeys={new Set()} onAdd={() => {}} onPreview={() => {}} label="Results" onOpenAlbum={open} />);
-  const b = button('Open the album A Great Chaos');
-  expect(b).toBeTruthy();
-  expect(b!.title).toBe('Open the album');
-  expect(button('Open the album Rock N Roll')).toBeNull();
-  // The single keeps the button's place empty, so both rows' columns line up.
-  const rows = [...host.querySelectorAll('.track__actions')];
-  expect(rows.map((r) => r.children.length)).toEqual([rows[0]!.children.length, rows[0]!.children.length]);
-  expect(rows[1]!.querySelector('.album-gap')!.getAttribute('aria-hidden')).toBe('true');
-  await act(async () => b!.click());
-  expect(open).toHaveBeenCalledWith(onAlbum);
+  const play = vi.fn();
+  await draw(<TrackList tracks={[onAlbum, single]} seedKeys={new Set()} onAdd={() => {}} onPreview={play} label="Results" onOpenAlbum={open} />);
+  const rows = [...host.querySelectorAll('.track')];
+  for (const [i, track] of [onAlbum, single].entries()) {
+    const row = rows[i]!;
+    const text = row.querySelector('.track__text')!;
+    const album = text.querySelector<HTMLButtonElement>('button.song-credits__album');
+    expect(album).toBeTruthy();
+    expect(album!.textContent).toBe(track.album);
+    expect(album!.classList.contains('iconbtn')).toBe(false);
+    expect(album!.querySelector('svg')).toBeNull();
+    expect(row.querySelector('.track__actions [aria-label^="Open the album"]')).toBeNull();
+    expect(row.querySelector('.album-gap')).toBeNull();
+    expect(text.textContent!.indexOf(track.album!)).toBeLessThan(text.textContent!.lastIndexOf('Ken Carson'));
+    await act(async () => album!.click());
+    expect(open).toHaveBeenLastCalledWith(track);
+  }
+  expect(open).toHaveBeenCalledTimes(2);
+  expect(play).not.toHaveBeenCalled();
 });
 
 it('lists albums found by a search, opens one, and folds a long list', async () => {
@@ -122,18 +130,21 @@ it('opens the album of a song, and says so plainly when none is found', async ()
   expect(host.querySelector('[role="alert"]')!.textContent).toContain('No album for this song was found');
 });
 
-it('gives the queue and saved rows the album button too', async () => {
+it('opens albums from text credits in queue and saved rows, including singles', async () => {
   const open = vi.fn();
   const item = { rank: 1, track: onAlbum, score: 1, coverage: 1, tier: 'core', evidence: 'strong', best_seed: null, reasons: [], uncertainty: [], new_release: false, factors: {}, weights: {}, sources: [], playback: { preview: null, embed: null, open: [] } };
   await draw(createElement(Results, {
     seeds: [], onRemoveSeed: () => {}, onEmphasis: () => {}, items: [item] as never, focusKey: null, playingKey: null, flags: {},
     onFocus: () => {}, onPlay: () => {}, onPlayTrack: () => {}, onFeedback: () => {}, onOpenAlbum: open,
   }));
-  await act(async () => button('Open the album A Great Chaos')!.click());
+  const queueAlbum = host.querySelector<HTMLButtonElement>('.rec__text button.song-credits__album');
+  expect(queueAlbum?.textContent).toBe('A Great Chaos');
+  await act(async () => queueAlbum!.click());
   expect(open).toHaveBeenCalledWith(onAlbum);
   open.mockReset();
   await draw(<SavedView saved={[{ track: onAlbum, ts: 1 }, { track: single, ts: 2 }] as never} lists={[]} onLists={() => {}} onPreview={() => {}} onRemoveSaved={() => {}} onOpenAlbum={open} />);
-  expect(button('Open the album Rock N Roll')).toBeNull();
-  await act(async () => button('Open the album A Great Chaos')!.click());
-  expect(open).toHaveBeenCalledWith(onAlbum);
+  const savedAlbums = [...host.querySelectorAll<HTMLButtonElement>('.track__text button.song-credits__album')];
+  expect(savedAlbums.map((b) => b.textContent)).toEqual(['A Great Chaos', 'Rock N Roll']);
+  for (const b of savedAlbums) await act(async () => b.click());
+  expect(open.mock.calls).toEqual([[onAlbum], [single]]);
 });
