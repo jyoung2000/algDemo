@@ -24,7 +24,7 @@ class NativePlayback(private val context: Context) {
     .setWakeMode(C.WAKE_MODE_LOCAL)
     .build()
 
-  fun loadLocal(uri: Uri, title: String, artist: String) {
+  fun loadLocal(uri: Uri, title: String, artist: String, album: String? = null) {
     require(title.isNotBlank()) { "A playable item needs a title" }
     when (uri.scheme) {
       "file" -> {
@@ -43,7 +43,7 @@ class NativePlayback(private val context: Context) {
     player.setMediaItem(MediaItem.Builder()
       .setMediaId(uri.toString())
       .setUri(uri)
-      .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(NowPlayingLabel.artistLine(artist)).build())
+      .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(NowPlayingLabel.artistLine(artist, album)).setAlbumTitle(album).build())
       .build())
     player.prepare()
   }

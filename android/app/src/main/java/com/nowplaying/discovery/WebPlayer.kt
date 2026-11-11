@@ -179,12 +179,12 @@ class WebPlayer(looper: Looper) : SimpleBasePlayer(looper) {
   companion object {
     /**
      * Shared metadata builder so the browse tree and the now-playing card describe a song the same way.
-     * `nowPlaying` puts the app's name on the artist line of the player itself (NATIVE-BRAND-001).
+     * `nowPlaying` shows artist and album, never an app-name suffix (NATIVE-ALBUM-001).
      */
     fun metadataOf(song: MediaHub.Song, playable: Boolean, browsable: Boolean = false, nowPlaying: Boolean = false): MediaMetadata {
       val b = MediaMetadata.Builder()
         .setTitle(song.title)
-        .setArtist(if (nowPlaying) NowPlayingLabel.artistLine(song.artist) else song.artist)
+        .setArtist(if (nowPlaying) NowPlayingLabel.artistLine(song.artist, song.album) else song.artist)
         .setIsBrowsable(browsable)
         .setIsPlayable(playable)
         .setMediaType(if (browsable) MediaMetadata.MEDIA_TYPE_PLAYLIST else MediaMetadata.MEDIA_TYPE_MUSIC)

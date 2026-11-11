@@ -1,18 +1,13 @@
 package com.nowplaying.discovery
 
 /**
- * NATIVE-BRAND-001. The owner: the native player should say Airwave Discovery somewhere, so listeners
- * know which app is playing. Android 13 and later draw the system media player (quick settings, lock
- * screen) from the session's title and artist lines and a small app icon only, with no app name, so
- * the name rides on the artist line of what is playing. Browse rows in the car are left alone: the car
- * already shows the app around them.
+ * NATIVE-ALBUM-001. Show artist and album on the system player's second line, replacing the former
+ * app-name suffix. Keep albumTitle separate too for car/Bluetooth controllers that show that field.
+ * Android's own app attribution is not song metadata and is left to the system.
  */
 object NowPlayingLabel {
-  /** Must match `app_name` in res/values/strings.xml (a JVM test holds them together). */
-  const val APP = "Airwave Discovery"
-
-  fun artistLine(artist: String?): String {
-    val who = artist?.trim().orEmpty()
-    return if (who.isEmpty() || who == APP) APP else "$who \u00b7 $APP"
-  }
+  fun artistLine(artist: String?, album: String? = null): String =
+    listOfNotNull(artist?.trim()?.takeIf { it.isNotEmpty() }, album?.trim()?.takeIf { it.isNotEmpty() })
+      .distinct()
+      .joinToString(" \u00b7 ")
 }
