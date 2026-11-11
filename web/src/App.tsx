@@ -470,6 +470,21 @@ export function App() {
       });
       api.queueAdd(row, after).then((r) => setResult((prev) => prev ?? r), (e: Error) => flash(`Could not add that: ${e.message}`));
       flash(`Added \u201c${t.title}\u201d to your now playing queue.`);
+      // QUEUE-SEED-001: a song put in the queue by hand is a starting song too, so one added song is
+      // enough to discover from — the listener should not have to find a second control for that.
+      if (!seeds.some((x) => x.key === t.key)) {
+        const next = [...seeds, { ...t, emphasis: t.emphasis ?? 1 }];
+        setSeeds(next);
+        void (async () => {
+          try {
+            await api.putSeeds(next);
+            // A discovery already under way is reading these same seeds; let it finish.
+            if (!running) await run(true);
+          } catch (e) {
+            flash(`Could not start from that song: ${(e as Error).message}`);
+          }
+        })();
+      }
       return;
     }
     const target = addTarget;
@@ -752,6 +767,8 @@ export function App() {
 
   // ---------------------------------------------------------------- render
   const running = Boolean(job && !job.done);
+  // ALLOWANCE-SEEN-001: every source the last discovery asked was refused for the day's allowance.
+  const allowanceSpent = Object.values(result?.sources ?? {}).some((s) => s.state === 'budget');
   const sample = Boolean(result?.sample);
   const adventurous = settings?.adventurous ?? 0.5;
   const fresh = settings?.fresh ?? false;
@@ -997,6 +1014,19 @@ export function App() {
                 <p className="state state--bad" role="alert">
                   <Glyph name="warning" size={14} /> {runErr}
                 </p>
+              )}
+              {/* ALLOWANCE-SEEN-001: a day's allowance that is used up stops discovery, genre reading
+                  and album colour. Say so where the new music would have been, not only in Settings. */}
+              {allowanceSpent && !running && (
+                <div className="budget-note" role="note" aria-label="Discovery allowance used up">
+                  <p className="state">
+                    <Glyph name="info" size={14} /> Today’s download allowance is all used up, so no new music could be
+                    found and genres were not read. It resets tomorrow.
+                  </p>
+                  <button className="push" type="button" onClick={() => setTab('settings')} aria-label="Raise the allowance in Settings">
+                    Raise the allowance in Settings
+                  </button>
+                </div>
               )}
               {result ? (
                 <>
