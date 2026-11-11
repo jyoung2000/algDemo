@@ -215,8 +215,34 @@ class PlaybackService : MediaLibraryService() {
       startPositionMs: Long,
     ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
       return Futures.transform(Futures.allAsList(mediaItems.map(::resolveAsync)), { resolved ->
-        MediaSession.MediaItemsWithStartPosition(resolved!!, startIndex, startPositionMs)
+        val items = resolved!!
+        // CAR-SKIP-001: a head unit plays a tapped song by sending that one item. Left alone the
+        // timeline holds a single song, so there is nothing to skip to and the car replaces its
+        // skip buttons with a 15-second seek. Put the list the song came from back around it.
+        val whole = if (items.size == 1) listAround(items[0]) else null
+        if (whole != null) MediaSession.MediaItemsWithStartPosition(whole.items, whole.index, startPositionMs)
+        else MediaSession.MediaItemsWithStartPosition(items, startIndex, startPositionMs)
       }, MoreExecutors.directExecutor())
+    }
+
+    /** The list a car-played song belongs to, and where it sits in it; null when it belongs to none. */
+    private fun listAround(item: MediaItem): ItemsAt? {
+      val id = item.mediaId
+      val scoped = Regex("^playlist/([^/]+)/track/([^/]+)$").matchEntire(id)
+      if (scoped != null) {
+        val listId = Uri.decode(scoped.groupValues[1])
+        val songs = MediaHub.playlist(listId)?.songs ?: return null
+        val at = songs.indexOfFirst { playlistTrackId(listId, it.id) == id }
+        if (at < 0) return null
+        return ItemsAt(songs.map { songItem(it, playlistTrackId(listId, it.id)) }.toMutableList(), at)
+      }
+      val album = Regex("^calbum/([^/]+)$").matchEntire(id)
+      if (album != null) return null
+      // A plain song id: the now playing queue is the list the driver is listening to.
+      val queue = MediaHub.songs
+      val at = queue.indexOfFirst { it.id == id }
+      if (at < 0) return null
+      return ItemsAt(queue.map { songItem(it) }.toMutableList(), at)
     }
 
     private fun resolveAsync(item: MediaItem): ListenableFuture<MediaItem> {
@@ -320,6 +346,9 @@ class PlaybackService : MediaLibraryService() {
  * ALBUM-CAR-001: a voice request asks for an album when the assistant says so (the album focus), or
  * names an album and no song. Android Auto and Google Assistant pass these as MEDIA_PLAY_FROM_SEARCH extras.
  */
+/** CAR-SKIP-001: a list to play and the index of the song the driver actually tapped. */
+private class ItemsAt(val items: MutableList<MediaItem>, val index: Int)
+
 object VoiceRequest {
   fun asksForAlbum(focus: String?, album: String?, title: String?): Boolean =
     focus == android.provider.MediaStore.Audio.Albums.ENTRY_CONTENT_TYPE || (!album.isNullOrBlank() && title.isNullOrBlank())
