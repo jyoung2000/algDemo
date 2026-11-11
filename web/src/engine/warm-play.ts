@@ -7,8 +7,10 @@
  * that was. Both answers are already cached — by the engine's store and by the shell's stream
  * resolver — so the only thing that has to change is WHEN they are asked for.
  *
- * The warmer asks before the click, for the few songs a listener is about to press: the row under
- * the pointer or keyboard, the first rows of a list, the song queued next. It is deliberately mean
+ * The warmer asks before the click, for the few songs a listener is about to press: the row they
+ * have scrolled to or pointed at, and the song queued next. It asks BOTH questions even when the
+ * page can guess the link, because the player asks the lookup again when the song is chosen - on the
+ * phone that lookup was measured at 4.3 s of the silence after a tap. It is deliberately mean
  * with work, because each resolve is a yt-dlp process: one song warmed once per window, a held file
  * never warmed, at most a couple of lookups at a time, and a hard budget on top, so showing a
  * thirty-row list never spawns thirty processes.
@@ -99,21 +101,38 @@ export class PlayWarmer {
   }
 
   private async one(track: Track): Promise<void> {
+    // A link the page can name without asking anyone starts the shell's work immediately.
+    const guess = (() => {
+      try {
+        return this.ports.known(track);
+      } catch {
+        return null;
+      }
+    })();
+    this.send(guess);
     let source: string | null = null;
     try {
-      source = this.ports.known(track) ?? (await this.ports.find(track));
+      // Asked for even when the link was guessed: the player makes this same call when the song is
+      // chosen, and on the phone that call was measured at 4.3 s of the wait before any sound.
+      // Answering it now means the click finds the answer already there.
+      source = await this.ports.find(track);
     } catch {
       // Offline, or the provider refused: forget it so a later hover may try again.
-      this.seen.delete(track.key);
+      if (!guess) this.seen.delete(track.key);
       return;
     }
     // No source at all is a durable answer for this window: do not ask again on every hover.
+    if (!source || source === guess) return;
+    this.send(source);
+  }
+
+  private send(source: string | null): void {
     if (!source) return;
     try {
       if (this.ports.held(source)) return;
       this.ports.resolve(source);
     } catch {
-      this.seen.delete(track.key);
+      /* a closed bridge: warming is an optimisation, never an error a listener should see */
     }
   }
 }

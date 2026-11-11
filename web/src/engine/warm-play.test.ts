@@ -38,13 +38,29 @@ describe('warming a song so a click plays it at once (FAST-PLAY-002)', () => {
     expect(w.resolve).toHaveBeenCalledWith('https://music.youtube.com/watch?v=s1');
   });
 
-  it('uses a source the page already knows without a lookup', async () => {
+  it('starts on a source the page already knows, and still asks the lookup the player will ask', async () => {
     const w = world();
     w.known.mockReturnValue('https://music.youtube.com/watch?v=known');
+    w.find.mockResolvedValue('https://music.youtube.com/watch?v=known');
     w.warmer.warm(track('s1'));
     await settle();
-    expect(w.find).not.toHaveBeenCalled();
+    // The guessed link is warmed at once, without waiting for anything.
     expect(w.resolve).toHaveBeenCalledWith('https://music.youtube.com/watch?v=known');
+    // And the lookup is answered now, because the player repeats it when the song is chosen: on the
+    // phone that call was 4.3 s of the silence after a tap.
+    expect(w.find).toHaveBeenCalledTimes(1);
+    // The same answer is not sent to the shell twice.
+    expect(w.resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it('warms the link the lookup gives when it differs from the guess', async () => {
+    const w = world();
+    w.known.mockReturnValue('https://music.youtube.com/watch?v=guessed');
+    w.find.mockResolvedValue('https://soundcloud.com/someone/the-real-one');
+    w.warmer.warm(track('s1'));
+    await settle();
+    expect(w.resolve).toHaveBeenCalledWith('https://music.youtube.com/watch?v=guessed');
+    expect(w.resolve).toHaveBeenCalledWith('https://soundcloud.com/someone/the-real-one');
   });
 
   it('warms one song once a window, and again once the window has passed', async () => {
