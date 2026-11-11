@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import com.nowplaying.discovery.Downloads
 import com.nowplaying.discovery.MediaHub
+import com.nowplaying.discovery.Streams
 import org.json.JSONObject
 
 /**
@@ -56,6 +57,16 @@ object EngineHub {
 
   fun fromPage(json: String) {
     val cmd = runCatching { JSONObject(json) }.getOrNull() ?: return
+    // FAST-PLAY-002: name these songs' files before the listener taps one. It needs no player and
+    // must not queue behind one: warming a row is useful exactly while nothing is playing yet.
+    // Bounded by the page (a few rows at a time) and by Streams.warm (one run, short queue).
+    if (cmd.optString("op") == "warm") {
+      val list = cmd.optJSONArray("sources")
+      for (i in 0 until minOf(list?.length() ?: 0, 4)) {
+        Streams.warm(list?.optString(i)?.takeIf { it.isNotEmpty() && it.length <= 2048 })
+      }
+      return
+    }
     main.post {
       val p = player
       if (p == null) {

@@ -6,6 +6,7 @@ import { Art } from './Art';
 import { SaveMenu } from './SaveMenu';
 import { AlbumShelf, AlbumSlot } from './AlbumShelf';
 import { ArtistCard, ArtistNames, namesArtist } from './ArtistLinks';
+import { warmer } from './engine/warm-shell';
 import { namesAlbum } from './engine/album-key';
 import { PROVIDER_LABEL, artistOf, classNames, fmtDuration, fmtRelease, looksLikeUrl, markKey } from './util';
 
@@ -1077,6 +1078,60 @@ export function TrackList({
   const [ownSaving, setOwnSaving] = useState<string | null>(null);
   const saving = onSaving ? (savingProp ?? null) : ownSaving;
   const setSaving = onSaving ?? setOwnSaving;
+  /**
+   * FAST-PLAY-002. Owner: "I want to be able to play a song instantly when i click on it on all
+   * platforms". A click paid for the song's source lookup and then for yt-dlp naming the source's
+   * file — measured at 2.9 s for the naming alone on Windows (32 ms once it is cached), and longer
+   * on the phone. Both answers are cached, so they are asked for before the click.
+   *
+   * A row is warmed when it comes into view, which is the one signal every platform has: a phone
+   * has no pointer to hover with, and a list is scrolled before it is tapped. Hover and keyboard
+   * focus warm too, for a desktop listener who aims straight at a row. What keeps this cheap is the
+   * warmer itself (engine/warm-play.ts): one warm per song per window, a couple at a time, a hard
+   * budget, and nothing at all for a song whose file is already here.
+   */
+  const rows = useRef(new Map<Element, Track>());
+  const watcher = useRef<IntersectionObserver | null>(null);
+  useEffect(() => {
+    if (typeof IntersectionObserver !== 'function') {
+      warmer().warmFirst(tracks, 4);
+      return;
+    }
+    const seen = rows.current;
+    const onScreen = new Set<Element>();
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) onScreen.add(e.target);
+          else onScreen.delete(e.target);
+        }
+        // Only rows the listener has actually stopped on. Scrolling through forty rows must not
+        // spend a lookup on each one as it flies past: each is a yt-dlp run in the shell.
+        clearTimeout(settle);
+        settle = setTimeout(() => {
+          const here = [...onScreen]
+            .map((el) => ({ el, top: el.getBoundingClientRect().top }))
+            .sort((a, b) => a.top - b.top)
+            .slice(0, 3);
+          for (const { el } of here) warmer().warm(seen.get(el));
+        }, 400);
+      },
+      { rootMargin: '80px 0px' },
+    );
+    watcher.current = io;
+    for (const el of seen.keys()) io.observe(el);
+    return () => {
+      clearTimeout(settle);
+      io.disconnect();
+      watcher.current = null;
+    };
+  }, [tracks]);
+  const watchRow = (el: HTMLLIElement | null, t: Track) => {
+    if (!el) return;
+    rows.current.set(el, t);
+    watcher.current?.observe(el);
+  };
   return (
     <ul className="well tracks" aria-label={label}>
       {tracks.map((t, i) => {
@@ -1087,6 +1142,9 @@ export function TrackList({
             key={`${t.provider}:${t.platform_id}`}
             className={classNames('track', added && 'is-added', numbered && 'track--numbered', t.key === playingKey && 'is-playing')}
             aria-current={t.key === playingKey ? 'true' : undefined}
+            ref={(el) => watchRow(el, t)}
+            onPointerEnter={() => warmer().warm(t)}
+            onFocus={() => warmer().warm(t)}
           >
             {numbered && <span className="track__num" aria-hidden="true">{i + 1}</span>}
             <Art src={t.artwork} size={44} />

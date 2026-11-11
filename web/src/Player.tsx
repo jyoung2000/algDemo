@@ -3,6 +3,7 @@ import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
 import { ShuffleGlyph } from './icons';
 import { api, type ArtistTarget, type Playback, type Track } from './api';
 import { ArtistNames } from './ArtistLinks';
+import { warmer } from './engine/warm-shell';
 import { PREVIEW_ROUTE } from './engine/shape';
 import { Art } from './Art';
 import { Volume } from './Volume';
@@ -296,6 +297,13 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     embeddedRef.current.add(k);
     void api.embedLocal(playing.track, localSource).catch(() => embeddedRef.current.delete(k));
   }, [canLocal, localSrc, localSource, playing]);
+
+  // FAST-PLAY-002: the song queued next is the one most likely to be pressed, so its source file is
+  // named while the current song plays. Next then starts at once instead of waiting for yt-dlp.
+  useEffect(() => {
+    if (!nextTrackForCache) return;
+    warmer().warm(nextTrackForCache);
+  }, [nextTrackForCache]);
 
   useEffect(() => {
     if (!canLocal) return;

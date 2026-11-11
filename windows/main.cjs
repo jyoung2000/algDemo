@@ -87,6 +87,18 @@ ipcMain.handle('aw:dl', async (event, json) => {
   }
 });
 let suspensionBlocker = null;
+/**
+ * FAST-PLAY-002. Owner: "I want to be able to play a song instantly when i click on it on all
+ * platforms". Name the source's audio file now so a click does not wait for yt-dlp: the answer goes
+ * into the same 20-minute stream cache /stream-audio reads, and a failure is only logged — nothing
+ * is waiting on it.
+ */
+ipcMain.on('aw:warm', (event, url) => {
+  if (!trusted(event) || typeof url !== 'string' || url.length > 2048) return;
+  if (!stream().streamable(url)) return;
+  void stream().resolve(url).catch(() => {});
+});
+
 ipcMain.on('aw:playback', (event, playing) => {
   if (!trusted(event) || typeof playing !== 'boolean') return;
   if (playing && suspensionBlocker === null) suspensionBlocker = powerSaveBlocker.start('prevent-app-suspension');
