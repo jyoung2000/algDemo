@@ -12,6 +12,7 @@
  *   - a stream that failed is not tried again for that song; the player waits for the file.
  */
 import type { LocalStatus } from './local-audio';
+import { urlAllowedFor } from './downloads';
 
 export interface StreamInputs {
   /** The shell serves /stream-audio and this player plays through its own deck. */
@@ -25,15 +26,9 @@ export interface StreamInputs {
   current: { url: string | null; started: boolean; failed: boolean } | null;
 }
 
-/** YouTube links name one progressive audio file; SoundCloud and others hand out segment lists. */
+/** Only links the existing yt-dlp downloader accepts may be sent to the shell's stream endpoint. */
 export function streamableSource(source: string | null | undefined): boolean {
-  if (!source) return false;
-  try {
-    const u = new URL(source);
-    return u.protocol === 'https:' && ['youtu.be', 'youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com'].includes(u.hostname.toLowerCase());
-  } catch {
-    return false;
-  }
+  return Boolean(source && urlAllowedFor('yt-dlp', source));
 }
 
 export const STREAM_AUDIO_PATH = '/stream-audio';

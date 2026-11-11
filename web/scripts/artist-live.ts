@@ -34,6 +34,8 @@ for (const q of names) {
   console.log(`${q} -> ${v.name} (${v.id}, alt ${top.alt ?? '-'}) in ${ms} ms: ${v.songs.length} songs ${JSON.stringify(byProv)} dup=${v.songs.length - keys.size}; ${v.albums.length} albums/EPs, ${v.singles.length} singles; ${v.detail}; sources ${JSON.stringify(v.sources)}`);
   console.log(`   albums: ${v.albums.slice(0, 12).map((a) => `${a.title} (${a.year ?? '?'}, ${a.kind}, ${a.provider})`).join(' | ')}`);
   console.log(`   first songs: ${v.songs.slice(0, 6).map((t) => `${t.title} — ${t.artists.join(', ')} [${t.duration}s]`).join(' | ')}`);
+  // ARTIST-FEATURES-001: the songs other artists have them on, which the page lists under Features.
+  console.log(`   features: ${v.features.length}${v.features.length ? ` -> ${v.features.slice(0, 5).map((t) => `${t.title} — ${t.artists.join(', ')}`).join(' | ')}` : ''}`);
   const noDur = v.songs.filter((t) => !t.duration).length;
   if (noDur) console.log(`   songs without a duration: ${noDur}`);
   const t1 = Date.now();

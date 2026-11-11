@@ -34,7 +34,7 @@ interface Props {
 }
 
 type State = { state: 'loading' } | { state: 'ready'; artist: ArtistData } | { state: 'failed'; message: string };
-type Every = { state: 'loading' } | { state: 'ready'; songs: Track[]; failed: number } | { state: 'failed' };
+type Every = { state: 'loading' } | { state: 'ready'; songs: Track[]; features: Track[]; failed: number } | { state: 'failed' };
 
 const songs = (n: number) => `${n} ${n === 1 ? 'song' : 'songs'}`;
 
@@ -49,11 +49,17 @@ function sourceLine(a: ArtistData): { line: string; marks: ('deezer' | 'ytmusic'
  * albums". Opens on the most played songs; every song on every album and single follows a moment
  * later, so "Show all" lists everything the artist has released. Albums, EPs and singles open as
  * album pages. Every song plays as the full song, as from a search.
+ *
+ * ARTIST-FEATURES-001. Owner: "clicking on a artist name should take you to a discography page where
+ * you can see all there albums, singles and features". The page is that discography: their songs,
+ * their albums and EPs, their singles, then the songs other artists have them on, each naming the
+ * artist it belongs to so one page leads on to the next.
  */
 export function ArtistView({ target, onBack, onPreview, onOpenAlbum, onOpenArtist, seedKeys, onAdd, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys, playingKey }: Props) {
   const [st, setSt] = useState<State>({ state: 'loading' });
   const [every, setEvery] = useState<Every>({ state: 'loading' });
   const [all, setAll] = useState(false);
+  const [allFeat, setAllFeat] = useState(false);
   const back = useRef<HTMLButtonElement>(null);
 
   useEffect(() => back.current?.focus({ preventScroll: true }), []);
@@ -68,7 +74,7 @@ export function ArtistView({ target, onBack, onPreview, onOpenAlbum, onOpenArtis
         // Every song on every album and single: asked once the page is up, so it never holds it up.
         const t: ArtistTarget = { id: r.artist.id, name: r.artist.name };
         api.artistSongs(t, c.signal).then(
-          (s) => { if (!c.signal.aborted) setEvery({ state: 'ready', songs: s.songs, failed: s.failed }); },
+          (s) => { if (!c.signal.aborted) setEvery({ state: 'ready', songs: s.songs, features: s.features ?? [], failed: s.failed }); },
           () => { if (!c.signal.aborted) setEvery({ state: 'failed' }); },
         );
       },
@@ -103,8 +109,17 @@ export function ArtistView({ target, onBack, onPreview, onOpenAlbum, onOpenArtis
         const a = st.artist;
         const full = every.state === 'ready' ? every.songs : a.songs;
         const shown = all ? full : full.slice(0, SONGS_FOLDED);
+        // ARTIST-FEATURES-001: the page's own features, then the ones the deferred search confirmed.
+        const later = every.state === 'ready' ? every.features : [];
+        const feats = [...(a.features ?? []), ...later.filter((t) => !(a.features ?? []).some((x) => x.key === t.key))];
+        const featsShown = allFeat ? feats : feats.slice(0, SONGS_FOLDED);
         const src = sourceLine(a);
-        const meta = [a.detail, every.state === 'ready' ? songs(every.songs.length) : null, a.albums.length ? `${a.albums.length} ${a.albums.length === 1 ? 'album' : 'albums'}` : null].filter((x): x is string => Boolean(x));
+        const meta = [
+          a.detail,
+          every.state === 'ready' ? songs(every.songs.length) : null,
+          a.albums.length ? `${a.albums.length} ${a.albums.length === 1 ? 'album' : 'albums'}` : null,
+          feats.length ? `${feats.length} ${feats.length === 1 ? 'feature' : 'features'}` : null,
+        ].filter((x): x is string => Boolean(x));
         return (
           <>
             <div className="album__head">
@@ -147,7 +162,7 @@ export function ArtistView({ target, onBack, onPreview, onOpenAlbum, onOpenArtis
             <div className="artist__more">
               {every.state === 'loading' && (
                 <p className="state" role="status">
-                  <span className="sdot sdot--busy" aria-hidden="true" /> Finding every song on {a.name}’s albums and singles…
+                  <span className="sdot sdot--busy" aria-hidden="true" /> Finding every song on {a.name}’s albums and singles, and the songs other artists have them on…
                 </p>
               )}
               {every.state === 'failed' && (
@@ -168,6 +183,20 @@ export function ArtistView({ target, onBack, onPreview, onOpenAlbum, onOpenArtis
             </div>
             {a.albums.length > 0 && <AlbumShelf albums={a.albums} query={a.name} onOpen={onOpenAlbum} title="Albums and EPs" label={`Albums by ${a.name}`} folded={6} noun="albums" />}
             {a.singles.length > 0 && <AlbumShelf albums={a.singles} query={a.name} onOpen={onOpenAlbum} title="Singles" label={`Singles by ${a.name}`} folded={6} noun="singles" />}
+            {feats.length > 0 && (
+              <>
+                <h3 className="albums__h">Features</h3>
+                <p className="artist__hint">Songs by other artists that {a.name} is on, most played first.</p>
+                <TrackList tracks={featsShown} {...listProps} label={`Songs featuring ${a.name}`} />
+                {!allFeat && feats.length > SONGS_FOLDED && (
+                  <div className="artist__more">
+                    <button type="button" className="linkbtn albums__more" onClick={() => setAllFeat(true)}>
+                      Show all {feats.length} features
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </>
         );
       })()}

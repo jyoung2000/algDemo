@@ -1587,7 +1587,10 @@ a.push {
 .np--panel .np__note {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  /* STREAM-DL-001: three lines, like the title. The note column measures 178px beside the artwork
+     and controls, where two lines cut "…through the equalise…" off the streaming statuses (measured
+     in the packaged window: 66px of text in a 33px box). Every status now fits whole. */
+  -webkit-line-clamp: 3;
   overflow: hidden;
   white-space: normal;
   font-size: 11px;
@@ -3917,6 +3920,14 @@ html {
 /* Each part of the artist's line ("148 songs") stays whole; the line breaks between parts. */
 .artist__part {
   white-space: nowrap;
+}
+/* ARTIST-FEATURES-001: the line under Features, saying what the list is without claiming more.
+   --ink-2, not --ink-3: measured in the window, 11px on --ink-3 reads at 2.86:1, under the 4.5:1
+   this app holds itself to; --ink-2 measures 6.86:1, like the artist line beside it. */
+.artist__hint {
+  font-size: 11px;
+  margin: 0;
+  color: var(--ink-2);
 }
 /* On a phone the picture gives the name and its line the room: 72px, not 112px. */
 @media (max-width: 480px) {

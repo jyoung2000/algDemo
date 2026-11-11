@@ -28,10 +28,14 @@ const song = (k: string, title: string, artists = ['Ken Carson']): Track =>
   ({ key: k, title, artist: artists.join(', '), artists, album: 'A Great Chaos', duration: 150, artwork: null, preview: null, provider: 'deezer', platform_id: k, release: null, tags: [], artist_ids: { deezer: '2568121' } }) as unknown as Track;
 const album = (id: string, title: string, kind: AlbumSummary['kind'], year: string): AlbumSummary => ({ id, provider: 'deezer', title, artist: 'Ken Carson', artwork: null, year, kind, count: 10, url: '' });
 const popular = Array.from({ length: 14 }, (_, i) => song(`p${i}`, `Popular ${i + 1}`));
+/** A song of another artist's that Ken Carson is on: their name second, and the lead's own id. */
+const feature = (k: string, title: string, lead = 'Lil Tecca'): Track =>
+  ({ ...song(k, title, [lead, 'Ken Carson']), artist_ids: { deezer: '14492701' } }) as unknown as Track;
+const features = [feature('f0', 'Fell In Love'), ...Array.from({ length: 11 }, (_, i) => feature(`f${i + 1}`, `Guest ${i + 1}`, 'Playboi Carti'))];
 const view: ArtistData = {
   id: 'dz:2568121', name: 'Ken Carson', picture: null, detail: '4.47M monthly audience', songs: popular,
   albums: [album('dz:1', 'xperiment', 'album', '2026'), album('dz:2', 'A Great Chaos', 'album', '2023'), album('dz:3', 'Teen X : Relapsed', 'ep', '2021')],
-  singles: [album('dz:4', 'Possession', 'single', '2026')],
+  singles: [album('dz:4', 'Possession', 'single', '2026')], features,
   links: { deezer: 'https://www.deezer.com/artist/2568121' }, sources: { deezer: { state: 'ok', count: 14 }, ytmusic: { state: 'ok', count: 0 } },
 };
 const every = [...popular, song('x1', 'Deep Cut One'), song('x2', 'Deep Cut Two')];
@@ -95,7 +99,7 @@ it('opens on the most played songs, then offers every song once they are found',
   await act(async () => { release({ songs: every, opened: 4, failed: 0 }); });
   await flush();
   expect(host.textContent).not.toContain('Finding every song');
-  expect(host.querySelector('.album__meta')!.textContent).toBe('4.47M monthly audience · 16 songs · 3 albums');
+  expect(host.querySelector('.album__meta')!.textContent).toBe('4.47M monthly audience · 16 songs · 3 albums · 12 features');
   await act(async () => byText('Show all 16 songs')!.click());
   expect(titles('Songs by Ken Carson')).toEqual(every.map((t) => t.title));
   expect(host.textContent).toContain('All songs');
@@ -122,6 +126,49 @@ it('lists albums and EPs apart from singles, and each opens as an album page', a
   expect(names('Singles by Ken Carson')).toEqual(['Possession']);
   await act(async () => button('Open the album A Great Chaos by Ken Carson')!.click());
   expect(openAlbum).toHaveBeenCalledWith(view.albums[1]);
+});
+
+it('lists the songs other artists have them on, folded, each naming the artist it belongs to', async () => {
+  artistCall.mockResolvedValue({ artist: view });
+  // The deferred call brings more features; the one already on the page is not repeated.
+  songsCall.mockResolvedValue({ songs: every, features: [feature('f0', 'Fell In Love'), feature('late', 'Late Guest', 'Yeat')], opened: 4, failed: 0 });
+  const open = vi.fn();
+  await draw(page({ onOpenArtist: open }));
+  await flush();
+  expect(host.textContent).toContain('Features');
+  expect(titles('Songs featuring Ken Carson')).toEqual(features.slice(0, SONGS_FOLDED).map((t) => t.title));
+  // The lead artist opens from the feature row, so a discography leads on to the artists it names.
+  await act(async () => button('Open the artist Lil Tecca')!.click());
+  // The row carries the lead's own id, so their page opens by id rather than by a name search.
+  expect(open).toHaveBeenCalledWith({ id: 'dz:14492701', name: 'Lil Tecca' });
+  expect(host.querySelector('.album__meta')!.textContent).toContain('13 features');
+  await act(async () => byText('Show all 13 features')!.click());
+  expect(titles('Songs featuring Ken Carson')).toEqual([...features.map((t) => t.title), 'Late Guest']);
+});
+
+it('leaves the features out when the artist is on nobody else\u2019s songs', async () => {
+  artistCall.mockResolvedValue({ artist: { ...view, features: [] } });
+  songsCall.mockResolvedValue({ songs: every, opened: 4, failed: 0 });
+  await draw(page());
+  await flush();
+  expect(host.textContent).not.toContain('Features');
+  expect(host.querySelector('.album__meta')!.textContent).toBe('4.47M monthly audience \u00b7 16 songs \u00b7 3 albums');
+});
+
+it('says it is still looking for the songs other artists have them on (ARTIST-FEATURES-001)', async () => {
+  // The page opens on the most played songs; the features of an artist whose best known guest spots
+  // are not in that list arrive with the deferred read, which takes seconds. Saying nothing reads as
+  // “this artist has no features”, so the wait is named while it is going on.
+  artistCall.mockResolvedValue({ artist: { ...view, features: [] } });
+  let land: (v: unknown) => void = () => {};
+  songsCall.mockReturnValue(new Promise((r) => (land = r)));
+  await draw(page());
+  await flush();
+  expect(host.textContent).toContain('songs other artists have them on');
+  await act(async () => { land({ songs: every, features: [feature('late', 'Late Guest', 'Yeat')], opened: 4, failed: 0 }); });
+  await flush();
+  expect(titles('Songs featuring Ken Carson')).toEqual(['Late Guest']);
+  expect(host.textContent).not.toContain('songs other artists have them on, too');
 });
 
 it('says so when only the most played songs could be listed, or some albums could not be read', async () => {
@@ -180,5 +227,9 @@ it('keeps artist names whole and their hit area out of the layout (CSS)', () => 
   expect(rule('.artistlink:focus-visible')).toMatch(/outline: 2px solid/);
   expect(rule('.artistlink--head')).toMatch(/min-height: 44px/);
   expect(rule('.artist__part')).toMatch(/white-space: nowrap/);
+  // ARTIST-FEATURES-001: the line under Features reads as a note, not as another heading, and at
+  // 11px it needs --ink-2 (measured 6.86:1); --ink-3 came out at 2.86:1, under the 4.5:1 bar.
+  expect(rule('.artist__hint')).toMatch(/font-size: 11px/);
+  expect(rule('.artist__hint')).toMatch(/color: var\(--ink-2\)/);
   expect(css).toMatch(/@media \(max-width: 480px\) \{\n {2}\.artist \.album__head \.artist-pic \.art \{\n {4}width: 72px !important;/);
 });

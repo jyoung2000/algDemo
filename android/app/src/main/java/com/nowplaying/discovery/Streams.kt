@@ -13,24 +13,19 @@ import java.net.URI
  * names the source's own audio file (the Opus stream the download keeps) and [EnginePlayer] opens it
  * over the network through the same decoder, EQ and mixer as a file. The download carries on.
  *
- * Only YouTube hands out one progressive file; SoundCloud and others give segment lists (HLS), so
- * those songs wait for their download as before. yt-dlp is asked with the fast client first, as
- * downloads are ([YtdlpClients]).
+ * Accepts every track link the native downloader accepts; the resolved format still has to be a
+ * progressive audio file. A playlist-only (HLS) track cannot enter [DecodedSource] as a URL.
+ * yt-dlp is asked with the fast client first, as downloads are ([YtdlpClients]).
  *
  * Mirrored by windows/streams.cjs.
  */
 object Streams {
   private const val TAG = "AirwaveStream"
-  private val HOSTS = setOf("youtu.be", "youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com")
   private val HEADER_NAME = Regex("^[A-Za-z0-9-]{1,40}$")
 
   data class Stream(val url: String, val headers: Map<String, String>)
 
-  fun streamable(raw: String?): Boolean {
-    if (raw == null || raw.length > 500 || raw.any { it.isWhitespace() || it.code < 0x20 }) return false
-    val u = runCatching { URI(raw) }.getOrNull() ?: return false
-    return u.scheme == "https" && u.userInfo == null && u.host?.lowercase() in HOSTS
-  }
+  fun streamable(raw: String?): Boolean = raw != null && Downloads.urlAllowed(raw)
 
   /** yt-dlp's options: name the best progressive audio file and print it; download nothing. */
   fun options(clients: String?): List<Pair<String, String?>> = buildList {
@@ -39,8 +34,8 @@ object Streams {
     add("--no-cache-dir" to null)
     add("--no-playlist" to null)
     add("--no-warnings" to null)
-    add("-f" to "bestaudio[protocol=https]/bestaudio[protocol=http]")
-    add("--print" to "%(.{url,http_headers,protocol})j")
+    add("-f" to "bestaudio[protocol=https]/bestaudio[protocol=http]/best[protocol=https]/best[protocol=http]")
+    add("--print" to "%(.{url,http_headers,ext,acodec,vcodec,protocol})j")
     if (clients != null) add("--extractor-args" to clients)
   }
 
@@ -50,6 +45,11 @@ object Streams {
     val o = runCatching { JSONObject(line) }.getOrNull() ?: return null
     val protocol = o.optString("protocol")
     if (protocol != "https" && protocol != "http") return null
+    if (o.optString("acodec") == "none" || (o.has("acodec") && o.isNull("acodec"))) return null
+    val video = o.optString("vcodec")
+    if (video.isNotEmpty() && video != "none" && video != "unknown") return null
+    val ext = o.optString("ext")
+    if (ext.isNotEmpty() && ext !in setOf("mp3", "m4a", "aac", "flac", "opus", "ogg", "oga", "wav", "webm")) return null
     val url = o.optString("url")
     val scheme = runCatching { URI(url).scheme }.getOrNull()
     if (scheme != "https" && scheme != "http") return null

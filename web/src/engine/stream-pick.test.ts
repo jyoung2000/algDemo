@@ -27,17 +27,34 @@ describe('pickStream', () => {
     expect(pickStream({ ...base, localStatus: 'ready', localSrc: 'blob:x', current: { url: URL_, started: true, failed: false } })).toBe(URL_);
   });
 
-  it('does not try a failed stream again; nor where the shell cannot stream; nor for SoundCloud', () => {
+  it('does not try a failed stream again or where the shell cannot stream', () => {
     expect(pickStream({ ...base, current: { url: null, started: false, failed: true } })).toBeNull();
     expect(pickStream({ ...base, canStream: false })).toBeNull();
-    expect(pickStream({ ...base, source: 'https://soundcloud.com/frank-ocean/nikes' })).toBeNull();
     expect(pickStream({ ...base, source: null })).toBeNull();
+  });
+
+  it('tries every downloader-approved source, including SoundCloud while its download is in flight', () => {
+    for (const source of [
+      'https://soundcloud.com/forss/flickermood',
+      'https://audius.co/Lofibeat/stars-in-the-sky-lofi-beats-370899',
+      'https://benprunty.bandcamp.com/track/giant-step',
+      'https://hearthis.at/random1-ej/deep-by-random-creative-commons-royalty-free/',
+      'https://archive.org/download/cold-funk-by-kevin-macleod/cold-funk-by-kevin-macleod.mp3',
+    ]) expect(pickStream({ ...base, source })).toBe(streamAudioUrl(source));
   });
 });
 
 describe('streamableSource', () => {
-  it('accepts YouTube links only, over https', () => {
+  it('accepts only downloader-approved HTTPS song links, never Spotify or an arbitrary host', () => {
     expect(streamableSource('https://www.youtube.com/watch?v=jfKfPfyJRdk')).toBe(true);
+    expect(streamableSource('https://soundcloud.com/forss/flickermood')).toBe(true);
+    expect(streamableSource('https://audius.co/Lofibeat/stars-in-the-sky-lofi-beats-370899')).toBe(true);
+    expect(streamableSource('https://benprunty.bandcamp.com/track/giant-step')).toBe(true);
+    expect(streamableSource('https://hearthis.at/random1-ej/deep-by-random-creative-commons-royalty-free/')).toBe(true);
+    expect(streamableSource('https://archive.org/download/cold-funk-by-kevin-macleod/cold-funk-by-kevin-macleod.mp3')).toBe(true);
+    expect(streamableSource('https://open.spotify.com/track/11dFghVXANMlKmJXsNCbNl')).toBe(false);
+    expect(streamableSource('https://hearthis.at/a/song/../secret/')).toBe(false);
+    expect(streamableSource('https://archive.org/download/item/evil.zip')).toBe(false);
     expect(streamableSource('http://www.youtube.com/watch?v=jfKfPfyJRdk')).toBe(false);
     expect(streamableSource('https://evil.youtube.com.example/watch')).toBe(false);
     expect(streamableSource('not a url')).toBe(false);

@@ -3,13 +3,15 @@
  * songs and albums".
  *
  * An artist is read from two services at once and merged:
- *   - Deezer: the artist, their 100 most played songs (features included) and their whole
- *     discography (albums, EPs, singles), page after page;
+ *   - Deezer: the artist, their 100 most played songs (the songs other artists have them on
+ *     included) and their whole discography (albums, EPs, singles), page after page;
  *   - YouTube Music: the artist page (picture, audience, albums, singles & EPs). Its songs list is
  *     read only for an artist Deezer does not have: it runs about 40 KB a song as sent (4.0 MB for
  *     100 songs on 2026-11-10), against about 20 KB for a whole Deezer album.
  * The page opens on the most played songs; `everySong` then opens every album and single and adds
  * each song not already listed, so the list holds everything the artist has released.
+ * The songs another artist leads are taken out of that list and answered as `features`
+ * (ARTIST-FEATURES-001), so the page reads as a discography: songs, albums, singles, features.
  * The other service's page is found by the artist's exact name only, so a different artist whose name
  * merely resembles it is never borrowed. Songs are ordinary tracks: they play in full exactly as a
  * search result does. Albums open through engine/albums.ts.
@@ -32,11 +34,24 @@ export interface Ctx {
 export const YT_ARTIST = /^UC[A-Za-z0-9_-]{22}$/;
 const YT_LIST = /^VL[A-Za-z0-9_-]{10,80}$/;
 const DZ_ID = /^\d{1,15}$/;
-/** Pages of the YouTube Music songs list (about 100 songs each) and of Deezer's discography. */
+/** Pages of the YouTube Music songs list (about 100 songs each) and of Deezer's lists. */
 const SONG_PAGES = 8;
-const ALBUM_PAGES = 4;
+/**
+ * Deezer answers 100 releases a page and says when another follows; every page is read, so the
+ * discography is the whole discography. The bound is a stop against a list that never ends, not a
+ * limit any real artist reaches (2,000 releases).
+ */
+const ALBUM_PAGES = 20;
 /** Albums opened at once by `everySong`. */
 const ALBUM_READS = 4;
+/**
+ * The songs other artists have them on: every page of the name search is read (100 rows a page), and
+ * every row another artist leads is confirmed by one small track read, a few at a time. The bounds
+ * are stops against an endless answer, not a cap on a real artist's features.
+ */
+const FEATURE_PAGES = 6;
+const FEATURE_CANDIDATES = 300;
+const FEATURE_READS = 6;
 
 export interface ArtistSummary {
   /** `dz:<deezer id>` or `yt:<UC channel id>`. */
@@ -46,6 +61,8 @@ export interface ArtistSummary {
   picture: string | null;
   /** "112,807 fans" or "4.47M monthly audience". */
   detail: string | null;
+  /** Deezer's fan count, when it gives one: it tells two same-named artists apart (ARTIST-NAME-PICK-001). */
+  fans?: number | null;
   url: string;
   /** The same artist's id on the other service, when found. */
   alt?: string;
@@ -58,6 +75,8 @@ export interface ArtistView {
   detail: string | null;
   /** The most played songs, once each (Deezer's, or YouTube Music's list when Deezer lacks the artist). */
   songs: Track[];
+  /** Songs by other artists that this artist is on, most played first (ARTIST-FEATURES-001). */
+  features: Track[];
   /** Albums, EPs, mixtapes and compilations, newest first. */
   albums: AlbumSummary[];
   /** Singles, newest first. */
@@ -71,6 +90,8 @@ export type ArtistTarget = { id?: string; name?: string };
 export interface ArtistSongs {
   /** The most played songs first, then every other song on their albums and singles, newest first. */
   songs: Track[];
+  /** More songs other artists have them on, found after the page opened (ARTIST-FEATURES-001). */
+  features: Track[];
   /** Album and single pages read, and how many of them could not be read. */
   opened: number;
   failed: number;
@@ -95,6 +116,7 @@ export function parseDeezerArtists(resp: Json): ArtistSummary[] {
       id: `dz:${x['id']}`, provider: 'deezer' as const, name: String(x['name']),
       picture: (x['picture_xl'] ?? x['picture_big'] ?? x['picture_medium'] ?? null) as string | null,
       detail: typeof x['nb_fan'] === 'number' ? `${x['nb_fan'].toLocaleString('en-US')} fans` : null,
+      fans: typeof x['nb_fan'] === 'number' ? x['nb_fan'] : null,
       url: String(x['link'] ?? `https://www.deezer.com/artist/${x['id']}`),
     }));
 }
@@ -126,6 +148,11 @@ export interface YtArtistPage {
   songsList: string | null;
   albums: AlbumSummary[];
   singles: AlbumSummary[];
+  /**
+   * A shelf the page only shows a few of, with the link to its whole list: YouTube Music shows about
+   * ten albums and keeps the rest behind "More" (ARTIST-FEATURES-001 asked for all of them).
+   */
+  more: { kind: 'albums' | 'singles'; params: string }[];
 }
 
 /** A YouTube Music artist page: header, the link to every song, and the album pages it shows. */
@@ -137,11 +164,21 @@ export function parseYtArtistPage(resp: Json): YtArtistPage {
   let songsList: string | null = null;
   const albums: AlbumSummary[] = [];
   const singles: AlbumSummary[] = [];
+  const more: YtArtistPage['more'] = [];
   for (const s of sections) {
     const shelf = s['musicShelfRenderer'];
     if (shelf && !songsList) {
       const id = String(nav(shelf, ['title', 'runs', 0, 'navigationEndpoint', 'browseEndpoint', 'browseId']) ?? nav(shelf, ['bottomEndpoint', 'browseEndpoint', 'browseId']) ?? '');
       if (YT_LIST.test(id)) songsList = id;
+    }
+    const head = nav(s, ['musicCarouselShelfRenderer', 'header', 'musicCarouselShelfBasicHeaderRenderer']);
+    if (head) {
+      const params = nav(head, ['moreContentButton', 'buttonRenderer', 'navigationEndpoint', 'browseEndpoint', 'params']);
+      const title = text(head['title']);
+      if (typeof params === 'string' && /^[A-Za-z0-9_%=+-]{4,200}$/.test(params)) {
+        const kind = /single/i.test(title) ? 'singles' : /album/i.test(title) ? 'albums' : null;
+        if (kind) more.push({ kind, params });
+      }
     }
     for (const it of ((s['musicCarouselShelfRenderer']?.['contents'] as Json[] | undefined) ?? [])) {
       const x = it['musicTwoRowItemRenderer'];
@@ -158,7 +195,36 @@ export function parseYtArtistPage(resp: Json): YtArtistPage {
       (a.kind === 'single' ? singles : albums).push(a);
     }
   }
-  return { name, picture: lastThumb(head['thumbnail']), detail: text(head['monthlyListenerCount']) || null, songsList, albums, singles };
+  return { name, picture: lastThumb(head['thumbnail']), detail: text(head['monthlyListenerCount']) || null, songsList, albums, singles, more };
+}
+
+/**
+ * The whole list behind a shelf's "More" link: a grid of albums, EPs or singles. Each is an ordinary
+ * album page, so it opens exactly as one from the shelf does.
+ */
+export function parseYtDiscography(resp: Json, artist: string): AlbumSummary[] {
+  const secs = (nav(resp, ['contents', 'singleColumnBrowseResultsRenderer', 'tabs', 0, 'tabRenderer', 'content', 'sectionListRenderer', 'contents']) as unknown as Json[] | undefined) ?? [];
+  const items: Json[] = [];
+  for (const s of secs) {
+    items.push(...((nav(s, ['gridRenderer', 'items']) as unknown as Json[] | undefined) ?? []));
+    items.push(...((nav(s, ['musicCarouselShelfRenderer', 'contents']) as unknown as Json[] | undefined) ?? []));
+  }
+  const out: AlbumSummary[] = [];
+  for (const it of items) {
+    const x = it['musicTwoRowItemRenderer'];
+    const id = browseId(x);
+    if (!x || !YT_ALBUM.test(id)) continue;
+    const title = text(x['title']);
+    const parts = text(x['subtitle']).split(' \u2022 ').map((p) => p.trim());
+    const yr = parts.find((p) => /^\d{4}$/.test(p)) ?? null;
+    const type = /^single$/i.test(parts[0] ?? '') ? 'single' : /^ep$/i.test(parts[0] ?? '') ? 'ep' : 'album';
+    if (!title) continue;
+    out.push({
+      id: `yt:${id}`, provider: 'ytmusic', title, artist, artwork: lastThumb(x['thumbnailRenderer']), year: yr,
+      kind: albumKind(type, title, null), count: null, url: `https://music.youtube.com/browse/${id}`,
+    });
+  }
+  return out;
 }
 
 /** Rows of the artist's songs list (first page or a continuation) as full YouTube Music songs. */
@@ -209,6 +275,25 @@ export function artistTargetOf(t: { artists?: string[] | null; artist?: string |
 const newestFirst = (list: AlbumSummary[]) =>
   list.map((a, i) => ({ a, i })).sort((x, y) => Number(y.a.year ?? 0) - Number(x.a.year ?? 0) || x.i - y.i).map((x) => x.a);
 
+/**
+ * ARTIST-FEATURES-001. Owner: "clicking on a artist name should take you to a discography page where
+ * you can see all there albums, singles and features". A song is a feature when another artist leads
+ * it and this artist is still named on it — Deezer's most played list holds those, and a song's
+ * artists are its contributors. A row that names neither spelling of them cannot be shown to be a
+ * feature, so it stays among the most played rather than being claimed as one.
+ */
+export function partitionFeatures<T extends Pick<Track, 'artists' | 'artist'>>(tracks: readonly T[], who: string): { songs: T[]; features: T[] } {
+  const me = fold(who);
+  const songs: T[] = [];
+  const features: T[] = [];
+  for (const t of tracks) {
+    const names = (t.artists?.length ? t.artists : t.artist ? [String(t.artist)] : []).map((n) => fold(String(n)));
+    const guest = names.length > 1 && names[0] !== me && names.slice(1).includes(me);
+    (guest ? features : songs).push(t);
+  }
+  return { songs, features };
+}
+
 // ---- the service ----------------------------------------------------------------------------------
 
 export class Artists {
@@ -247,8 +332,12 @@ export class Artists {
       const k = fold(a.name);
       const had = byName.get(k);
       if (!had) byName.set(k, { ...a });
-      // Two Deezer artists can share a name; only the other service's page is the same artist.
-      else if (had.provider !== a.provider) {
+      // Two Deezer artists can share a name: the row is the one people listen to (ARTIST-NAME-PICK-001).
+      else if (had.provider === a.provider) {
+        if ((a.fans ?? -1) > (had.fans ?? -1)) byName.set(k, { ...a, ...(had.alt ? { alt: had.alt } : {}) });
+      }
+      // Only the other service's page is the same artist.
+      else {
         had.alt ??= a.id;
         had.picture ??= a.picture;
       }
@@ -274,7 +363,16 @@ export class Artists {
 
   private async build(id: string, name: string, dzId: string | null, ytId: string | null, c: Ctx): Promise<ArtistView> {
     const sources: ArtistView['sources'] = {};
-    const exact = (list: ArtistSummary[], who: string) => list.find((a) => fold(a.name) === fold(who)) ?? null;
+    /**
+     * ARTIST-NAME-PICK-001. Several artists can carry one name, and the service answers its own
+     * order, which can put a 42-fan namesake first. The artist the words mean is the one people
+     * listen to, so of the exact matches the most followed opens; without fan counts the first
+     * stands, and a name that merely resembles it is still never borrowed.
+     */
+    const exact = (list: ArtistSummary[], who: string) => {
+      const hits = list.filter((a) => fold(a.name) === fold(who));
+      return hits.reduce<ArtistSummary | null>((best, a) => (best && (best.fans ?? -1) >= (a.fans ?? -1) ? best : a), null);
+    };
     const lookDz = async (who: string) => {
         try {
           const aid = dzId ?? (who ? exact(await this.searchDz(who, c), who)?.id.slice(3) ?? null : null);
@@ -316,13 +414,15 @@ export class Artists {
       }
     }
     const shown = dzSide?.name ?? ytSide?.name ?? name;
-    const songs: Track[] = [];
+    const pool: Track[] = [];
     const seen = new Set<string>();
     for (const t of [...(dzSide?.songs ?? []), ...(ytSide?.songs ?? [])]) {
       if (seen.has(t.key)) continue;
       seen.add(t.key);
-      songs.push(t);
+      pool.push(t);
     }
+    // ARTIST-FEATURES-001: their own songs, and the songs other artists have them on, apart.
+    const { songs, features } = partitionFeatures(pool, shown);
     const named = (list: AlbumSummary[]) => list.map((a) => (a.artist ? a : { ...a, artist: shown }));
     const all = mergeAlbums(named(dzSide?.albums ?? []), named(ytSide?.albums ?? []));
     const links: ArtistView['links'] = {};
@@ -334,6 +434,7 @@ export class Artists {
       picture: dzSide?.picture ?? ytSide?.picture ?? null,
       detail: ytSide?.detail ?? dzSide?.detail ?? null,
       songs,
+      features,
       albums: newestFirst(all.filter((a) => a.kind !== 'single')),
       singles: newestFirst(all.filter((a) => a.kind === 'single')),
       links,
@@ -366,11 +467,11 @@ export class Artists {
   }
 
   /** Every song the artist has released: the page's songs, then each album's and single's others. */
-  everySong(view: Pick<ArtistView, 'id' | 'songs' | 'albums' | 'singles'>, c: Ctx = {}): Promise<ArtistSongs> {
+  everySong(view: Pick<ArtistView, 'id' | 'name' | 'songs' | 'features' | 'albums' | 'singles' | 'links'>, c: Ctx = {}): Promise<ArtistSongs> {
     const albums = this.albums;
     if (!albums) return Promise.reject(new ProviderError('Albums cannot be opened here.'));
     const pages = [...view.albums, ...view.singles];
-    return cached(this.store, `artistsongs:${view.id}:${pages.length}`, 'artist', 6 * 3600, async () => {
+    return cached(this.store, `artistsongs2:${view.id}:${pages.length}`, 'artist', 6 * 3600, async () => {
       const read: (Track[] | null)[] = new Array(pages.length).fill(null);
       let next = 0;
       const worker = async () => {
@@ -379,7 +480,16 @@ export class Artists {
           read[i] = await albums.open(pages[i]!.id, c).then((v) => v.tracks, () => null);
         }
       };
-      await Promise.all(Array.from({ length: Math.min(ALBUM_READS, pages.length) }, worker));
+      // The albums, and (for a Deezer artist) more of the songs other artists have them on, together.
+      const dzId = /\/artist\/(\d{1,15})/.exec(view.links?.deezer ?? '')?.[1] ?? /^dz:(\d{1,15})$/.exec(view.id)?.[1] ?? null;
+      const known = new Set<string>();
+      for (const t of [...view.songs, ...(view.features ?? [])]) {
+        if (t.provider === 'deezer' && t['platform_id']) known.add(String(t['platform_id']));
+      }
+      const [, more] = await Promise.all([
+        Promise.all(Array.from({ length: Math.min(ALBUM_READS, pages.length) }, worker)),
+        dzId && view.name ? this.moreFeatures(dzId, view.name, known, c).catch(() => []) : Promise.resolve([]),
+      ]);
       const songs: Track[] = [];
       const seen = new Set<string>();
       for (const t of [...view.songs, ...read.flatMap((x) => x ?? [])]) {
@@ -387,8 +497,51 @@ export class Artists {
         seen.add(t.key);
         songs.push(t);
       }
-      return { songs, opened: pages.length, failed: read.filter((x) => x === null).length };
+      // A song of theirs that an album also holds is their own song, not a feature.
+      const had = new Set([...seen, ...(view.features ?? []).map((t) => t.key)]);
+      const features = more.filter((t) => !had.has(t.key));
+      return { songs, features, opened: pages.length, failed: read.filter((x) => x === null).length };
     });
+  }
+
+  /**
+   * ARTIST-FEATURES-001: more of the songs other artists have them on. Their most played list holds
+   * the best known ones; a name search offers others, but a search row never says who is on the song,
+   * so each candidate is read once and kept only when Deezer's own contributors name this artist. A
+   * row that merely has the words in its title is never claimed as a feature.
+   */
+  private async moreFeatures(dzId: string, name: string, known: Set<string>, c: Ctx): Promise<Track[]> {
+    const q = encodeURIComponent(name);
+    const rows: Json[] = [];
+    let resp = await this.dzGet(`/search/track?q=${q}&limit=100`, c);
+    rows.push(...((resp['data'] as Json[] | undefined) ?? []));
+    // Every page the search offers, so a feature far down the list is still found.
+    for (let p = 1; p < FEATURE_PAGES && typeof resp['next'] === 'string'; p++) {
+      resp = await this.dzGet(`/search/track?q=${q}&limit=100&index=${p * 100}`, c);
+      rows.push(...((resp['data'] as Json[] | undefined) ?? []));
+    }
+    const ids = new Set<string>();
+    const cand = rows
+      .filter((x) => {
+        const id = x && x['id'] ? String(x['id']) : '';
+        if (!id || known.has(id) || ids.has(id) || String(x['artist']?.['id'] ?? '') === dzId) return false;
+        ids.add(id);
+        return true;
+      })
+      .slice(0, FEATURE_CANDIDATES);
+    const out: (Track | null)[] = new Array(cand.length).fill(null);
+    let next = 0;
+    const worker = async () => {
+      while (next < cand.length) {
+        const i = next++;
+        const full = await this.dzGet(`/track/${String(cand[i]!['id'])}`, c).catch(() => null);
+        if (!full) continue;
+        const on = ((full['contributors'] as Json[] | undefined) ?? []).some((x) => String(x['id']) === dzId);
+        if (on) out[i] = this.dz.toTrack(full);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(FEATURE_READS, cand.length) }, worker));
+    return out.filter((t): t is Track => t !== null);
   }
 
   private async readYtSongs(uc: string, page: YtArtistPage, wantSongs: boolean, c: Ctx) {
@@ -402,6 +555,15 @@ export class Artists {
         songs.push(...r.tracks);
       }
     }
-    return { id: uc, name: page.name, url: `https://music.youtube.com/channel/${uc}`, picture: page.picture, detail: page.detail, songs, albums: [...page.albums, ...page.singles] };
+    // The page's shelves show about ten each; their "More" lists hold the rest of the discography. A
+    // shelf that cannot be read leaves the few the page showed, rather than failing the whole artist.
+    const whole: AlbumSummary[] = [];
+    for (const m of page.more) {
+      whole.push(...(await yt.discography(uc, m.params, c).then((r) => parseYtDiscography(r, page.name), () => [])));
+    }
+    return {
+      id: uc, name: page.name, url: `https://music.youtube.com/channel/${uc}`, picture: page.picture, detail: page.detail, songs,
+      albums: [...page.albums, ...page.singles, ...whole],
+    };
   }
 }

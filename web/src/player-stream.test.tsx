@@ -13,13 +13,22 @@ import { localLibrary } from './engine/local-audio';
 import { streamAudioUrl } from './engine/stream-pick';
 import type * as Downloads from './engine/downloads';
 
-const { held, sourceHints, canStream, started, gate } = vi.hoisted(() => ({
+const { held, sourceHints, canStream, started, gate, hlsStarts } = vi.hoisted(() => ({
   held: new Set<string>(),
   sourceHints: new Map<string, string>(),
   canStream: { yes: true },
   started: [] as string[],
   /** When set, the shell's answer about a link waits for this. */
   gate: { wait: null as Promise<void> | null },
+  hlsStarts: [] as { media: HTMLAudioElement; source: string; failed: () => void; stopped: boolean }[],
+}));
+
+vi.mock('./engine/hls', () => ({
+  startHls: (media: HTMLAudioElement, source: string, failed: () => void) => {
+    const started = { media, source, failed, stopped: false };
+    hlsStarts.push(started);
+    return () => { started.stopped = true; };
+  },
 }));
 
 vi.mock('./engine/downloads', async (importOriginal) => {
@@ -105,7 +114,7 @@ const note = () => document.querySelector('.np__note')?.textContent ?? '';
 const fire = (type: string) => act(async () => { document.querySelector('audio')!.dispatchEvent(new Event(type)); });
 
 beforeEach(() => {
-  held.clear(); sourceHints.clear(); started.length = 0; canStream.yes = true; gate.wait = null;
+  held.clear(); sourceHints.clear(); started.length = 0; hlsStarts.length = 0; canStream.yes = true; gate.wait = null;
   stubMedia();
   const g = globalThis as unknown as Record<string, unknown>;
   g['fetch'] = vi.fn(async () => ({ ok: true, blob: async () => new Blob([new Uint8Array(4)]) }) as unknown as Response);
@@ -143,7 +152,7 @@ it('keeps playing the stream when the download lands, rather than restarting the
   await settle();
   await settle();
   expect(deckSrc()).toBe(streamAudioUrl(SRC));
-  expect(note()).toContain('The download has finished');
+  expect(note()).toContain('Download finished');
 });
 
 it('plays the file instead when it lands before the stream makes a sound', async () => {
@@ -168,6 +177,9 @@ it('falls back to waiting for the download, without an error, when the stream fa
   await settle();
   await fire('error');
   await settle();
+  expect(hlsStarts).toHaveLength(1);
+  await act(async () => { hlsStarts[0]!.failed(); });
+  await settle();
   expect(deckSrc()).toBeNull();
   expect(note()).toContain('Downloading the full song');
   expect(document.querySelector('.np__note--bad')).toBeNull();
@@ -187,12 +199,21 @@ it('falls back to waiting for the download, without an error, when the stream fa
   expect(deckSrc()).toBeNull();
 });
 
-it('streams nothing for a source with no single audio file (SoundCloud), and the download still starts', async () => {
+it('tries HLS on the same deck after progressive fails, then waits for download on fatal HLS error', async () => {
   const SRC = 'https://soundcloud.com/someone/a-song';
   sourceHints.set('five', SRC);
   render(createElement(Player, { ...props, playing: song('five') }));
   await settle();
   await settle();
+  expect(deckSrc()).toBe(streamAudioUrl(SRC));
+  await fire('error');
+  await settle();
+  expect(hlsStarts).toHaveLength(1);
+  expect(hlsStarts[0]!.source).toBe(SRC);
+  expect(hlsStarts[0]!.media).toBe(document.querySelector('audio'));
+  await act(async () => { hlsStarts[0]!.failed(); });
+  await settle();
+  expect(hlsStarts[0]!.stopped).toBe(true);
   expect(deckSrc()).toBeNull();
   expect(note()).toContain('Downloading the full song');
 });

@@ -10,6 +10,7 @@ const { pathToFileURL } = require('node:url');
 const { request } = require('./bridge.cjs');
 const { createDownloads } = require('./downloads.cjs');
 const { createStreams } = require('./streams.cjs');
+const { createHls } = require('./hls.cjs');
 
 const APP_HOST = 'appassets.androidplatform.net';
 const ROOT = app.isPackaged ? path.join(process.resourcesPath, 'web') : path.join(__dirname, '..', 'web', 'dist');
@@ -48,12 +49,9 @@ function savedMusicFolder() {
 let downloads = null;
 // STREAM-DL-001: a chosen song plays from its source while its download runs.
 let streams = null;
-const stream = () =>
-  (streams ||= createStreams({
-    toolsDir: TOOLS,
-    // Past this app's own https handler, which would otherwise receive the request again.
-    fetchImpl: (url, init) => net.fetch(url, { ...init, bypassCustomProtocolHandlers: true }),
-  }));
+let hls = null;
+const hlsAudio = () => (hls ||= createHls({ toolsDir: TOOLS }));
+const stream = () => (streams ||= createStreams({ toolsDir: TOOLS }));
 const dl = () =>
   (downloads ||= createDownloads({
     toolsDir: TOOLS,
@@ -191,6 +189,8 @@ app.whenReady().then(() => {
     if (url.pathname === '/local-audio') return serveLocalAudio(req, url.searchParams.get('u') || '');
     // STREAM-DL-001: the same song from its source, while the download is still running.
     if (url.pathname === '/stream-audio') return stream().serve(req, url.searchParams.get('u') || '');
+    if (url.pathname === '/hls-info') return hlsAudio().info(url.searchParams.get('u') || '');
+    if (url.pathname === '/hls-resource') return hlsAudio().resource(req, url.searchParams.get('t') || '', url.searchParams.get('i') || '');
     let file = fileFor(url.pathname);
     if (!file) return new Response('Forbidden', { status: 403 });
     if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {

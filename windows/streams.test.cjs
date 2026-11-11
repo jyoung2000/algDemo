@@ -29,21 +29,33 @@ function fakeSpawn(stdout, code = 0, calls = []) {
   };
 }
 const req = (range) => ({ headers: new Headers(range ? { range } : {}), signal: undefined });
+const publicLookup = async () => [{ address: '8.8.8.8', family: 4 }];
 
 test('asks yt-dlp for one progressive audio file, the link after --, downloading nothing', () => {
   const a = streamArgs(YT);
   assert.deepEqual(a.slice(-2), ['--', YT]);
   assert.ok(a.includes('--ignore-config') && a.includes('--no-playlist'));
-  assert.equal(a[a.indexOf('-f') + 1], 'bestaudio[protocol=https]/bestaudio[protocol=http]');
+  assert.equal(a[a.indexOf('-f') + 1], 'bestaudio[protocol=https]/bestaudio[protocol=http]/best[protocol=https]/best[protocol=http]');
   assert.ok(!a.includes('--exec') && !a.includes('-o') && !a.includes('--output'));
 });
 
-test('streams YouTube links only; never a host the downloader refuses, nor SoundCloud\u2019s segments', () => {
-  assert.equal(streamable(YT), true);
-  assert.equal(streamable('https://www.youtube.com/watch?v=jfKfPfyJRdk'), true);
-  assert.equal(streamable('https://soundcloud.com/frank-ocean/nikes'), false);
-  assert.equal(streamable('https://evil.example/watch?v=x'), false);
-  assert.equal(streamable('http://music.youtube.com/watch?v=KavaUJxnNVU'), false);
+test('offers every yt-dlp downloader-approved platform; never Spotify or an arbitrary URL', () => {
+  for (const link of [
+    YT,
+    'https://www.youtube.com/watch?v=jfKfPfyJRdk',
+    'https://soundcloud.com/forss/flickermood',
+    'https://audius.co/Lofibeat/stars-in-the-sky-lofi-beats-370899',
+    'https://benprunty.bandcamp.com/track/giant-step',
+    'https://hearthis.at/random1-ej/deep-by-random-creative-commons-royalty-free/',
+    'https://archive.org/download/cold-funk-by-kevin-macleod/cold-funk-by-kevin-macleod.mp3',
+  ]) assert.equal(streamable(link), true, link);
+  for (const link of [
+    'https://evil.example/watch?v=x',
+    'https://open.spotify.com/track/11dFghVXANMlKmJXsNCbNl',
+    'http://music.youtube.com/watch?v=KavaUJxnNVU',
+    'https://archive.org/download/item/evil.zip',
+    'https://hearthis.at/a/song/../secret/',
+  ]) assert.equal(streamable(link), false, link);
 });
 
 test('reads the printed file: link, headers and when it expires', () => {
@@ -75,6 +87,33 @@ test('asks once for songs requested together, and reuses the answer until near i
   assert.equal(calls.length, 2);
 });
 
+test('Audius single MP3 format is playable even when yt-dlp labels its video codec unknown, but video is not', () => {
+  const a = parseStream(JSON.stringify({ url: 'https://api.audius.co/v1/tracks/95wro/stream', ext: 'mp3', acodec: 'mp3', vcodec: 'unknown', protocol: 'https', duration: 71 }));
+  assert.equal(a.ext, 'mp3');
+  assert.throws(() => parseStream(JSON.stringify({ url: 'https://cdn.example/video.mp4', ext: 'mp4', acodec: 'aac', vcodec: 'h264', protocol: 'https' })), /video/);
+  assert.throws(() => parseStream(JSON.stringify({ url: 'https://cdn.example/mute.mp3', ext: 'mp3', acodec: 'none', protocol: 'https' })), /audio/);
+});
+
+test('does not fetch a private resolved URL or follow a redirect to one', async () => {
+  for (const url of ['http://127.0.0.1/private', 'http://169.254.169.254/latest/meta-data', 'http://[::1]/private']) {
+    assert.throws(() => parseStream(JSON.stringify({ url, protocol: 'http', acodec: 'mp3' })), /public/);
+  }
+  const fetched = [];
+  const s = createStreams({ toolsDir: 'C:/tools', spawnImpl: fakeSpawn(PRINTED), lookupImpl: publicLookup, fetchImpl: async (url) => {
+    fetched.push(url);
+    return new Response(null, { status: 302, headers: { location: 'http://127.0.0.1/private' } });
+  } });
+  assert.equal((await s.serve(req(), YT)).status, 502);
+  assert.equal(fetched.length, 1);
+});
+
+test('refuses a public hostname resolving to a private address before fetching', async () => {
+  let fetches = 0;
+  const s = createStreams({ toolsDir: 'C:/tools', spawnImpl: fakeSpawn(PRINTED), lookupImpl: async () => [{ address: '169.254.169.254', family: 4 }], fetchImpl: async () => { fetches++; return new Response('audio'); } });
+  assert.equal((await s.serve(req(), YT)).status, 502);
+  assert.equal(fetches, 0);
+});
+
 test('a failed lookup is not remembered, and its reason is kept and logged', async () => {
   const calls = [];
   const lines = [];
@@ -83,14 +122,16 @@ test('a failed lookup is not remembered, and its reason is kept and logged', asy
   assert.match(lines[0], /^no stream for https:\/\/music\.youtube\.com\/watch\?v=KavaUJxnNVU after \d+ ms: .*Video unavailable/);
   await assert.rejects(s.resolve(YT), /Video unavailable/);
   assert.equal(calls.length, 2);
-  await assert.rejects(s.resolve('https://soundcloud.com/frank-ocean/nikes'), /Not a link this app streams/);
-  assert.equal(calls.length, 2);
+  await assert.rejects(s.resolve('https://soundcloud.com/forss/flickermood'), /Video unavailable/);
+  assert.equal(calls.length, 3);
+  await assert.rejects(s.resolve('https://open.spotify.com/track/11dFghVXANMlKmJXsNCbNl'), /Not a link this app streams/);
+  assert.equal(calls.length, 3);
 });
 
 test('serves the source\u2019s bytes at the app origin, passing the range and yt-dlp\u2019s headers through', async () => {
   const seen = [];
   const s = createStreams({
-    toolsDir: 'C:/tools', spawnImpl: fakeSpawn(PRINTED),
+    toolsDir: 'C:/tools', spawnImpl: fakeSpawn(PRINTED), lookupImpl: publicLookup,
     fetchImpl: async (url, init) => {
       seen.push({ url, init });
       return new Response('OPUS', { status: 206, headers: { 'content-type': 'audio/webm', 'content-length': '4', 'content-range': 'bytes 0-3/3367064', 'set-cookie': 'x=1', 'access-control-allow-origin': 'https://music.youtube.com' } });
@@ -114,10 +155,10 @@ test('serves the source\u2019s bytes at the app origin, passing the range and yt
 test('an expired link is asked for afresh; a refused link is a 404 the page falls back from', async () => {
   const calls = [];
   let status = 403;
-  const s = createStreams({ toolsDir: 'C:/tools', spawnImpl: fakeSpawn(PRINTED, 0, calls), fetchImpl: async () => new Response('', { status }), log: () => {} });
+  const s = createStreams({ toolsDir: 'C:/tools', spawnImpl: fakeSpawn(PRINTED, 0, calls), lookupImpl: publicLookup, fetchImpl: async () => new Response('', { status }), log: () => {} });
   assert.equal((await s.serve(req(), YT)).status, 502);
   status = 200;
   assert.equal((await s.serve(req(), YT)).status, 200);
   assert.equal(calls.length, 2);
-  assert.equal((await s.serve(req(), 'https://soundcloud.com/frank-ocean/nikes')).status, 404);
+  assert.equal((await s.serve(req(), 'https://open.spotify.com/track/11dFghVXANMlKmJXsNCbNl')).status, 404);
 });

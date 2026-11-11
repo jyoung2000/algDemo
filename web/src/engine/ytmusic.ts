@@ -345,6 +345,16 @@ export class YouTubeMusic {
     return this.post('browse', { continuation: token }, c, LIST_BYTES);
   }
 
+  /**
+   * ARTIST-FEATURES-001: the whole list behind an artist shelf's "More" link (all their albums, or
+   * all their singles), which the artist page itself only shows about ten of.
+   */
+  discography(browseId: string, params: string, c: Ctx = {}): Promise<Json> {
+    if (!/^UC[A-Za-z0-9_-]{22}$/.test(browseId)) return Promise.reject(new ProviderError('That is not a YouTube Music artist.'));
+    if (!/^[A-Za-z0-9_%=+-]{4,200}$/.test(params)) return Promise.reject(new ProviderError('That is not a YouTube Music list.'));
+    return this.post('browse', { browseId, params }, c);
+  }
+
   search(q: string, limit = 15, c: Ctx = {}): Promise<Track[]> {
     return cached(c.refresh ? undefined : this.store, `yt:search:${fold(q)}:${limit}`, 'search', 15 * 60, async () => {
       const r = await this.post('search', { query: q, params: SONGS_FILTER }, c);

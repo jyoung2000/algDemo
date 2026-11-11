@@ -123,6 +123,8 @@ export interface ArtistView {
   detail: string | null;
   /** The most played songs. */
   songs: Track[];
+  /** ARTIST-FEATURES-001: songs by other artists that this artist is on, most played first. */
+  features: Track[];
   albums: AlbumSummary[];
   singles: AlbumSummary[];
   links: { deezer?: string; ytmusic?: string };
@@ -551,7 +553,7 @@ export const api = {
   artist: (target: ArtistTarget, signal?: AbortSignal) =>
     call<{ artist: ArtistView }>('/api/artist', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
   artistSongs: (target: ArtistTarget, signal?: AbortSignal) =>
-    call<{ songs: Track[]; opened: number; failed: number }>('/api/artist/songs', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
+    call<{ songs: Track[]; features?: Track[]; opened: number; failed: number }>('/api/artist/songs', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
   /** `{ id }` opens that album; `{ track }` opens the album the song is on (404 `code: 'none'` when there is none). */
   album: (target: { id: string } | { track: Track }, signal?: AbortSignal) =>
     call<{ album: AlbumView }>('/api/album', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),

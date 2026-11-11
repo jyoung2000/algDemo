@@ -13,6 +13,7 @@ import { attachElement, bus as audioBus, eqConfig, mixSlider, playThrough, resum
 import { localLibrary, sourceUrlFor } from './engine/local-audio';
 import { rescueSource } from './engine/rescue';
 import { pickStream } from './engine/stream-pick';
+import { startHls } from './engine/hls';
 import { downloadsAvailable, playbackActive } from './engine/downloads';
 import { mediaNativeAvailable, pushMediaState, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { engineAvailable, engineRev, engineSend, engineSong, engineState, markEngineEvent, subscribeEngineState, type EngineState } from './engine/native-engine';
@@ -218,7 +219,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const scEmbed = playing?.playback.embed?.provider === 'soundcloud' ? playing.playback.embed : null;
   const [found, setFound] = useState<{ key: string; id: string | null; url?: string } | null>(null);
   // STREAM-DL-001: this song's stream from its source while its download runs (engine/stream-pick.ts).
-  const [streamOf, setStreamOf] = useState<{ key: string; url: string | null; started: boolean; failed: boolean } | null>(null);
+  const [streamOf, setStreamOf] = useState<{ key: string; url: string | null; started: boolean; failed: boolean; hls?: boolean } | null>(null);
   const [badVideo, setBadVideo] = useState<string | null>(null);
   const previewSrc = playing?.playback.preview ?? null;
   // Songs the mixer blended into. They are already playing, as the preview they were blended as,
@@ -317,11 +318,12 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // Only what the deck reported is kept (it started; it failed); the choice itself is worked out here.
   // YouTube's own player is never used where songs download, so a stream never meets it.
   const streamNow = streamOf?.key === key ? streamOf : null;
-  const streamSrc = native || !key ? null : pickStream({ canStream: canLocal && localLibrary.canStream(), source: localSource, localStatus, localSrc, current: streamNow });
+  const streamSrc = native || !key ? null : streamNow?.hls && !streamNow.failed ? (streamNow.started || !localSrc ? streamNow.url : null) : pickStream({ canStream: canLocal && localLibrary.canStream(), source: localSource, localStatus, localSrc, current: streamNow });
   // In the Android app the engine streams for itself and says so in its state.
   const [engineStreams, setEngineStreams] = useState<string | null>(null);
   const streaming = Boolean(streamSrc) || (native && engineStreams !== null && engineStreams === key);
-  const src = streamSrc ?? localSrc ?? previewPick;
+  // A downloadable full song never silently turns into a short catalogue preview.
+  const src = streamSrc ?? localSrc ?? (canLocal ? null : previewPick);
   const embed = embedPick;
   const mode: Mode = localSrc || streaming ? 'local' : canLocal ? 'none' : askingLocal || fetchingLocal ? 'none' : videoId ? 'full' : src ? 'preview' : embed ? 'embed' : 'none';
   const hasSound = mode === 'full' || mode === 'local' || mode === 'preview';
@@ -513,6 +515,10 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
             setErr(e instanceof Error && e.message ? e.message : 'This preview could not be reached.');
           },
         );
+      } else if (streamNow?.hls && streamSrc && localSource && key) {
+        // A progressive stream was unavailable: attach HLS to the SAME permanent audio deck.
+        // No blob/second element is created, so seeking, progress, WebAudio and mixer remain intact.
+        return startHls(a, localSource, () => setStreamOf({ key, url: null, started: false, failed: true }));
       } else begin(src);
       return () => {
         live = false;
@@ -870,7 +876,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   ) : blending ? (
     <p className="np__note np__note--mix" aria-live="polite">{note}</p>
   ) : mode === 'local' && streaming ? (
-    <p className="np__note">{loading ? 'Starting the full song from its source…' : localStatus === 'ready' ? 'Full song, streamed from its source — through the equaliser and mixer. The download has finished.' : 'Full song, streaming from its source while it downloads — through the equaliser and mixer.'}</p>
+    <p className="np__note">{loading ? 'Starting the full song from its source…' : localStatus === 'ready' ? 'Full song from its source — through the equaliser and mixer. Download finished.' : 'Full song, streaming from its source while it downloads — through the equaliser and mixer.'}</p>
   ) : mode === 'local' ? (
     <p className="np__note">{loading ? 'Loading the full song…' : 'Full song, downloaded — through the equaliser and mixer.'}</p>
   ) : src ? (
@@ -1039,7 +1045,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
             if (id !== deck) return;
             setLoading(false);
             // STREAM-DL-001: once the stream sounds, it is this song's source to the end.
-            if (streamSrc && e.currentTarget.src.endsWith(streamSrc) && key && !streamNow?.started) setStreamOf({ key, url: streamSrc, started: true, failed: false });
+            if (streamSrc && (streamNow?.hls || e.currentTarget.src.endsWith(streamSrc)) && key && !streamNow?.started) setStreamOf({ key, url: streamSrc, started: true, failed: false, hls: streamNow?.hls });
           }}
           onPause={() => { if (id === deck) setPaused(true); syncPlayback(); }}
           onWaiting={() => id === deck && setLoading(true)}
@@ -1064,8 +1070,9 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
           onError={(e) => {
             // STREAM-DL-001: a stream that fails gives way to the download, quietly; only a file
             // that fails is an error the listener needs to hear about.
-            if (id === deck && streamSrc && e.currentTarget.src.endsWith(streamSrc) && key) {
-              setStreamOf({ key, url: null, started: false, failed: true });
+            if (id === deck && streamSrc && (streamNow?.hls || e.currentTarget.src.endsWith(streamSrc)) && key) {
+              // Only a progressive failure tries HLS. A fatal HLS error waits for the download.
+              setStreamOf(streamNow?.hls || !localSource ? { key, url: null, started: false, failed: true } : { key, url: `/hls-info?u=${encodeURIComponent(localSource)}`, started: false, failed: false, hls: true });
               return;
             }
             if (id === deck && src) {

@@ -512,7 +512,7 @@ export class LocalApi {
       const clean = (list: readonly object[]) => list.map((t) => cleanTrack(t as Dict));
       if (!every) return ok({ artist: { ...a, songs: clean(a.songs) } });
       const all = await this.artists.everySong(a, { meter });
-      return ok({ songs: clean(all.songs), opened: all.opened, failed: all.failed });
+      return ok({ songs: clean(all.songs), features: clean(all.features), opened: all.opened, failed: all.failed });
     } catch (e) {
       if (e instanceof ProviderError) return fail(404, e.message, { code: 'none' });
       return this.identifyFailure(e, 'artist');
