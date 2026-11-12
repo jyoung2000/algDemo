@@ -40,7 +40,7 @@ const NO_SOURCE_TTL = 15 * 60;
 
 import { buildProfile } from './profile';
 import { playlistMix } from './playlist-mix';
-import { albumGenres, releaseGroupId, tagsFromReleaseGroup } from './album-genres';
+import { albumGenres, baseAlbumTitle, releaseGroupId, tagsFromReleaseGroup } from './album-genres';
 import { seedWindow } from './seed-window';
 import type { Tag } from './genres';
 import { classify, classifyAll } from './classify';
@@ -543,8 +543,10 @@ export class LocalApi {
         this.http.getJson<Dict>(url, { maxBytes: 150_000, ...(meter ? { meter } : {}), category: 'metadata', headers }),
       );
     try {
-      const q = `release:"${title.replace(/"/g, ' ')}"${artist ? ` AND artist:"${artist.replace(/"/g, ' ')}"` : ''}`;
-      const found = await get(`https://musicbrainz.org/ws/2/release-group?query=${encodeURIComponent(q)}&fmt=json&limit=1`, `mb:rg:${fold(artist)}:${fold(title)}`);
+      // A reissue is the same record: MusicBrainz files "A Great Chaos (Deluxe)" as "A Great Chaos".
+      const asked = baseAlbumTitle(title);
+      const q = `release:"${asked.replace(/"/g, ' ')}"${artist ? ` AND artist:"${artist.replace(/"/g, ' ')}"` : ''}`;
+      const found = await get(`https://musicbrainz.org/ws/2/release-group?query=${encodeURIComponent(q)}&fmt=json&limit=1`, `mb:rg:${fold(artist)}:${fold(asked)}`);
       const id = releaseGroupId(found, title, artist);
       if (!id) return [];
       const full = await get(`https://musicbrainz.org/ws/2/release-group/${id}?inc=tags+genres&fmt=json`, `mb:rgtags:${id}`);
@@ -604,7 +606,11 @@ export class LocalApi {
       const mbTags = await this.releaseGroupTags(String((a as Dict)['title'] ?? ''), artist, meter, subs[subsKey]?.tags ?? []);
       const albumTags = [...mbTags, ...stated.filter((t) => !mbTags.some((m) => m.name === t.name))];
       const genresOf = (t: Dict): Tag[] => albumGenres({ ...t, tags: own(t) }, { albumTags, subs, artist });
-      const mix = playlistMix(tracks, genresOf, unixNow());
+      // ALBUM-RAGE-001: when the songs were placed from album-level tags they all carry the same
+      // ones, so the bar is drawn from the strength of that evidence rather than from 21 identical
+      // play counts. A record whose songs carry their own tags still counts songs.
+      const fromAlbum = tracks.every((t) => !own(t).length);
+      const mix = playlistMix(tracks, genresOf, unixNow(), { byEvidence: fromAlbum });
       const tagged = tracks.map((t) => ({ ...t, tags: genresOf(t) }));
       return ok({ album: { ...a, tracks: tagged, mix } });
     } catch (e) {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { withArtistSubs } from './artist-subs';
-import { albumGenres, releaseGroupId, tagsFromReleaseGroup } from './album-genres';
+import { albumGenres, baseAlbumTitle, releaseGroupId, tagsFromReleaseGroup } from './album-genres';
 import type { Tag } from './genres';
 import type { Dict } from './shape';
 
@@ -152,5 +152,38 @@ describe('ties are broken by what the artist is known for (ALBUM-GENRE-DETAIL-00
 
   it('works with nothing known about the artist', () => {
     expect(tagsFromReleaseGroup(lookup).length).toBe(3);
+  });
+});
+
+describe('an edition is the same record (ALBUM-GENRE-DETAIL-001)', () => {
+  it('strips the edition words a service adds to a title', () => {
+    expect(baseAlbumTitle('A Great Chaos (Deluxe)')).toBe('A Great Chaos');
+    expect(baseAlbumTitle('A Great Chaos [Deluxe Edition]')).toBe('A Great Chaos');
+    expect(baseAlbumTitle('Igor (Bonus Track Version)')).toBe('Igor');
+    expect(baseAlbumTitle('Thriller (25th Anniversary Edition)')).toBe('Thriller');
+    expect(baseAlbumTitle('Abbey Road (Remastered 2019)')).toBe('Abbey Road');
+  });
+
+  it('leaves a title whose brackets are part of the name', () => {
+    expect(baseAlbumTitle('Untitled (Rise)')).toBe('Untitled (Rise)');
+    expect(baseAlbumTitle('More Chaos')).toBe('More Chaos');
+  });
+
+  it('accepts the plain release for a deluxe edition', () => {
+    const search = {
+      'release-groups': [{
+        id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        title: 'A Great Chaos',
+        'artist-credit': [{ artist: { name: 'Ken Carson' } }],
+      }],
+    };
+    expect(releaseGroupId(search, 'A Great Chaos (Deluxe)', 'Ken Carson')).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+  });
+
+  it('still refuses a different record', () => {
+    const search = {
+      'release-groups': [{ id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', title: 'Teen X', 'artist-credit': [{ artist: { name: 'Ken Carson' } }] }],
+    };
+    expect(releaseGroupId(search, 'A Great Chaos (Deluxe)', 'Ken Carson')).toBeNull();
   });
 });

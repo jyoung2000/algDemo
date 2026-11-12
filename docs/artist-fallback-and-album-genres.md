@@ -64,3 +64,39 @@ A wrong subgenre is worse than none, so each now names the family and stops.
 | *Live From NPR's Tiny Desk* (Sasha Keable), both | General R&B 100% | General Soul 50% · General R&B 50% (MusicBrainz has no tags for this release, so the artist's own are all there is — and it says so) |
 
 Tests: `web/src/engine/album-genres.test.ts` (18), `web/src/engine/genre-aliases.test.ts` (7).
+
+## ALBUM-RAGE-001 — the record's own genre leads (0.18.8 / vc51)
+
+Owner, looking at *More Chaos*: **"more chaos is a rage album."**
+
+Three things kept it from reading that way:
+
+1. **Even thirds.** Every song on an album page is placed from the same album-level tags, so each
+   tag had exactly the same play count and the bar split 34/33/33. When an album's songs carry no
+   tags of their own, the bar is now drawn from the strength of the evidence (`byEvidence`), not
+   from 21 identical play counts.
+2. **Filler.** A bare "Hip-hop" stood beside "Rage" and took a third of the bar while saying
+   nothing. `dropCoveredFamilies` removes a family word when a subgenre of that same family is
+   present; a family nothing finer covers still stays, because then it is all that is known.
+3. **Flat confidence.** Every release-group tag was worth 0.55. Confidence now rises with votes and
+   rises further when the artist is known for that genre — one listener's tag on one record is thin
+   evidence beside an artist's whole catalogue.
+
+A reissue is also the same record now: `baseAlbumTitle` strips known edition words
+("A Great Chaos (Deluxe)" → "A Great Chaos", "(Bonus Track Version)", "(Remastered 2019)",
+"(25th Anniversary Edition)"), so MusicBrainz is asked about the release it actually files. Brackets
+that are part of a name ("Untitled (Rise)") are left alone.
+
+### Verified on real builds
+
+| Album | Before | Now |
+| --- | --- | --- |
+| *More Chaos*, Windows 0.18.8 | Rage 34% · General Hip-hop 33% · Pop-trap 33% | **Rage 59% · Pop-trap & pop-rap 41%** |
+| *More Chaos*, Android release 0.18.8/vc51 | — | **Rage 50% · Southern hip-hop & crunk 50%** |
+| *A Great Chaos (Deluxe)*, Windows | "No genre known yet" (the deluxe title matched no release) | **Rage 58% · Cloud & melodic rap 42%** |
+
+The two platforms differ because each device has looked up different things: the phone had the
+artist's southern-hip-hop tag cached and the desktop had the release's pop-rap tag. Both lead with
+rage, and both say where they read it.
+
+Tests: `web/src/engine/album-rage.test.ts` (6) and four more cases in `album-genres.test.ts`.

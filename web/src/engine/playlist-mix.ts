@@ -19,8 +19,14 @@ export interface PlaylistMix {
   placed: number;
 }
 
-/** `genresOf` returns a song's tags from whichever source knows them, or [] when none does. */
-export function playlistMix(tracks: Dict[], genresOf: (t: Dict) => Tag[], nowTs: number): PlaylistMix {
+/**
+ * `genresOf` returns a song's tags from whichever source knows them, or [] when none does.
+ *
+ * ALBUM-RAGE-001: with `byEvidence`, every song was placed from the same album-level tags, so the
+ * play counts are all equal and say nothing - the card is told to weigh by score (which carries
+ * each tag's confidence) instead, so the genre the record is really in leads.
+ */
+export function playlistMix(tracks: Dict[], genresOf: (t: Dict) => Tag[], nowTs: number, opts: { byEvidence?: boolean } = {}): PlaylistMix {
   const rows: TasteRow[] = [];
   let placed = 0;
   for (const t of tracks) {
@@ -30,5 +36,11 @@ export function playlistMix(tracks: Dict[], genresOf: (t: Dict) => Tag[], nowTs:
     rows.push({ key: String(t['key']), kind: 'save', ts: nowTs, track: { ...t, tags } });
   }
   const taste = buildTaste(rows, nowTs);
-  return { taste: placed ? tasteSummary(taste) : null, songs: tracks.length, placed };
+  const summary = placed ? tasteSummary(taste) : null;
+  if (summary && opts.byEvidence) {
+    const blank = (list: unknown) => (list as { plays?: number }[] | undefined)?.map((g) => ({ ...g, plays: 0 }));
+    summary['genres'] = blank(summary['genres']) ?? [];
+    summary['likes'] = blank(summary['likes']) ?? [];
+  }
+  return { taste: summary, songs: tracks.length, placed };
 }

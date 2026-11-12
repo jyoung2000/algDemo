@@ -16,6 +16,23 @@ import type { Dict } from './shape';
 
 export const MB_ALBUM_SOURCE = 'MusicBrainz album tags';
 
+/** Words a service adds to an album title for a reissue; the record is the same one. */
+const EDITION = /^(deluxe|deluxe edition|super deluxe|expanded|expanded edition|extended|bonus track version|bonus tracks?|remaster(?:ed)?(?:\s*\d{4})?|\d+(?:st|nd|rd|th) anniversary(?: edition)?|anniversary edition|special edition|explicit|clean|original motion picture soundtrack)$/i;
+
+/**
+ * An album title without its edition suffix: "A Great Chaos (Deluxe)" is the same record as
+ * "A Great Chaos", and MusicBrainz files it under the plain name. Brackets that are part of a name
+ * ("Untitled (Rise)") are left alone, because only known edition words are stripped.
+ */
+export function baseAlbumTitle(title: string): string {
+  let out = title.trim();
+  for (;;) {
+    const m = /^(.*\S)\s*[([]([^)\]]+)[)\]]\s*$/.exec(out);
+    if (!m || !EDITION.test(m[2]!.trim())) return out;
+    out = m[1]!.trim();
+  }
+}
+
 /**
  * ALBUM-GENRE-DETAIL-001: the community tags MusicBrainz holds for THIS release, which name a
  * record far more finely than a service's one-word album genre ("neo soul", "alternative r&b"
@@ -32,7 +49,8 @@ export function releaseGroupId(body: Dict, title: string, artist: string): strin
   const hit = ((body['release-groups'] as Dict[] | undefined) ?? [])[0];
   if (!hit) return null;
   const credited = ((hit['artist-credit'] as Dict[] | undefined) ?? []).map((c) => fold(String((c['artist'] as Dict | undefined)?.['name'] ?? c['name'] ?? '')));
-  if (fold(String(hit['title'] ?? '')) !== fold(title)) return null;
+  const theirs = fold(String(hit['title'] ?? ''));
+  if (theirs !== fold(title) && theirs !== fold(baseAlbumTitle(title))) return null;
   if (artist && credited.length > 0 && !credited.includes(fold(artist))) return null;
   const id = String(hit['id'] ?? '');
   return /^[0-9a-f-]{36}$/i.test(id) ? id : null;
@@ -66,7 +84,16 @@ export function tagsFromReleaseGroup(body: Dict, title?: string, artist?: string
   return [...votes.entries()]
     .sort((a, b) => b[1] - a[1] || Number(known.has(b[0])) - Number(known.has(a[0])))
     .slice(0, 3)
-    .map(([name]) => ({ name, label: label.get(name) ?? name, source: MB_ALBUM_SOURCE, scope: 'album', confidence: 0.55, inferred: false }));
+    .map(([name, count]) => ({
+      name,
+      label: label.get(name) ?? name,
+      source: MB_ALBUM_SOURCE,
+      scope: 'album',
+      // Votes raise it a little; being what the artist is known for raises it a lot, because one
+      // listener's tag on one record is thin evidence beside an artist's whole catalogue.
+      confidence: Math.min(0.95, 0.5 + Math.min(0.15, 0.05 * (count - 1)) + (known.has(name) ? 0.25 : 0)),
+      inferred: false,
+    }));
 }
 
 export interface AlbumGenreSources {
@@ -83,5 +110,21 @@ export function albumGenres(track: Dict, src: AlbumGenreSources): Tag[] {
   const base = own.length ? own : src.albumTags;
   if (!base.length) return [];
   const withSubs = withArtistSubs({ ...track, tags: base }, src.subs, src.artist);
-  return (withSubs['tags'] as Tag[]) ?? base;
+  return dropCoveredFamilies((withSubs['tags'] as Tag[]) ?? base);
+}
+
+/**
+ * ALBUM-RAGE-001: "Hip-hop" beside "Rage" adds nothing but takes a third of the bar. A bare family
+ * word is dropped when a subgenre of that same family is present; a family nothing finer covers
+ * stays, because then it is all that is known.
+ */
+export function dropCoveredFamilies(tags: Tag[]): Tag[] {
+  const covered = new Set<string>();
+  for (const t of tags) {
+    if (FAMILY_TAGS[t.name]) continue;
+    const fam = familyOfGenre(t.name);
+    if (fam) covered.add(fam);
+  }
+  const kept = tags.filter((t) => !(FAMILY_TAGS[t.name] && covered.has(familyOfGenre(t.name) ?? FAMILY_TAGS[t.name] ?? '')));
+  return kept.length ? kept : tags;
 }
