@@ -7,6 +7,8 @@ import { markKey } from './util';
 import { ListSaveButton } from './ListSaveButton';
 import { albumFolderName } from './engine/list-save';
 import { TrackList } from './Search';
+import { SoundCard } from './SoundCard';
+import { listMixNote } from './list-mix-note';
 
 export { AlbumShelf, albumSource } from './AlbumShelf';
 
@@ -152,6 +154,27 @@ export function AlbumView({ target, onBack, onPreview, seedKeys, onAdd, onDownlo
               <p className="state album__note" role="status">
                 <Glyph name="info" size={14} /> {note}
               </p>
+            )}
+            {/*
+              ALBUM-SOUND-001: what this album sounds like, in the same coloured bar the listener's
+              own sound uses, read from the genres of its songs. No genre known means it says so
+              rather than drawing a gradient out of nothing.
+            */}
+            {a.tracks.length > 0 && (
+              <SoundCard
+                key={a.id}
+                taste={a.mix?.taste ?? null}
+                listening={false}
+                title={`Sound of \u201C${a.title}\u201D`}
+                label="This album's mix"
+                historyKey={`airwave.sound.album.${a.id}`}
+                idleText={a.mix ? listMixNote(a.mix, 'album') : 'Reading the album\u2026'}
+                emptyText={
+                  a.mix
+                    ? `No genre known yet for the ${a.mix.songs} ${a.mix.songs === 1 ? 'song' : 'songs'} on this album. Add one to your queue and discovery looks them up.`
+                    : 'Reading the album\u2026'
+                }
+              />
             )}
             {a.tracks.length ? (
               <TrackList

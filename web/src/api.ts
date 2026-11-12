@@ -101,6 +101,8 @@ export interface AlbumView extends AlbumSummary {
   tracks: Track[];
   duration: number | null;
   genres: string[];
+  /** ALBUM-SOUND-001: the album's own listening mix, for the Sound card on its page. */
+  mix?: AlbumMix;
 }
 
 /** ARTIST-PAGE-001: `dz:<deezer id>` or `yt:<UC channel id>`; a name alone is looked up exactly. */
@@ -457,6 +459,14 @@ export interface SeedsView {
   seeds: Track[];
   playlist?: { id: string; name: string } | null;
   can_restore?: boolean;
+}
+
+/** ALBUM-SOUND-001: an album's own mix - the same shape a saved list has, minus the list itself. */
+export interface AlbumMix {
+  taste: TasteSummary | null;
+  /** Songs on the album the engine could read; `placed` of them have a genre. */
+  songs: number;
+  placed: number;
 }
 
 export interface PlaylistMix {

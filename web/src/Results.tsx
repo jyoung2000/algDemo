@@ -3,6 +3,7 @@ import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
 import type { ArtistTarget, FeedbackKind, PlaylistSummary, RecItem, Track } from './api';
 import type { CardCache } from './engine/queue-controls';
 import { Art } from './Art';
+import { matchRecordings } from './engine/identity';
 import { SaveMenu } from './SaveMenu';
 import { SongCredits } from './SongCredits';
 import { PROVIDER_LABEL, TIER_LABEL, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreBubbles, markKey, playbackOfTrack, toneLabel } from './util';
@@ -50,6 +51,17 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
   /** Which row's save menu is showing, by song key. Only one opens at a time. */
   const [saving, setSaving] = useState<string | null>(null);
 
+  /**
+   * SEED-DUPE-001: a song that is both a starting song and in the queue below is one song, so it
+   * gets one row. The queue row is the one kept - it is the playable one, with its rank, cache
+   * state and feedback - and it carries the starting-song marker and controls. The same recording
+   * from another service counts as the same song, not a second one.
+   */
+  const sameSong = (a: Track, b: Track): boolean =>
+    a.key === b.key || matchRecordings(a as never, b as never).verdict === 'same';
+  const seedOf = (t: Track): Track | null => seeds.find((s) => sameSong(s, t)) ?? null;
+  const seedRows = seeds.filter((s) => !items.some((it) => sameSong(it.track, s)));
+
   const move = (from: number, dir: 1 | -1) => {
     const next = items[from + dir];
     if (!next) return;
@@ -59,7 +71,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
 
   return (
     <ol className="recs" aria-label="Now playing queue">
-      {seeds.map((s) => {
+      {seedRows.map((s) => {
         const strong = (s.emphasis ?? 1) > 1;
         const pb = playbackOfTrack(s);
         const seedPlayable = canPlayHere(pb);
@@ -132,6 +144,9 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         const bubbles = genreBubbles(it.characteristics);
         const toneFact = toneLabel(it.characteristics);
         const cache = cacheOf?.(t.key) ?? null;
+        // SEED-DUPE-001: this queue row is also the starting song, so it says so and carries its controls.
+        const seed = seedOf(t);
+        const seedStrong = (seed?.emphasis ?? 1) > 1;
         return (
           <li
             key={t.key}
@@ -190,6 +205,11 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               <SongCredits track={t} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} artistClassName="rec__artist" />
             </div>
             <div className="rec__sub">
+              {seed && (
+                <span className="rec__why1 rec__why1--seed">
+                  <Glyph name="star" size={11} /> Starting song{seedStrong ? ' · counts double' : ''}
+                </span>
+              )}
               <span className="rec__why1">{it.reasons[0]?.text ?? 'Found from your starting songs.'}</span>
               {(bubbles.length > 0 || facts.length > 0) && (
                 <span className="rec__facts" aria-label="Song details">
@@ -212,6 +232,29 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
             </span>
             <span className="rec__dur">{fmtDuration(t.duration)}</span>
             <div className="rec__actions">
+              {seed && (
+                <>
+                  <button
+                    className={classNames('iconbtn', seedStrong && 'is-on')}
+                    type="button"
+                    aria-pressed={seedStrong}
+                    title={seedStrong ? 'Emphasised: counts double' : 'Emphasise this starting song'}
+                    aria-label={seedStrong ? `Stop emphasising ${t.title}` : `Emphasise ${t.title}`}
+                    onClick={() => onEmphasis(seed.key, seedStrong ? 1 : 2)}
+                  >
+                    <Glyph name="star" size={14} />
+                  </button>
+                  <button
+                    className="iconbtn"
+                    type="button"
+                    title="Stop using this as a starting song"
+                    aria-label={`Stop ${t.title} being a starting song`}
+                    onClick={() => onRemoveSeed(seed.key)}
+                  >
+                    <Glyph name="close" size={14} />
+                  </button>
+                </>
+              )}
               {playable && (
                 <button className="iconbtn" type="button" onClick={() => onPlay(it)} aria-label={`Play ${t.title}`} title="Play">
                   <Glyph name="play" size={14} />

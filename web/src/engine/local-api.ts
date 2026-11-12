@@ -534,7 +534,15 @@ export class LocalApi {
     try {
       const a = id ? await this.albums.open(id, { meter }) : await this.albums.openFor(track as never, { meter });
       if (!a) return fail(404, 'No album for this song was found on Deezer, Apple Music, YouTube Music or SoundCloud.', { code: 'none' });
-      return ok({ album: { ...a, tracks: a.tracks.map((t) => cleanTrack(t as Dict)) } });
+      // ALBUM-SOUND-001: the album's own sound, from the genres of its songs, in the shape the
+      // Sound card draws for the listener's taste and for a saved list. Album songs come straight
+      // from the provider and usually carry no tags of their own, so what the service says about
+      // the album itself (Deezer and Apple state a genre) stands in for a song it cannot place.
+      const tracks = a.tracks.map((t) => cleanTrack(t as Dict));
+      const own = this.genresOfTrack();
+      const albumTags = a.genres.map((g) => makeTag(String(g), 'album genre', 'album', 0.6)).filter((t): t is Tag => Boolean(t));
+      const mix = playlistMix(tracks, (t) => { const got = own(t); return got.length ? got : albumTags; }, unixNow());
+      return ok({ album: { ...a, tracks, mix } });
     } catch (e) {
       if (e instanceof ProviderError) return fail(404, e.message, { code: 'none' });
       return this.identifyFailure(e, 'album');
@@ -769,14 +777,14 @@ export class LocalApi {
     this.store.drop('discovery_events');
   }
 
-  /** PLAYLIST-MIX-001: a saved list's own listening mix, for the Sound card. */
-  private playlistMixRoute(id: string): LocalResponse {
-    const list = this.storedPlaylists().find((l) => l.id === id);
-    if (!list) return fail(404, 'That list no longer exists.');
-    const known = this.knownTracks();
-    const tracks = list.entries.map((e) => known.get(e.key)).filter((t): t is Dict => Boolean(t));
+  /**
+   * A song's genres from whichever source knows them: its own tags, then what the services said
+   * when it was a starting song, then its artist's other songs. [] when none of them does, so a
+   * mix can say honestly how much of a list or album it could place.
+   */
+  private genresOfTrack(): (t: Dict) => Tag[] {
     const artists = this.store.get<Record<string, Record<string, number>>>('artist_genres') ?? {};
-    const genresOf = (t: Dict): Tag[] => {
+    return (t: Dict): Tag[] => {
       const own = ((t['tags'] as Tag[] | undefined) ?? []).filter((g) => g && typeof g.name === 'string');
       if (own.length) return own;
       const prof = this.store.cacheGet(`seedprofile:${t['id']}`, true)?.value as Dict | undefined;
@@ -785,6 +793,15 @@ export class LocalApi {
       const guess = inferFromArtist(t, artists);
       return guess ? [guess] : [];
     };
+  }
+
+  /** PLAYLIST-MIX-001: a saved list's own listening mix, for the Sound card. */
+  private playlistMixRoute(id: string): LocalResponse {
+    const list = this.storedPlaylists().find((l) => l.id === id);
+    if (!list) return fail(404, 'That list no longer exists.');
+    const known = this.knownTracks();
+    const tracks = list.entries.map((e) => known.get(e.key)).filter((t): t is Dict => Boolean(t));
+    const genresOf = this.genresOfTrack();
     // A song the engine holds no copy of still counts as one of the list's songs, just not placed.
     return ok({ id: list.id, name: list.name, ...playlistMix(tracks, genresOf, unixNow()), songs: list.entries.length });
   }
