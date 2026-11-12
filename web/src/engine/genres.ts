@@ -11,6 +11,11 @@ const ALIASES: Record<string, string> = {
   'r b': 'r&b', rnb: 'r&b', 'r and b': 'r&b', 'rhythm and blues': 'r&b', 'contemporary r b': 'r&b', 'contemporary r and b': 'r&b', 'r and b soul': 'r&b', 'neo soul': 'neo-soul', neosoul: 'neo-soul', motown: 'soul',
   'hip hop': 'hip-hop', 'rap hip hop': 'hip-hop', rap: 'hip-hop', hiphop: 'hip-hop', 'hip hop rap': 'hip-hop', trap: 'trap',
   'boom bap': 'hip-hop', crunk: 'hip-hop', 'g funk': 'hip-hop', 'uk drill': 'drill', drill: 'drill', grime: 'grime', phonk: 'phonk',
+  // ALBUM-GENRE-DETAIL-001: both describe a manner, not a scene, and MusicBrainz puts them on
+  // records from every city. They name the family and stop there, rather than borrowing West Coast
+  // or conscious rap from a neighbouring cell.
+  'gangsta rap': 'hip-hop', gangsta: 'hip-hop', 'hardcore hip hop': 'hip-hop', 'hardcore rap': 'hip-hop',
+  'chicago drill': 'hip-hop', 'industrial hip hop': 'hip-hop',
   electro: 'electronic', electronica: 'electronic', edm: 'electronic', 'electronic dance music': 'electronic', idm: 'electronic',
   dance: 'dance', 'dance pop': 'dance-pop', eurodance: 'dance', disco: 'disco', 'nu disco': 'disco',
   synthpop: 'synth-pop', 'synth pop': 'synth-pop', electropop: 'synth-pop', 'electro pop': 'synth-pop',

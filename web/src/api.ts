@@ -131,6 +131,8 @@ export interface ArtistView {
   singles: AlbumSummary[];
   links: { deezer?: string; ytmusic?: string };
   sources: Record<string, { state: 'ok' | 'none' | 'failed'; count?: number; detail?: string }>;
+  /** ARTIST-FALLBACK-001: no service had a page for this name; the songs are the ones held here. */
+  local?: boolean;
 }
 
 export interface AlbumSearchResponse {

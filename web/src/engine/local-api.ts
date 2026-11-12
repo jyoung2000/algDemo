@@ -23,11 +23,11 @@ import {
   unplayedCount,
   type Playlist,
 } from './playlists';
-import { Deezer, NeedsChoice, ProviderError, type Ctx } from './deezer';
+import { Deezer, NeedsChoice, ProviderError, cached, type Ctx } from './deezer';
 import * as E from './engine';
 import { buildTaste, tasteSummary, tasteFit, type TasteProfile } from './taste';
 import { buildTasteBlend, type TasteBlend } from './taste2';
-import { ARTIST_SUBS_KEY, withArtistSubs, type ArtistSubsMap } from './artist-subs';
+import { ARTIST_SUBS_KEY, MUSICBRAINZ_UA, lookupArtistSubs, withArtistSubs, type ArtistSubsMap } from './artist-subs';
 import { fold, matchRecordings } from './identity';
 import { findFullSong, type FullSongResult } from './full-song-chain';
 
@@ -40,6 +40,7 @@ const NO_SOURCE_TTL = 15 * 60;
 
 import { buildProfile } from './profile';
 import { playlistMix } from './playlist-mix';
+import { albumGenres, releaseGroupId, tagsFromReleaseGroup } from './album-genres';
 import { seedWindow } from './seed-window';
 import type { Tag } from './genres';
 import { classify, classifyAll } from './classify';
@@ -52,7 +53,7 @@ import { Job, Pipeline, pmap, type Embedder } from './pipeline';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
 import { Albums } from './albums';
-import { Artists } from './artists';
+import { Artists, partitionFeatures } from './artists';
 import { albumKeyOf } from './album-key';
 import { SoundCloud } from './soundcloud';
 import { Bandcamp } from './bandcamp';
@@ -520,9 +521,52 @@ export class LocalApi {
       const all = await this.artists.everySong(a, { meter });
       return ok({ songs: clean(all.songs), features: clean(all.features), opened: all.opened, failed: all.failed });
     } catch (e) {
-      if (e instanceof ProviderError) return fail(404, e.message, { code: 'none' });
+      // ARTIST-FALLBACK-001: song credits carry names no service has a page for - uploader handles,
+      // small self-releases, a name spelt another way. Tapping one lands on what this app holds by
+      // that name rather than on an error.
+      if (e instanceof ProviderError && name) return ok({ artist: this.localArtist(name) });
       return this.identifyFailure(e, 'artist');
     }
+  }
+
+  /**
+   * ALBUM-GENRE-DETAIL-001: what MusicBrainz's listeners call this record. Two small requests, both
+   * cached a month and charged to the day's allowance: a search that proves which release-group is
+   * meant, then the lookup that carries its genres (a search answer has none). Any failure, or a
+   * release nobody tagged, simply adds nothing.
+   */
+  private async releaseGroupTags(title: string, artist: string, meter: Meter | undefined, artistKnown: Tag[] = []): Promise<Tag[]> {
+    if (!title || title.length > 120 || artist.length > 120) return [];
+    const headers = { 'user-agent': MUSICBRAINZ_UA, accept: 'application/json' };
+    const get = (url: string, key: string) =>
+      cached(this.store, key, 'metadata', 30 * 24 * 3600, () =>
+        this.http.getJson<Dict>(url, { maxBytes: 150_000, ...(meter ? { meter } : {}), category: 'metadata', headers }),
+      );
+    try {
+      const q = `release:"${title.replace(/"/g, ' ')}"${artist ? ` AND artist:"${artist.replace(/"/g, ' ')}"` : ''}`;
+      const found = await get(`https://musicbrainz.org/ws/2/release-group?query=${encodeURIComponent(q)}&fmt=json&limit=1`, `mb:rg:${fold(artist)}:${fold(title)}`);
+      const id = releaseGroupId(found, title, artist);
+      if (!id) return [];
+      const full = await get(`https://musicbrainz.org/ws/2/release-group/${id}?inc=tags+genres&fmt=json`, `mb:rgtags:${id}`);
+      return tagsFromReleaseGroup(full, undefined, undefined, artistKnown);
+    } catch {
+      return [];
+    }
+  }
+
+  /** The songs this app already holds credited to a name, as an artist page of its own. */
+  private localArtist(name: string): Dict {
+    const held = [...this.knownTracks().values()].filter((t) =>
+      ((t['artists'] as string[] | undefined) ?? (t['artist'] ? [String(t['artist'])] : [])).some((n) => fold(String(n)) === fold(name)),
+    );
+    const { songs, features } = partitionFeatures(held as never, name);
+    return {
+      id: `local:${fold(name)}`, name, picture: null, detail: null, local: true,
+      songs: (songs as Dict[]).map((t) => cleanTrack(t)),
+      features: (features as Dict[]).map((t) => cleanTrack(t)),
+      albums: [], singles: [], links: {},
+      sources: { deezer: { state: 'none' }, ytmusic: { state: 'none' } },
+    };
   }
 
   /** `{ id }` opens that album; `{ track }` opens the album the song sits on. */
@@ -540,9 +584,29 @@ export class LocalApi {
       // the album itself (Deezer and Apple state a genre) stands in for a song it cannot place.
       const tracks = a.tracks.map((t) => cleanTrack(t as Dict));
       const own = this.genresOfTrack();
-      const albumTags = a.genres.map((g) => makeTag(String(g), 'album genre', 'album', 0.6)).filter((t): t is Tag => Boolean(t));
-      const mix = playlistMix(tracks, (t) => { const got = own(t); return got.length ? got : albumTags; }, unixNow());
-      return ok({ album: { ...a, tracks, mix } });
+      const stated = a.genres.map((g) => makeTag(String(g), 'album genre', 'album', 0.6)).filter((t): t is Tag => Boolean(t));
+      const artist = String((a as Dict)['artist'] ?? '');
+      const subsKey = fold(artist);
+      // ALBUM-GENRE-DETAIL-001, step one: what this artist is known for. Asked once per artist
+      // (MusicBrainz, cached a month, inside the day's allowance) and remembered for everything
+      // else that reads a genre.
+      if (artist && artist.length <= 80 && !(this.store.get<ArtistSubsMap>(ARTIST_SUBS_KEY) ?? {})[subsKey]?.tags.length) {
+        try {
+          await lookupArtistSubs(this.store, this.http, artist, { meter }, (key, fn) => cached(this.store, key, 'metadata', 30 * 24 * 3600, fn) as Promise<never>, unixNow());
+        } catch {
+          /* no subgenre detail is not a failed album */
+        }
+      }
+      const subs = this.store.get<ArtistSubsMap>(ARTIST_SUBS_KEY) ?? {};
+      // Step two: what MusicBrainz's listeners call THIS record ("neo-soul", "rage"), which is
+      // finer than a service's one-word album genre. Ties go to what the artist is known for, so a
+      // single stray vote does not take a slot from the style the record is actually in.
+      const mbTags = await this.releaseGroupTags(String((a as Dict)['title'] ?? ''), artist, meter, subs[subsKey]?.tags ?? []);
+      const albumTags = [...mbTags, ...stated.filter((t) => !mbTags.some((m) => m.name === t.name))];
+      const genresOf = (t: Dict): Tag[] => albumGenres({ ...t, tags: own(t) }, { albumTags, subs, artist });
+      const mix = playlistMix(tracks, genresOf, unixNow());
+      const tagged = tracks.map((t) => ({ ...t, tags: genresOf(t) }));
+      return ok({ album: { ...a, tracks: tagged, mix } });
     } catch (e) {
       if (e instanceof ProviderError) return fail(404, e.message, { code: 'none' });
       return this.identifyFailure(e, 'album');

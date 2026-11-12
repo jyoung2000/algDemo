@@ -122,6 +122,16 @@ export function ArtistView({ target, onBack, onPreview, onOpenAlbum, onOpenArtis
         ].filter((x): x is string => Boolean(x));
         return (
           <>
+            {a.local && (
+              // ARTIST-FALLBACK-001: say plainly that no service has a page for this name, and show
+              // what this app holds by it, instead of a dead end.
+              <p className="state album__note" role="status">
+                <Glyph name="info" size={14} /> Neither Deezer nor YouTube Music has a page for
+                {' \u201C'}{a.name}{'\u201D'}. {a.songs.length || (a.features?.length ?? 0)
+                  ? 'These are the songs you already have by them.'
+                  : 'You have no songs by them yet, so there is nothing to show.'}
+              </p>
+            )}
             <div className="album__head">
               <span className="artist-pic">
                 <Art src={a.picture} size={112} />

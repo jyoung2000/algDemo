@@ -55,7 +55,11 @@ export const SUBS: SubDef[] = [
   { key: 'boom-bap', name: 'Boom bap revival', family: 'hip-hop', aliases: ['boom bap', 'boom-bap', 'old school hip hop', 'golden age hip hop', 'east coast hip hop', 'east coast rap', 'new york hip hop'] },
   { key: 'jersey-club', name: 'Jersey club (rap crossover)', family: 'hip-hop', aliases: ['jersey club', 'jersey-club'] },
   { key: 'trap', name: 'Trap', family: 'hip-hop', aliases: ['trap music', 'southern trap', 'atlanta trap', 'mumble rap', 'hip hop trap'] },
-  { key: 'drill', name: 'NY / Brooklyn drill', family: 'hip-hop', aliases: ['drill', 'ny drill', 'brooklyn drill', 'chicago drill', 'bronx drill', 'drill rap'], short: 'NY drill' },
+  // This cell is the picker's NY cell (Pop Smoke, Fivio, Ice Spice), with its own tempo range, so
+  // 'chicago drill' no longer leads here: Ken Carson's More Chaos was shown as NY & Brooklyn drill
+  // on the strength of one Chicago tag. Chicago drill now names the family and stops
+  // (ALBUM-GENRE-DETAIL-001).
+  { key: 'drill', name: 'NY / Brooklyn drill', family: 'hip-hop', aliases: ['drill', 'ny drill', 'brooklyn drill', 'bronx drill', 'drill rap'], short: 'NY drill' },
   { key: 'plugg', name: 'Plugg / pluggnb', family: 'hip-hop', aliases: ['plugg', 'pluggnb', 'plugg nb'] },
   { key: 'phonk', name: 'Phonk (OG and drift)', family: 'hip-hop', aliases: ['phonk', 'drift phonk', 'memphis phonk', 'memphis rap', 'brazilian phonk'] },
   { key: 'trap-metal', name: 'Trap metal / SoundCloud rap', family: 'hip-hop', aliases: ['trap metal', 'soundcloud rap', 'soundcloud', 'emo rap'] },
@@ -66,8 +70,13 @@ export const SUBS: SubDef[] = [
   // (so tempo never invents them); only a tag or a community tag can name them. Words come from real
   // MusicBrainz artist tags (Pop Smoke, Playboi Carti, Kendrick Lamar, MF DOOM).
   { key: 'cloud-rap', name: 'Cloud / melodic rap', family: 'hip-hop', aliases: ['cloud rap', 'melodic rap', 'sad rap', 'dream rap', 'ethereal rap'], short: 'Cloud rap' },
-  { key: 'conscious', name: 'Conscious / jazz rap', family: 'hip-hop', aliases: ['conscious hip hop', 'conscious rap', 'political hip hop', 'lyrical hip hop', 'jazz rap', 'jazz hip hop', 'hardcore hip hop'], short: 'Conscious rap' },
-  { key: 'west-coast', name: 'West Coast / G-funk', family: 'hip-hop', aliases: ['west coast hip hop', 'west coast rap', 'g funk', 'g-funk', 'gangsta rap', 'hyphy', 'bay area hip hop'] },
+  // 'hardcore hip hop' was an alias here and put rage albums (Ken Carson, A Great Chaos) under
+  // conscious / jazz rap. It describes loudness, not that scene, so it names no subgenre at all now
+  // and leaves the song in hip-hop: a wrong subgenre is worse than none (ALBUM-GENRE-DETAIL-001).
+  { key: 'conscious', name: 'Conscious / jazz rap', family: 'hip-hop', aliases: ['conscious hip hop', 'conscious rap', 'political hip hop', 'lyrical hip hop', 'jazz rap', 'jazz hip hop'], short: 'Conscious rap' },
+  // 'gangsta rap' is a stance, not a coast: it is tagged on Atlanta and New York records too, so it
+  // no longer stands in for West Coast / G-funk (ALBUM-GENRE-DETAIL-001).
+  { key: 'west-coast', name: 'West Coast / G-funk', family: 'hip-hop', aliases: ['west coast hip hop', 'west coast rap', 'g funk', 'g-funk', 'hyphy', 'bay area hip hop'] },
   { key: 'southern', name: 'Southern hip-hop / crunk', family: 'hip-hop', aliases: ['southern hip hop', 'southern rap', 'dirty south', 'crunk', 'houston rap', 'chopped and screwed', 'chopped screwed', 'bounce music', 'miami bass'] },
   { key: 'alt-hip-hop', name: 'Alternative / underground hip-hop', family: 'hip-hop', aliases: ['alternative hip hop', 'alternative rap', 'underground hip hop', 'underground rap', 'abstract hip hop', 'experimental hip hop', 'indie rap', 'left field hip hop'], short: 'Alternative hip-hop' },
   { key: 'grime', name: 'Grime / UK rap', family: 'hip-hop', aliases: ['grime', 'uk hip hop', 'uk rap', 'road rap'] },
