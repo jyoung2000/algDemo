@@ -90,9 +90,11 @@ export class Deezer {
     });
   }
 
-  search(q: string, limit = 15, c: Ctx = {}): Promise<Track[]> {
-    return cached(this.store, `dz:search:${fold(q)}:${limit}`, 'search', 15 * 60, async () => {
-      const d = await this.get(`/search?q=${encodeURIComponent(q)}&limit=${limit}`, c);
+  /** `page` reads that far into the results (COLOR-DISCOVERY-001), so a repeated term still brings new songs. */
+  search(q: string, limit = 15, c: Ctx = {}, page = 0): Promise<Track[]> {
+    const index = Math.max(0, Math.trunc(page)) * limit;
+    return cached(this.store, `dz:search:${fold(q)}:${limit}:${index}`, 'search', 15 * 60, async () => {
+      const d = await this.get(`/search?q=${encodeURIComponent(q)}&limit=${limit}${index ? `&index=${index}` : ''}`, c);
       return ((d.data as Json[]) ?? []).filter((x) => (x.type ?? 'track') === 'track' && (x.readable ?? true)).map((x) => this.toTrack(x));
     });
   }

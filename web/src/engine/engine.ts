@@ -29,8 +29,11 @@ export const RELATION: Record<string, [number, string, boolean]> = {
   search_match: [0.5, 'Apple Music’s catalogue turns it up for', false],
   // ALBUM-TASTE-001: the rest of an album the listener keeps playing, fetched for a starting song on it.
   same_album: [0.6, 'From the album you keep playing, like', true],
+  // COLOR-DISCOVERY-001: the listener's own colours asked the services for this, so discovery keeps
+  // finding new music after the starting songs' own sources are spent. Exploration, not relatedness.
+  taste_colour: [0.0, 'Your sound leans this way, so the services were asked for more of', false],
 };
-export const EXPLORATION_RELATIONS = new Set(['genre_chart']);
+export const EXPLORATION_RELATIONS = new Set(['genre_chart', 'taste_colour']);
 
 export interface Settings {
   adventurous: number; // 0 familiar .. 1 adventurous; 0.5 is neutral scoring
@@ -835,11 +838,12 @@ export function explain(s: Scored, ctx: Context): [Reason[], string[]] {
   const explore = (t.provenance ?? []).find((p) => EXPLORATION_RELATIONS.has(p.relation));
   if (explore && !reasons.some((r) => r.factor === 'provider' || r.factor === 'audio' || r.factor === 'artist')) {
     const g = explore.via;
-    reasons.push({
-      factor: 'exploration',
-      text: `An exploration pick from Deezer's ${g ? g + ' ' : 'genre '}chart, a genre Deezer gives ${seed}.`,
-      weight: 0.001,
-    });
+    // COLOR-DISCOVERY-001: a song the listener's own colours asked for did not come off a chart, and
+    // saying so would be a lie about where it came from.
+    const text = explore.relation === 'taste_colour'
+      ? `Your sound leans ${g ?? 'this way'}, so the services were asked for more of it.`
+      : `An exploration pick from Deezer's ${g ? g + ' ' : 'genre '}chart, a genre Deezer gives ${seed}.`;
+    reasons.push({ factor: 'exploration', text, weight: 0.001 });
   }
   // Evidence first; "new artist" and freshness describe the pick rather than why it fits.
   const several = reasons.length > 1;

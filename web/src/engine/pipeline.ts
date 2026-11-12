@@ -6,6 +6,7 @@
  * round-robin across seeds give the same candidates as the server would.
  */
 import * as A from './audio';
+import { tasteAsks, tasteWideAsk, TASTE_ASKS_PER_RUN, TASTE_RELATION, type Colour } from './taste-gather';
 import { type EngineConfig, TRANSFER } from './config';
 import { decodeToMono48k } from './decode';
 import { type Ctx, type Deezer, ProviderError, cached } from './deezer';
@@ -180,6 +181,8 @@ export class Pipeline {
     onPartial?: (cands: Dict[], related: Map<string, Set<string>>) => void,
     /** ALBUM-TASTE-001: album keys the listener keeps playing; a starting song on one fetches the rest of it. */
     deepAlbums: ReadonlySet<string> = new Set(),
+    /** COLOR-DISCOVERY-001: the listener's colours and how far previous runs read into them. */
+    colour: { colours: Colour[]; cursor: number } = { colours: [], cursor: 0 },
   ): Promise<{ cands: Dict[]; related: Map<string, Set<string>> }> {
     const n = Math.max(1, seeds.length);
     const perSeed = Math.max(6, Math.ceil(cfg.perSourceCap / n));
@@ -238,6 +241,35 @@ export class Pipeline {
         const gid = ids[name];
         if (gid) add('deezer-genre-chart', s, async () => rel(await this.dz.genreChart(gid, 10, c), 'genre_chart', name));
       }
+    }
+
+    // COLOR-DISCOVERY-001: the listener's colours ask for music of their own. These are the only
+    // asks that do not come from a starting song, which is exactly why discovery can keep going
+    // after every seed's own sources are spent. Each ask is pinned to a starting song so the merge
+    // and the reason still name one, and the relation says a colour found it.
+    const asks = tasteAsks(colour.colours, colour.cursor, TASTE_ASKS_PER_RUN);
+    asks.forEach((ask, i) => {
+      const owner = seeds[i % seeds.length] as Dict | undefined;
+      if (!owner) return;
+      const term = ask.kind === 'artist' ? `artist:"${ask.term}"` : ask.term;
+      add(`taste-${ask.kind}`, owner, async () => rel(await this.dz.search(term, 12, c, ask.page), TASTE_RELATION, ask.label));
+    });
+
+    // Widening: one colour per run is followed out to the artists Deezer puts beside its reference
+    // artist, so a colour is never limited to the three names the catalogue happens to list.
+    const wide = tasteWideAsk(colour.colours, colour.cursor);
+    if (wide && seeds.length) {
+      add('taste-wide', seeds[0] as Dict, async () => {
+        const hits = await this.dz.search(`artist:"${wide.term}"`, 1, c, wide.depth);
+        const aid = (hits[0]?.artistIds as Dict | undefined)?.['deezer'] as string | undefined;
+        if (!aid || !/^\d{1,15}$/.test(aid)) return [];
+        const out: Rel[] = [];
+        for (const a of (await this.dz.relatedArtists(aid, 4, c)).slice(0, 4)) {
+          job.token.check();
+          for (const t of await this.dz.artistTop(a.id, 3, c)) out.push([t, TASTE_RELATION, wide.label]);
+        }
+        return out;
+      });
     }
 
     // similar-artist names from YT Music feed the artist factor

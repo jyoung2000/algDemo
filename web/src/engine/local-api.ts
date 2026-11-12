@@ -26,6 +26,7 @@ import {
 import { Deezer, NeedsChoice, ProviderError, cached, type Ctx } from './deezer';
 import * as E from './engine';
 import { buildTaste, tasteSummary, tasteFit, type TasteProfile } from './taste';
+import { type Colour } from './taste-gather';
 import { buildTasteBlend, type TasteBlend } from './taste2';
 import { ARTIST_SUBS_KEY, MUSICBRAINZ_UA, lookupArtistSubs, withArtistSubs, type ArtistSubsMap } from './artist-subs';
 import { fold, matchRecordings } from './identity';
@@ -149,6 +150,8 @@ function withAlbumOf(t: Dict, from: Dict | undefined): Dict {
 }
 const QUEUE_SAVED_KEY = 'queue_saved';
 const SEED_CURSOR_KEY = 'seed_cursor';
+/** COLOR-DISCOVERY-001: how far previous runs have read into the listener's colours. */
+const TASTE_CURSOR_KEY = 'taste_cursor';
 const CAPS = ['search', 'resolve_link', 'related_candidates', 'artist_candidates', 'recent_candidates', 'playback_link'];
 
 /**
@@ -1100,7 +1103,14 @@ export class LocalApi {
       };
       // ALBUM-TASTE-001: albums the listener keeps playing are fetched whole for a starting song on them.
       const deepAlbums = new Set(Object.entries(fb.album ?? {}).filter(([, v]) => v >= E.ALBUM_DEEP_MIN).map(([k]) => k));
-      const gathered = await p.gather(job, gatherViews, profiles, cfg, es.fresh, onPartial, deepAlbums);
+      // COLOR-DISCOVERY-001: the colours the Sound card draws are handed to the gather step as a
+      // source of their own, and the cursor moves on, so the next run asks for music this one did
+      // not. This is what lets discovery keep going once every starting song's sources are spent.
+      const colourCursor = Math.max(0, Math.trunc(Number(this.store.get(TASTE_CURSOR_KEY) ?? 0)));
+      const colours = this.colourList(taste);
+      if (colours.length) await this.store.put(TASTE_CURSOR_KEY, colourCursor + 1);
+      job.timings['taste_colours'] = colours.length;
+      const gathered = await p.gather(job, gatherViews, profiles, cfg, es.fresh, onPartial, deepAlbums, { colours, cursor: colourCursor });
       const related = gathered.related;
       // Only songs the list does not already hold can take a slot in this batch.
       const cands = newDiscoveryTracks(gathered.cands, held);
@@ -1110,7 +1120,11 @@ export class LocalApi {
         job.result = merge({
           phase: 'final', items: [], count: 0, asked: cfg.queueSize, sources: job.sources, audio: job.audio, timings: job.timings,
           transfer: { ...job.meter.counts },
-          empty_reason: previous.length ? 'No new songs this time. Your list is unchanged.' : 'No service returned related songs for these starting songs.',
+          empty_reason: previous.length
+            ? colours.length
+              ? 'No new songs this time. Your list is unchanged; the next run reads further into your sound.'
+              : 'No new songs this time. Your list is unchanged. Finish or like a few songs and your sound starts finding more on its own.'
+            : 'No service returned related songs for these starting songs.',
         });
         return;
       }
@@ -1413,6 +1427,13 @@ export class LocalApi {
   }
 
   /** The listening taste as of now, from every stored playback and feedback event. */
+  /** The colours the Sound card draws, as the gather step wants them (COLOR-DISCOVERY-001). */
+  private colourList(taste: TasteProfile): Colour[] {
+    const sum = tasteSummary(taste);
+    const list = (sum?.['genres'] ?? []) as { name: string; label: string; score: number }[];
+    return list.filter((g) => g.score > 0).map((g) => ({ name: g.name, label: g.label || g.name, score: g.score }));
+  }
+
   taste(): TasteProfile {
     return buildTaste(this.historyRows().map((r) => ({ key: r.key, kind: r.kind, ts: r.ts, track: r.track })), unixNow());
   }
