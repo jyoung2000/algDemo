@@ -3625,6 +3625,13 @@ html {
 /* These states fill the whole rail and carry their own flat colour, so no clip and no gradient. */
 /* Ready is the quiet, common case: a full hairline, not a shout. */
 .rec__dl[data-dl='ready'] .rec__dl-rail { background: var(--accent-soft); clip-path: none; }
+/* READY-PLAY-001: a quiet blue tint means a full local file is ready, not merely resolvable.
+   The existing check and accessible readiness text remain; colour is an additional cue. */
+.rec__actions .iconbtn.playbtn[data-ready='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px #b8cff0;
+}
 .rec__dl[data-dl='failed'] .rec__dl-rail,
 .rec__dl[data-dl='blocked'] .rec__dl-rail { width: 100%; background: var(--danger); opacity: 0.5; clip-path: none; }
 .rec__dl[data-dl='queued'] .rec__dl-rail { width: 100%; background: var(--hair); clip-path: none; }

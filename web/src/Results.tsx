@@ -76,6 +76,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         const strong = (s.emphasis ?? 1) > 1;
         const pb = playbackOfTrack(s);
         const seedPlayable = canPlayHere(pb);
+        const seedReady = cacheOf?.(s.key)?.state === 'ready';
         return (
           <li key={`seed:${s.key}`} className={classNames('rec', 'rec--seed', strong && 'is-strong', playingKey === s.key && 'is-playing')}>
             <span className="rec__rank" aria-hidden="true">
@@ -109,7 +110,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
             <span className="rec__dur" />
             <div className="rec__actions">
               {seedPlayable && (
-                <button className="iconbtn" type="button" onClick={() => onPlayTrack(s)} aria-label={`Play ${s.title}`} title="Play">
+                <button className="iconbtn playbtn" data-ready={seedReady || undefined} type="button" onClick={() => onPlayTrack(s)} aria-label={`Play ${s.title}`} title={seedReady ? 'Play — ready locally' : 'Play'}>
                   <Glyph name="play" size={14} />
                 </button>
               )}
@@ -257,7 +258,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                 </>
               )}
               {playable && (
-                <button className="iconbtn" type="button" onClick={() => onPlay(it)} aria-label={`Play ${t.title}`} title="Play">
+                <button className="iconbtn playbtn" data-ready={cache?.state === 'ready' || undefined} type="button" onClick={() => onPlay(it)} aria-label={`Play ${t.title}`} title={cache?.state === 'ready' ? 'Play — ready locally' : 'Play'}>
                   <Glyph name="play" size={14} />
                 </button>
               )}
