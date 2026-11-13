@@ -203,8 +203,8 @@ describe('the controls are flat and reachable', () => {
     const row = /<span className="track__actions">([\s\S]*?)<\/span>/.exec(search);
     expect(row, 'track__actions not found').toBeTruthy();
     expect(row![1]).not.toContain('addbtn');
-    // The row's own action is the like button now (SEARCH-LIKE-001), drawn as the song list's.
-    expect(row![1]).toMatch(/className=\{classNames\('iconbtn', added && 'is-on'\)\}[\s\S]*?aria-pressed=\{added\}[\s\S]*?<Glyph name="thumb-up" size=\{14\} \/>/);
+    // Same action and flat touch target; STAR-PLAYLIST-001 changes only the mark, not its behavior.
+    expect(row![1]).toMatch(/className=\{classNames\('iconbtn', added && 'is-on'\)\}[\s\S]*?aria-pressed=\{added\}[\s\S]*?<SongStar saved=\{inPlaylist\(t.key, lists\)\} \/>/);
     expect(row![1]).not.toMatch(/name=\{added \? 'check' : 'add'\}/);
     // Same paint as .rec__actions: one shared rule set in the main stylesheet.
     const main = readFileSync(new URL('./styles.css', import.meta.url), 'utf8');

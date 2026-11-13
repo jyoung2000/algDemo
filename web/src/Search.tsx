@@ -4,6 +4,7 @@ import { RefreshGlyph } from './icons';
 import { api, ApiError, type AlbumSummary, type ArtistSummary, type ArtistTarget, type Evidence, type IdentifyResponse, type PlaylistSummary, type ResolveResponse, type SearchResponse, type SourceState, type Track } from './api';
 import { Art } from './Art';
 import { SaveMenu } from './SaveMenu';
+import { SongStar, inPlaylist } from './SongStar';
 import { AlbumShelf } from './AlbumShelf';
 import { SongCredits } from './SongCredits';
 import { ArtistCard, namesArtist } from './ArtistLinks';
@@ -1218,10 +1219,10 @@ export function TrackList({
                   onAdd(t);
                   if (onLists) setSaving(t.key);
                 }}
-                aria-label={added ? `Remove like from ${t.title}` : `Like ${t.title} and choose lists`}
-                title={added ? 'Liked — a starting song' : 'Like and choose lists'}
+                aria-label={`${added ? `Remove like from ${t.title}` : `Like ${t.title} and choose lists`}${inPlaylist(t.key, lists) ? ' — saved to a playlist' : ''}`}
+                title={`${added ? 'Liked — a starting song' : 'Like and choose lists'}${inPlaylist(t.key, lists) ? ' — saved to a playlist' : ''}`}
               >
-                <Glyph name="thumb-up" size={14} />
+                <SongStar saved={inPlaylist(t.key, lists)} />
               </button>
             </span>
             {saving === t.key && onLists && (

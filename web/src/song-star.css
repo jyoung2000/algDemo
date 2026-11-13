@@ -1,0 +1,10 @@
+.song-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.song-star > svg { flex-shrink: 0; }
+.song-star__check { color: var(--accent, currentColor); }

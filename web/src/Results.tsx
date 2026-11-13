@@ -5,6 +5,7 @@ import type { CardCache } from './engine/queue-controls';
 import { Art } from './Art';
 import { matchRecordings } from './engine/identity';
 import { SaveMenu } from './SaveMenu';
+import { SongStar, inPlaylist } from './SongStar';
 import { SongCredits } from './SongCredits';
 import { PROVIDER_LABEL, TIER_LABEL, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreBubbles, markKey, playbackOfTrack, toneLabel } from './util';
 
@@ -276,10 +277,10 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                   onFeedback(it, 'like');
                   if (onLists) setSaving(t.key);
                 }}
-                aria-label={f.like ? `Remove like from ${t.title}` : `Like ${t.title} and choose lists`}
-                title={f.like ? 'Liked' : 'Like'}
+                aria-label={`${f.like ? `Remove like from ${t.title}` : `Like ${t.title} and choose lists`}${inPlaylist(t.key, lists) ? ' — saved to a playlist' : ''}`}
+                title={`${f.like ? 'Liked' : 'Like'}${inPlaylist(t.key, lists) ? ' — saved to a playlist' : ''}`}
               >
-                <Glyph name="thumb-up" size={14} />
+                <SongStar saved={inPlaylist(t.key, lists)} />
               </button>
               <button
                 className={classNames('iconbtn', f.dislike && 'is-bad')}

@@ -722,23 +722,58 @@ export function App() {
   };
 
   // ---------------------------------------------------------------- feedback
-  const onFeedback = (it: RecItem, kind: FeedbackKind) => {
-    const k = it.track.key;
-    setFlags((f) => {
-      const cur = { ...(f[k] ?? {}) };
-      if (kind === 'like') Object.assign(cur, { like: true, dislike: false });
-      if (kind === 'unlike') cur.like = false;
-      if (kind === 'dislike') Object.assign(cur, { dislike: true, like: false });
-      if (kind === 'undislike') cur.dislike = false;
-      if (kind === 'hide') cur.hide = true;
-      return { ...f, [k]: cur };
-    });
-    if (kind === 'hide') {
-      setHidden((h) => new Set(h).add(k));
-      flash(`Hidden “${it.track.title}”. It will be less likely to come back for a while.`);
+  const feedbackPending = useRef(new Set<string>());
+
+  /** Explicit judgements teach the same live ranker as listening, without another provider run. */
+  const learnFeedback = async (track: Track, kind: FeedbackKind) => {
+    const k = track.key;
+    if (feedbackPending.current.has(k)) return;
+    feedbackPending.current.add(k);
+    try {
+      // Persist before presenting a successful judgement; a failed write must not poison the UI.
+      if (!result?.sample) await api.feedback(kind, track, { event_id: newEventId(kind, k), session: sessionRef.current, origin: 'explicit' });
+      setFlags((f) => {
+        const cur = { ...(f[k] ?? {}) };
+        if (kind === 'like') Object.assign(cur, { like: true, dislike: false });
+        if (kind === 'unlike') cur.like = false;
+        if (kind === 'dislike') Object.assign(cur, { dislike: true, like: false });
+        if (kind === 'undislike') cur.dislike = false;
+        if (kind === 'hide') cur.hide = true;
+        return { ...f, [k]: cur };
+      });
+      if (kind === 'hide') {
+        setHidden((h) => new Set(h).add(k));
+        flash(`Hidden “${track.title}”. It will be less likely to come back for a while.`);
+      }
+      if (result?.sample) return;
+      const seq = ++rerankSeq.current;
+      await refreshTaste();
+      if (!result) return;
+      // Protect playback/history and owner-added entries, but apply the learned order to upcoming
+      // recommendations now. Disliked songs are excluded by the engine, not just painted red.
+      try {
+        const r = await api.rerank([...playedRef.current]);
+        if (seq !== rerankSeq.current) return;
+        setTaste(r.taste);
+        setResult(prev => {
+          if (!prev || prev.sample) return prev;
+          const protectedKeys = new Set(playedRef.current);
+          if (playing) protectedKeys.add(playing.track.key);
+          const merged = mergeRerank(prev.items, r.items, protectedKeys);
+          setFocusKey(f => keepFocus(prev.items.map(x => x.track.key), f, merged.map(x => x.track.key)));
+          return { ...prev, items: merged, count: merged.length };
+        });
+      } catch {
+        // A manually added queue can have no discovery pool yet. The judgement and colour update
+        // still succeeded and will inform the next discovery run.
+      }
+    } finally {
+      feedbackPending.current.delete(k);
     }
-    if (result?.sample) return; // sample rows are not real songs to learn from
-    api.feedback(kind, it.track, { event_id: newEventId(kind, k) }).then(() => void refreshTaste(), (e: Error) => flash(`Could not save that: ${e.message}`));
+  };
+  const onFeedback = async (it: RecItem, kind: FeedbackKind) => {
+    try { await learnFeedback(it.track, kind); }
+    catch (e) { flash(`Could not save that: ${(e as Error).message}`); }
   };
 
   useEffect(() => {
@@ -752,10 +787,7 @@ export function App() {
    * (SEARCH-LIKE-001). Same engine call as the song list's like, so the algorithm learns the same.
    */
   const likeTrack = (track: Track, like: boolean) => {
-    setFlags((f) => ({ ...f, [track.key]: { ...(f[track.key] ?? {}), like, ...(like ? { dislike: false } : {}) } }));
-    api
-      .feedback(like ? 'like' : 'unlike', track, { event_id: newEventId(like ? 'like' : 'unlike', track.key) })
-      .then(() => void refreshTaste(), (e: Error) => flash(`Could not save that: ${e.message}`));
+    void learnFeedback(track, like ? 'like' : 'unlike').catch((e: Error) => flash(`Could not save that: ${e.message}`));
   };
 
   /** Take a song off Saved: the like is removed on the engine and the row goes at once. */
@@ -1251,28 +1283,14 @@ export function App() {
           repeat={repeat}
           cacheGb={settings?.cache_gb ?? 1}
           actions={{
+            songKey: playing?.track.key,
+            lists,
             flags: (playing && flags[playing.track.key]) || {},
             downloadState: dls.trackState(playing?.track.key),
             downloadAvailable: dls.on,
             onFeedback: async (kind) => {
-              const it = playing ? items.find((x) => x.track.key === playing.track.key) : undefined;
-              if (it) {
-                onFeedback(it, kind);
-                return;
-              }
               if (!playing) return;
-              // The song playing may have left the list (a new queue, or a search result): record it directly.
-              setFlags((f) => {
-                const cur = { ...(f[playing.track.key] ?? {}) };
-                if (kind === 'like') Object.assign(cur, { like: true, dislike: false });
-                if (kind === 'unlike') cur.like = false;
-                if (kind === 'dislike') Object.assign(cur, { dislike: true, like: false });
-                if (kind === 'undislike') cur.dislike = false;
-                return { ...f, [playing.track.key]: cur };
-              });
-              if (result?.sample) return;
-              await api.feedback(kind, playing.track, { event_id: newEventId(kind, playing.track.key) });
-              await refreshTaste();
+              await learnFeedback(playing.track, kind);
             },
             onDownload: async () => (playing ? dls.downloadTrack(playing.track) : false),
             onDownloads: () => setTab('downloads'),
