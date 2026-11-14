@@ -25,10 +25,10 @@ import java.util.concurrent.atomic.AtomicReference
  * CAR-SKIP-001. Owner: "The android auto buttons also dont skip songs but only skip ahead and back
  * 15 seconds in the same song instead of going to the next song."
  *
- * A head unit plays a tapped song by sending that ONE item to the session. If the session keeps a
- * one-item timeline there is no next or previous item, so Android Auto hides the skip buttons and
- * offers its own 15-second seek instead. Playing a song from a car list must therefore leave the
- * whole list in the timeline, positioned on the tapped song. Only songs whose complete audio is on
+ * A head unit can request one item. Restore its surrounding list to give track skips actual
+ * destinations; timeline length alone does not prove which controls the host will draw. Playing
+ * from a car list must leave the whole list in the timeline, positioned on the tapped song.
+ * Only songs whose complete audio is on
  * the phone can be skipped to, as everywhere else in this app, so the fixtures carry a source.
  */
 @RunWith(AndroidJUnit4::class)

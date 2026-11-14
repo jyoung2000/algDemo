@@ -71,7 +71,9 @@ class NativeSoundTest {
     return Uri.fromFile(f)
   }
 
-  /** Records the left channel into a growable array, paced at about 4x real time like a blocking AudioTrack. */
+  /** Records the left channel at the output sample rate, like a blocking AudioTrack.
+   * Artificial 4x playback can outrun the Android decoder and insert underrun silence, invalidating
+   * a wall-frame song-duration assertion even though the DSP and transition timing are unchanged. */
   private class Recorder : AudioOutput {
     override val sampleRate = 48000
     private var buf = FloatArray(48000 * 30)
@@ -83,7 +85,7 @@ class NativeSoundTest {
         for (i in 0 until frames) buf[size + i] = interleaved[2 * i]
         size += frames
       }
-      Thread.sleep((frames * 1000L / 48000).coerceAtLeast(1) / 4)
+      Thread.sleep((frames * 1000L / 48000).coerceAtLeast(1))
       return frames
     }
     fun pcm(): FloatArray = synchronized(this) { buf.copyOf(size) }

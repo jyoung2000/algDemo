@@ -216,9 +216,9 @@ class PlaybackService : MediaLibraryService() {
     ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
       return Futures.transform(Futures.allAsList(mediaItems.map(::resolveAsync)), { resolved ->
         val items = resolved!!
-        // CAR-SKIP-001: a head unit plays a tapped song by sending that one item. Left alone the
-        // timeline holds a single song, so there is nothing to skip to and the car replaces its
-        // skip buttons with a 15-second seek. Put the list the song came from back around it.
+        // CAR-SKIP-001: a head unit can request a single item. Restore its surrounding list so
+        // track skips have real destinations. Timeline length alone does not determine the host's
+        // button choice; the platform command/action policy is verified separately.
         val whole = if (items.size == 1) listAround(items[0]) else null
         if (whole != null) MediaSession.MediaItemsWithStartPosition(whole.items, whole.index, startPositionMs)
         else MediaSession.MediaItemsWithStartPosition(items, startIndex, startPositionMs)

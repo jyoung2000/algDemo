@@ -161,16 +161,21 @@ class NativeBackgroundTest {
     val late = "https://music.youtube.com/watch?v=bgtestlatex"
     // Not downloaded yet: forget any copy an earlier run left.
     ctx.getSharedPreferences("airwave-private-audio", Context.MODE_PRIVATE).edit().remove(late).commit()
+    val pageRevision = java.util.concurrent.atomic.AtomicInteger(0)
     val page = object : EnginePlayer.Page {
       override val live = true
       override fun command(cmd: JSONObject) {}
-      override fun state(json: JSONObject) {}
+      override fun state(json: JSONObject) { pageRevision.set(json.optInt("rev", pageRevision.get())) }
     }
     EngineHub.attachPage(page)
+    // A page must adopt the service revision before issuing a load, just as the real hello
+    // handshake does; another controller test may have left a newer session revision.
+    EngineHub.fromPage(JSONObject().put("op", "hello").toString())
+    instr.waitForIdleSync()
     try {
       val song = JSONObject().put("id", "late").put("title", "Late").put("artist", "Test").put("durationMs", 3000)
         .put("ready", false).put("source", late)
-      EngineHub.fromPage(JSONObject().put("op", "load").put("song", song).put("positionMs", 0).put("play", true).put("rev", 0).toString())
+      EngineHub.fromPage(JSONObject().put("op", "load").put("song", song).put("positionMs", 0).put("play", true).put("rev", pageRevision.get()).toString())
       waitFor("waiting for the file, as loading") { it.playbackState == Player.STATE_BUFFERING && it.playWhenReady && it.currentMediaItem?.mediaId == "late" }
       Thread.sleep(1500)
       assertTrue("nothing plays before the file is here", onMain { !it.isPlaying })

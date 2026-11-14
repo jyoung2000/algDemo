@@ -318,6 +318,37 @@ class EnginePlayer(
     return Futures.immediateVoidFuture()
   }
 
+  /** A car/controller may clear or remove queue entries between playback requests. Advertising
+   * CHANGE_MEDIA_ITEMS without this handler crashed the entire media service on a non-empty clear. */
+  override fun handleRemoveMediaItems(fromIndex: Int, toIndex: Int): ListenableFuture<*> {
+    val current = queue.current
+    val next = queue.items.filterIndexed { index, _ -> index !in fromIndex until toIndex }
+    val keptAt = next.indexOfFirst { it.mediaId == current?.mediaId }
+    queue.set(next, if (keptAt >= 0) keptAt else fromIndex.coerceAtMost((next.size - 1).coerceAtLeast(0)))
+    cue = null
+    cueFor = null
+    preparedNextKey = null
+    engine.setNext(null, null)
+    nativeChange()
+    if (next.isEmpty()) {
+      ++loadGeneration // a decoder/stream lookup in flight must not resurrect the old song
+      waitingFor = null
+      loadedKey = null
+      streamingKey = null
+      pendingStartMs = 0
+      ended = false
+      error = null
+      changePlayWhenReady(false)
+    } else if (keptAt < 0) {
+      loadCurrent(0, chosen = true)
+    } else {
+      prepareNext()
+    }
+    invalidateState()
+    emit(null)
+    return Futures.immediateVoidFuture()
+  }
+
   override fun handlePrepare(): ListenableFuture<*> {
     if (error != null) { error = null; loadCurrent(0, chosen = true) }
     return Futures.immediateVoidFuture()

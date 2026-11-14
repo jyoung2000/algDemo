@@ -42,12 +42,28 @@ object EngineHub {
     player = p
     p.page = page
     if (settings.length() > 0) applySettings(p, settings)
+    // CAR-QUEUE-HANDOFF-001: the first library push can precede service attachment. Replay it
+    // before a pending phone load so the session gets the whole list, not only the tapped song.
+    replayLibrary(p)
     while (waiting.isNotEmpty()) dispatch(p, waiting.removeFirst())
   }
 
   fun detachPlayer(p: EnginePlayer) = main.post { if (player === p) { p.page = null; player = null } }
 
-  fun attachPage(pg: EnginePlayer.Page) = main.post { page = pg; player?.page = pg }
+  fun attachPage(pg: EnginePlayer.Page) = main.post {
+    page = pg
+    player?.let { p ->
+      p.page = pg
+      // The service can attach before the page too; libraryChanged only adopts the page's order
+      // once it is live. Do not require another incidental JS library update to unlock skips.
+      replayLibrary(p)
+    }
+  }
+
+  private fun replayLibrary(p: EnginePlayer) {
+    val s = MediaHub.state
+    p.libraryChanged(s.queue, s.shuffle, s.repeat)
+  }
 
   /** Forget [pg] if it is still the page (a newer Activity may already have attached its own). */
   fun detachPage(pg: EnginePlayer.Page) = main.post { if (page === pg) { page = null; player?.page = null } }
