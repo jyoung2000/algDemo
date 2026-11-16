@@ -62,6 +62,20 @@ describe('an artist name the services do not know (ARTIST-FALLBACK-001)', () => 
     expect(artist['local']).toBe(true);
   }, 30_000);
 
+  it('answers the page\'s next request, for every song, in that request\'s own shape (ARTIST-FALLBACK-002)', async () => {
+    // The page asks for every song as soon as it is up, with the id it was just given. The answer was
+    // a second artist page: the screen got no song list and the whole app went blank.
+    const { api } = await open([song(), song({ key: 'k2', id: 'yt:2', title: 'Another song' })]);
+    const artist = ((await ask(api, 'jackiegalama')).body as Dict)['artist'] as Dict;
+    const r = await api.handle('POST', '/api/artist/songs', { id: artist['id'], name: artist['name'] });
+    expect(r.status).toBe(200);
+    const body = r.body as Dict;
+    expect(body['artist']).toBeUndefined();
+    expect((body['songs'] as Dict[]).map((s) => s['title']).sort()).toEqual(['A song', 'Another song']);
+    expect(body['features']).toEqual([]);
+    expect(body['failed']).toBe(0);
+  }, 30_000);
+
   it('keeps asking for a name with no id and no name as a bad request', async () => {
     const { api } = await open([]);
     expect((await api.handle('POST', '/api/artist', {})).status).toBe(400);

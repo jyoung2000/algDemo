@@ -44,8 +44,10 @@
   cursor: pointer;
   border-radius: 8px;
 }
+@media (hover: hover) {
 .savemenu__row:hover {
   background: var(--accent-soft);
+}
 }
 .savemenu__row:focus-within {
   outline: 2px solid var(--focus);
@@ -80,9 +82,11 @@
   font-weight: 600;
   cursor: pointer;
 }
+@media (hover: hover) {
 .savemenu__add:hover {
   background: var(--accent-soft);
   border-style: solid;
+}
 }
 .savemenu__new {
   display: grid;
@@ -121,8 +125,10 @@
   font-weight: 600;
   cursor: pointer;
 }
+@media (hover: hover) {
 .savemenu__done:hover {
   filter: brightness(1.06);
+}
 }
 .savemenu .field {
   min-height: 44px;

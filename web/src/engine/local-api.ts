@@ -527,7 +527,13 @@ export class LocalApi {
       // ARTIST-FALLBACK-001: song credits carry names no service has a page for - uploader handles,
       // small self-releases, a name spelt another way. Tapping one lands on what this app holds by
       // that name rather than on an error.
-      if (e instanceof ProviderError && name) return ok({ artist: this.localArtist(name) });
+      if (e instanceof ProviderError && name) {
+        const local = this.localArtist(name);
+        // ARTIST-FALLBACK-002: the page asks for every song next, with the local id. That request gets
+        // its own shape; answered with a second page, the screen had no song list and the app went blank.
+        if (every) return ok({ songs: local['songs'], features: local['features'], opened: 0, failed: 0, featuresComplete: true });
+        return ok({ artist: local });
+      }
       return this.identifyFailure(e, 'artist');
     }
   }

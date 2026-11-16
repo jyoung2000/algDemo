@@ -1018,7 +1018,7 @@ export function App() {
                 </p>
                 <label className="go__fresh">
                   <input type="checkbox" checked={fresh} onChange={(e) => patchSettings({ fresh: e.target.checked })} />
-                  <span>Favour new releases</span>
+                  <span>Prefer new releases</span>
                   <span className="go__freshnote">songs from the last 60 days, when the source gives a date</span>
                 </label>
               </div>

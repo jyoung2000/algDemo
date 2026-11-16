@@ -138,9 +138,11 @@ body {
 .side__item:active {
   transform: translateY(1px);
 }
+@media (hover: hover) {
 .side__item:hover {
   background: rgba(0, 0, 0, 0.04);
   color: var(--ink);
+}
 }
 .side__item.is-on {
   background: linear-gradient(var(--sel-top), var(--sel-mid) 60%, var(--sel-bot));
@@ -337,9 +339,11 @@ body {
   color: var(--ink-2);
   cursor: pointer;
 }
+@media (hover: hover) {
 .iconbtn:hover {
   color: var(--ink);
   border-color: #c6c3bb;
+}
 }
 .iconbtn[aria-pressed='true'] {
   color: var(--accent);
@@ -523,8 +527,10 @@ a.push {
   line-height: 1;
   overflow: visible;
 }
+@media (hover: hover) {
 .find__act:hover:not([disabled]) {
   background: rgba(0, 0, 0, 0.05);
+}
 }
 .find__act:active:not([disabled]) {
   background: rgba(0, 0, 0, 0.1);
@@ -1287,10 +1293,15 @@ a.push {
   opacity: 0;
   transition: opacity 0.15s;
 }
-.rec__art:hover .rec__playover,
 .rec__art:focus-visible .rec__playover,
 .rec.is-playing .rec__playover {
   opacity: 1;
+}
+/* The overlay also marks the playing song, so a tap must not leave it on the cover (BTN-UNIFORM-001). */
+@media (hover: hover) {
+.rec__art:hover .rec__playover {
+  opacity: 1;
+}
 }
 .rec__text {
   grid-area: text;
@@ -1387,10 +1398,12 @@ a.push {
   border-radius: 999px;
   box-shadow: inset 0 0 0 1px var(--hair);
 }
+@media (hover: hover) {
 .rec__actions .iconbtn:hover,
 .track__actions .iconbtn:hover {
   border-color: transparent;
   box-shadow: inset 0 0 0 1px #c6c3bb;
+}
 }
 .rec__actions .iconbtn[aria-pressed='true'],
 .track__actions .iconbtn[aria-pressed='true'] {
@@ -1444,9 +1457,11 @@ a.push {
   text-decoration: none;
   white-space: nowrap;
 }
+@media (hover: hover) {
 .openlink:hover {
   color: var(--ink);
   border-color: #c6c3bb;
+}
 }
 .why {
   grid-column: 3 / -1;
@@ -1741,9 +1756,11 @@ a.push {
   font-size: 10px;
   opacity: 0.6;
 }
+@media (hover: hover) {
 .np--panel .np__open .openlink:hover {
   border-color: rgb(0 0 0 / 28%);
   color: var(--ink);
+}
 }
 .np--panel .wheel,
 .np--panel .upnext {
@@ -1850,8 +1867,10 @@ a.push {
   cursor: pointer;
   transition: background-color 150ms ease, opacity 150ms ease;
 }
+@media (hover: hover) {
 .tbtn:hover:not(:disabled) {
   background: rgb(0 0 0 / 6%);
+}
 }
 /* The one filled control: the play/pause disc, flat accent, no gloss. */
 .tbtn--main {
@@ -1860,8 +1879,10 @@ a.push {
   color: #fff;
   background: #0071e3;
 }
+@media (hover: hover) {
 .tbtn--main:hover:not(:disabled) {
   background: #0077ed;
+}
 }
 /* Shuffle and repeat: quiet when off; when on, the accent colour on a faint tint. */
 .tbtn--mode {
@@ -1920,8 +1941,10 @@ a.push {
   gap: 1px;
   cursor: pointer;
 }
+@media (hover: hover) {
 .wheel__btn:hover {
   color: var(--ink);
+}
 }
 .wheel__btn:disabled {
   opacity: 0.4;
@@ -1990,8 +2013,10 @@ a.push {
   text-align: left;
   cursor: pointer;
 }
+@media (hover: hover) {
 .upnext__row:hover {
   background: rgba(0, 0, 0, 0.04);
+}
 }
 .upnext__text {
   min-width: 0;
@@ -2749,8 +2774,10 @@ html {
   color: var(--ink-2);
   cursor: pointer;
 }
+@media (hover: hover) {
 .vol__btn:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.07);
+}
 }
 .vol__btn:disabled,
 .vol__bar:disabled {
@@ -3723,8 +3750,10 @@ html {
   text-align: left;
   cursor: pointer;
 }
+@media (hover: hover) {
 .album-row__open:hover {
   background: var(--accent-soft);
+}
 }
 .album-row__open:focus-visible {
   outline: 2px solid var(--accent);
@@ -3894,9 +3923,11 @@ html {
   text-decoration-color: transparent;
   text-underline-offset: 2px;
 }
+@media (hover: hover) {
 .artistlink:hover {
   color: var(--accent);
   text-decoration-color: currentColor;
+}
 }
 .artistlink:focus-visible {
   outline: 2px solid var(--accent);
@@ -3972,7 +4003,9 @@ html {
   cursor: pointer;
   transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
 }
+@media (hover: hover) {
 .typefilter__btn:hover { border-color: var(--accent); color: var(--ink); }
+}
 .typefilter__btn:active { transform: scale(0.95); }
 .typefilter__btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .typefilter__btn.is-on {

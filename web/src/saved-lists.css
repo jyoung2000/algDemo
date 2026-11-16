@@ -38,9 +38,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+@media (hover: hover) {
 .lists__tab:hover,
 .lists__add:hover {
   background: var(--accent-soft);
+}
 }
 .lists__tab.is-on {
   border-color: var(--accent);

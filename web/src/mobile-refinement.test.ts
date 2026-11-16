@@ -213,6 +213,24 @@ describe('the controls are flat and reachable', () => {
     expect(main).toMatch(/\.rec__actions \.iconbtn\[aria-pressed='true'\],\s*\.track__actions \.iconbtn\[aria-pressed='true'\] \{/);
   });
 
+  it('fits all eight dock controls in a 320px phone row: widths give way, never the 44px height (DOCK-NARROW-001)', () => {
+    // Measured on the packaged app at 320px: Download ended at 343px, 23px past the screen edge.
+    const block = /@media \(max-width: 359px\) \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? '';
+    const px = (selector: string, prop: string) =>
+      Number(new RegExp(`${selector.replace(/\./g, '\\.')} \\{[^}]*?[^-]${prop}: (\\d+)px;`).exec(block)?.[1] ?? NaN);
+    const side = px('.np--docked .tbtn', 'width');
+    const main = px('.np--docked .tbtn--main', 'width');
+    const mode = px('.np--docked .tbtn--mode', 'width');
+    const action = px('.np--docked .np__track-actions .quiet-control', 'min-width');
+    const row = 320 - 2 * 12; // the dock's side padding
+    // shuffle, previous, play, next, repeat with 2px gaps; 6px; like, dislike, download with 2px gaps.
+    expect(2 * mode + 2 * side + main + 4 * 2 + 6 + 3 * action + 2 * 2).toBeLessThanOrEqual(row);
+    expect(Math.min(side, mode, action)).toBeGreaterThanOrEqual(32);
+    expect(main).toBe(44);
+    expect(block).not.toMatch(/height:/);
+    expect(block).not.toMatch(/display: none/);
+  });
+
   it('drops the dock volume entirely on a very narrow phone, where the rocker is the volume (DOCK-SHUFFLE-001)', () => {
     expect(css).toMatch(/@media \(max-width: 379px\) \{[\s\S]*?\.np--docked \.np__controls \.vol \{[^}]*display: none;/);
   });

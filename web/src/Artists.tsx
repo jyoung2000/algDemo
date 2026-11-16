@@ -78,6 +78,11 @@ export function ArtistView({ target, onBack, onPreview, onOpenAlbum, onOpenArtis
     api.artistSongs(t, c.signal).then(
       (s) => {
         if (c.signal.aborted) return;
+        // ARTIST-FALLBACK-002: an answer without a song list is a failed look, never a ready page.
+        if (!Array.isArray(s.songs)) {
+          setEvery((was) => (was.state === 'ready' ? was : { state: 'failed' }));
+          return;
+        }
         setEvery((was) => {
           const had = was.state === 'ready' ? was.features : [];
           const keys = new Set(had.map((x) => x.key));

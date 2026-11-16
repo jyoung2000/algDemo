@@ -28,9 +28,11 @@ button.song-credits__album {
   text-decoration-color: var(--hair);
   text-underline-offset: 2px;
 }
+@media (hover: hover) {
 button.song-credits__album:hover {
   color: var(--accent);
   text-decoration-color: currentColor;
+}
 }
 button.song-credits__album:focus-visible {
   outline: 2px solid var(--accent);

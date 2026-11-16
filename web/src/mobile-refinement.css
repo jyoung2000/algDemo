@@ -36,9 +36,11 @@
     color 120ms ease,
     transform 90ms ease;
 }
+@media (hover: hover) {
 .quiet-control:hover:not(:disabled) {
   background: var(--tint-1);
   color: var(--ink);
+}
 }
 .quiet-control:active:not(:disabled) {
   transform: scale(0.94);
@@ -133,6 +135,23 @@
   /* 335px of row: nothing left for the speaker either; the rocker is the volume. */
   .np--docked .np__controls .vol {
     display: none;
+  }
+}
+/* DOCK-NARROW-001: a 320px phone has 296px of row. The eight controls at their 360px sizes need 330, so
+   the last action (Download) hung 23px off the right edge. Every control keeps its 44px height; the
+   widths give way: 32 + 36 + 44 + 36 + 32 with 2px gaps = 188, 6px, three 32px actions = 100. */
+@media (max-width: 359px) {
+  .np--docked .tbtn {
+    width: 36px;
+  }
+  .np--docked .tbtn--main {
+    width: 44px;
+  }
+  .np--docked .tbtn--mode {
+    width: 32px;
+  }
+  .np--docked .np__track-actions .quiet-control {
+    min-width: 32px;
   }
 }
 

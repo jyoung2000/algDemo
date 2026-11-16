@@ -24,14 +24,18 @@ const page = (songs: number): ArtistData => ({
 } as unknown as ArtistData);
 
 const artist = vi.fn();
+const artistSongs = vi.fn();
 vi.mock('./api', async (orig) => {
   const real = await orig<Record<string, unknown>>();
-  return { ...real, api: { ...(real['api'] as object), artist: (...a: unknown[]) => artist(...a) } };
+  return { ...real, api: { ...(real['api'] as object), artist: (...a: unknown[]) => artist(...a), artistSongs: (...a: unknown[]) => artistSongs(...a) } };
 });
 
 let root: Root;
 let host: HTMLDivElement;
-beforeEach(() => { host = document.createElement('div'); document.body.append(host); root = createRoot(host); });
+beforeEach(() => {
+  host = document.createElement('div'); document.body.append(host); root = createRoot(host);
+  artistSongs.mockRejectedValue(new Error('offline in this test'));
+});
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.clearAllMocks(); });
 
 const open = async (a: ArtistData) => {
@@ -60,5 +64,15 @@ describe('a name no service knows (ARTIST-FALLBACK-001)', () => {
     await open(page(0));
     expect(host.textContent).toMatch(/no songs by them yet/i);
     expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('stays on screen when the every-song answer carries no song list (ARTIST-FALLBACK-002)', async () => {
+    // What the engine answered for a local page: another artist page. The view took its missing
+    // `songs` as the list, and the whole app unmounted to a blank window.
+    artistSongs.mockResolvedValue({ artist: page(3) });
+    await open(page(3));
+    await act(async () => { await Promise.resolve(); });
+    expect(host.querySelector('.album__back')).not.toBeNull();
+    expect(host.textContent).toMatch(/Song 1/);
   });
 });
