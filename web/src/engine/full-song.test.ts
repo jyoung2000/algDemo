@@ -156,6 +156,25 @@ it('does not reuse a previously cached uncertain near miss as a full song', asyn
   expect(asked.length).toBeGreaterThan(0);
 });
 
+// SC-NOLINK-001: a cached site match without a link (a preview-only SoundCloud upload cached as a
+// bare id) cannot be downloaded; it must be re-asked, not reused for seven days.
+it('does not reuse a cached site match that carries no downloadable link', async () => {
+  const store = await Store.open(new MemoryBackend());
+  const asked: string[] = [];
+  const api = new LocalApi({ store, encoder: null, spotifySearch: () => async () => [], port: {
+    request: async (req: { url: string }) => {
+      asked.push(req.url);
+      return { status: 200, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(ytmusicSearch) };
+    },
+  } });
+  const track = { key: 'nolink', provider: 'deezer', platform_id: '1', title: 'Smooth Song', artists: ['Artist'], duration: 101 };
+  await store.cachePut(`fullsong:${track.title}|${track.artists.join('|')}|${track.duration}`, 'meta',
+    { id: '256273861', source: 'soundcloud' }, 7 * 86400);
+  const r = await api.handle('POST', '/api/full-song', { track });
+  expect(r.body).not.toMatchObject({ id: '256273861' });
+  expect(asked.length).toBeGreaterThan(0);
+});
+
 it('passive retry bypasses BOTH cached source misses and cached provider searches, but keeps good matches', async () => {
   const store = await Store.open(new MemoryBackend());
   const asked: string[] = [];

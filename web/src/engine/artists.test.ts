@@ -7,11 +7,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Albums } from './albums';
-import { Artists, parseDeezerArtists, parseYtArtistPage, parseYtArtistSearch, parseYtSongRows, parseYtDiscography, artistTargetOf, partitionFeatures } from './artists';
+import { Artists, parseDeezerArtists, parseYtArtistPage, parseYtArtistSearch, parseYtSongRows, parseYtDiscography, artistTargetOf, partitionFeatures, nextSearchIndex } from './artists';
 import { Deezer } from './deezer';
 import { YouTubeMusic } from './ytmusic';
 import { Http, HostPacer, type HttpPort, type HttpRequest } from './net';
 import type { Track } from './track';
+import type { Store } from './store';
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), 'golden');
 const load = (n: string) => JSON.parse(readFileSync(join(dir, n), 'utf8'));
@@ -28,10 +29,18 @@ const UC = 'UCaG2V4fBeGjBVuLQu7bCcGg';
 const SONGS_LIST = 'VLOLAK5uy_m2Pd7qePTcC5QqjTV9ByX4JpejSSWq7n4';
 
 /** Routes: url prefix -> body; a YouTube Music POST is told apart by the browseId / continuation in its body. */
-function world(routes: Record<string, unknown>) {
+// A real cache: a store that always misses could never show an incomplete answer being kept.
+function mapStore() {
+  const m = new Map<string, unknown>();
+  return { m, store: { cacheGet: (k: string) => (m.has(k) ? { value: m.get(k), created: 0, stale: false } : null), cachePut: async (k: string, _kind: string, v: unknown) => void m.set(k, v) } as unknown as Store };
+}
+
+function world(routes: Record<string, unknown>, store?: Store, tap?: (req: HttpRequest) => unknown) {
   const seen: { url: string; body?: string }[] = [];
   const port: HttpPort = {
     async request(req: HttpRequest) {
+      const tapped = tap?.(req);
+      if (tapped !== undefined) return { status: 200, headers: {}, body: enc(JSON.stringify(tapped)) };
       const body = req.body === null || req.body === undefined ? undefined : typeof req.body === 'string' ? req.body : new TextDecoder().decode(req.body as unknown as Uint8Array);
       seen.push({ url: req.url, ...(body ? { body } : {}) });
       const u = new URL(req.url);
@@ -48,7 +57,7 @@ function world(routes: Record<string, unknown>) {
   const http = new Http(port, new HostPacer({}, 0));
   const dz = new Deezer(http);
   const yt = new YouTubeMusic(http);
-  return { artists: new Artists(http, dz, yt, undefined, new Albums(http, dz, undefined, yt)), seen };
+  return { artists: new Artists(http, dz, yt, store, new Albums(http, dz, undefined, yt)), seen };
 }
 
 const FULL = {
@@ -352,7 +361,8 @@ describe('every song the artist has released (ARTIST-PAGE-001)', () => {
     const guest = (id: number, lead: number, on: boolean) =>
       ({ id, title: `Guest ${id}`, title_short: `Guest ${id}`, artist: { id: lead, name: `Artist ${lead}` }, contributors: on ? [{ id: lead, name: `Artist ${lead}` }, KC] : [{ id: lead, name: `Artist ${lead}` }], album: { id: 77, title: 'Guest LP' }, duration: 100, link: `https://www.deezer.com/track/${id}`, readable: true, rank: 1 });
     // 60 candidates over three pages: more than one page, and more than a handful to confirm.
-    const page = (from: number) => ({ data: Array.from({ length: 20 }, (_, i) => guest(from + i, 900 + from + i, true)), total: 60, next: from + 20 < 9061 ? `https://api.deezer.com/search/track?index=${from + 20}` : undefined });
+    // Deezer's own next link is followed, whatever page size it answers (here 20 rows, not the 100 asked).
+    const page = (from: number) => ({ data: Array.from({ length: 20 }, (_, i) => guest(from + i, 900 + from + i, true)), total: 60, ...(from + 20 < 9061 ? { next: `https://api.deezer.com/search/track?q=Ken%20Carson&limit=100&index=${from + 20 - 9001}` } : {}) });
     const tracks: Record<string, unknown> = {};
     for (let id = 9001; id < 9061; id++) tracks[`api.deezer.com/track/${id}`] = guest(id, 900 + id, id !== 9060);
     const w = world({
@@ -367,8 +377,130 @@ describe('every song the artist has released (ARTIST-PAGE-001)', () => {
     // Every page was asked for, every candidate read, and only the confirmed ones kept.
     expect(all.features).toHaveLength(59);
     expect(all.features.map((t) => t.title)).not.toContain('Guest 9060');
-    expect(w.seen.filter((s) => s.url.includes('/search/track')).length).toBeGreaterThanOrEqual(3);
+    expect(w.seen.filter((s) => s.url.includes('/search/track')).map((s) => new URL(s.url).searchParams.get('index'))).toEqual([null, '20', '40']);
     expect(w.seen.filter((s) => /\/track\/90\d\d/.test(s.url))).toHaveLength(60);
+    expect(all.featuresComplete).toBe(true);
+  });
+
+  it('asks Deezer as the app, so a provider that ranks by client identity answers every shell the same (DEEZER-UA-001)', async () => {
+    // A FAKE provider, standing in for the observed behaviour (not a claim about Deezer itself): page two
+    // carries one more confirmed guest only for the app's own User-Agent.
+    const KC = { id: 2568121, name: 'Ken Carson' };
+    const g = (id: number) => ({ id, title: `Guest ${id}`, title_short: `Guest ${id}`, artist: { id: 7, name: 'Lead' }, contributors: [{ id: 7, name: 'Lead' }, KC], album: { id: 77, title: 'Guest LP' }, duration: 100, link: `https://www.deezer.com/track/${id}`, readable: true, rank: 1 });
+    const uas: (string | undefined)[] = [];
+    const w = world({ ...FULL, 'api.deezer.com/track/9501': g(9501), 'api.deezer.com/track/9502': g(9502) }, undefined, (req) => {
+      const u = new URL(req.url);
+      if (u.pathname !== '/search/track') return undefined;
+      const agent = Object.entries(req.headers ?? {}).find(([k]) => k.toLowerCase() === 'user-agent')?.[1];
+      uas.push(agent);
+      if (u.searchParams.get('index') === '1') return { data: agent === 'AirwaveDiscovery/0.18.13' ? [g(9502)] : [] };
+      return { data: [g(9501)], next: 'https://api.deezer.com/search/track?q=Ken%20Carson&limit=100&index=1' };
+    });
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const all = await w.artists.everySong(a);
+    expect(all.features.map((t) => t.title)).toEqual(['Guest 9501', 'Guest 9502']);
+    expect(all.featuresComplete).toBe(true);
+    expect(uas).toEqual(['AirwaveDiscovery/0.18.13', 'AirwaveDiscovery/0.18.13']);
+  });
+
+  it('versions the artist caches so an answer kept under an older request identity is not served (DEEZER-UA-001)', async () => {
+    const KC = { id: 2568121, name: 'Ken Carson' };
+    const g = (id: number) => ({ id, title: `Guest ${id}`, title_short: `Guest ${id}`, artist: { id: 7, name: 'Lead' }, contributors: [{ id: 7, name: 'Lead' }, KC], album: { id: 77, title: 'Guest LP' }, duration: 100, link: `https://www.deezer.com/track/${id}`, readable: true, rank: 1 });
+    const kept = mapStore();
+    // What an earlier build kept: a fresh, "complete" songs answer and an artist view, both under the old keys.
+    const old = { songs: [], features: [], opened: 0, failed: 0, featuresComplete: true };
+    for (let n = 0; n < 40; n++) kept.m.set(`artistsongs3:dz:2568121:${n}`, old);
+    kept.m.set('artistview:2568121::ken carson', { id: 'dz:2568121', name: 'Old', songs: [], features: [], albums: [], singles: [], links: {} });
+    const w = world({ ...FULL, 'api.deezer.com/search/track': { data: [g(9601)] }, 'api.deezer.com/track/9601': g(9601) }, kept.store);
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    expect(a.name).toBe('Ken Carson');
+    const all = await w.artists.everySong(a);
+    expect(all.features.map((t) => t.title)).toEqual(['Guest 9601']);
+    expect([...kept.m.keys()].some((k) => k.startsWith('artistsongs4:dz:2568121:'))).toBe(true);
+    expect([...kept.m.keys()].some((k) => k.startsWith('artistview2:2568121:'))).toBe(true);
+    // Only the artist namespaces moved: the old rows are left for the store's own expiry, not wiped.
+    expect(kept.m.get('artistsongs3:dz:2568121:21')).toBe(old);
+  });
+
+  it('keeps the features already confirmed when a later search page fails, and says the list is incomplete', async () => {
+    const KC = { id: 2568121, name: 'Ken Carson' };
+    const OTHER_KC = { id: 555, name: 'Ken Carson' };
+    const t = (id: number, lead: { id: number; name: string }, contributors: { id: number; name: string }[], title = `Guest ${id}`) =>
+      ({ id, title, title_short: title, artist: lead, contributors, album: { id: 77, title: 'Guest LP' }, duration: 100 + (id % 50), link: `https://www.deezer.com/track/${id}`, readable: true, rank: 1 });
+    // Page one: 25 rows led by others with Ken Carson credited (more than ten, more than one fold).
+    const p1 = Array.from({ length: 25 }, (_, i) => t(9100 + i, { id: 100 + i, name: `Lead ${i}` }, [{ id: 100 + i, name: `Lead ${i}` }, KC]));
+    // Page two: a second lead artist crediting him; a namesake who is not him; a title that only names him;
+    // and a row already seen on page one.
+    const p2 = [
+      t(9200, { id: 7, name: 'Destroy Lonely' }, [{ id: 7, name: 'Destroy Lonely' }, { id: 8, name: 'Homixide Gang' }, KC]),
+      t(9201, OTHER_KC, [OTHER_KC]),
+      t(9202, { id: 9, name: 'Somebody' }, [{ id: 9, name: 'Somebody' }], 'Ken Carson Type Beat'),
+      p1[0]!,
+    ];
+    const tracks: Record<string, unknown> = {};
+    for (const r of [...p1, ...p2]) tracks[`api.deezer.com/track/${r.id}`] = r;
+    const w = world({
+      ...FULL,
+      'api.deezer.com/search/track?q=Ken%20Carson&limit=100&index=29': { error: { type: 'Exception', message: 'Quota limit exceeded', code: 4 } },
+      'api.deezer.com/search/track?q=Ken%20Carson&limit=100&index=25': { data: p2, total: 40, next: 'https://api.deezer.com/search/track?q=Ken%20Carson&limit=100&index=29' },
+      'api.deezer.com/search/track?q=Ken%20Carson&limit=100': { data: p1, total: 40, next: 'https://api.deezer.com/search/track?q=Ken%20Carson&limit=100&index=25' },
+      ...tracks,
+    });
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const all = await w.artists.everySong(a);
+    const titles = all.features.map((x) => x.title);
+    expect(titles).toHaveLength(26);
+    expect(titles).toContain('Guest 9200');
+    expect(titles).not.toContain('Guest 9201');
+    expect(titles).not.toContain('Ken Carson Type Beat');
+    expect(new Set(all.features.map((x) => x.key)).size).toBe(26);
+    const f = all.features.find((x) => x.title === 'Guest 9200')!;
+    // The exact recording: its lead, its full credits as Deezer lists them, and its own length.
+    expect([f.artists[0], f.artist, f.duration]).toEqual(['Destroy Lonely', 'Destroy Lonely, Homixide Gang, Ken Carson', 100 + (9200 % 50)]);
+    expect(all.featuresComplete).toBe(false);
+  });
+
+  it('never fetches a next link that is not a later page of the same Deezer search, and keeps an incomplete answer out of the cache', async () => {
+    const KC = { id: 2568121, name: 'Ken Carson' };
+    const g = (id: number) => ({ id, title: `Guest ${id}`, title_short: `Guest ${id}`, artist: { id: 7, name: 'Lead' }, contributors: [{ id: 7, name: 'Lead' }, KC], album: { id: 77, title: 'Guest LP' }, duration: 100, link: `https://www.deezer.com/track/${id}`, readable: true, rank: 1 });
+    const evil = 'https://evil.example/search/track?q=Ken%20Carson&index=20';
+    const inc = mapStore();
+    const m = inc.m;
+    const kept = mapStore();
+    const w = world({
+      ...FULL,
+      // Page two points back at itself: a repeated cursor ends the walk instead of looping.
+      'api.deezer.com/search/track?q=Ken%20Carson&limit=100&index=20': { data: [g(9302)], next: 'https://api.deezer.com/search/track?q=Ken%20Carson&limit=100&index=20' },
+      'api.deezer.com/search/track?q=Ken%20Carson&limit=100': { data: [g(9301)], next: 'https://api.deezer.com/search/track?q=Ken%20Carson&limit=100&index=20' },
+      'evil.example': { data: [g(9399)] },
+      'api.deezer.com/track/9301': g(9301),
+      'api.deezer.com/track/9302': g(9302),
+      'api.deezer.com/track/9399': g(9399),
+    }, inc.store);
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const first = await w.artists.everySong(a);
+    expect(first.features.map((t) => t.title)).toEqual(['Guest 9301', 'Guest 9302']);
+    expect(first.featuresComplete).toBe(false);
+    expect(w.seen.filter((s) => s.url.includes('/search/track'))).toHaveLength(2);
+    expect(w.seen.some((s) => s.url.includes('evil.example'))).toBe(false);
+    // Incomplete, so not kept: the next look asks Deezer again.
+    await w.artists.everySong(a);
+    expect(w.seen.filter((s) => s.url.includes('/search/track'))).toHaveLength(4);
+    expect([...m.keys()].some((k) => k.startsWith('artistsongs'))).toBe(false);
+    // Positive control: a complete answer (one page, no next link) is kept, and the second look is served from it.
+    const w2 = world({ ...FULL, 'api.deezer.com/search/track': { data: [g(9301)] }, 'api.deezer.com/track/9301': g(9301) }, kept.store);
+    const b = await w2.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    expect((await w2.artists.everySong(b)).featuresComplete).toBe(true);
+    await w2.artists.everySong(b);
+    expect(w2.seen.filter((s) => s.url.includes('/search/track'))).toHaveLength(1);
+    expect([...kept.m.keys()].some((k) => k.startsWith('artistsongs4:'))).toBe(true);
+    // Only Deezer's own search, on this query, with a plain index, is a page of it.
+    expect(nextSearchIndex(evil, 'Ken Carson')).toBeNull();
+    expect(nextSearchIndex('http://api.deezer.com/search/track?q=Ken%20Carson&index=20', 'Ken Carson')).toBeNull();
+    expect(nextSearchIndex('https://api.deezer.com/search/track?q=Somebody&index=20', 'Ken Carson')).toBeNull();
+    expect(nextSearchIndex('https://api.deezer.com/track/1?q=Ken%20Carson&index=20', 'Ken Carson')).toBeNull();
+    expect(nextSearchIndex('https://api.deezer.com/search/track?q=Ken%20Carson&index=20x', 'Ken Carson')).toBeNull();
+    expect(nextSearchIndex('https://api.deezer.com/search/track?q=Ken%20Carson&limit=100&index=20', 'Ken Carson')).toBe(20);
   });
 });
 

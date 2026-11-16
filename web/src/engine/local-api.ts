@@ -522,7 +522,7 @@ export class LocalApi {
       const clean = (list: readonly object[]) => list.map((t) => cleanTrack(t as Dict));
       if (!every) return ok({ artist: { ...a, songs: clean(a.songs) } });
       const all = await this.artists.everySong(a, { meter });
-      return ok({ songs: clean(all.songs), features: clean(all.features), opened: all.opened, failed: all.failed });
+      return ok({ songs: clean(all.songs), features: clean(all.features), opened: all.opened, failed: all.failed, featuresComplete: all.featuresComplete });
     } catch (e) {
       // ARTIST-FALLBACK-001: song credits carry names no service has a page for - uploader handles,
       // small self-releases, a name spelt another way. Tapping one lands on what this app holds by
@@ -1680,7 +1680,9 @@ export class LocalApi {
     const cached = hit?.value as Dict | undefined;
     // Older builds cached uncertain `close` matches for seven days. Never resurrect them as full
     // songs even when their link once downloaded; refresh the source chain instead.
-    const cachedPlayable = cached?.['source'] !== 'close';
+    // SC-NOLINK-001: a site match is fetched by its link; one cached without a link cannot play.
+    const siteWithoutLink = ['soundcloud', 'bandcamp', 'audius', 'hearthis', 'archive'].includes(String(cached?.['source'])) && !cached?.['url'];
+    const cachedPlayable = cached?.['source'] !== 'close' && !siteWithoutLink;
     // SOURCE-HEARTHIS-002: a cached HearThis link is permission that can be withdrawn. Re-read the
     // creator's own public JSON and re-gate license/download/identity before reusing the link.
     if (cachedPlayable && !exclude.length && hit && cached?.['source'] === 'hearthis' && typeof cached['url'] === 'string') {

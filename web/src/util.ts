@@ -158,7 +158,7 @@ export interface QueueStep {
  * The shuffle's committed next pick: from which song, to which. Once a next song has been announced
  * (cued, downloaded, blended into) the same one must come back until it plays (SHUFFLE-NEXT-001).
  */
-let shuffleNext: { from: string | null; key: string } | null = null;
+let shuffleNext: { from: string | null; key: string; heard: ReadonlySet<string>; wrapped: boolean } | null = null;
 export function resetShuffleNextForTests(): void {
   shuffleNext = null;
 }
@@ -186,15 +186,19 @@ export function stepQueue(
   if (o.shuffle && dir === 1) {
     const fresh = choosable.filter((x) => x.track.key !== fromKey && !o.heard.has(x.track.key));
     if (fresh.length) {
-      const kept = shuffleNext && shuffleNext.from === fromKey ? fresh.find((x) => x.track.key === shuffleNext!.key) : undefined;
+      const kept = shuffleNext && shuffleNext.from === fromKey && shuffleNext.heard === o.heard && !shuffleNext.wrapped ? fresh.find((x) => x.track.key === shuffleNext!.key) : undefined;
       const item = kept ?? pick(fresh);
-      shuffleNext = { from: fromKey, key: item.track.key };
+      shuffleNext = { from: fromKey, key: item.track.key, heard: o.heard, wrapped: false };
       return { item, wrapped: false };
     }
     if (o.repeat !== 'all') return null;
     const others = choosable.filter((x) => x.track.key !== fromKey);
     if (!others.length && !choosable.length) return null;
-    return { item: pick(others.length ? others : choosable), wrapped: true };
+    const pool = others.length ? others : choosable;
+    const kept = shuffleNext && shuffleNext.from === fromKey && shuffleNext.heard === o.heard && shuffleNext.wrapped ? pool.find(x => x.track.key === shuffleNext!.key) : undefined;
+    const item = kept ?? pick(pool);
+    shuffleNext = { from: fromKey, key: item.track.key, heard: o.heard, wrapped: true };
+    return { item, wrapped: true };
   }
   const i = fromKey ? ok.findIndex((x) => x.track.key === fromKey) : -1;
   if (i === -1) return { item: dir === 1 ? ok[0]! : ok[ok.length - 1]!, wrapped: false };

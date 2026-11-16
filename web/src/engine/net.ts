@@ -62,6 +62,12 @@ export interface HttpResponse {
 /** The transport. Implementations must not follow redirects themselves: Http re-checks every hop. */
 export interface HttpPort {
   request(req: HttpRequest, signal?: AbortSignal): Promise<HttpResponse>;
+  /**
+   * NATIVE-CLOCK-001. Optional: wait at least `ms` on the shell's own clock. A hidden Android WebView
+   * suspends its DOM timers, so pacing and backoff use this when present. It must reject a wait it
+   * cannot honour in full rather than end it early.
+   */
+  delay?(ms: number, signal?: AbortSignal): Promise<void>;
 }
 
 export function hostAllowed(host: string): boolean {
@@ -129,6 +135,18 @@ export class Meter {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** Waits on the port's native clock when it has one; a refused native wait falls back to the full DOM wait. */
+async function pause(ms: number, port?: Pick<HttpPort, 'delay'>): Promise<void> {
+  if (port?.delay) {
+    try {
+      return await port.delay(ms);
+    } catch {
+      // Refused (out of range, too many pending, bridge gone): never shorten, wait the whole time instead.
+    }
+  }
+  await sleep(ms);
+}
+
 /** Minimum spacing between calls to one host (Deezer documents 50 requests / 5 s). */
 export class HostPacer {
   private next = new Map<string, number>();
@@ -136,14 +154,36 @@ export class HostPacer {
     private readonly spacing: Record<string, number>,
     private readonly fallback = 0.05,
   ) {}
-  async wait(host: string): Promise<void> {
+  async wait(host: string, clock?: Pick<HttpPort, 'delay'>): Promise<void> {
     const gapMs = (this.spacing[host] ?? this.fallback) * 1000;
     const now = Date.now();
     const at = Math.max(now, this.next.get(host) ?? 0);
     this.next.set(host, at + gapMs);
     const delay = at - now;
-    if (delay > 0) await sleep(delay);
+    if (delay > 0) await pause(delay, clock);
   }
+}
+
+/**
+ * DEEZER-UA-001. Deezer's public API ranks a search by the asking client's identity: the Android
+ * WebView's own identity got a different (and shorter) list of a name's songs than Windows did. Every
+ * api.deezer.com request therefore names this app, the same on every shell. An honest descriptive
+ * name, never a browser's or a platform's; other hosts keep exactly the headers their callers set.
+ */
+export const DEEZER_API_UA = 'AirwaveDiscovery/0.18.13';
+
+function withIdentity(url: string, headers: Record<string, string> | undefined): Record<string, string> | undefined {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return headers;
+  }
+  if (u.protocol !== 'https:' || u.hostname.toLowerCase().replace(/\.+$/, '') !== 'api.deezer.com') return headers;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers ?? {})) if (k.toLowerCase() !== 'user-agent') out[k] = v;
+  out['User-Agent'] = DEEZER_API_UA;
+  return out;
 }
 
 export const PACER = new HostPacer({ 'api.deezer.com': 0.11, 'soundcloud.com': 0.3, 'open.spotify.com': 0.2, 'genius.com': 1, 'amp.shazam.com': 1, 'musicbrainz.org': 1.1 });
@@ -178,7 +218,7 @@ export class Http {
         attempt += 1;
         if (attempt > retries) throw new FetchError(`${hostOf(url)}: ${(e as Error).message}`);
         opt.token?.check();
-        await sleep(Math.min(4000, 400 * 2 ** (attempt - 1)));
+        await pause(Math.min(4000, 400 * 2 ** (attempt - 1)), this.port);
       }
     }
   }
@@ -206,17 +246,18 @@ export class Http {
       opt.token?.check();
       validateUrl(current);
       const host = hostOf(current);
-      await this.pacer.wait(host);
+      await this.pacer.wait(host, this.port);
       let cap = opt.maxBytes;
       if (opt.meter) {
         cap = Math.min(cap, opt.meter.remaining());
         if (cap <= 0) throw new BudgetExceeded('transfer allowance for this request is used up');
       }
       const post = hop === 0 && opt.method === 'POST';
+      const headers = withIdentity(current, opt.headers);
       const response = await this.port.request(
         post
-          ? { url: current, method: 'POST', headers: opt.headers, body: opt.body ?? '', timeoutMs: opt.timeoutMs }
-          : { url: current, method: 'GET', headers: opt.headers, timeoutMs: opt.timeoutMs },
+          ? { url: current, method: 'POST', headers, body: opt.body ?? '', timeoutMs: opt.timeoutMs }
+          : { url: current, method: 'GET', headers, timeoutMs: opt.timeoutMs },
         undefined,
       );
       if ([301, 302, 303, 307, 308].includes(response.status)) {

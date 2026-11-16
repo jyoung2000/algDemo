@@ -64,28 +64,40 @@ export function startLocal(): Promise<LocalApi> {
       freeFloor: 50_000_000,
     });
     void navigator.storage?.persist?.();
-    // Spotify search: the anonymous web-player search on every platform. Windows adds spotDL (in the
-    // shell) as the fallback when that search fails; Android has no spotDL and reports the failure.
-    const spotifySearch = (http: Http) => {
-      const anon = new SpotifySearch(http);
-      return async (q: string, limit: number) => {
-        try {
-          return await anon.searchTracks(q, limit);
-        } catch (e) {
-          if (!spotifySearchAvailable()) throw e;
-          // Android has a native downloader too, but no spotDL: its shell rejects the request, and
-          // the anonymous search's own error is the one worth showing.
-          try {
-            return await searchSpotify(async (query, n) => (await spotifySearchRaw(query, n)).songs, q, limit);
-          } catch {
-            throw e;
-          }
-        }
-      };
-    };
-    return new LocalApi({ store, port: defaultHttpPort(), encoder: await makeEncoder(), spotifySearch });
+    return new LocalApi({ store, port: defaultHttpPort(), encoder: await makeEncoder(), spotifySearch: spotifySearchFor });
   })();
   return started;
+}
+
+/**
+ * Spotify search: the anonymous web-player search on every platform. Windows adds spotDL (in the
+ * shell) as the fallback when that search fails; Android has no spotDL and reports the failure.
+ */
+export function spotifySearchFor(http: Http) {
+  const anon = new SpotifySearch(http);
+  return async (q: string, limit: number) => {
+    try {
+      return await anon.searchTracks(q, limit);
+    } catch (e) {
+      if (!spotifySearchAvailable()) throw e;
+      // Android has a native downloader too, but no spotDL: its shell rejects the request, and
+      // the anonymous search's own error is the one worth showing.
+      try {
+        return await searchSpotify(async (query, n) => (await spotifySearchRaw(query, n)).songs, q, limit);
+      } catch {
+        throw e;
+      }
+    }
+  };
+}
+
+/**
+ * CAR-CATALOG-SERVICE-001: a page that builds its own engine (car.html) hands it here before any
+ * `api` call, so `api` reaches that engine and never opens the default one beside it.
+ */
+export function provideLocal(local: Promise<LocalApi>): void {
+  if (started) throw new Error('The local engine has already started.');
+  started = local;
 }
 
 /** True when the page runs inside the Android shell, or with ?local=1 for testing in a browser. */

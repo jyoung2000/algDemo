@@ -529,8 +529,24 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
       status = 200;
       text = JSON.stringify((await import('../../server/airwave_discovery/sample_data.json')).default);
     } else {
-      const local = await (await import('./engine/runtime')).startLocal();
-      const r = await local.handle(init.method ?? 'GET', path, init.body ? JSON.parse(String(init.body)) : null);
+      const body = init.body ? JSON.parse(String(init.body)) : null;
+      // SERVICE-API-001: when the playback service owns the engine, ask it; never open a second one here.
+      const { serviceClient, switchToLocal, ServiceError } = await import('./engine/service-client');
+      const client = serviceClient();
+      let r: { status: number; body: unknown; local?: unknown } | null = null;
+      if (client) {
+        try {
+          r = await client.request(init.method ?? 'GET', path, body, init.signal);
+        } catch (e) {
+          if (e instanceof ServiceError && e.reason === 'aborted') throw new DOMException('The request was cancelled.', 'AbortError');
+          throw new ApiError(e instanceof Error ? e.message : String(e), 503, null);
+        }
+        // The service engine never opened the original database: this page may, once it has claimed it.
+        if (r.local === true && switchToLocal()) r = null;
+      }
+      if (!r) {
+        r = await (await (await import('./engine/runtime')).startLocal()).handle(init.method ?? 'GET', path, body);
+      }
       status = r.status;
       text = JSON.stringify(r.body);
     }
@@ -558,6 +574,13 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
 const json = (v: unknown) => JSON.stringify(v);
 
 export const api = {
+  /**
+   * SERVICE-API-001: the exact list the service engine offered a car song in (a car search answer,
+   * an album, a saved list), with its original Tracks. 404 when it offered no such song (and always
+   * where no service engine exists).
+   */
+  carContext: (id: string) =>
+    call<{ tracks: Track[]; ids: string[]; index: number }>('/_native/context', { method: 'POST', body: json({ id }) }),
   search: (q: string, signal?: AbortSignal) =>
     call<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}&sources=ytmusic,deezer,soundcloud,apple,spotify`, signal ? { signal } : {}),
   searchLyrics: (q: string, signal?: AbortSignal) => call<IdentifyResponse>(`/api/search/lyrics?q=${encodeURIComponent(q)}`, signal ? { signal } : {}),
@@ -567,7 +590,7 @@ export const api = {
   artist: (target: ArtistTarget, signal?: AbortSignal) =>
     call<{ artist: ArtistView }>('/api/artist', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
   artistSongs: (target: ArtistTarget, signal?: AbortSignal) =>
-    call<{ songs: Track[]; features?: Track[]; opened: number; failed: number }>('/api/artist/songs', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
+    call<{ songs: Track[]; features?: Track[]; opened: number; failed: number; featuresComplete?: boolean }>('/api/artist/songs', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
   /** `{ id }` opens that album; `{ track }` opens the album the song is on (404 `code: 'none'` when there is none). */
   album: (target: { id: string } | { track: Track }, signal?: AbortSignal) =>
     call<{ album: AlbumView }>('/api/album', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),

@@ -223,6 +223,30 @@ describe('the source chain', () => {
     expect(asked.length).toBeGreaterThan(0);
   });
 
+  // SC-NOLINK-001: DHU 2026-11-15. Sade's official SoundCloud uploads are preview-only (SNIP), so
+  // SC-SNIP-001 blanks their links. The chain still accepted them and handed back a bare SoundCloud
+  // id nothing can download: eight car songs (Smooth Operator, Paradise...) waited forever.
+  it('skips a SoundCloud match with no downloadable link and keeps looking', async () => {
+    const { s } = sources({
+      ytm: {},
+      sc: { 'Kevin MacLeod Wallpaper': [
+        cand({ provider: 'soundcloud', platform_id: '253562905', url: '' }),
+        cand({ provider: 'soundcloud', platform_id: '77', url: 'https://soundcloud.com/kmacleod/wallpaper-full' }),
+      ] },
+    });
+    const r = await findFullSong(track(), s, {});
+    expect(r).toMatchObject({ source: 'soundcloud', url: 'https://soundcloud.com/kmacleod/wallpaper-full' });
+  });
+
+  it('reports no source rather than a bare SoundCloud id when every SoundCloud match is preview-only', async () => {
+    const { s } = sources({
+      ytm: {},
+      sc: { 'Kevin MacLeod Wallpaper': [cand({ provider: 'soundcloud', platform_id: '253562905', url: '' })] },
+    });
+    const r = await findFullSong(track(), s, {});
+    expect(r).toMatchObject({ id: null, source: 'none' });
+  });
+
   it('stops asking once the budget of questions is spent', async () => {
     const { s, asked } = sources({ ytm: {}, sc: {} });
     await findFullSong(track({ title: 'A (feat. B) [Remix]', artists: ['X', 'Y'] }), s, { maxQueries: 2 });

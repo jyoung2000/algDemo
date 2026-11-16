@@ -17,7 +17,7 @@ import { ListDownloadBar, ListDownloadButton, ListFolderButton } from './ListDow
 import { useCardCache } from './useCardCache';
 import { useKeptKeys } from './useKeptKeys';
 import { savedTracks, playbackRows, preparationTracks, contextRows, addTargetOf, addedRow, insertAfter, SEARCH_CONTEXT } from './engine/queue-context';
-import { decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pushMediaLibrary, pushMediaState, setMediaHandlers, songFromTrack } from './engine/media-native';
+import { decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pickCarContext, pushMediaLibrary, pushMediaState, pushMediaTracks, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { engineAvailable, engineSend, listenFromEvent, markEngineEvent, subscribeEngineState } from './engine/native-engine';
 import { SettingsView } from './Settings';
 import { setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
@@ -149,7 +149,11 @@ export function App() {
   // PLAYLIST-MIX-001: that list's own listening mix.
   const [listMix, setListMix] = useState<PlaylistMix | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
-  const [carCatalog] = useState(() => new CarCatalog(api.search, track => queueAudio.isReady(track), api.searchLyrics, api.searchAlbums, (id) => api.album({ id })));
+  const [carCatalog] = useState(() => new CarCatalog(
+    api.search, track => queueAudio.isReady(track), api.searchLyrics, api.searchAlbums, (id) => api.album({ id }),
+    // CAR-SEARCH-TYPES-001: the car's Identify icon uses the phone's own fingerprinting.
+    (signature, ms) => api.identifyAudio(signature, ms), () => import('./engine/listen'),
+  ));
 
   // ---------------------------------------------------------------- load persisted state
   useEffect(() => {
@@ -382,9 +386,18 @@ export function App() {
   }, [items, result]);
 
   // ---------------------------------------------------------------- playback
+  // SHUFFLE-ROUND-001: row taps and refreshes within one list must not erase its heard set.
+  // A genuinely different playback context starts its own round and navigation history.
+  const enterPlayingContext = (context: string | null) => {
+    if (context !== playingContext) {
+      heardRef.current = new Set();
+      historyRef.current = [];
+    }
+    setPlayingContext(context);
+  };
   const play = (it: RecItem, o?: { newRound?: boolean; back?: boolean; keepList?: boolean }) => {
     // Playing from the queue leaves any saved list behind, so the queue's own rule applies again.
-    if (!o?.keepList) { playingListRef.current = null; setPlayingContext(null); }
+    if (!o?.keepList) { playingListRef.current = null; enterPlayingContext(null); }
     playedRef.current.add(it.track.key);
     if (o?.newRound) heardRef.current = new Set();
     heardRef.current.add(it.track.key);
@@ -397,9 +410,9 @@ export function App() {
   const playFromSearch = (t: Track, list: Track[]) => {
     playingListRef.current = null;
     setSearchList(list.length ? list : [t]);
-    setPlayingContext(SEARCH_CONTEXT);
-    heardRef.current = new Set([t.key]);
-    historyRef.current = [t.key];
+    enterPlayingContext(SEARCH_CONTEXT);
+    heardRef.current.add(t.key);
+    historyRef.current = [...historyRef.current.slice(-199), t.key];
     previewTrack(t);
   };
   // PLAYLIST-QUEUE-001: with a saved list in the now playing queue, its songs play first, in the list's
@@ -412,13 +425,14 @@ export function App() {
   // The rows the skip buttons walk: the queue, the saved list played from, or the search results.
   const activeItems = useMemo(() => contextRows(playingContext, { queueRows, search: searchList, saved, lists }), [queueRows, playingContext, searchList, saved, lists]);
   const playingKey = playing?.track.key ?? null;
+  const playingLiked = Boolean(playingKey && flags[playingKey]?.like);
+  const playingDisliked = Boolean(playingKey && flags[playingKey]?.dislike);
   const inQueue = playingKey != null && activeItems.some((x) => x.track.key === playingKey);
   const ready = readyFilter(queueAudio, downloadsAvailable());
   const readySignature = useMemo(() => ready ? activeItems.filter(x => ready(x.track)).map(x => x.track.key).join('\0') : '', [activeItems, cacheRevision]);
-  // SEARCH-QUEUE-001: search results are rarely downloaded yet, and a song played from a search row is
-  // fetched when it starts (NP-ALWAYS-001). Requiring a finished file here would leave the skip buttons
-  // dead on a search list, so in that one context they step to the next result and the player fetches it.
-  const stepReady = playingContext === SEARCH_CONTEXT ? undefined : ready;
+  // SEARCH-QUEUE-001: sequential search Next may fetch its selected full song. Shuffle, however,
+  // must obey local readiness even in a search list (SHUFFLE-ROUND-001).
+  const stepReady = playingContext === SEARCH_CONTEXT && !shuffle ? undefined : ready;
   const queueOpts = { shuffle, repeat, heard: heardRef.current, ready: stepReady };
   const nextStep = stepQueue(activeItems, inQueue ? playingKey : null, 1, hidden, queueOpts);
   const back = shuffle ? historyBack(historyRef.current, playingKey, stepReady ? activeItems.filter(x => stepReady(x.track)) : activeItems, hidden) : null;
@@ -438,8 +452,8 @@ export function App() {
     setShuffle((s) => {
       const on = !s;
       writeFlag(SHUFFLE_KEY, on ? 'on' : 'off');
-      // A new shuffle round starts from the song now playing.
-      heardRef.current = new Set(playingKey ? [playingKey] : []);
+      // Toggling shuffle is not permission to replay songs while unheard ones remain.
+      if (playingKey) heardRef.current.add(playingKey);
       return on;
     });
   const cycleRepeat = () =>
@@ -547,22 +561,34 @@ export function App() {
     ?? lists.flatMap((l) => savedTracks(saved, lists, l.id)).find((t) => t.key === id)
     ?? (saved ?? []).map((s) => s.track).find((x) => x.key === id)
     ?? carCatalog.find(id);
+  /**
+   * SERVICE-API-001: a car row the service engine found (the phone page was closed or hidden) is not
+   * known here. Ask the service for its exact list and play it as a search list, whole; a newer
+   * choice made meanwhile wins, and an unknown or mismatched answer plays nothing.
+   */
+  const carContextSeq = useRef(0);
+  const playFromService = (id: string, seq: number) => {
+    api.carContext(id).then((ctx) => {
+      const hit = pickCarContext(ctx, id);
+      if (hit && seq === carContextSeq.current) playFromSearch(hit.track, hit.tracks);
+    }, () => undefined);
+  };
   const playById = (id: string) => {
+        const seq = ++carContextSeq.current;
         // ALBUM-CAR-001: an album's song from a car search plays the album around it, in album order.
         if (decodeCarAlbumId(id)) {
           const hit = carCatalog.albumOf(id);
           if (hit) playFromSearch(hit.track, hit.tracks);
-          return; // A stale/forged car id must not play an unrelated song.
+          else playFromService(id, seq); // A stale/forged car id must not play an unrelated song.
+          return;
         }
         const scoped = decodePlaylistMediaId(id);
         if (scoped) {
           const list = lists.find((l) => l.id === scoped.listId);
           const track = list && savedTracks(saved, lists, list.id).find((t) => t.key === scoped.key);
-          if (!track) return; // A stale/forged car id must not play an unrelated song.
+          if (!track) { playFromService(id, seq); return; } // A stale/forged car id must not play an unrelated song.
           playingListRef.current = list.id;
-          setPlayingContext(list.id);
-          heardRef.current = new Set([track.key]);
-          historyRef.current = [track.key];
+          enterPlayingContext(list.id);
           const row = playbackRows([track])[0];
           if (row) play(row, { keepList: true });
           return;
@@ -572,6 +598,7 @@ export function App() {
         const t = trackById(id);
         const row = t ? playbackRows([t])[0] : undefined;
         if (row) play(row, { keepList: true });
+        else playFromService(id, seq);
   };
   useEffect(() => {
     if (!mediaNativeAvailable()) return;
@@ -581,6 +608,7 @@ export function App() {
       playIndex: (i) => { const it = activeItems[i]; if (it) play(it, { keepList: true }); },
       playId: playById,
       catalogSearch: (query, opts) => carCatalog.searchAll(query, opts),
+      identifyAudio: (samples) => carCatalog.identifyClip(samples),
       search: (q) => {
         const ql = q.trim().toLowerCase();
         if (!ql) return;
@@ -591,6 +619,12 @@ export function App() {
         if (row) play(row, { keepList: true });
       },
       shuffle: (on) => { if (on !== shuffle) toggleShuffle(); },
+      // CAR-ACTIONS-001: the car's Star and Dislike buttons teach the same taste as the app's own.
+      feedback: (id, kind) => {
+        const t = trackById(id) ?? (playing?.track.key === id ? playing.track : undefined);
+        if (!t) return;
+        learnFeedback(t, kind).catch((e) => flash(`Could not save that: ${(e as Error).message}`));
+      },
       repeat: (mode) => {
         const target: RepeatMode = mode === 1 ? 'one' : mode === 2 ? 'all' : 'off';
         setRepeat(() => { writeFlag(REPEAT_KEY, target); return target; });
@@ -614,8 +648,10 @@ export function App() {
       repeat: repeat === 'one' ? 1 : repeat === 'all' ? 2 : 0,
       queue: activeItems.map((x) => nativeSong(x.track)),
       queueIndex: idx,
+      liked: playingLiked,
+      disliked: playingDisliked,
     });
-  }, [playing, activeItems, playingKey, Boolean(nextStep), Boolean(prevStep), shuffle, repeat, readySignature]);
+  }, [playing, activeItems, playingKey, Boolean(nextStep), Boolean(prevStep), shuffle, repeat, readySignature, playingLiked, playingDisliked]);
   useEffect(() => {
     if (!mediaNativeAvailable()) return;
     pushMediaLibrary(
@@ -626,6 +662,8 @@ export function App() {
         ...(l.album ? { album: true, artist: l.album.artist, artwork: l.album.artwork } : {}),
       })),
     );
+    // NATIVE-COLD-STATE-001: their original Tracks too, so a cold car start acquires these exact songs.
+    pushMediaTracks([...activeItems.map((x) => x.track), ...lists.flatMap((l) => savedTracks(saved, lists, l.id))]);
   }, [activeItems, lists, saved, readySignature]);
 
   // A skip or a full listen is recorded, then the songs still to come are ranked again with it.
@@ -1204,9 +1242,9 @@ export function App() {
               // Remember which list this play came from, so a finished song is judged by that
               // list's rule rather than the discovery queue's.
               playingListRef.current = listId ?? null;
-              setPlayingContext(listId ?? 'all');
-              heardRef.current = new Set([t.key]);
-              historyRef.current = [t.key];
+              enterPlayingContext(listId ?? 'all');
+              heardRef.current.add(t.key);
+              historyRef.current = [...historyRef.current.slice(-199), t.key];
               previewTrack(t);
             }}
             onRemoveSaved={removeSaved}

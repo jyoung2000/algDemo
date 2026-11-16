@@ -24,6 +24,7 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.nowplaying.discovery.Downloads
 import com.nowplaying.discovery.MediaHub
+import com.nowplaying.discovery.NativeStateCodec
 import com.nowplaying.discovery.Streams
 import com.nowplaying.discovery.WebPlayer
 import com.nowplaying.discovery.dsp.EqConfig
@@ -81,6 +82,13 @@ class EnginePlayer(
   }
 
   var page: Page? = null
+
+  /** NATIVE-STATE-OBSERVER-001: every state the page would get, page or not, as a copy (EngineHub saves it). */
+  var observer: ((JSONObject) -> Unit)? = null
+  /** Changes whenever the queue, its round, its modes or the current song change. */
+  val queueVersion: Long get() = queue.version
+  /** NATIVE-COLD-STATE-001: restored from storage and not opened yet: paused, nothing decoded, streamed or downloaded. */
+  private var restored = false
 
   private val main = Handler(looper)
   private val opener = Executors.newSingleThreadExecutor { r -> Thread(r, "AirwaveOpen").apply { isDaemon = true } }
@@ -182,6 +190,7 @@ class EnginePlayer(
   fun pagePlay(play: Boolean) = changePlayWhenReady(play)
   fun pageSeek(positionMs: Long) {
     if (queue.current == null) return
+    if (restored) { pendingStartMs = positionMs.coerceAtLeast(0); invalidateState(); emit(null); return }
     engine.seekTo(positionMs.coerceAtLeast(0) * SAMPLE_RATE / 1000)
     ended = false
     invalidateState()
@@ -209,10 +218,15 @@ class EnginePlayer(
       queue.shuffle = shuffle
       if (repeat != repeatMode()) applyRepeat(repeat)
       invalidateState()
-    } else if (list.isNotEmpty()) {
-      // Carrying on alone: keep the order, but take the page's newer copies (a file that just landed).
+    } else if (queue.items.isNotEmpty()) {
+      // Carrying on alone (or with no page list at all: a car cold start): keep the native order and
+      // context, but take newer copies of its own songs (a file that just landed), from the page's
+      // list first, else the library. The playing song is only re-described here, never reopened.
       val byId = list.associateBy { it.id }
-      val items = queue.items.map { e -> byId[e.song.id]?.let { Entry(it, e.mediaId) } ?: e }
+      val items = queue.items.map { e ->
+        (byId[e.song.id] ?: lookup(e.mediaId)?.takeIf { it.id == e.song.id } ?: lookup(e.song.id)?.takeIf { it.id == e.song.id })
+          ?.let { Entry(it, e.mediaId) } ?: e
+      }
       if (items != queue.items) queue.refresh(items)
     }
     val waiting = waitingFor ?: return
@@ -232,6 +246,31 @@ class EnginePlayer(
 
   /** The full state for a page that just woke up: where things are, and what it missed. */
   fun snapshotForPage(): JSONObject = stateJson(null).put("pending", pending())
+
+  /** NATIVE-COLD-STATE-001: the queue, its shuffle round and the native millisecond position, to save. */
+  fun nativeState(): JSONObject = NativeStateCodec.nativeJson(
+    NativeStateCodec.NativeQueue(queue.items.map { it.mediaId to it.song }, queue.control(), positionMs(engine.snapshot)),
+  )
+
+  /**
+   * Put back a saved queue (every entry, the current song, repeat, shuffle and its round), paused and
+   * unopened: nothing is decoded, streamed or downloaded until an explicit prepare or play, which
+   * opens the remembered position through [loadCurrent]. Only into a player with no queue yet.
+   */
+  fun restoreNativeState(saved: JSONObject, sourceAllowed: (String) -> Boolean = Downloads::urlAllowed): Boolean {
+    if (queue.items.isNotEmpty() || loadedKey != null || waitingFor != null) return false
+    val q = NativeStateCodec.nativeOf(saved, sourceAllowed)?.takeIf { it.entries.isNotEmpty() } ?: return false
+    queue.restore(q.entries.map { (m, s) -> Entry(s, m) }, q.control)
+    engine.setRepeatOne(queue.repeat == PlayQueue.Repeat.ONE)
+    playWhenReady = false
+    pendingStartMs = q.positionMs
+    ended = false
+    error = null
+    restored = true
+    invalidateState()
+    emit(null)
+    return true
+  }
 
   /* -------------------------------------------------------------- Player state */
 
@@ -271,7 +310,7 @@ class EnginePlayer(
   private fun playbackState(snap: AudioEngine.Snapshot): Int {
     val current = queue.current
     return when {
-      error != null || current == null -> Player.STATE_IDLE
+      error != null || current == null || restored -> Player.STATE_IDLE
       ended -> Player.STATE_ENDED
       loadedKey != current.song.id || snap.key != current.song.id || snap.buffering -> Player.STATE_BUFFERING
       else -> Player.STATE_READY
@@ -332,6 +371,7 @@ class EnginePlayer(
     nativeChange()
     if (next.isEmpty()) {
       ++loadGeneration // a decoder/stream lookup in flight must not resurrect the old song
+      restored = false
       waitingFor = null
       loadedKey = null
       streamingKey = null
@@ -350,7 +390,8 @@ class EnginePlayer(
   }
 
   override fun handlePrepare(): ListenableFuture<*> {
-    if (error != null) { error = null; loadCurrent(0, chosen = true) }
+    if (restored) loadCurrent(pendingStartMs, chosen = true)
+    else if (error != null) { error = null; loadCurrent(0, chosen = true) }
     return Futures.immediateVoidFuture()
   }
 
@@ -415,7 +456,8 @@ class EnginePlayer(
     if (play && !requestFocus()) return
     playWhenReady = play
     if (play) {
-      if (ended) { ended = false; if (queue.current != null) loadCurrent(0, chosen = true) } else engine.play()
+      if (restored) loadCurrent(pendingStartMs, chosen = true)
+      else if (ended) { ended = false; if (queue.current != null) loadCurrent(0, chosen = true) } else engine.play()
     } else engine.pause()
     holdWake(play)
     invalidateState()
@@ -469,6 +511,7 @@ class EnginePlayer(
     val entry = queue.current ?: run { invalidateState(); emit(null); return }
     val song = entry.song
     val gen = ++loadGeneration
+    restored = false
     loadedKey = null
     waitingFor = null
     streamingKey = null
@@ -717,9 +760,12 @@ class EnginePlayer(
   }
 
   private fun emit(event: JSONObject?) {
-    val p = page ?: return
-    if (!p.live) return
-    runCatching { p.state(stateJson(event)) }
+    val p = page?.takeIf { it.live }
+    val o = observer
+    if (p == null && o == null) return
+    val json = stateJson(event)
+    if (o != null) runCatching { o(JSONObject(json.toString())) }
+    if (p != null) runCatching { p.state(json) }
   }
 
   /**

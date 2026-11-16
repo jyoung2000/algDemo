@@ -10,6 +10,7 @@ import android.net.Uri
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
 import android.view.View
@@ -56,6 +57,7 @@ import java.util.concurrent.Executors
 class MainActivity : Activity() {
   private lateinit var root: FrameLayout
   private var web: WebView? = null
+  private var bridge: Bridge? = null
   private val pool = Executors.newFixedThreadPool(16)
   private var pendingMic: PermissionRequest? = null
   private var pendingFile: ValueCallback<Array<Uri>>? = null
@@ -85,16 +87,13 @@ class MainActivity : Activity() {
    *  the Web Audio engine actually acts on it. The page implements `window.__awMediaCmd(jsonString)`. */
   private val mediaCommandSink: (JSONObject) -> Unit = { cmd ->
     val v = web
-    v?.post {
-      if (web !== v) return@post
-      if (cmd.optString("type") == "catalogSearch") {
-        // AA's keyboard backgrounds the phone Activity. Keep only this bounded catalogue request
-        // awake; do not leave the renderer permanently resumed or claim service-owned playback.
-        v.onResume()
-        v.postDelayed({ if (web === v && activityPaused && !webAudioPlaying && !MediaHub.catalogSearchPending) v.onPause() }, 25000)
-      }
-      v.evaluateJavascript("window.__awMediaCmd && window.__awMediaCmd(${JSONObject.quote(cmd.toString())})", null)
-    }
+    v?.post { if (web === v) v.evaluateJavascript("window.__awMediaCmd && window.__awMediaCmd(${JSONObject.quote(cmd.toString())})", null) }
+  }
+
+  /** SERVICE-API-001: the service engine's replies to this page's requests (`window.__awApi`). */
+  private val apiReplies: (Int, String) -> Unit = { id, json ->
+    val v = web
+    v?.post { if (web === v) v.evaluateJavascript("window.__awApi && window.__awApi($id, ${JSONObject.quote(json)})", null) }
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -103,6 +102,11 @@ class MainActivity : Activity() {
     setContentView(root)
     edgeToEdge()
     Downloads.warmUp(this) // unpacks yt-dlp, Python and ffmpeg in the background
+    NativeLibraryState.init(this)
+    // SERVICE-API-001: this Activity starts the service (startNativeSession), whose engine page opens the
+    // original database; the page loaded here is its client unless that engine never opens it (EngineOwner).
+    ServiceApi.owner.reserveForService(SystemClock.elapsedRealtime())
+    ServiceApi.core.toUi = apiReplies
     open()
     startNativeSession()
     playFromSearch(intent)
@@ -222,7 +226,8 @@ class MainActivity : Activity() {
       settings.setSupportZoom(false)
       setBackgroundColor(Color.parseColor("#f7f6f3"))
       overScrollMode = View.OVER_SCROLL_NEVER
-      addJavascriptInterface(Bridge(this), "AirwaveNative")
+      bridge?.dispose()
+      addJavascriptInterface(Bridge(this).also { bridge = it }, "AirwaveNative")
       webChromeClient = object : WebChromeClient() {
         override fun onConsoleMessage(m: ConsoleMessage): Boolean {
           Log.d("AirwaveWeb", "${m.messageLevel()} ${m.message()} (${m.sourceId()}:${m.lineNumber()})")
@@ -326,41 +331,26 @@ class MainActivity : Activity() {
   }
 
   /** Serve /path from the APK's assets with the right MIME type (wasm and ES modules need them). */
-  private fun asset(rawPath: String): WebResourceResponse {
-    var path = rawPath.trimStart('/')
-    if (path.isEmpty()) path = "index.html"
-    val mime = mimeOf(path)
-    return try {
-      val stream = assets.open("web/$path")
-      val enc = if (mime.startsWith("text/") || mime == "application/json") "utf-8" else null
-      // addJavascriptInterface is exposed to every frame. Installed-app playback uses no embeds;
-      // refuse third-party frames so they cannot call the privileged downloader/HTTP bridge.
-      val headers = mapOf("Cache-Control" to "no-cache", "Content-Security-Policy" to "frame-src 'none'; object-src 'none'; base-uri 'none'")
-      WebResourceResponse(mime, enc, 200, "OK", headers, stream)
-    } catch (e: java.io.IOException) {
-      if (!path.substringAfterLast('/').contains('.')) asset("/index.html")
-      else WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(ByteArray(0)))
-    }
-  }
-
-  private fun mimeOf(path: String): String = when (path.substringAfterLast('.', "").lowercase()) {
-    "html" -> "text/html"
-    "js", "mjs" -> "text/javascript"
-    "css" -> "text/css"
-    "json" -> "application/json"
-    "wasm" -> "application/wasm"
-    "svg" -> "image/svg+xml"
-    "png" -> "image/png"
-    "ico" -> "image/x-icon"
-    "woff2" -> "font/woff2"
-    "md" -> "text/plain"
-    else -> "application/octet-stream"
-  }
+  private fun asset(rawPath: String): WebResourceResponse = AppAssets.serve(this, rawPath)
 
   /** What the page can ask the phone to do: HTTP to the music services, nothing else. */
   inner class Bridge(private val view: WebView) {
+    /** NATIVE-CLOCK-001: the only owner of the page's delayed jobs; disposed with the page. */
+    private val clock = NativeClock(NativeClock.mainLooper())
+
+    fun dispose() = clock.dispose()
+
     @JavascriptInterface
     fun version(): String = BuildConfig.VERSION_NAME
+
+    /** Pacing/backoff waits that a hidden page's suspended DOM timers would stall. False = refused. */
+    @JavascriptInterface
+    fun delay(id: Int, ms: Int): Boolean = clock.schedule(id, ms.toLong()) { fired ->
+      if (web === view) view.evaluateJavascript("window.__awDelay && window.__awDelay($fired)", null)
+    }
+
+    @JavascriptInterface
+    fun cancelDelay(id: Int) = clock.cancel(id)
 
     /** The native engine plays; the page drives it with one JSON command per call (see [EngineHub]). */
     @JavascriptInterface
@@ -387,7 +377,7 @@ class MainActivity : Activity() {
         if (playing) {
           maybeAskNotifications()
           if (activityPaused) view.onResume()
-        } else if (activityPaused && !MediaHub.catalogSearchPending) {
+        } else if (activityPaused) {
           view.onPause()
         }
       }
@@ -411,7 +401,7 @@ class MainActivity : Activity() {
         if (playing) {
           maybeAskNotifications()
           if (activityPaused) view.onResume()
-        } else if (activityPaused && !MediaHub.catalogSearchPending) {
+        } else if (activityPaused) {
           view.onPause()
         }
       }
@@ -457,44 +447,27 @@ class MainActivity : Activity() {
     @JavascriptInterface
     fun request(id: Int, json: String) {
       pool.execute {
-        val out = JSONObject()
-        try {
-          val req = JSONObject(json)
-          val url = URL(req.getString("url"))
-          if (url.protocol != "https" || !allowed(url.host)) throw SecurityException("host not allowed: ${url.host}")
-          val c = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = req.optString("method", "GET")
-            connectTimeout = 15000
-            readTimeout = req.optInt("timeoutMs", 30000)
-            instanceFollowRedirects = false // the page re-checks each hop against the allow-list
-            req.optJSONObject("headers")?.let { h -> h.keys().forEach { k -> setRequestProperty(k, h.getString(k)) } }
-            if (req.has("body") && !req.isNull("body")) {
-              doOutput = true
-              outputStream.use { it.write(req.getString("body").toByteArray(Charsets.UTF_8)) }
-            }
-          }
-          val status = c.responseCode
-          val stream = if (status >= 400) c.errorStream else c.inputStream
-          val cap = req.optInt("maxBytes", 8_000_000)
-          val bytes = stream?.use { s ->
-            val buf = java.io.ByteArrayOutputStream()
-            val chunk = ByteArray(16384)
-            while (true) {
-              val n = s.read(chunk)
-              if (n < 0) break
-              buf.write(chunk, 0, n)
-              if (buf.size() > cap) throw java.io.IOException("response larger than $cap bytes")
-            }
-            buf.toByteArray()
-          } ?: ByteArray(0)
-          val headers = JSONObject()
-          c.headerFields.forEach { (k, v) -> if (k != null && v.isNotEmpty()) headers.put(k.lowercase(), v.last()) }
-          out.put("status", status).put("headers", headers).put("body", Base64.encodeToString(bytes, Base64.NO_WRAP))
-        } catch (e: Exception) {
-          out.put("error", "${e.javaClass.simpleName}: ${e.message}")
-        }
-        view.post { view.evaluateJavascript("window.__awHttp($id, ${JSONObject.quote(out.toString())})", null) }
+        val out = NativeHttp.perform(json)
+        view.post { if (web === view) view.evaluateJavascript("window.__awHttp($id, ${JSONObject.quote(out.toString())})", null) }
       }
+    }
+
+    /**
+     * SERVICE-API-001: how this page reaches the engine, decided once at its first request:
+     * "service" (every `api` request goes to [api]) or "local" (it may open the original database
+     * itself, and must claim it first with [claimLocal]). See [EngineOwner].
+     */
+    @JavascriptInterface
+    fun apiMode(): String = ServiceApi.owner.modeForUi(SystemClock.elapsedRealtime())
+
+    /** True when this page may open the original database: the service engine never opened it. */
+    @JavascriptInterface
+    fun claimLocal(): Boolean = web === view && ServiceApi.owner.claimUi(SystemClock.elapsedRealtime(), view)
+
+    /** One request to the service engine; the reply comes back through `window.__awApi(id, json)`. */
+    @JavascriptInterface
+    fun api(id: Int, json: String) {
+      ServiceApi.onMain { if (web === view) ServiceApi.core.fromUi(id, json) }
     }
   }
 
@@ -536,18 +509,23 @@ class MainActivity : Activity() {
     cb.onReceiveValue(uri?.let { arrayOf(it) }) // null = cancelled; the page simply stays where it was
   }
 
-  private fun allowed(host: String): Boolean = host in HOSTS || SUFFIXES.any { host.endsWith(it) }
-
   @Deprecated("Deprecated in Java")
   override fun onBackPressed() {
     val w = web
     if (w != null && w.canGoBack()) w.goBack() else @Suppress("DEPRECATION") super.onBackPressed()
   }
 
-  override fun onPause() { activityPaused = true; if (!webAudioPlaying && !MediaHub.catalogSearchPending) web?.onPause(); super.onPause() }
+  override fun onPause() {
+    activityPaused = true
+    // CAR-CATALOG-SERVICE-001: a hidden page no longer answers car searches; the service engine does.
+    MediaHub.setPageVisible(mediaCommandSink, false)
+    if (!webAudioPlaying) web?.onPause()
+    super.onPause()
+  }
   override fun onResume() {
     super.onResume()
     activityPaused = false
+    MediaHub.setPageVisible(mediaCommandSink, true)
     web?.onResume()
     // Back in front: hand the page the engine's state and whatever played while it was away.
     EngineHub.fromPage("{\"op\":\"hello\"}")
@@ -555,36 +533,20 @@ class MainActivity : Activity() {
   override fun onDestroy() {
     EngineHub.detachPage(enginePage)
     MediaHub.clearCommandSink(mediaCommandSink)
+    web?.let { ServiceApi.releaseUi(it, apiReplies) }
     mediaController?.release()
     mediaControllerFuture?.let { MediaController.releaseFuture(it) }
     mediaController = null
     mediaControllerFuture = null
+    bridge?.dispose(); bridge = null
     web?.destroy(); web = null; pool.shutdownNow(); super.onDestroy()
   }
 
   private companion object {
-    const val APP_HOST = "appassets.androidplatform.net"
+    const val APP_HOST = AppAssets.HOST
     const val REQ_MIC = 41
     const val REQ_FILE = 42
     const val REQ_FOLDER = 43
     const val REQ_NOTIFY = 44
-    // Mirrors server/airwave_discovery/net.py ALLOWED_HOSTS / ALLOWED_SUFFIXES.
-    val HOSTS = setOf(
-      "api.deezer.com", "www.deezer.com", "deezer.com", "deezer.page.link", "link.deezer.com",
-      "open.spotify.com", "spotify.link", "spotify.app.link",
-      "soundcloud.com", "www.soundcloud.com", "m.soundcloud.com", "on.soundcloud.com", "api-v2.soundcloud.com",
-      "bandcamp.com", "www.bandcamp.com", "api.audius.co", "audius.co", "api-v2.hearthis.at", "archive.org",
-      "www.youtube.com", "youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be",
-      "itunes.apple.com", "music.apple.com",
-      "api-partner.spotify.com", "clienttoken.spotify.com", "open.spotifycdn.com",
-      "open.qobuz.com",
-      "music.amazon.com", "na.web.skill.music.a2z.com",
-      "tidal.com", "resources.tidal.com",
-      "api.song.link",
-      "lrclib.net", "musicbrainz.org",
-      "genius.com", "amp.shazam.com",
-      "i.ytimg.com",
-    )
-    val SUFFIXES = listOf(".dzcdn.net", ".sndcdn.com")
   }
 }

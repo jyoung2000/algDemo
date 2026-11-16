@@ -98,9 +98,17 @@ export function searchVariants(t: Pick<Track, 'title' | 'artists'>): string[] {
 
 /** Turn a verified whole-track candidate into the downloader's link or video id. */
 
+const SITE_PROVIDERS = ['soundcloud', 'bandcamp', 'audius', 'hearthis', 'archive'];
+
+/**
+ * SC-NOLINK-001: a site upload is only fetched by its link. One without a link (a preview-only
+ * SoundCloud track, SC-SNIP-001) is a correct match that nothing can download; never return it.
+ */
+const downloadable = (t: Track): boolean => !SITE_PROVIDERS.includes(t.provider) || !!t.url;
+
 const resultFor = (t: Track, source: 'match' | 'video' | 'soundcloud' | 'bandcamp' | 'audius' | 'hearthis' | 'archive'): FullSongResult => {
   // Site uploads use their validated track links; YouTube Music uses the video id.
-  const url = ['soundcloud', 'bandcamp', 'audius', 'hearthis', 'archive'].includes(t.provider) && t.url ? String(t.url) : undefined;
+  const url = SITE_PROVIDERS.includes(t.provider) && t.url ? String(t.url) : undefined;
   return { id: url ? null : (t.platform_id ?? null), source, ...(url ? { url } : {}) };
 };
 
@@ -120,7 +128,7 @@ async function ask(
       return null; // this provider is not answering; the chain moves on
     }
     for (const r of results) {
-      if (dead(r)) continue; // this one has already been tried and could not be downloaded
+      if (dead(r) || !downloadable(r)) continue; // already failed, or no link the downloader can fetch
       const v = matchRecordings(t as never, r as never);
       if (v.verdict === 'same') return r;
     }

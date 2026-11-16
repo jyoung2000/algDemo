@@ -92,6 +92,216 @@ class PlayQueueTest {
     assertTrue("a different list is refused", !q2.refresh(listOf(S("x"))))
   }
 
+  @Test fun libraryPushesDoNotForgetSongsAlreadyHeard() {
+    for (seed in 0 until 40) {
+      val q = queue(*(0 until 6).map { S("s$it") }.toTypedArray(), seed = seed)
+      q.shuffle = true
+      q.repeat = PlayQueue.Repeat.ALL
+      val heard = mutableSetOf(q.current!!.key)
+      repeat(5) { step ->
+        // EnginePlayer.libraryChanged re-sends fresh entries and the current index on each push.
+        val copies = q.items.map { it.copy() }.let { if (step % 2 == 0) it.reversed() else it }
+        q.set(copies, copies.indexOfFirst { it.key == q.current!!.key })
+        val peek = q.peekAfterEnd()!!
+        repeat(4) { assertEquals(peek, q.peekAfterEnd()) }
+        assertEquals(peek, q.advance(false))
+        assertTrue("seed $seed repeated ${q.current!!.key} before the list finished: $heard", heard.add(q.current!!.key))
+      }
+      assertEquals(6, heard.size)
+    }
+  }
+
+  @Test fun selectingThePeekAsNativeEndAndBlendDoKeepsTheRound() {
+    for (seed in 0 until 40) {
+      val q = queue(*(0 until 5).map { S("s$it") }.toTypedArray(), seed = seed)
+      q.shuffle = true
+      q.repeat = PlayQueue.Repeat.ALL
+      repeat(4) {
+        val heard = mutableSetOf(q.current!!.key)
+        repeat(4) {
+          val next = q.items[q.peekAfterEnd()!!].key
+          assertTrue(q.select(next))
+          assertTrue("native select repeated $next: $heard", heard.add(next))
+        }
+        val last = q.current!!.key
+        val next = q.items[q.peekAfterEnd()!!].key
+        assertNotEquals(last, next)
+        assertTrue(q.select(next))
+      }
+    }
+  }
+
+  @Test fun manualReplayDoesNotResetAutomaticProgress() {
+    for (seed in 0 until 40) {
+      val q = queue(S("a"), S("b"), S("c"), S("d"), seed = seed)
+      q.shuffle = true
+      q.repeat = PlayQueue.Repeat.ALL
+      val heard = mutableSetOf(q.current!!.key)
+      q.advance(false)
+      heard += q.current!!.key
+      assertTrue(q.select("a")) // An intentional replay is allowed, not a new shuffle round.
+      repeat(2) {
+        q.advance(false)
+        assertTrue("seed $seed automatic replay before unplayed songs: $heard", heard.add(q.current!!.key))
+      }
+    }
+  }
+
+  @Test fun metadataAndReorderKeepTheSamePreparedSongByKey() {
+    val q = queue(S("a"), S("b"), S("c"), S("d"))
+    q.shuffle = true
+    q.repeat = PlayQueue.Repeat.ALL
+    repeat(12) {
+      val prepared = q.items[q.peekAfterEnd()!!].key
+      val current = q.current!!.key
+      val reordered = q.items.reversed().map { it.copy() }
+      q.set(reordered, reordered.indexOfFirst { it.key == current })
+      assertEquals(current, q.current!!.key)
+      assertEquals(prepared, q.items[q.peekAfterEnd()!!].key)
+      assertTrue(q.select(prepared))
+    }
+  }
+
+  @Test fun pageLoadsUsingSetAlsoKeepHeardHistory() {
+    for (seed in 0 until 40) {
+      val q = queue(S("a"), S("b"), S("c"), S("d"), seed = seed)
+      q.shuffle = true
+      q.repeat = PlayQueue.Repeat.ALL
+      val heard = mutableSetOf(q.current!!.key)
+      repeat(15) {
+        if (heard.size == 4) heard.clear()
+        val peek = q.peekAfterEnd()!!
+        q.set(q.items.map { it.copy() }, peek)
+        assertTrue("page load repeated before unplayed: $heard", heard.add(q.current!!.key))
+      }
+    }
+  }
+
+  @Test fun shuffleKeepsRepeatOneAndNextPressedSemantics() {
+    val q = queue(S("a"), S("missing", false), S("b"))
+    q.shuffle = true
+    q.repeat = PlayQueue.Repeat.ONE
+    assertEquals(0, q.peekAfterEnd())
+    assertEquals(0, q.advance(false))
+    assertEquals(2, q.peekNextPressed())
+    assertEquals(2, q.advance(true))
+    assertEquals(2, q.advance(false))
+    q.repeat = PlayQueue.Repeat.OFF
+    assertNull(q.peekAfterEnd())
+    assertNull(q.advance(false))
+    assertEquals(0, q.advance(true))
+  }
+
+  @Test fun noReadySongsStopAndASingleReadySongCanRepeat() {
+    val q = queue(S("a", false), S("b", false))
+    q.shuffle = true
+    q.repeat = PlayQueue.Repeat.ALL
+    assertNull(q.peekAfterEnd())
+    assertNull(q.advance(true))
+    assertTrue(q.refresh(listOf(S("a", false), S("b"))))
+    repeat(4) {
+      assertEquals(1, q.peekAfterEnd())
+      assertEquals(1, q.advance(false))
+    }
+    q.set(emptyList(), 0)
+    assertNull(q.current)
+    assertNull(q.advance(true))
+  }
+
+  @Test fun editsAndNewlyReadySongsGetTheirTurnWithoutResurrectingHeardSongs() {
+    for (seed in 0 until 40) {
+      val q = queue(S("a"), S("b"), S("c"), S("waiting", false), seed = seed)
+      q.shuffle = true
+      q.repeat = PlayQueue.Repeat.ALL
+      val heard = mutableSetOf(q.current!!.key)
+      q.advance(false)
+      heard += q.current!!.key
+      val remaining = q.items.first { it.ready && it.key !in heard }.key
+      val changed = listOf(S("waiting"), S("new"), S(remaining), q.current!!.copy())
+      q.set(changed, changed.indexOfFirst { it.key == q.current!!.key })
+      // Re-add a removed heard song; it must still wait for the next round.
+      q.set(q.items + S("a"), q.index)
+      val turns = mutableSetOf<String>()
+      repeat(3) {
+        q.advance(false)
+        assertTrue("heard track returned early: ${q.current}", q.current!!.key !in heard)
+        assertTrue(turns.add(q.current!!.key))
+      }
+      assertEquals(setOf("waiting", "new", remaining), turns)
+    }
+  }
+
+  @Test fun refreshMakesSkippedUnreadySongsEligibleBeforeAnotherRound() {
+    val q = queue(S("a"), S("b", false), S("c"))
+    q.shuffle = true
+    q.repeat = PlayQueue.Repeat.ALL
+    q.advance(false)
+    assertEquals("c", q.current!!.key)
+    assertTrue(q.refresh(q.items.map { it.copy(ready = true) }))
+    assertEquals("b", q.items[q.peekAfterEnd()!!].key)
+    assertEquals("b", q.items[q.advance(false)!!].key)
+  }
+
+  @Test fun shuffleRoundBoundariesAvoidImmediateRepeatWithUnreadyEntries() {
+    for (seed in 0 until 100) {
+      val q = queue(S("a"), S("missing", false), S("b"), S("also-missing", false), seed = seed)
+      q.shuffle = true
+      q.repeat = PlayQueue.Repeat.ALL
+      repeat(12) {
+        val previous = q.current!!.key
+        val peek = q.peekAfterEnd()
+        assertEquals(peek, q.advance(false))
+        assertTrue(q.current!!.ready)
+        assertNotEquals("seed $seed", previous, q.current!!.key)
+      }
+    }
+  }
+
+  @Test fun togglingShuffleDoesNotForgetTheCurrentRound() {
+    for (seed in 0 until 40) {
+      val q = queue(S("a"), S("b"), S("c"), S("d"), seed = seed)
+      q.shuffle = true
+      val heard = mutableSetOf(q.current!!.key)
+      q.advance(true)
+      heard += q.current!!.key
+      q.shuffle = false
+      q.shuffle = true
+      repeat(2) {
+        q.advance(true)
+        assertTrue("shuffle toggle repeated before unplayed: $heard", heard.add(q.current!!.key))
+      }
+    }
+  }
+
+  @Test fun enablingShuffleKeepsSequentiallyPlayedSongsAccountedFor() {
+    for (seed in 0 until 40) {
+      val q = queue(S("a"), S("b"), S("c"), S("d"), seed = seed)
+      q.advance(false)
+      assertEquals("b", q.current!!.key)
+      q.set(q.items.map { it.copy() }, q.index)
+      q.shuffle = true
+      val heard = mutableSetOf("a", "b")
+      repeat(2) {
+        q.advance(true)
+        assertTrue("enabling shuffle forgot sequential play: $heard", heard.add(q.current!!.key))
+      }
+    }
+  }
+
+  @Test fun aDifferentListStartsItsOwnRound() {
+    for (seed in 0 until 40) {
+      val q = queue(S("a"), S("b"), S("c"), S("d"), seed = seed)
+      q.shuffle = true
+      repeat(3) { q.advance(true) }
+      // Another playlist sharing one song: that song is not "already played" in the new list.
+      val other = listOf(S("x"), S("y"), S("z"), S(q.current!!.key))
+      q.set(other, 0)
+      val turns = mutableSetOf(q.current!!.key)
+      repeat(3) { q.advance(false); assertTrue("new list skipped or repeated: $turns", turns.add(q.current!!.key)) }
+      assertEquals(4, turns.size)
+    }
+  }
+
   @Test fun selectingARowMakesItCurrent() {
     val q = queue(S("a"), S("b"), S("c"))
     assertTrue(q.select("c"))

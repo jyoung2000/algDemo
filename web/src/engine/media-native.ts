@@ -23,7 +23,15 @@ export interface NativeSong {
   /** The download link of the complete audio held on the phone, so the native engine can play this
    *  exact file without the page. Sent only while `ready`. */
   source?: string | null;
+  /** CAR-SEARCH-TYPES-001: what kind of result a car search song is, for the car's icons. */
+  kinds?: CarKind[];
 }
+
+/** CAR-SEARCH-TYPES-001: the kinds the car's search icons narrow to. */
+export type CarKind = 'single' | 'album' | 'feature' | 'lyrics' | 'artist';
+/** CAR-SEARCH-TYPES-001: the kind a car search asked for (spoken lead words or the Search tab). */
+export type CarSearchMode = 'all' | 'artists' | 'singles' | 'albums' | 'features' | 'lyrics';
+const CAR_MODES: readonly string[] = ['all', 'artists', 'singles', 'albums', 'features', 'lyrics'];
 
 export interface NativeFolder {
   id: string;
@@ -68,7 +76,14 @@ export interface NativeState {
   repeat: number; // 0 off, 1 one, 2 all
   queue: NativeSong[];
   queueIndex: number;
+  /** CAR-ACTIONS-001: the song now playing is starred (liked) / disliked, for the car's buttons. */
+  liked: boolean;
+  disliked: boolean;
 }
+
+/** CAR-ACTIONS-001: the judgements the car's Star and Dislike buttons can send. */
+export type CarFeedbackKind = 'like' | 'unlike' | 'dislike' | 'undislike';
+const CAR_FEEDBACK: readonly string[] = ['like', 'unlike', 'dislike', 'undislike'];
 
 /** Transport the native surfaces (lock screen, Bluetooth, car, voice) ask the page to perform. */
 export interface MediaHandlers {
@@ -84,9 +99,13 @@ export interface MediaHandlers {
   /** A raw search query (voice), when the native side could not resolve it to a song itself. */
   search?: (query: string) => void;
   /** Catalogue lookup for typed/voice car search; results are metadata, not automatic queue adds. */
-  catalogSearch?: (query: string, opts: { album: boolean }) => Promise<NativeSong[] | CatalogAnswer> | NativeSong[] | CatalogAnswer;
+  catalogSearch?: (query: string, opts: { album: boolean; mode?: CarSearchMode }) => Promise<NativeSong[] | CatalogAnswer> | NativeSong[] | CatalogAnswer;
+  /** CAR-SEARCH-TYPES-001: the car's Identify icon: name the music in this 16 kHz mono clip. */
+  identifyAudio?: (samples: Float32Array) => Promise<NativeSong[]>;
   shuffle?: (on: boolean) => void;
   repeat?: (mode: number) => void;
+  /** CAR-ACTIONS-001: Star or Dislike pressed in the car (or queued while the app was closed). */
+  feedback?: (id: string, kind: CarFeedbackKind) => void;
 }
 
 type NativeMedia = { media?: (json: string) => void };
@@ -107,6 +126,23 @@ export function decodeCarAlbumId(id: string): { albumId: string; key: string } |
   } catch {
     return null;
   }
+}
+
+/**
+ * SERVICE-API-001: the song a car id names in the context the service engine answered for it, with
+ * the whole list; null unless the answer is well formed and its song at `index` is exactly that id's
+ * track (a stale or mismatched answer plays nothing).
+ */
+export function pickCarContext(ctx: unknown, id: string): { track: Track; tracks: Track[] } | null {
+  const c = ctx as { tracks?: unknown; ids?: unknown; index?: unknown } | null;
+  if (!c || !Array.isArray(c.tracks) || !Array.isArray(c.ids) || c.tracks.length !== c.ids.length || c.tracks.length > 2000) return null;
+  if (typeof c.index !== 'number' || !Number.isInteger(c.index) || c.index < 0 || c.index >= c.tracks.length) return null;
+  const tracks = c.tracks as Track[];
+  if (!tracks.every(t => t && typeof t === 'object' && typeof t.key === 'string' && t.key && typeof t.title === 'string')) return null;
+  const key = decodeCarAlbumId(id)?.key ?? decodePlaylistMediaId(id)?.key ?? (id.includes('/') ? null : id);
+  const track = tracks[c.index]!;
+  if (key === null || track.key !== key || c.ids[c.index] !== id) return null;
+  return { track, tracks };
 }
 
 /** Playlist rows carry context in their Android Auto mediaId; a plain track key has none. */
@@ -143,6 +179,8 @@ const DEFAULT_STATE: NativeState = {
   repeat: 0,
   queue: [],
   queueIndex: 0,
+  liked: false,
+  disliked: false,
 };
 
 let lastState: NativeState = { ...DEFAULT_STATE };
@@ -160,7 +198,7 @@ export function pushMediaLibrary(songs: NativeSong[], playlists: NativeFolder[])
   send({ state: lastState, library: lastLibrary });
 }
 
-function send(payload: { state: NativeState; library?: { songs: NativeSong[]; playlists: NativeFolder[] }; search?: { requestId: string; query: string; songs: NativeSong[]; albums?: NativeAlbum[]; play?: string; error?: string } }): void {
+function send(payload: { state: NativeState; library?: { songs: NativeSong[]; playlists: NativeFolder[] }; search?: { requestId: string; query: string; songs: NativeSong[]; albums?: NativeAlbum[]; play?: string; error?: string }; identify?: { requestId: string; songs: NativeSong[]; error?: string } }): void {
   const n = nativeMedia();
   if (typeof n?.media !== 'function') return;
   try {
@@ -169,6 +207,56 @@ function send(payload: { state: NativeState; library?: { songs: NativeSong[]; pl
     /* serialisation failed or the snapshot was too large: drop it rather than crash the page */
   }
 }
+
+/**
+ * SERVICE-API-001: complete files the service's queue cache now holds (or no longer holds) for songs
+ * in the car-selected list, so the native player can swap in the local file for those known ids.
+ */
+export function pushSourceUpdates(updates: { id: string; key: string; ready: boolean; source: string | null }[]): void {
+  const n = nativeMedia();
+  if (typeof n?.media !== 'function' || !updates.length) return;
+  try {
+    n.media(JSON.stringify({ sourceUpdates: updates }));
+  } catch {
+    /* as send(): drop rather than crash */
+  }
+}
+
+/** What the native side was last given for each track key (bounded), so only new or changed Tracks are sent. */
+const rememberedTracks = new Map<string, string>();
+const TRACK_CHUNK = 100;
+const MAX_TRACK_CHARS = 16_000;
+
+/**
+ * NATIVE-COLD-STATE-001: the original Tracks of the library's songs, kept natively by exact key so
+ * the service engine can acquire a saved song's full recording after a cold car start without
+ * rebuilding it from its title. Sent apart from the library push (in chunks), new or changed only.
+ */
+export function pushMediaTracks(tracks: readonly Track[]): void {
+  const n = nativeMedia();
+  if (typeof n?.media !== 'function') return;
+  const fresh: Track[] = [];
+  for (const t of tracks) {
+    if (!t?.key) continue;
+    let json: string;
+    try { json = JSON.stringify(t); } catch { continue; }
+    if (json.length > MAX_TRACK_CHARS || rememberedTracks.get(t.key) === json) continue;
+    rememberedTracks.delete(t.key);
+    rememberedTracks.set(t.key, json);
+    fresh.push(t);
+  }
+  while (rememberedTracks.size > 5000) rememberedTracks.delete(rememberedTracks.keys().next().value!);
+  for (let i = 0; i < fresh.length; i += TRACK_CHUNK) {
+    try {
+      n.media(JSON.stringify({ rememberTracks: fresh.slice(i, i + TRACK_CHUNK) }));
+    } catch {
+      /* as send(): drop rather than crash */
+    }
+  }
+}
+
+/** For tests: forget what was sent. */
+export function resetRememberedTracksForTest(): void { rememberedTracks.clear(); }
 
 /** Map an app [Track] to the native song shape. Duration is seconds in the app, milliseconds here. */
 export function songFromTrack(track: Track, ready: boolean, source?: string | null): NativeSong {
@@ -185,10 +273,23 @@ export function songFromTrack(track: Track, ready: boolean, source?: string | nu
 }
 
 /** Install the entry point the native layer calls to drive the page (`window.__awMediaCmd`). */
+/** CAR-SEARCH-TYPES-001: the car's clip (base64 of 16-bit little-endian mono PCM) as samples in -1..1. */
+export function samplesFromPcm16(b64: string): Float32Array {
+  const bin = atob(b64);
+  const n = bin.length >> 1;
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let v = bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8);
+    if (v >= 0x8000) v -= 0x10000;
+    out[i] = v / 32768;
+  }
+  return out;
+}
+
 export function installMediaCommands(): void {
   if (typeof window === 'undefined') return;
   (window as unknown as { __awMediaCmd?: (json: string) => void }).__awMediaCmd = (json: string) => {
-    let cmd: { type?: string; requestId?: string; positionMs?: number; index?: number; id?: string; query?: string; on?: boolean; mode?: number; album?: boolean };
+    let cmd: { type?: string; requestId?: string; positionMs?: number; index?: number; id?: string; query?: string; on?: boolean; mode?: number | string; album?: boolean; kind?: string; pcm?: string };
     try {
       cmd = JSON.parse(json);
     } catch {
@@ -210,7 +311,8 @@ export function installMediaCommands(): void {
         void (async () => {
           try {
             if (!handlers.catalogSearch) throw new Error('Open Airwave on your phone to search music.');
-            const answer = await handlers.catalogSearch(query, { album: cmd.album === true });
+            const mode = typeof cmd.mode === 'string' && CAR_MODES.includes(cmd.mode) ? (cmd.mode as CarSearchMode) : 'all';
+            const answer = await handlers.catalogSearch(query, { album: cmd.album === true, mode });
             const songs = (Array.isArray(answer) ? answer : answer.songs).slice(0, 25);
             const albums = Array.isArray(answer) ? [] : (answer.albums ?? []).slice(0, 5);
             const play = Array.isArray(answer) ? null : answer.play ?? null;
@@ -221,8 +323,26 @@ export function installMediaCommands(): void {
         })();
         break;
       }
+      case 'identifyAudio': {
+        const requestId = String(cmd.requestId ?? '');
+        if (!requestId || requestId.length > 100 || typeof cmd.pcm !== 'string' || cmd.pcm.length > 2_000_000) break;
+        const pcm = cmd.pcm;
+        void (async () => {
+          try {
+            if (!handlers.identifyAudio) throw new Error('Open Airwave on your phone to identify music.');
+            const songs = (await handlers.identifyAudio(samplesFromPcm16(pcm))).slice(0, 10);
+            send({ state: lastState, identify: { requestId, songs } });
+          } catch (e) {
+            send({ state: lastState, identify: { requestId, songs: [], error: String((e as Error)?.message ?? 'Could not identify the music').slice(0, 200) } });
+          }
+        })();
+        break;
+      }
       case 'shuffle': handlers.shuffle?.(Boolean(cmd.on)); break;
       case 'repeat': handlers.repeat?.(Number(cmd.mode) || 0); break;
+      case 'feedback':
+        if (cmd.id && typeof cmd.kind === 'string' && CAR_FEEDBACK.includes(cmd.kind)) handlers.feedback?.(String(cmd.id), cmd.kind as CarFeedbackKind);
+        break;
       default: break;
     }
   };

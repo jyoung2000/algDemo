@@ -264,14 +264,18 @@ export class QueuePreloader {
   }
   /** What one card should say about its own audio: provenance plus live progress. */
   cardOf(key: string, o: { kept: boolean; percent: number | null }): CardCache {
+    return cacheStateOf({ ...this.cardFacts(key), kept: o.kept, percent: o.percent });
+  }
+  /** The loader's own half of a card (everything but the kept copy and job percent). */
+  cardFacts(key: string): { status: LocalStatus; blocked: boolean; inTarget: boolean; error: string | null; givenUp: boolean } {
     const e = this.entries.get(key);
     const url = e?.url;
-    return cacheStateOf({
+    return {
       status: url ? (this.backend.library.status(url) as LocalStatus) : 'unknown',
-      kept: o.kept, percent: o.percent, blocked: this.blocked && e?.phase === 'failed',
+      blocked: this.blocked && e?.phase === 'failed',
       inTarget: this.wantedKeys.has(key), error: url ? this.backend.library.error(url) : null,
       givenUp: e?.phase === 'failed' || e?.phase === 'expired',
-    });
+    };
   }
   private recomputeTarget(): void {
     this.wantedKeys = new Set([...preloadPlan([...this.automaticKeys], this.preload), ...this.manualKeys]);

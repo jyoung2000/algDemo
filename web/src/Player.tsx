@@ -1125,7 +1125,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
             )}
             <div className="np__text">
               <span className="np__title">{t!.title}</span>
-              {onOpenArtist && !docked ? <ArtistNames track={t!} onOpen={onOpenArtist} className="np__artist" /> : <span className="np__artist">{artistOf(t!)}</span>}
+              {/* ARTIST-PAGE-001: the phone's docked strip opens the artist page too (owner report 2026-11-15). */}
+              {onOpenArtist ? <ArtistNames track={t!} onOpen={onOpenArtist} className="np__artist" /> : <span className="np__artist">{artistOf(t!)}</span>}
               {!docked && status}
               {/*
                 The docked strip is deliberately compact, so it carries no note lines — the same

@@ -53,6 +53,21 @@ const FEATURE_PAGES = 6;
 const FEATURE_CANDIDATES = 300;
 const FEATURE_READS = 6;
 
+/**
+ * The index of a Deezer track search's next page, only when the link is Deezer's own API and the same
+ * search; anything else (another host, path or query) is not a page of this search and gives null.
+ */
+export function nextSearchIndex(link: unknown, query: string): number | null {
+  if (typeof link !== 'string') return null;
+  let u: URL;
+  try { u = new URL(link); } catch { return null; }
+  if (u.protocol !== 'https:' || u.hostname !== 'api.deezer.com' || u.pathname !== '/search/track') return null;
+  if (u.searchParams.get('q') !== query) return null;
+  const raw = u.searchParams.get('index') ?? '';
+  if (!/^\d{1,6}$/.test(raw)) return null;
+  return Number(raw);
+}
+
 export interface ArtistSummary {
   /** `dz:<deezer id>` or `yt:<UC channel id>`. */
   id: string;
@@ -95,6 +110,8 @@ export interface ArtistSongs {
   /** Album and single pages read, and how many of them could not be read. */
   opened: number;
   failed: number;
+  /** False when a search page, a limit, or a candidate's read left features unlooked-at. */
+  featuresComplete: boolean;
 }
 
 // ---- reading ------------------------------------------------------------------------------------
@@ -358,7 +375,8 @@ export class Artists {
       else if (m?.[1] === 'yt' && YT_ARTIST.test(m[2]!)) ytId = m[2]!;
       else throw new ProviderError('That is not an artist this app can open.');
     } else if (!name) throw new ProviderError('An artist needs a name or an id.');
-    return cached(this.store, `artistview:${dzId ?? ''}:${ytId ?? ''}:${fold(name)}`, 'artist', 6 * 3600, () => this.build(id, name, dzId, ytId, c));
+    // Versioned with the Deezer request identity (DEEZER-UA-001): a view built under another one is not served.
+    return cached(this.store, `artistview2:${dzId ?? ''}:${ytId ?? ''}:${fold(name)}`, 'artist', 6 * 3600, () => this.build(id, name, dzId, ytId, c));
   }
 
   private async build(id: string, name: string, dzId: string | null, ytId: string | null, c: Ctx): Promise<ArtistView> {
@@ -471,7 +489,13 @@ export class Artists {
     const albums = this.albums;
     if (!albums) return Promise.reject(new ProviderError('Albums cannot be opened here.'));
     const pages = [...view.albums, ...view.singles];
-    return cached(this.store, `artistsongs2:${view.id}:${pages.length}`, 'artist', 6 * 3600, async () => {
+    // 4: features found under one Deezer request identity on every shell (DEEZER-UA-001).
+    const key = `artistsongs4:${view.id}:${pages.length}`;
+    const hit = this.store?.cacheGet(key)?.value as ArtistSongs | undefined;
+    if (hit) return Promise.resolve(hit);
+    // An answer missing features is not kept, so the next look asks again (ARTIST-FEATURES-001).
+    const keep = this.store ? { cacheGet: () => null, cachePut: (k: string, kind: string, v: ArtistSongs, ttl: number) => (v.featuresComplete ? this.store!.cachePut(k, kind, v, ttl) : undefined) } : undefined;
+    return cached(keep as unknown as Store | undefined, key, 'artist', 6 * 3600, async () => {
       const read: (Track[] | null)[] = new Array(pages.length).fill(null);
       let next = 0;
       const worker = async () => {
@@ -488,7 +512,9 @@ export class Artists {
       }
       const [, more] = await Promise.all([
         Promise.all(Array.from({ length: Math.min(ALBUM_READS, pages.length) }, worker)),
-        dzId && view.name ? this.moreFeatures(dzId, view.name, known, c).catch(() => []) : Promise.resolve([]),
+        dzId && view.name
+          ? this.moreFeatures(dzId, view.name, known, c).catch(() => ({ tracks: [] as Track[], complete: false }))
+          : Promise.resolve({ tracks: [] as Track[], complete: true }),
       ]);
       const songs: Track[] = [];
       const seen = new Set<string>();
@@ -499,8 +525,13 @@ export class Artists {
       }
       // A song of theirs that an album also holds is their own song, not a feature.
       const had = new Set([...seen, ...(view.features ?? []).map((t) => t.key)]);
-      const features = more.filter((t) => !had.has(t.key));
-      return { songs, features, opened: pages.length, failed: read.filter((x) => x === null).length };
+      const features: Track[] = [];
+      for (const t of more.tracks) {
+        if (had.has(t.key)) continue;
+        had.add(t.key);
+        features.push(t);
+      }
+      return { songs, features, opened: pages.length, failed: read.filter((x) => x === null).length, featuresComplete: more.complete };
     });
   }
 
@@ -510,38 +541,49 @@ export class Artists {
    * so each candidate is read once and kept only when Deezer's own contributors name this artist. A
    * row that merely has the words in its title is never claimed as a feature.
    */
-  private async moreFeatures(dzId: string, name: string, known: Set<string>, c: Ctx): Promise<Track[]> {
+  private async moreFeatures(dzId: string, name: string, known: Set<string>, c: Ctx): Promise<{ tracks: Track[]; complete: boolean }> {
     const q = encodeURIComponent(name);
     const rows: Json[] = [];
-    let resp = await this.dzGet(`/search/track?q=${q}&limit=100`, c);
+    let complete = true;
+    let resp: Json | null = await this.dzGet(`/search/track?q=${q}&limit=100`, c);
     rows.push(...((resp['data'] as Json[] | undefined) ?? []));
-    // Every page the search offers, so a feature far down the list is still found.
-    for (let p = 1; p < FEATURE_PAGES && typeof resp['next'] === 'string'; p++) {
-      resp = await this.dzGet(`/search/track?q=${q}&limit=100&index=${p * 100}`, c);
+    // Every page the search offers, by Deezer's own next link, so a feature far down the list is still
+    // found whatever page size Deezer answers. Only the link's index is taken, and only when it is a
+    // later page of this same search: any other address is never fetched. A page that fails keeps the
+    // rows already read, and the answer says it is incomplete.
+    let at = 0;
+    for (let p = 1; resp && typeof resp['next'] === 'string'; p++) {
+      const index = nextSearchIndex(resp['next'], name);
+      if (index === null || index <= at) { complete = false; break; }
+      if (p >= FEATURE_PAGES) { complete = false; break; }
+      at = index;
+      resp = await this.dzGet(`/search/track?q=${q}&limit=100&index=${index}`, c).catch(() => null);
+      if (!resp) { complete = false; break; }
       rows.push(...((resp['data'] as Json[] | undefined) ?? []));
     }
     const ids = new Set<string>();
-    const cand = rows
-      .filter((x) => {
-        const id = x && x['id'] ? String(x['id']) : '';
-        if (!id || known.has(id) || ids.has(id) || String(x['artist']?.['id'] ?? '') === dzId) return false;
-        ids.add(id);
-        return true;
-      })
-      .slice(0, FEATURE_CANDIDATES);
+    const fresh = rows.filter((x) => {
+      const id = x && x['id'] ? String(x['id']) : '';
+      if (!id || known.has(id) || ids.has(id) || String(x['artist']?.['id'] ?? '') === dzId) return false;
+      ids.add(id);
+      return true;
+    });
+    if (fresh.length > FEATURE_CANDIDATES) complete = false;
+    const cand = fresh.slice(0, FEATURE_CANDIDATES);
     const out: (Track | null)[] = new Array(cand.length).fill(null);
     let next = 0;
     const worker = async () => {
       while (next < cand.length) {
         const i = next++;
         const full = await this.dzGet(`/track/${String(cand[i]!['id'])}`, c).catch(() => null);
-        if (!full) continue;
+        if (!full) { complete = false; continue; }
+        // Confirmed by Deezer's id for this artist, never by the name: a namesake is someone else.
         const on = ((full['contributors'] as Json[] | undefined) ?? []).some((x) => String(x['id']) === dzId);
         if (on) out[i] = this.dz.toTrack(full);
       }
     };
     await Promise.all(Array.from({ length: Math.min(FEATURE_READS, cand.length) }, worker));
-    return out.filter((t): t is Track => t !== null);
+    return { tracks: out.filter((t): t is Track => t !== null), complete };
   }
 
   private async readYtSongs(uc: string, page: YtArtistPage, wantSongs: boolean, c: Ctx) {

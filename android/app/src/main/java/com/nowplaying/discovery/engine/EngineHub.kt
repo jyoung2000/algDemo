@@ -1,11 +1,15 @@
 package com.nowplaying.discovery.engine
 
 import android.os.Handler
+import android.content.Context
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import com.nowplaying.discovery.Downloads
 import com.nowplaying.discovery.MediaHub
+import com.nowplaying.discovery.NativeLibraryState
+import com.nowplaying.discovery.NativeStateCodec
 import com.nowplaying.discovery.Streams
 import org.json.JSONObject
 
@@ -38,17 +42,64 @@ object EngineHub {
   /** The last settings the page sent, re-applied to a new player (the service can be recreated). */
   private var settings = JSONObject()
 
+  /** NATIVE-STATE-OBSERVER-001: service-side watchers of the native player's state (JSON strings). */
+  private val observers = java.util.concurrent.CopyOnWriteArrayList<(String) -> Unit>()
+  private var delivering = false
+  private val throttle = NativeStateCodec.PositionThrottle(POSITION_SAVE_MS)
+
+  /**
+   * NATIVE-COLD-STATE-001: open the saved state and take the saved sound as the settings a new player
+   * starts with. Call on the main thread before the player is created; settings the page already
+   * sent in this process win over saved ones.
+   */
+  fun init(context: Context) {
+    NativeLibraryState.init(context)
+    NativeLibraryState.settings()?.let { saved -> for (k in saved.keys()) if (!settings.has(k)) settings.put(k, saved.get(k)) }
+  }
+
+  /** A copy of the settings a new player starts with (the page's, else the saved ones); main thread. */
+  internal fun settingsSnapshot(): JSONObject = JSONObject(settings.toString())
+
+  fun addObserver(listener: (String) -> Unit) = main.post {
+    if (listener in observers) return@post
+    observers += listener
+    player?.let { p -> runCatching { listener(p.snapshotForPage().toString()) } }
+  }
+
+  fun removeObserver(listener: (String) -> Unit) = main.post { observers.remove(listener) }
+
+  /** Every native state: saved (position-only changes at most every POSITION_SAVE_MS), then told to observers. */
+  private fun nativeChanged(p: EnginePlayer, json: JSONObject) {
+    if (player !== p || delivering) return
+    delivering = true
+    try {
+      saveNative(p, json)
+      val s = json.toString()
+      for (l in observers) runCatching { l(s) }.onFailure { Log.w(TAG, "native observer failed: ${it.javaClass.simpleName}") }
+    } finally { delivering = false }
+  }
+
+  private fun saveNative(p: EnginePlayer, json: JSONObject?) {
+    val v = p.queueVersion * 4 + (if (json?.optBoolean("playWhenReady") == true) 2 else 0) + (if (json?.optBoolean("waiting") == true) 1 else 0)
+    if (json == null || throttle.shouldWrite(v, SystemClock.elapsedRealtime())) runCatching { NativeLibraryState.recordNativeState(p.nativeState()) }
+  }
+
   fun attachPlayer(p: EnginePlayer) = main.post {
     player = p
     p.page = page
     if (settings.length() > 0) applySettings(p, settings)
+    // NATIVE-COLD-STATE-001: a cold start (no page list yet) carries on the saved queue, paused.
+    if (MediaHub.state.queue.isEmpty()) NativeLibraryState.nativeState()?.let { runCatching { p.restoreNativeState(it) } }
+    p.observer = { json -> nativeChanged(p, json) }
     // CAR-QUEUE-HANDOFF-001: the first library push can precede service attachment. Replay it
     // before a pending phone load so the session gets the whole list, not only the tapped song.
     replayLibrary(p)
     while (waiting.isNotEmpty()) dispatch(p, waiting.removeFirst())
   }
 
-  fun detachPlayer(p: EnginePlayer) = main.post { if (player === p) { p.page = null; player = null } }
+  fun detachPlayer(p: EnginePlayer) = main.post {
+    if (player === p) { saveNative(p, null); p.observer = null; p.page = null; player = null }
+  }
 
   fun attachPage(pg: EnginePlayer.Page) = main.post {
     page = pg
@@ -138,6 +189,7 @@ object EngineHub {
 
   private fun mergeSettings(cmd: JSONObject) {
     for (k in listOf("eq", "mix", "playThrough", "volume")) if (cmd.has(k)) settings.put(k, cmd.get(k))
+    NativeLibraryState.recordSettings(settings)
   }
 
   private fun applySettings(p: EnginePlayer, s: JSONObject) {
@@ -161,4 +213,5 @@ object EngineHub {
   }
 
   private const val TAG = "AirwaveEngineHub"
+  private const val POSITION_SAVE_MS = 5000L
 }

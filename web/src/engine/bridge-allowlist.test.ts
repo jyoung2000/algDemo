@@ -14,11 +14,21 @@ const quoted = (block: string): string[] => [...block.matchAll(/"([^"]+)"/g)].ma
 
 describe('bridge allowlists match net.ts', () => {
   it('Android HOSTS and SUFFIXES', () => {
-    const kt = read('android/app/src/main/java/com/nowplaying/discovery/MainActivity.kt');
+    // One guarded copy, shared by the Activity bridge and the service-owned CatalogEngine.
+    const kt = read('android/app/src/main/java/com/nowplaying/discovery/NativeHttp.kt');
     const hosts = quoted(/val HOSTS = setOf\(([\s\S]*?)\n\s*\)/.exec(kt)?.[1] ?? '');
     const suffixes = quoted(/val SUFFIXES = listOf\(([^)]*)\)/.exec(kt)?.[1] ?? '');
+    expect(hosts.length).toBeGreaterThan(0);
     expect(new Set(hosts)).toEqual(new Set(ALLOWED_HOSTS));
     expect(suffixes).toEqual([...ALLOWED_SUFFIXES]);
+  });
+
+  it('Android callers use NativeHttp, not a second allowlist copy', () => {
+    for (const f of ['MainActivity.kt', 'CatalogEngine.kt']) {
+      const kt = read(`android/app/src/main/java/com/nowplaying/discovery/${f}`);
+      expect(kt).toContain('NativeHttp.perform(');
+      expect(kt).not.toMatch(/val (HOSTS|SUFFIXES) =/);
+    }
   });
 
   it('Windows HOSTS and SUFFIXES', () => {

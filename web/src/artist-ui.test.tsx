@@ -187,6 +187,20 @@ it('says so when only the most played songs could be listed, or some albums coul
   expect(host.textContent).toContain('2 albums could not be read, so their songs may be missing');
 });
 
+it('says when not every feature could be looked up, and looks again on request', async () => {
+  artistCall.mockResolvedValue({ artist: view });
+  songsCall.mockResolvedValue({ songs: every, features: [feature('late', 'Late Guest', 'Yeat')], featuresComplete: false, opened: 4, failed: 0 });
+  await draw(page());
+  await flush();
+  expect(host.textContent).toContain('Not every feature could be looked up');
+  songsCall.mockResolvedValue({ songs: every, features: [feature('late', 'Late Guest', 'Yeat'), feature('later', 'Later Guest', 'Yeat')], featuresComplete: true, opened: 4, failed: 0 });
+  await act(async () => byText('Look again')!.click());
+  await flush();
+  expect(host.textContent).not.toContain('Not every feature could be looked up');
+  await act(async () => byText('Show all 14 features')!.click());
+  expect(host.textContent).toContain('Later Guest');
+});
+
 it('explains a failure to open, in words', async () => {
   const real = await vi.importActual<typeof Api>('./api');
   artistCall.mockRejectedValue(new real.ApiError('No artist named \u201cNobody\u201d was found on Deezer or YouTube Music.', 404, null));

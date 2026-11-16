@@ -7,6 +7,7 @@ import { matchRecordings } from './engine/identity';
 import { SaveMenu } from './SaveMenu';
 import { SongStar, inPlaylist } from './SongStar';
 import { SongCredits } from './SongCredits';
+import { SwipeLi } from './useSwipeRemove';
 import { PROVIDER_LABEL, TIER_LABEL, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreBubbles, markKey, playbackOfTrack, toneLabel } from './util';
 
 export interface FeedbackFlags {
@@ -78,7 +79,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         const seedPlayable = canPlayHere(pb);
         const seedReady = cacheOf?.(s.key)?.state === 'ready';
         return (
-          <li key={`seed:${s.key}`} className={classNames('rec', 'rec--seed', strong && 'is-strong', playingKey === s.key && 'is-playing')}>
+          <SwipeLi key={`seed:${s.key}`} onRemove={() => onRemoveSeed(s.key)} className={classNames('rec', 'rec--seed', strong && 'is-strong', playingKey === s.key && 'is-playing')}>
             <span className="rec__rank" aria-hidden="true">
               {playingKey === s.key ? <Glyph name="speaker" size={12} /> : <Glyph name="star" size={12} />}
             </span>
@@ -133,7 +134,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                 <Glyph name="close" size={14} />
               </button>
             </div>
-          </li>
+          </SwipeLi>
         );
       })}
       {items.map((it, i) => {
@@ -149,9 +150,16 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         // SEED-DUPE-001: this queue row is also the starting song, so it says so and carries its controls.
         const seed = seedOf(t);
         const seedStrong = (seed?.emphasis ?? 1) > 1;
+        const removeRow = () => {
+          // The queue can display a starting song as a recommendation too. Removing that row
+          // must clear both roles, or hiding the recommendation immediately reveals the seed.
+          if (seed) onRemoveSeed(seed.key);
+          onFeedback(it, 'hide');
+        };
         return (
-          <li
+          <SwipeLi
             key={t.key}
+            onRemove={removeRow}
             id={rowId(t.key)}
             className={classNames('rec', focusKey === t.key && 'is-focus', playingKey === t.key && 'is-playing', f.dislike && 'is-disliked')}
             data-dl={cache?.state}
@@ -298,7 +306,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                   <Glyph name="download" size={14} />
                 </button>
               )}
-              <button className="iconbtn" type="button" onClick={() => onFeedback(it, 'hide')} aria-label={`Hide ${t.title}`} title="Hide">
+              <button className="iconbtn" type="button" onClick={removeRow} aria-label={`Hide ${t.title}`} title="Hide">
                 <Glyph name="close" size={14} />
               </button>
               <button
@@ -323,7 +331,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               </div>
             )}
             {isOpen && <Why item={it} id={`why-${rowId(t.key)}`} />}
-          </li>
+          </SwipeLi>
         );
       })}
     </ol>

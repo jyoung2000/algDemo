@@ -100,6 +100,24 @@ class CarSearchTest {
     } finally { MediaHub.clearCommandSink(sink) }
   }
 
+  @Test fun carQueryBeforePageSnapshotWaitsForTheReadyPageInsteadOfLosingTheRequest() {
+    val asked = java.util.concurrent.atomic.AtomicReference<JSONObject>()
+    val sink: (JSONObject) -> Unit = { asked.set(it) }
+    MediaHub.setCommandSink(sink)
+    try {
+      val pending = MediaHub.searchCatalog("early-page-catalogue-unique", timeoutMs = 2000, debounceMs = 60)
+      Thread.sleep(180)
+      assertNull("no JS command is lost before the page is ready", asked.get())
+      MediaHub.apply(JSONObject().put("state", JSONObject().put("queue", org.json.JSONArray())))
+      val until = System.currentTimeMillis() + 1000
+      while (asked.get() == null && System.currentTimeMillis() < until) Thread.sleep(20)
+      val cmd = requireNotNull(asked.get())
+      MediaHub.apply(JSONObject().put("search", JSONObject().put("requestId", cmd.getString("requestId"))
+        .put("query", cmd.getString("query")).put("songs", org.json.JSONArray("""[{"id":"ready-page-result","title":"Ready page result"}]"""))))
+      assertEquals("ready-page-result", pending.get(2, TimeUnit.SECONDS).single().id)
+    } finally { MediaHub.clearCommandSink(sink) }
+  }
+
   @Test fun newestTypedQueryIsNotStarvedByPendingPrefixes() {
     seed()
     var last: JSONObject? = null

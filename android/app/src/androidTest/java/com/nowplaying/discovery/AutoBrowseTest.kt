@@ -101,8 +101,9 @@ class AutoBrowseTest {
       val root = rootResult.value!!
       assertTrue("car host can offer search", rootResult.params?.extras?.getBoolean("android.media.browse.SEARCH_SUPPORTED") == true)
       val sections = await { b.getChildren(root.mediaId, 0, 10, null) }.value!!
-      assertEquals(listOf("songs", "playlists", "albums"), sections.map { it.mediaId })
-      assertEquals(listOf("Now playing queue", "Playlists", "Albums"), sections.map { it.mediaMetadata.title.toString() })
+      // CAR-SEARCH-TYPES-001: Search is the fourth (last) tab, holding the search icons.
+      assertEquals(listOf("songs", "playlists", "albums", "search"), sections.map { it.mediaId })
+      assertEquals(listOf("Now playing queue", "Playlists", "Albums", "Search"), sections.map { it.mediaMetadata.title.toString() })
       assertTrue("top-level sections are browsable, not dead-end play buttons", sections.all { it.mediaMetadata.isBrowsable == true && it.mediaMetadata.isPlayable == false })
       assertEquals("Your playback queue", sections[0].mediaMetadata.subtitle?.toString())
       assertEquals("Your saved playlists", sections[1].mediaMetadata.subtitle?.toString())
@@ -134,8 +135,17 @@ class AutoBrowseTest {
       assertEquals(androidx.media3.common.MediaMetadata.MEDIA_TYPE_ALBUM, albums.single().mediaMetadata.mediaType)
       assertEquals(listOf("playlist/A1/track/g1", "playlist/A1/track/g2"), ids(await { b.getChildren("playlist/A1", 0, 50, null) }))
       // ALBUM-CAR-001: the car's search shows the saved album the words name, above its songs.
+      // CAR-RESULTS-FIRST-001: what a search found leads; one trailing "Show only" row opens the icon tiles.
       await { b.search("a great chaos", null) }
-      assertEquals("playlist/A1", ids(await { b.getSearchResult("a great chaos", 0, 50, null) }).first())
+      val chaos = await { b.getSearchResult("a great chaos", 0, 50, null) }.value!!
+      assertEquals("playlist/A1", chaos.first().mediaId)
+      assertTrue("no icon tile ahead of the results", chaos.none { it.mediaId.startsWith("sfilter/") || it.mediaId == "identify" })
+      val choose = chaos.last()
+      assertTrue("one trailing chooser row, browsable, not a play button", choose.mediaId.startsWith("schoose/all/") && choose.mediaMetadata.isBrowsable == true && choose.mediaMetadata.isPlayable != true)
+      val tiles = await { b.getChildren(choose.mediaId, 0, 50, null) }.value!!
+      assertTrue("the chooser leads with All and has Identify", tiles.first().mediaId.startsWith("sfilter/all/") && tiles.any { it.mediaId == "identify" })
+      assertTrue("icon tiles are not play buttons", tiles.all { it.mediaMetadata.isPlayable != true })
+      assertTrue("a forged chooser id is refused", await { b.getChildren("schoose/nope/x", 0, 50, null) }.resultCode != androidx.media3.session.LibraryResult.RESULT_SUCCESS)
 
       val plSongs = await { b.getChildren("playlist/p1", 0, 50, null) }.value!!
       assertEquals(listOf("playlist/p1/track/s3"), plSongs.map { it.mediaId })
@@ -144,7 +154,9 @@ class AutoBrowseTest {
       await { b.search("plant", null) }
       val results = await { b.getSearchResult("plant", 0, 50, null) }.value!!
       assertTrue("search finds Plant Island", results.map { it.mediaId }.contains("s1"))
+      assertTrue("found song is playable", results.first { it.mediaId == "s1" }.mediaMetadata.isPlayable == true)
       await { b.search("a", null) }
+      // Results lead, so the first pages are the songs themselves.
       assertEquals(listOf("s1"), ids(await { b.getSearchResult("a", 0, 1, null) }))
       assertEquals(listOf("s2"), ids(await { b.getSearchResult("a", 1, 1, null) }))
     } finally {

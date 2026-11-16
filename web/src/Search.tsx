@@ -11,6 +11,12 @@ import { ArtistCard, namesArtist } from './ArtistLinks';
 import { warmer } from './engine/warm-shell';
 import { namesAlbum } from './engine/album-key';
 import { PROVIDER_LABEL, classNames, fmtDuration, fmtRelease, looksLikeUrl, markKey } from './util';
+import { TypeFilter, toggleType } from './TypeFilter';
+import { releaseMatches, songMatches, isAlbumTrack, isByArtist, isFeatureTrack, isSingleRelease, isSingleTrack, namesArtistIn, type ResultType } from './result-types';
+
+/** RESULT-TYPES-001: the icon menu above search results. */
+// RESULT-ARTIST-001: the one-person icon is for search only; an artist's own page has no Artists icon.
+const SEARCH_TYPES: readonly ResultType[] = ['artists', 'singles', 'albums', 'features', 'lyrics'];
 
 /** What a result row's like button needs, shared by every list of results (SEARCH-LIKE-001). */
 interface LikeProps {
@@ -64,7 +70,8 @@ type LyricPart = { state: 'pending' } | { state: 'ok'; tracks: Track[]; named: n
 /** ALBUM-SEARCH-001: the album part of a plain-text search; it never holds up or hides the songs. */
 type AlbumPart = { state: 'pending' } | { state: 'ok'; albums: AlbumSummary[] } | { state: 'failed' };
 /** ARTIST-PAGE-001: the artist a plain-text search names, if any; it never holds up the songs either. */
-type ArtistPart = { state: 'ok'; artist: ArtistSummary };
+/** `artist` is the artist the search is exactly the name of; `named` every artist it names (RESULT-ARTIST-001). */
+type ArtistPart = { state: 'ok'; artist?: ArtistSummary | undefined; named: ArtistSummary[] };
 
 type View =
   | { kind: 'idle' }
@@ -152,6 +159,8 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
   const likeProps: LikeProps = { onLike, onRemoveSeed, lists, onLists, saving, onSaving: setSaving, onQueueAdd, addLabel, addedKeys, onOpenAlbum, onOpenArtist, playingKey };
   const [q, setQ] = useState('');
   const [view, setView] = useState<View>({ kind: 'idle' });
+  // RESULT-TYPES-001: held here so the chosen icons survive each new query while typing.
+  const [types, setTypes] = useState<ReadonlySet<ResultType>>(() => new Set());
   const [artistFix, setArtistFix] = useState('');
   /** A newer answer is on its way; the list on screen is the previous one. */
   const [refreshing, setRefreshing] = useState(false);
@@ -285,8 +294,10 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
         ? (live ? wait(LYRIC_LAG_MS, c.signal) : Promise.resolve()).then(() => api.searchArtists(s, c.signal)).then(
             (r) => {
               const hit = r.artists.find((a) => namesArtist(s, a));
-              if (!hit) return;
-              artist = { state: 'ok', artist: hit };
+              // RESULT-ARTIST-001: the Artists icon lists every artist the search names, the exact one first.
+              const named = [...(hit ? [hit] : []), ...r.artists.filter((a) => a !== hit && namesArtistIn(s, a.name))].slice(0, 5);
+              if (!named.length) return;
+              artist = { state: 'ok', artist: hit, named };
               if (songs) show(false);
             },
             () => undefined,
@@ -684,7 +695,7 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
           </div>
         )}
         {view.kind === 'results' && (
-          <ResultsView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} onRefresh={() => void run(view.query, false, true)} refreshing={refreshing} onOpenSettings={onOpenSettings} onOpenAlbumId={onOpenAlbumTarget ? (a) => onOpenAlbumTarget({ id: a.id }) : undefined} />
+          <ResultsView view={view} types={types} onToggleType={(t) => setTypes((s) => toggleType(s, t))} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} onRefresh={() => void run(view.query, false, true)} refreshing={refreshing} onOpenSettings={onOpenSettings} onOpenAlbumId={onOpenAlbumTarget ? (a) => onOpenAlbumTarget({ id: a.id }) : undefined} />
         )}
         {view.kind === 'identified' && (
           <IdentifiedView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} />
@@ -704,6 +715,8 @@ const LYRIC_NOTE: Record<string, string> = {
 /** Title results and lyric matches for one plain-text query, in the order that suits the query. */
 function ResultsView({
   view,
+  types,
+  onToggleType,
   seedKeys,
   onAdd,
   onPreview,
@@ -726,6 +739,9 @@ function ResultsView({
   playingKey,
 }: {
   view: Extract<View, { kind: 'results' }>;
+  /** RESULT-TYPES-001: the kinds chosen in the icon menu; none chosen shows everything. */
+  types: ReadonlySet<ResultType>;
+  onToggleType: (t: ResultType) => void;
   seedKeys: Set<string>;
   onAdd: (t: Track) => void;
   onPreview: PlayFrom;
@@ -737,20 +753,32 @@ function ResultsView({
 } & LikeProps) {
   const lyr = view.lyrics;
   const titleKeys = new Set(view.tracks.map((t) => t.key));
-  const lyricTracks = lyr?.state === 'ok' ? lyr.tracks.filter((t) => !titleKeys.has(t.key)) : [];
+  const allLyricTracks = lyr?.state === 'ok' ? lyr.tracks.filter((t) => !titleKeys.has(t.key)) : [];
+  const allFound = view.albums?.state === 'ok' ? view.albums.albums : [];
+  // RESULT-TYPES-001: narrow to the chosen kinds. Lyric matches are their own kind.
+  const filtering = types.size > 0;
+  const shownTracks = view.tracks.filter((t) => songMatches(t, types, view.query));
+  const lyricTracks = !filtering || types.has('lyrics') ? allLyricTracks : [];
+  const typeCounts: Partial<Record<ResultType, number>> = {
+    artists: (view.artist?.named.length ?? 0) + view.tracks.filter((t) => isByArtist(t, view.query)).length + allFound.filter((a) => namesArtistIn(view.query, a.artist)).length,
+    singles: view.tracks.filter(isSingleTrack).length + allFound.filter(isSingleRelease).length,
+    albums: view.tracks.filter(isAlbumTrack).length + allFound.filter((a) => !isSingleRelease(a)).length,
+    features: view.tracks.filter(isFeatureTrack).length,
+    lyrics: allLyricTracks.length,
+  };
   const lead = lyricsLead(view.query, lyricTracks.length);
   const common = { seedKeys, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, saving, onSaving, onQueueAdd, addLabel, addedKeys, onOpenAlbum, onOpenArtist, playingKey } as const;
-  const found = view.albums?.state === 'ok' ? view.albums.albums : [];
+  const found = allFound.filter((a) => releaseMatches(a, types, view.query));
   const albumBlock = found.length && onOpenAlbumId ? <AlbumShelf key="albums" albums={found} query={view.query} onOpen={onOpenAlbumId} /> : null;
   const spent = Object.values(view.sources).some((x) => x.state === 'budget');
   // Asking again cannot help when every source that did not answer was refused for the allowance.
   const canRefresh = !Object.values(view.sources).every((x) => x.state === 'ok' || x.state === 'skipped' || x.state === 'budget') || !spent;
 
-  const titles = view.tracks.length ? (
+  const titles = shownTracks.length ? (
     <div key="titles">
       <SourceLine sources={view.sources} onRefresh={canRefresh ? onRefresh : undefined} refreshing={refreshing} />
       {spent && <BudgetNote onOpenSettings={onOpenSettings} />}
-      <TrackList tracks={view.tracks} {...common} label={`Results for ${view.query}`} />
+      <TrackList tracks={shownTracks} {...common} label={`Results for ${view.query}`} />
     </div>
   ) : null;
 
@@ -772,14 +800,23 @@ function ResultsView({
   if (albumsLead(view.query, found)) blocks.unshift(albumBlock);
   else blocks.push(albumBlock);
   // ARTIST-PAGE-001: a search that is an artist's name leads with that artist's page.
-  if (view.artist && onOpenArtist) {
-    const a = view.artist.artist;
-    blocks.unshift(<ArtistCard key="artist" artist={a} onOpen={() => onOpenArtist({ id: a.id, name: a.name })} />);
-  }
+  // RESULT-ARTIST-001: the Artists icon lists every artist the search names; another icon chosen
+  // alone narrows to songs or releases, so no artist leads then.
+  const namedArtists = view.artist?.named ?? [];
+  const cards = !onOpenArtist ? [] : types.has('artists') ? namedArtists : !filtering && view.artist?.artist ? [view.artist.artist] : [];
+  blocks.unshift(...cards.map((a) => <ArtistCard key={`artist:${a.id}`} artist={a} onOpen={() => onOpenArtist!({ id: a.id, name: a.name })} />));
   const none = !view.tracks.length && !lyricTracks.length;
+  const anything = view.tracks.length > 0 || allLyricTracks.length > 0 || allFound.length > 0 || namedArtists.length > 0;
+  const filteredOut = filtering && anything && !shownTracks.length && !lyricTracks.length && !found.length && !cards.length;
 
   return (
     <>
+      {anything && <TypeFilter types={SEARCH_TYPES} selected={types} onToggle={onToggleType} counts={typeCounts} />}
+      {filteredOut && (
+        <p className="state" role="status">
+          <Glyph name="info" size={14} /> Nothing of that kind in these results. Tap the highlighted icon again to show everything.
+        </p>
+      )}
       {blocks}
       {lyr?.state === 'pending' && (
         <p className="state">

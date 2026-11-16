@@ -83,6 +83,29 @@ describe('SoundCloud mapping matches providers.py + yt-dlp', () => {
   });
 });
 
+// SC-SNIP-001: DHU 2026-11-15, a car search listed Sade's No Ordinary Love at 0:30. SoundCloud gives a
+// Go+ track (policy SNIP) or a region-blocked one (BLOCK) as `duration` = the 30 s clip, the real
+// length in `full_duration`. Full songs only: keep the real length and drop the clip link, so the
+// player finds the full recording elsewhere and the full-song chain can never pick the clip.
+describe('SoundCloud preview-only tracks (SNIP/BLOCK)', () => {
+  const base = { kind: 'track', id: 42, title: 'No Ordinary Love', user: { username: 'Sade' }, publisher_metadata: { artist: 'Sade' }, permalink_url: 'https://soundcloud.com/sade/no-ordinary-love' };
+  it('a SNIP track keeps its real length and loses its clip link', () => {
+    const t = new SoundCloud(null as never).toTrack({ ...base, policy: 'SNIP', duration: 30000, full_duration: 440000 });
+    expect(t.duration).toBe(440);
+    expect(t.url).toBe('');
+  });
+  it('a BLOCK track too; a SNIP without a real length has no length rather than the clip length', () => {
+    const sc0 = new SoundCloud(null as never);
+    expect(sc0.toTrack({ ...base, policy: 'BLOCK', duration: 30000, full_duration: 300000 })).toMatchObject({ duration: 300, url: '' });
+    expect(sc0.toTrack({ ...base, policy: 'SNIP', duration: 30000 })).toMatchObject({ duration: null, url: '' });
+  });
+  it('an ordinary (ALLOW/MONETIZE) track is unchanged', () => {
+    const sc0 = new SoundCloud(null as never);
+    expect(sc0.toTrack({ ...base, policy: 'ALLOW', duration: 440000, full_duration: 440000 })).toMatchObject({ duration: 440, url: base.permalink_url });
+    expect(sc0.toTrack({ ...base, policy: 'MONETIZE', duration: 250000 })).toMatchObject({ duration: 250, url: base.permalink_url });
+  });
+});
+
 describe('SoundCloud client id and links', () => {
   it('scrapes the id from the newest bundle that has one, once', async () => {
     const { s, seen } = sc();

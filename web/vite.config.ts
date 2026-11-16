@@ -32,6 +32,13 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: false,
     chunkSizeWarningLimit: 600,
+    // CAR-CATALOG-SERVICE-001: car.html is the Android service's catalogue engine page.
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        car: fileURLToPath(new URL('./car.html', import.meta.url)),
+      },
+    },
   },
   server: {
     host: '127.0.0.1',

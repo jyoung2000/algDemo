@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BlockedUrl, BudgetExceeded, CancelToken, Cancelled, FetchError, Http, HostPacer, Meter, hostAllowed, validateUrl,
+  BlockedUrl, BudgetExceeded, CancelToken, Cancelled, DEEZER_API_UA, FetchError, Http, HostPacer, Meter, hostAllowed, validateUrl,
   type HttpPort, type HttpRequest, type HttpResponse,
 } from './net';
 
@@ -22,6 +22,52 @@ function scripted(...steps: (HttpResponse | Error)[]) {
   };
   return { port, seen };
 }
+
+describe('Deezer API request identity (DEEZER-UA-001)', () => {
+  /** Records every request's headers as the transport sees them. */
+  function recording() {
+    const seen: HttpRequest[] = [];
+    const port: HttpPort = { async request(req: HttpRequest) { seen.push(req); return resp(200, '{}'); } };
+    return { http: new Http(port, fastPacer()), seen };
+  }
+  const ua = (r: HttpRequest) => Object.entries(r.headers ?? {}).filter(([k]) => k.toLowerCase() === 'user-agent').map(([, v]) => v);
+
+  it('sends the one app User-Agent to api.deezer.com, whatever the transport would have sent', async () => {
+    const { http, seen } = recording();
+    await http.getJson('https://api.deezer.com/search/track?q=Ken%20Carson&limit=100', { maxBytes: 1000 });
+    await http.getJson('https://API.DEEZER.COM./artist/2568121', { maxBytes: 1000 });
+    // A caller's own identity does not win, and the header is set once, not alongside it.
+    await http.getJson('https://api.deezer.com/track/1', { maxBytes: 1000, headers: { 'user-agent': 'Mozilla/5.0 (Linux; Android 14) wv', Accept: 'application/json' } });
+    expect(DEEZER_API_UA).toBe('AirwaveDiscovery/0.18.13');
+    expect(DEEZER_API_UA).not.toMatch(/android|mozilla|chrome|windows/i);
+    expect(seen.map(ua)).toEqual([[DEEZER_API_UA], [DEEZER_API_UA], [DEEZER_API_UA]]);
+    expect(seen[2]!.headers!['Accept']).toBe('application/json');
+  });
+
+  it('leaves every other host’s headers exactly as the caller set them, and the URL guard still runs first', async () => {
+    const { http, seen } = recording();
+    const mine = { 'User-Agent': 'Mozilla/5.0 Chrome/151', Referer: 'https://open.spotify.com/' };
+    await http.getJson('https://open.spotify.com/oembed?url=x', { maxBytes: 1000, headers: mine });
+    await http.getJson('https://musicbrainz.org/ws/2/artist?query=x', { maxBytes: 1000 });
+    await http.getJson('https://cdns-preview-1.dzcdn.net/x', { maxBytes: 1000 });
+    await http.getJson('https://www.deezer.com/track/1', { maxBytes: 1000 });
+    expect(seen[0]!.headers).toEqual(mine);
+    expect(seen.slice(1).map((r) => r.headers)).toEqual([undefined, undefined, undefined]);
+    for (const bad of ['http://api.deezer.com/x', 'https://api.deezer.com:8443/x', 'https://api.deezer.com.evil.net/x']) {
+      await expect(http.getJson(bad, { maxBytes: 1000 })).rejects.toBeInstanceOf(BlockedUrl);
+    }
+    expect(seen).toHaveLength(4);
+  });
+
+  it('does not carry the Deezer identity across a redirect to another host', async () => {
+    const { port, seen } = scripted(resp(302, '', { location: 'https://www.deezer.com/en/track/1' }), resp(200, '{}'));
+    const reqs: HttpRequest[] = [];
+    const http = new Http({ request: (r) => (reqs.push(r), port.request(r)) }, fastPacer());
+    await http.getJson('https://api.deezer.com/track/1', { maxBytes: 1000 });
+    expect(seen).toHaveLength(2);
+    expect(reqs.map(ua)).toEqual([[DEEZER_API_UA], []]);
+  });
+});
 
 describe('host allowlist (the web engine\'s own list; server/net.py has a narrower Deezer/SoundCloud set and is not mirrored here)', () => {
   it('allows the music hosts and their media CDNs', () => {

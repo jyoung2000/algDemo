@@ -31,7 +31,7 @@ describe('car albums (ALBUM-CAR-001)', () => {
     setMediaHandlers({ catalogSearch: ask });
     (win().__awMediaCmd as (s: string) => void)(JSON.stringify({ type: 'catalogSearch', requestId: 'r', query: 'a', album: true }));
     await vi.waitFor(() => expect(media).toHaveBeenCalled());
-    expect(ask).toHaveBeenCalledWith('a', { album: true });
+    expect(ask).toHaveBeenCalledWith('a', { album: true, mode: 'all' });
     expect(JSON.parse(media.mock.calls.at(-1)![0]).search).toEqual({ requestId: 'r', query: 'a', songs: [song], albums: [{ id: 'dz:1', title: 'A', artist: 'B', artwork: null, songs: [song] }], play: 'calbum/dz%3A1/track/k1' });
   });
 
@@ -157,5 +157,22 @@ describe('media-native bridge', () => {
     delete win().AirwaveNative;
     expect(() => pushMediaState({ playing: true })).not.toThrow();
     expect(() => pushMediaLibrary([], [])).not.toThrow();
+  });
+
+  // CAR-ACTIONS-001: the car's Star and Dislike buttons.
+  it('passes the car Star / Dislike presses to the feedback handler and drops anything else', () => {
+    const feedback = vi.fn();
+    setMediaHandlers({ feedback });
+    const cmd = (o: unknown) => (win().__awMediaCmd as (json: string) => void)(JSON.stringify(o));
+    for (const kind of ['like', 'unlike', 'dislike', 'undislike']) cmd({ type: 'feedback', id: 'k1', kind });
+    cmd({ type: 'feedback', id: 'k1', kind: 'hide' }); // the car cannot hide or save songs
+    cmd({ type: 'feedback', id: 'k1', kind: 'save' });
+    cmd({ type: 'feedback', kind: 'like' }); // no song named
+    expect(feedback.mock.calls).toEqual([['k1', 'like'], ['k1', 'unlike'], ['k1', 'dislike'], ['k1', 'undislike']]);
+  });
+
+  it('tells the car whether the song now playing is starred or disliked', () => {
+    pushMediaState({ mediaId: 'k1', liked: true, disliked: false });
+    expect(JSON.parse(media.mock.calls.at(-1)![0]).state).toMatchObject({ mediaId: 'k1', liked: true, disliked: false });
   });
 });

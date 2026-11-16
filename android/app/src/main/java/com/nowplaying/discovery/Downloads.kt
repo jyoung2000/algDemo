@@ -422,6 +422,12 @@ object Downloads {
 
   private fun run(context: Context, job: Job) {
     if (job.cancelled) { job.state = "cancelled"; job.stage = "done"; return }
+    // DL-COLD-READY-001: the car can start a download with the phone app never opened, before (or
+    // while) yt-dlp unpacks. Start setup if nobody has, and wait for it, bounded, rather than fail.
+    if (!ready) {
+      warmUp(context)
+      SetupWait.await({ if (ready) SetupWait.State.READY else if (starting.get()) SetupWait.State.STARTING else SetupWait.State.FAILED })
+    }
     if (!ready) return fail(job, failure?.let { "yt-dlp could not be set up: $it" } ?: "yt-dlp is still unpacking itself. Try again in a moment.")
     synchronized(libraryLock) {
       if (job.cancelled) return

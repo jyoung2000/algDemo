@@ -141,9 +141,15 @@ export class SoundCloud {
     const rel = release(day(e.release_date), 'release', 'SoundCloud') ?? release(day(e.created_at), 'upload', 'SoundCloud');
     const art: string | null = e.artwork_url ? String(e.artwork_url).replace(/-large\.(jpg|png)$/, '-t300x300.$1') : (e.user?.avatar_url ?? null);
     const url: string = e.permalink_url ?? '';
+    // SC-SNIP-001: a Go+ (SNIP) or region-blocked (BLOCK) track is only a 30 s clip here; its real
+    // length is `full_duration`. Keep that length and drop the clip link (as ALBUM-ALL-SONGS-001 does),
+    // so the car/player never shows 0:30 and the full-song chain finds the whole recording elsewhere.
+    const clipOnly = e.policy === 'SNIP' || e.policy === 'BLOCK';
+    const whole = Number(e.full_duration);
+    const duration = clipOnly ? (whole > 0 ? whole / 1000 : null) : (e.duration ? e.duration / 1000 : null);
     return makeTrack({
       provider: 'soundcloud', platformId: String(e.id ?? url), title, artists: splitArtists(artist).length ? [artist] : ['Unknown artist'],
-      duration: e.duration ? e.duration / 1000 : null, artwork: art, url, rel, tags, extra: { license: e.license ?? null },
+      duration, artwork: art, url: clipOnly ? '' : url, rel, tags, extra: { license: e.license ?? null },
     });
   }
 

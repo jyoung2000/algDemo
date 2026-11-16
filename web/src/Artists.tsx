@@ -5,6 +5,11 @@ import { Art } from './Art';
 import { AlbumShelf } from './AlbumShelf';
 import { ListSaveButton } from './ListSaveButton';
 import { TrackList } from './Search';
+import { TypeFilter, toggleType } from './TypeFilter';
+import type { ResultType } from './result-types';
+
+/** RESULT-TYPES-001: the icon menu near the top of the discography. */
+const PAGE_TYPES: readonly ResultType[] = ['singles', 'albums', 'features', 'songs'];
 
 export type { ArtistTarget } from './api';
 export { ArtistCard, ArtistNames, artistTargetsOf, namesArtist } from './ArtistLinks';
@@ -34,7 +39,7 @@ interface Props {
 }
 
 type State = { state: 'loading' } | { state: 'ready'; artist: ArtistData } | { state: 'failed'; message: string };
-type Every = { state: 'loading' } | { state: 'ready'; songs: Track[]; features: Track[]; failed: number } | { state: 'failed' };
+type Every = { state: 'loading' } | { state: 'ready'; songs: Track[]; features: Track[]; failed: number; featuresComplete: boolean } | { state: 'failed' };
 
 const songs = (n: number) => `${n} ${n === 1 ? 'song' : 'songs'}`;
 
@@ -60,31 +65,55 @@ export function ArtistView({ target, onBack, onPreview, onOpenAlbum, onOpenArtis
   const [every, setEvery] = useState<Every>({ state: 'loading' });
   const [all, setAll] = useState(false);
   const [allFeat, setAllFeat] = useState(false);
+  const [types, setTypes] = useState<ReadonlySet<ResultType>>(() => new Set());
+  const showing = (t: ResultType) => types.size === 0 || types.has(t);
   const back = useRef<HTMLButtonElement>(null);
+  const live = useRef<AbortController | null>(null);
 
   useEffect(() => back.current?.focus({ preventScroll: true }), []);
+
+  // Every song on every album and single. A look again keeps the features already confirmed and adds
+  // the ones the new answer finds, so a retry never takes a feature away (ARTIST-FEATURES-001).
+  const loadSongs = (t: ArtistTarget, c: AbortController) =>
+    api.artistSongs(t, c.signal).then(
+      (s) => {
+        if (c.signal.aborted) return;
+        setEvery((was) => {
+          const had = was.state === 'ready' ? was.features : [];
+          const keys = new Set(had.map((x) => x.key));
+          const features = [...had, ...(s.features ?? []).filter((x) => !keys.has(x.key))];
+          return { state: 'ready', songs: s.songs, features, failed: s.failed, featuresComplete: s.featuresComplete !== false };
+        });
+      },
+      () => { if (!c.signal.aborted) setEvery((was) => (was.state === 'ready' ? was : { state: 'failed' })); },
+    );
 
   // App mounts a fresh view for each artist (keyed by artistTargetKey), so loading is the initial state.
   useEffect(() => {
     const c = new AbortController();
+    live.current = c;
     api.artist(target, c.signal).then(
       (r) => {
         if (c.signal.aborted) return;
         setSt({ state: 'ready', artist: r.artist });
-        // Every song on every album and single: asked once the page is up, so it never holds it up.
-        const t: ArtistTarget = { id: r.artist.id, name: r.artist.name };
-        api.artistSongs(t, c.signal).then(
-          (s) => { if (!c.signal.aborted) setEvery({ state: 'ready', songs: s.songs, features: s.features ?? [], failed: s.failed }); },
-          () => { if (!c.signal.aborted) setEvery({ state: 'failed' }); },
-        );
+        // Asked once the page is up, so it never holds it up.
+        void loadSongs({ id: r.artist.id, name: r.artist.name }, c);
       },
       (e: unknown) => {
         if (c.signal.aborted) return;
         setSt({ state: 'failed', message: e instanceof ApiError ? e.message : 'The artist could not be opened. Check the connection and try again.' });
       },
     );
-    return () => c.abort();
+    return () => live.current?.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target]);
+
+  const lookAgain = (a: ArtistData) => {
+    live.current?.abort();
+    const c = new AbortController();
+    live.current = c;
+    void loadSongs({ id: a.id, name: a.name }, c);
+  };
 
   const listProps = { seedKeys, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys, playingKey, onOpenArtist };
 
@@ -163,11 +192,21 @@ export function ArtistView({ target, onBack, onPreview, onOpenAlbum, onOpenArtis
               {/* LIST-SAVE-FOLDER-001: every song, downloaded into a folder named after the artist. */}
               {every.state === 'ready' && <ListSaveButton tracks={every.songs} kind="list" name={a.name} label={`every song by ${a.name}`} />}
             </div>
-            <h3 className="albums__h">{all && every.state === 'ready' ? 'All songs' : 'Most played'}</h3>
-            {full.length ? (
-              <TrackList tracks={shown} {...listProps} label={`Songs by ${a.name}`} />
-            ) : (
-              <p className="empty">No songs by {a.name} were found.</p>
+            <TypeFilter
+              types={PAGE_TYPES}
+              selected={types}
+              onToggle={(t) => setTypes((s) => toggleType(s, t))}
+              counts={{ songs: full.length, albums: a.albums.length, singles: a.singles.length, features: feats.length }}
+            />
+            {showing('songs') && (
+              <>
+                <h3 className="albums__h">{all && every.state === 'ready' ? 'All songs' : 'Most played'}</h3>
+                {full.length ? (
+                  <TrackList tracks={shown} {...listProps} label={`Songs by ${a.name}`} />
+                ) : (
+                  <p className="empty">No songs by {a.name} were found.</p>
+                )}
+              </>
             )}
             <div className="artist__more">
               {every.state === 'loading' && (
@@ -180,7 +219,7 @@ export function ArtistView({ target, onBack, onPreview, onOpenAlbum, onOpenArtis
                   <Glyph name="info" size={14} /> Only the most played songs could be listed. The albums below still open.
                 </p>
               )}
-              {!all && full.length > SONGS_FOLDED && (
+              {showing('songs') && !all && full.length > SONGS_FOLDED && (
                 <button type="button" className="linkbtn albums__more" onClick={() => setAll(true)}>
                   {every.state === 'ready' ? `Show all ${full.length} songs` : `Show all ${full.length} most played`}
                 </button>
@@ -190,10 +229,16 @@ export function ArtistView({ target, onBack, onPreview, onOpenAlbum, onOpenArtis
                   <Glyph name="info" size={14} /> {every.failed === 1 ? '1 album could not be read' : `${every.failed} albums could not be read`}, so their songs may be missing.
                 </p>
               )}
+              {every.state === 'ready' && !every.featuresComplete && (
+                <p className="state" role="status">
+                  <Glyph name="info" size={14} /> Not every feature could be looked up, so some may be missing.{' '}
+                  <button type="button" className="linkbtn" onClick={() => lookAgain(a)}>Look again</button>
+                </p>
+              )}
             </div>
-            {a.albums.length > 0 && <AlbumShelf albums={a.albums} query={a.name} onOpen={onOpenAlbum} title="Albums and EPs" label={`Albums by ${a.name}`} folded={6} noun="albums" />}
-            {a.singles.length > 0 && <AlbumShelf albums={a.singles} query={a.name} onOpen={onOpenAlbum} title="Singles" label={`Singles by ${a.name}`} folded={6} noun="singles" />}
-            {feats.length > 0 && (
+            {showing('albums') && a.albums.length > 0 && <AlbumShelf albums={a.albums} query={a.name} onOpen={onOpenAlbum} title="Albums and EPs" label={`Albums by ${a.name}`} folded={6} noun="albums" />}
+            {showing('singles') && a.singles.length > 0 && <AlbumShelf albums={a.singles} query={a.name} onOpen={onOpenAlbum} title="Singles" label={`Singles by ${a.name}`} folded={6} noun="singles" />}
+            {showing('features') && feats.length > 0 && (
               <>
                 <h3 className="albums__h">Features</h3>
                 <p className="artist__hint">Songs by other artists that {a.name} is on, most played first.</p>
@@ -206,6 +251,11 @@ export function ArtistView({ target, onBack, onPreview, onOpenAlbum, onOpenArtis
                   </div>
                 )}
               </>
+            )}
+            {types.size > 0 && PAGE_TYPES.filter((t) => types.has(t)).every((t) => (t === 'songs' ? full.length : t === 'albums' ? a.albums.length : t === 'singles' ? a.singles.length : feats.length) === 0) && (
+              <p className="state" role="status">
+                <Glyph name="info" size={14} /> {a.name} has nothing of that kind here. Tap the highlighted icon again to show everything.
+              </p>
             )}
           </>
         );
