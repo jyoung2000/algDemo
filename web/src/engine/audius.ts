@@ -84,6 +84,27 @@ export class Audius {
 
   constructor(private readonly http: Http, private readonly store?: Store) {}
 
+  private opts(c: Ctx, maxBytes: number): Parameters<Http['getJson']>[1] {
+    const o: Parameters<Http['getJson']>[1] = { category: 'metadata', maxBytes };
+    if (c.meter) o.meter = c.meter;
+    if (c.token) o.token = c.token;
+    return o;
+  }
+
+  /** ARTIST-ALL-SOURCES-001: the accounts a name finds, as Audius sends them (`is_verified` among the rest). */
+  users(q: string, c: Ctx = {}): Promise<Json[]> {
+    return cached(c.refresh ? undefined : this.store, `audius:users:${fold(q)}`, 'search', 15 * 60, async () => {
+      const d = await this.http.getJson<Json>(`${API}/users/search?query=${encodeURIComponent(q)}&limit=10&app_name=${AUDIUS_APP}`, this.opts(c, 1_000_000));
+      return (Array.isArray(d?.data) ? d.data : []).filter((u: unknown) => u && typeof u === 'object') as Json[];
+    });
+  }
+
+  /** An account's own uploads that play in full. */
+  async userTracks(id: string, c: Ctx = {}): Promise<Track[]> {
+    if (!/^[A-Za-z0-9]{1,24}$/.test(id)) return [];
+    return parseAudiusTracks(await this.http.getJson<Json>(`${API}/users/${id}/tracks?limit=100&app_name=${AUDIUS_APP}`, this.opts(c, 3_000_000)));
+  }
+
   search(q: string, limit = 10, c: Ctx = {}): Promise<Track[]> {
     return cached(c.refresh ? undefined : this.store, `audius:search:${fold(q)}:${limit}`, 'search', 15 * 60, async () => {
       const o: Parameters<Http['getJson']>[1] = { category: 'metadata', maxBytes: 2_000_000 };

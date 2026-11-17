@@ -273,7 +273,7 @@ export function DownloadsView({ d }: { d: Downloads }) {
           Link
           <input className="field" type="url" inputMode="url" placeholder={tool === 'spotdl' ? 'https://open.spotify.com/track/…' : 'https://www.youtube.com/watch?v=…'} value={link} onChange={(e) => setLink(e.target.value)} aria-invalid={link.trim() !== '' && !linkOk} />
         </label>
-        <button className="push push--big" type="submit" disabled={!linkOk}>
+        <button className="push push--default push--big" type="submit" disabled={!linkOk}>
           Download
         </button>
       </form>

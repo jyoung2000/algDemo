@@ -75,25 +75,30 @@ describe('ServiceClient', () => {
 /** A real QueuePreloader over a fake shell library: readiness is whatever the test says the disk holds. */
 function realQueue() {
   const status = new Map<string, string>();
+  const disk = new Set<string>();
   const subs = new Set<() => void>();
   const q = new QueuePreloader({
-    library: { status: (u) => status.get(u) ?? 'unknown', error: () => null, ensure: async () => undefined, subscribe: (fn) => { subs.add(fn); return () => { subs.delete(fn); }; } },
+    library: {
+      status: (u) => status.get(u) ?? 'unknown', error: () => null, ensure: async () => undefined, subscribe: (fn) => { subs.add(fn); return () => { subs.delete(fn); }; },
+      // What the disk holds, learned only when asked (SHUFFLE-START-001).
+      refresh: async (u) => { if (disk.has(u)) status.set(u, 'ready'); else status.set(u, 'missing'); },
+    },
     known: (t) => `https://src/${t.key}`,
     resolve: async (t) => `https://src/${t.key}`,
     configure: async () => ({}),
   });
-  return { q, status };
+  return { q, status, disk };
 }
 
 describe('ServiceActor', () => {
   const setup = (contexts: Record<string, CarContext> = {}) => {
-    const { q, status } = realQueue();
+    const { q, status, disk } = realQueue();
     const emit = vi.fn();
     const cars = new CarSources({ contexts: { contextOf: (id) => contexts[id] ?? null }, queue: q, emit });
     const replies: [string, unknown][] = [];
     const local = { handle: vi.fn(async (m: string, p: string, b: unknown) => ({ status: 200, body: { m, p, b } })) };
     const actor = new ServiceActor({ local, queue: q, cars, reply: (id, json) => replies.push([id, JSON.parse(json)]) });
-    return { q, status, emit, cars, replies, local, actor };
+    return { q, status, disk, emit, cars, replies, local, actor };
   };
 
   it('answers ordinary routes through the one LocalApi and rejects malformed envelopes', async () => {
@@ -120,6 +125,20 @@ describe('ServiceActor', () => {
     expect((r.body as { counts: { total: number; ready: number } }).counts).toMatchObject({ total: 2, ready: 1 });
     const snap = r.cacheSnapshot as { tracks: { key: string; ready: string | null; source: string | null }[] };
     expect(snap.tracks.map(d => [d.key, d.ready, d.source])).toEqual([['a', 'https://src/a', 'https://src/a'], ['b', null, 'https://src/b']]);
+    t.q.dispose();
+  });
+
+  it('looks at what is held for a list it was never given, and changes nothing else (SHUFFLE-START-001)', async () => {
+    const t = setup();
+    const a = track('a'), b = track('b');
+    t.disk.add('https://src/b');
+    const before = await t.actor.route('POST', '/_native/queue/snapshot', { tracks: [a, b] });
+    expect((before.cacheSnapshot as { tracks: { ready: string | null }[] }).tracks.map(d => d.ready)).toEqual([null, null]);
+    const r = await t.actor.route('POST', '/_native/queue/look', { tracks: [a, b] });
+    expect(r.status).toBe(200);
+    expect((r.cacheSnapshot as { tracks: { key: string; ready: string | null }[] }).tracks.map(d => [d.key, d.ready])).toEqual([['a', null], ['b', 'https://src/b']]);
+    expect(t.q.snapshot().total).toBe(0);
+    expect((await t.actor.route('POST', '/_native/queue/look', { tracks: [{ title: 'no key' }] })).status).toBe(400);
     t.q.dispose();
   });
 
@@ -216,6 +235,17 @@ describe('RemoteQueue', () => {
     expect(q.snapshotFor([a, b])).toMatchObject({ ready: 1, queued: 1 });
     expect(q.cardOf('a', { kept: false, percent: null }).state).toBe('ready');
     expect(q.cardOf('b', { kept: false, percent: null }).state).toBe('queued');
+  });
+
+  it('look() asks the service and then knows what it holds (SHUFFLE-START-001)', async () => {
+    const facts = { status: 'ready', blocked: false, inTarget: false, error: null, givenUp: false };
+    const request = vi.fn(async () => ({ status: 200, body: {}, cacheSnapshot: { tracks: [{ key: 'b', source: 'https://s/b', ready: 'https://s/b', facts }], expired: [] } }));
+    const q = new RemoteQueue({ request });
+    const a = track('a'), b = track('b');
+    expect(q.isReady(b)).toBe(false);
+    await q.look([a, b]);
+    expect(request).toHaveBeenCalledWith('POST', '/_native/queue/look', { tracks: [a, b] });
+    expect([q.isReady(a), q.isReady(b)]).toEqual([false, true]);
   });
 
   it('surfaces service errors and never contacts the service after dispose', async () => {

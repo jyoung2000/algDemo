@@ -189,3 +189,25 @@ describe('discovery on a saved list', () => {
     expect(String((r.body as { reason: string }).reason)).toMatch(/does not need more songs yet/i);
   });
 });
+
+describe('radio bookmarks persist without a preceding like or completed listen', () => {
+  it('retains a matching snapshot when adding to an existing list, including after reopen', async () => {
+    const { api, backend } = await open();
+    await act(api, { action: 'create', name: 'Radio programmes' });
+    const id = (await lists(api))[0]!.id;
+    const station = { id: 'world', name: 'World radio', url: 'https://radio.example/live', tags: [] };
+    const track = { key: 'radio:world:news', id: 'radio:world:news', title: 'News', provider: 'radio', kind: 'radio-programme', radio_station: station };
+    const added = await act(api, { action: 'add', id, key: track.key, tracks: [track] });
+    expect(added.status).toBe(200);
+    const reopened = new LocalApi({ store: await Store.open(backend), port: { request: async () => { throw Error('no network'); } }, encoder: null, spotifySearch: () => async () => [] });
+    const body = (await reopened.handle('GET', '/api/playlists')).body as { lists: { items: { track: unknown }[] }[] };
+    expect(body.lists[0]!.items[0]!.track).toMatchObject({ key: track.key, kind: 'radio-programme', radio_station: station });
+  });
+  it('does not retain an unrelated snapshot supplied with a different entry key', async () => {
+    const { api } = await open(); await act(api, { action: 'create', name: 'Radio' });
+    const id = (await lists(api))[0]!.id;
+    await act(api, { action: 'add', id, key: 'target', tracks: [{ key: 'unrelated', title: 'Not the requested entry' }] });
+    const body = (await api.handle('GET', '/api/playlists')).body as { lists: { items: { track: unknown }[] }[] };
+    expect(body.lists[0]!.items[0]!.track).toBeNull();
+  });
+});

@@ -223,6 +223,14 @@ export class Http {
     }
   }
 
+  /**
+   * A wait on the shell's own clock where it has one (NATIVE-CLOCK-001), for a caller that backs off
+   * before asking a service again.
+   */
+  wait(ms: number): Promise<void> {
+    return pause(ms, this.port);
+  }
+
   async getJson<T = unknown>(url: string, opt: GetOptions): Promise<T> {
     const { response, finalUrl } = await this.get(url, { ...opt, maxBytes: opt.maxBytes });
     if (response.status >= 400) throw new FetchError(`HTTP ${response.status} from ${hostOf(finalUrl)}`);

@@ -281,6 +281,11 @@ export class ServiceActor {
       case 'snapshot':
         if (!tracks) return bad();
         return reply({ counts: q.snapshotFor(tracks) }, tracks);
+      case 'look':
+        // SHUFFLE-START-001: what is held of a list the loader was never given. Asks only.
+        if (!tracks) return bad();
+        await q.look(tracks);
+        return reply({}, tracks);
       case 'update':
         if (!tracks) return bad();
         // The car's list holds the cache while the native player plays from it.

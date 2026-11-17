@@ -5,7 +5,7 @@
  * Behaviour mirrors providers.py YouTubeMusic. Verified against responses recorded live from
  * music.youtube.com (see fixtures/ytm-*.json), trimmed to the first few items.
  */
-import type { CancelToken, Http, Meter } from './net';
+import { BudgetExceeded, Cancelled, type CancelToken, type Http, type Meter } from './net';
 import { fold, matchRecordings } from './identity';
 import { makeTrack, release, type Track } from './track';
 import { cached, NeedsChoice, ProviderError } from './deezer';
@@ -37,6 +37,19 @@ export const YT_ALBUM = /^MPREb_[A-Za-z0-9_-]{6,40}$/;
 const ARTISTS_FILTER = 'EgWKAQIgAWoMEA4QChADEAQQCRAF';
 const YT_ID = /^[A-Za-z0-9_-]{11}$/;
 const MAX_BYTES = 4_000_000;
+/** FEATURES-ALL-002: what a songs search page is read from, for both shapes a page comes in. */
+const SONG_ROW_PARTS = 'continuations,contents.musicResponsiveListItemRenderer(flexColumns,fixedColumns,playlistItemData,overlay.musicItemThumbnailOverlayRenderer.content.musicPlayButtonRenderer.playNavigationEndpoint.watchEndpoint,thumbnail,badges)';
+/** How long to wait before asking again after a "slow down" answer, in ms. */
+const SLOW_DOWN_WAITS = [700, 1500];
+/** A search read page after page meets more of them, and nothing is waiting on it: one wait more. */
+const PAGING_WAITS = [700, 1500, 3000];
+/** DISCOGRAPHY-MORE-001: what a release in a discography grid is read from. */
+const GRID_PARTS = `&prettyPrint=false&fields=${encodeURIComponent(
+  'contents.singleColumnBrowseResultsRenderer.tabs.tabRenderer.content.sectionListRenderer.contents.gridRenderer.items.musicTwoRowItemRenderer(title,subtitle,navigationEndpoint,thumbnailRenderer)',
+)}`;
+const SONG_PAGE_PARTS = `&prettyPrint=false&fields=${encodeURIComponent(
+  `contents.tabbedSearchResultsRenderer.tabs.tabRenderer.content.sectionListRenderer.contents.musicShelfRenderer(${SONG_ROW_PARTS}),continuationContents.musicShelfContinuation(${SONG_ROW_PARTS})`,
+)}`;
 const LIST_BYTES = 12_000_000;
 
 export interface Artist {
@@ -254,6 +267,24 @@ export function parseSearchSongs(resp: Json): YtItem[] {
   return out;
 }
 
+/**
+ * FEATURES-ALL-002: one page of a songs search, first or later, with the token of the page after it.
+ * A first page holds its rows in the search tab's shelf; a later one in a shelf continuation. Each
+ * row keeps every artist it links, which is how a song another artist leads is told from a namesake.
+ */
+export function parseSearchSongsPage(resp: Json): { items: YtItem[]; next: string | null } {
+  const tabs: Json[] = nav(resp, ['contents', 'tabbedSearchResultsRenderer', 'tabs']) ?? [];
+  const sections: Json[] = nav(tabs, [0, 'tabRenderer', 'content', 'sectionListRenderer', 'contents']) ?? [];
+  const shelf: Json | undefined = sections.map((s) => s.musicShelfRenderer).find(Boolean) ?? nav(resp, ['continuationContents', 'musicShelfContinuation']);
+  const items: YtItem[] = [];
+  for (const c of shelf?.contents ?? []) {
+    const song = c.musicResponsiveListItemRenderer && parseSongFlat(c.musicResponsiveListItemRenderer);
+    if (song) items.push(song);
+  }
+  const next = nav(shelf, ['continuations', 0, 'nextContinuationData', 'continuation']);
+  return { items, next: typeof next === 'string' && next ? next : null };
+}
+
 export function parsePlaylist(resp: Json): { title: string; trackCount: number | null; tracks: YtItem[] } {
   const two = nav(resp, ['contents', 'twoColumnBrowseResultsRenderer']);
   const shelf = nav(two, ['secondaryContents', 'sectionListRenderer', 'contents', 0, 'musicPlaylistShelfRenderer']);
@@ -280,7 +311,26 @@ export class YouTubeMusic {
 
   constructor(private readonly http: Http, private readonly store?: Store) {}
 
-  private async post(endpoint: string, body: Json, c: Ctx, maxBytes = MAX_BYTES): Promise<Json> {
+  /**
+   * OPEN-FLOW-001. Measured 2026-11-16: asked a number of things in a row, YouTube Music answers one
+   * of them 403 ("Sorry...") now and then, and the same request a moment later answers. That is
+   * "slow down", not "no": the request waits and is asked again, a few times at most, so one such
+   * answer no longer costs an artist page its YouTube Music half or ends a search part-way.
+   */
+  private async post(endpoint: string, body: Json, c: Ctx, maxBytes = MAX_BYTES, query = '', waits: readonly number[] = SLOW_DOWN_WAITS): Promise<Json> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.postOnce(endpoint, body, c, maxBytes, query);
+      } catch (e) {
+        const wait = /HTTP 403\b/.test(String((e as Error)?.message ?? '')) ? waits[attempt] : undefined;
+        if (wait === undefined) throw e;
+        c.token?.check();
+        await this.http.wait(wait);
+      }
+    }
+  }
+
+  private async postOnce(endpoint: string, body: Json, c: Ctx, maxBytes: number, query: string): Promise<Json> {
     const context = { context: { client: { clientName: 'WEB_REMIX', clientVersion: `1.${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.01.00` }, user: {} } };
     const o: Parameters<Http['getJson']>[1] = {
       category: 'metadata',
@@ -291,7 +341,7 @@ export class YouTubeMusic {
     };
     if (c.meter) o.meter = c.meter;
     if (c.token) o.token = c.token;
-    return this.http.getJson<Json>(`${API}${endpoint}?alt=json`, o);
+    return this.http.getJson<Json>(`${API}${endpoint}?alt=json${query}`, o);
   }
 
   private watch(videoId: string, limit: number, c: Ctx, radio = false) {
@@ -350,9 +400,38 @@ export class YouTubeMusic {
    * all their singles), which the artist page itself only shows about ten of.
    */
   discography(browseId: string, params: string, c: Ctx = {}): Promise<Json> {
-    if (!/^UC[A-Za-z0-9_-]{22}$/.test(browseId)) return Promise.reject(new ProviderError('That is not a YouTube Music artist.'));
+    // DISCOGRAPHY-MORE-001: the list has an id of its own now ("MPAD" and the artist's channel); the
+    // channel id alone, as older pages linked it, is still accepted.
+    if (!/^(?:MPAD)?UC[A-Za-z0-9_-]{22}$/.test(browseId)) return Promise.reject(new ProviderError('That is not a YouTube Music artist.'));
     if (!/^[A-Za-z0-9_%=+-]{4,200}$/.test(params)) return Promise.reject(new ProviderError('That is not a YouTube Music list.'));
-    return this.post('browse', { browseId, params }, c);
+    // Only the parts a release is read from: measured 546 KB as the list comes, 90 KB like this. The
+    // older link form answers a page of shelves instead of a grid, so it is asked for whole.
+    if (!browseId.startsWith('MPAD')) return this.post('browse', { browseId, params }, c);
+    return this.post('browse', { browseId, params }, c, MAX_BYTES, GRID_PARTS).catch((e) => {
+      if (e instanceof BudgetExceeded || e instanceof Cancelled || /HTTP 403\b/.test(String((e as Error)?.message ?? ''))) throw e;
+      return this.post('browse', { browseId, params }, c);
+    });
+  }
+
+  /**
+   * FEATURES-ALL-002: one page of the songs search for `q`, or the page a token from the page before
+   * names. Not cached here: the caller keeps the whole answer once it has every page.
+   */
+  async songSearchPage(q: string, token: string | null, c: Ctx = {}): Promise<{ items: YtItem[]; next: string | null }> {
+    if (token !== null && !/^[A-Za-z0-9_%=-]{20,2000}$/.test(token)) throw new ProviderError('That is not a YouTube Music page.');
+    const body = token === null ? { query: q, params: SONGS_FILTER } : { continuation: token };
+    // Only the parts a row is read from. Measured: 692 KB a page as it comes, 54 KB like this, which
+    // is what makes reading every page affordable against the day's allowance.
+    try {
+      return parseSearchSongsPage(await this.post('search', body, c, MAX_BYTES, SONG_PAGE_PARTS, PAGING_WAITS));
+    } catch (e) {
+      // FEATURES-FLOW-001: still told to slow down after every wait, the caller reports the list as
+      // incomplete; the 700 KB whole page is no remedy for that and is not asked for.
+      if (e instanceof BudgetExceeded || e instanceof Cancelled || /HTTP 403\b/.test(String((e as Error)?.message ?? ''))) throw e;
+      // Anything else is the short form itself being refused: the whole page is asked for instead,
+      // and a failure of that is the caller's to report.
+      return parseSearchSongsPage(await this.post('search', body, c));
+    }
   }
 
   search(q: string, limit = 15, c: Ctx = {}): Promise<Track[]> {

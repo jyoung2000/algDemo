@@ -211,6 +211,32 @@ describe('genre bubbles follow the Taste Picker', () => {
     expect(b).toEqual([{ label: 'Soul', color: pickerColour('soul'), sub: false }]);
   });
 
+  it('adds the styles and fills the engine sends, after the picker\u2019s own bubbles (GENRE-ALL-001)', () => {
+    const b = genreBubbles({ ...base, genres: ['Jazz'], styles: ['Smooth jazz'], fill: [] });
+    expect(b).toEqual([{ label: 'Jazz', color: pickerColour('jazz'), sub: false }, { label: 'Smooth jazz', color: pickerColour('jazz'), sub: true }]);
+    // The era takes its main genre's colour; where it came from rides along for the row to say.
+    const era = genreBubbles({ ...base, genres: ['Pop'], styles: [], fill: [{ label: '80s pop', sub: true, guess: false, why: 'Released in 1982' }] });
+    expect(era).toEqual([{ label: 'Pop', color: pickerColour('pop'), sub: false }, { label: '80s pop', color: pickerColour('pop'), sub: true, why: 'Released in 1982' }]);
+  });
+
+  it('marks an estimate as one, main genre first (GENRE-ALL-001)', () => {
+    const b = genreBubbles({ ...base, genres: [], styles: [], fill: [{ label: 'Hip-hop', sub: false, guess: true, why: 'Most songs in this list' }, { label: 'Rage', sub: true, guess: true, why: 'The artist\u2019s other songs' }] });
+    expect(b).toEqual([
+      { label: 'Hip-hop', color: pickerColour('hip-hop'), sub: false, guess: true, why: 'Most songs in this list' },
+      { label: 'Rage', color: pickerColorFor('Rage'), sub: true, guess: true, why: 'The artist\u2019s other songs' },
+    ]);
+  });
+
+  it('shows a genre the picker has no place for when it is the only main genre the song has (GENRE-ALL-001)', () => {
+    // "No bubble is grey" was about a spelling the lookup missed. A service's own word for a song that
+    // has no other main genre is shown, in a neutral tone, rather than leaving the song with none.
+    const b = genreBubbles({ ...base, genres: ['Asian Music'], main_off: 'Asian music', styles: [], fill: [{ label: '2020s Asian music', sub: true, guess: false, why: 'Released in 2024' }] });
+    expect(b.map((x) => [x.label, x.sub])).toEqual([['Asian music', false], ['2020s Asian music', true]]);
+    expect(b[0]!.color).toBe(b[1]!.color);
+    // Not shown beside a main genre the picker does place.
+    expect(genreBubbles({ ...base, genres: ['Asian Music', 'Soul'], main_off: 'Asian music' }).map((x) => x.label)).toEqual(['Soul']);
+  });
+
   it('gives a genre placed through its parent its family colour, named as words (GENRE-CLASS-001)', () => {
     expect(genreBubbles({ ...base, genres: ['Gospel'] })).toEqual([{ label: 'Gospel', color: pickerColour('soul'), sub: false }]);
     expect(genreBubbles({ ...base, genres: ['deep house'] })).toEqual([{ label: 'Deep house', color: pickerColour('electronic'), sub: false }]);

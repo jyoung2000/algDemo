@@ -2,7 +2,6 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { button, geo } from '@now-playing/aqua-ui/airwave-art';
 
 /**
  * BTN-UNIFORM-001 — owner: "on the android and windows app can we ensure all buttons have consistent ui and ux".
@@ -84,7 +83,7 @@ describe('one button contract for both shells (BTN-UNIFORM-001)', () => {
     const optedOut = /:where\(\s*:is\(button[^)]*\):not\(([^)]*)\)/.exec(css)?.[1]?.split(',').map((s) => s.trim().replace(/^\./, '')) ?? [];
     expect(optedOut.length).toBeGreaterThan(0);
     const pressed = (name: string) => everything.some((r) => new RegExp(`\\.${name}(?![\\w-])[^,{]*:active`).test(r.selector));
-    // A family the shared press skips (a full-width row, a text link, the Aqua push) must bring its own.
+    // A family the shared press skips (a full-width row, a text link) must bring its own.
     expect(optedOut.filter((name) => !pressed(name))).toEqual([]);
   });
 
@@ -99,34 +98,7 @@ describe('one button contract for both shells (BTN-UNIFORM-001)', () => {
     expect(missing).toEqual([]);
   });
 
-  it('shows a 44px Aqua pill with the drawing made at 44px, never a shorter one pulled tall', () => {
-    // installAquaArt draws one pill per height; a 22px drawing in a 44px box has flattened ends.
-    expect(read('main.tsx')).toMatch(/installAquaArt\(\{ btn: \[[^\]]*\b44\b/);
-    const g = geo(44);
-    const drawingWidth = Number(/width="(\d+)"/.exec(button('cancel', 44))?.[1] ?? 0);
-    expect(drawingWidth).toBeGreaterThan(0);
-    const tall = rules(contract()).filter((r) => /--aq-(?:btn|def)-\d+/.test(r.body));
-    expect(tall.length).toBeGreaterThanOrEqual(10);
-    for (const r of tall) expect([...r.body.matchAll(/--aq-(?:btn|def)-(\d+)/g)].map((m) => m[1]), r.selector).toEqual(['44']);
-    const frames = tall.filter((r) => /border-image:/.test(r.body));
-    // Once for phones and narrow windows, once for the places a layout makes 44px tall on Windows too.
-    expect(frames.map((r) => r.media.replace(/\s+/g, ' '))).toEqual(['@media (max-width: 899px), (pointer: coarse)', '']);
-    for (const r of frames) {
-      const frame = /border-image: var\(--aq-btn-44\) 0 (\d+) fill \/ 0 (\d+)px \/ (\d+)px (\d+)px (\d+)px;/.exec(r.body);
-      expect(frame, r.selector).not.toBeNull();
-      const [slice, width, top, side, bottom] = (frame ?? []).slice(1).map(Number) as [number, number, number, number, number];
-      expect([width, top, side, bottom]).toEqual([slice, g.T, g.M, g.B]);
-      // An end slice holds the margin and the whole round end...
-      expect(slice).toBeGreaterThanOrEqual(g.M + 44 / 2);
-      // ...and the two of them leave a middle strip to stretch, or the pill paints as two ends around a hole.
-      expect(2 * slice).toBeLessThan(drawingWidth);
-      expect(r.body).toMatch(/height: var\(--btn-touch\);/);
-      // Narrower than its two ends and the browser squeezes them.
-      expect(Number(/min-width: (\d+)px/.exec(r.body)?.[1] ?? 0) + 2 * side).toBeGreaterThanOrEqual(2 * slice);
-    }
-  });
-
   it('dims every switched-off button the same way', () => {
-    expect(contract()).toMatch(/:root button:disabled:not\(\.push, \.linkbtn\) \{[^}]*opacity: var\(--btn-off-opacity\);/);
+    expect(contract()).toMatch(/:root button:disabled:not\(\.linkbtn\) \{[^}]*opacity: var\(--btn-off-opacity\);/);
   });
 });

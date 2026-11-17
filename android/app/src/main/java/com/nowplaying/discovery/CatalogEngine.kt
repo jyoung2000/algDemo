@@ -91,7 +91,10 @@ class CatalogEngine(private val context: Context) {
       override fun shouldInterceptRequest(v: WebView, request: WebResourceRequest): WebResourceResponse {
         val u = request.url
         // Only the app's own files; everything else goes through the guarded bridge or nowhere.
-        if (u.scheme == "https" && u.host == AppAssets.HOST) return AppAssets.serve(context, u.path ?: "/", null)
+        if (u.scheme == "https" && u.host == AppAssets.HOST) {
+          if (u.path == "/radio-native") return RadioNative.serve(context, u)
+          return AppAssets.serve(context, u.path ?: "/", null)
+        }
         return WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", emptyMap(), ByteArrayInputStream(ByteArray(0)))
       }
       override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean = request.url.host != AppAssets.HOST

@@ -7,10 +7,10 @@ export function inPlaylist(songKey: string | undefined, lists: PlaylistSummary[]
   return Boolean(songKey && lists.some(l => !l.album && l.items.some(i => i.key === songKey)));
 }
 
-/** The same adjacent star + check in search, the queue and the current-song controls. */
+/** The same star, with a playlist tick on its corner, in search, the queue and the current-song controls. */
 export function SongStar({ saved, size = 14 }: { saved: boolean; size?: number }) {
   return <span className="song-star" aria-hidden="true" data-playlist-saved={saved}>
     <Glyph name="star" size={size} />
-    {saved && <Glyph name="check" size={11} className="song-star__check" />}
+    {saved && <Glyph name="check" size={9} className="song-star__check" />}
   </span>;
 }

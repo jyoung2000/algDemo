@@ -1,5 +1,6 @@
 import { downloadsAvailable } from './engine/downloads';
 import { familyIdentity, genreIdentity, subIdentity, type GenreIdentity } from './engine/genre-identity';
+import { styleCore } from './engine/genre-fill';
 import type { Characteristics, Playback, ProviderId, RecItem, Release, TasteSummary, Track } from './api';
 
 export const PROVIDER_LABEL: Record<string, string> = {
@@ -10,6 +11,7 @@ export const PROVIDER_LABEL: Record<string, string> = {
   audius: 'Audius',
   hearthis: 'HearThis',
   archive: 'Internet Archive',
+  radio: 'Live radio',
   spotify: 'Spotify',
   apple: 'Apple Music',
 };
@@ -216,6 +218,8 @@ export function stepQueue(
  */
 export interface ReadinessProbe {
   isReady?(track: Track): boolean;
+  /** SHUFFLE-START-001: find out what is held of a list not examined yet. Downloads nothing. */
+  look?(tracks: readonly Track[]): Promise<unknown>;
   readyUrl?(track: Track): string | null;
   expiredKeys?(): ReadonlySet<string>;
 }
@@ -227,6 +231,36 @@ export function readyFilter(probe: ReadinessProbe | null | undefined, native: bo
   if (!native || !probe || typeof probe.isReady !== 'function') return undefined;
   // Asked on every call, never captured: a pick made on a stale answer is the bug this prevents.
   return (track: Track) => probe.isReady!(track);
+}
+
+/**
+ * SHUFFLE-START-001. The song a whole list starts on ("Play songs", "Play album", "Play as my queue").
+ * In order, and wherever the app cannot say what it holds, that is the first song. Shuffled, it is one
+ * of the songs already held in full, so the list never opens on a song still loading while a loaded one
+ * waits. With nothing held yet it is the first song, which starts at once and loads as it plays.
+ */
+export function listStart(list: readonly Track[], o: { shuffle: boolean; ready?: ((track: Track) => boolean) | undefined; rand?: () => number }): Track | null {
+  const first = list[0];
+  if (!first) return null;
+  if (!o.shuffle || !o.ready) return first;
+  const held = list.filter((t) => o.ready!(t));
+  if (!held.length) return first;
+  return held[Math.min(held.length - 1, Math.floor((o.rand ?? Math.random)() * held.length))]!;
+}
+
+/**
+ * SHUFFLE-START-001: the longest a whole-list Play waits to learn what is held. Asking is a few file
+ * checks, so it is normally over in a blink; this only bounds a shell that does not answer.
+ */
+export const LIST_LOOK_MS = 1200;
+
+/** Resolves when `work` settles either way, or after `ms`, whichever is first. Never rejects. */
+export function settledWithin(work: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    const done = () => { clearTimeout(timer); resolve(); };
+    work.then(done, done);
+  });
 }
 
 /** Songs the preloader has given up on. A preloader that cannot say reports nothing expired. */
@@ -338,7 +372,16 @@ export interface GenreBubble {
   label: string;
   color: string;
   sub: boolean;
+  /** GENRE-ALL-001: an estimate of the engine's, drawn as one. */
+  guess?: boolean;
+  /** GENRE-ALL-001: where a filled-in genre came from. */
+  why?: string;
 }
+
+/** The tone of a genre the Taste Picker has no place for: the row's own grey, never a picker colour. */
+const OFF_PICKER = '#8a8f98';
+/** The most bubbles one row shows; the main genre and one subgenre always fit. */
+const MAX_BUBBLES = 5;
 
 /**
  * The genre bubbles for a row, in reading order: main genres first (the provider's own, e.g. "Rap",
@@ -367,7 +410,34 @@ export function genreBubbles(c?: Characteristics | null): GenreBubble[] {
   const fromFamily = new Set(families.map(familyIdentity).map((id) => id?.key));
   const kept = unique.filter((id) => !fromFamily.has(id.key) || !unique.some((o) => o !== id && !o.sub && o.family === id.family && !fromFamily.has(o.key)));
   const ordered = [...kept.filter((id) => !id.sub), ...kept.filter((id) => id.sub)];
-  return ordered.map(({ label, color, sub }) => ({ label, color, sub }));
+  const mains: GenreBubble[] = ordered.filter((id) => !id.sub).map(({ label, color, sub }) => ({ label, color, sub }));
+  const fine: GenreBubble[] = ordered.filter((id) => id.sub).map(({ label, color, sub }) => ({ label, color, sub }));
+  // GENRE-ALL-001: what the engine adds so every row has a main genre and a subgenre. A genre the
+  // picker has no place for is shown only when the song has no other main genre.
+  if (!mains.length && c.main_off) mains.push({ label: c.main_off, color: OFF_PICKER, sub: false });
+  for (const f of (c.fill ?? []).filter((x) => !x.sub)) {
+    if (!mains.length) mains.push({ label: f.label, color: genreIdentity(f.label)?.color ?? OFF_PICKER, sub: false, ...(f.guess ? { guess: true } : {}), why: f.why });
+  }
+  const lead = mains[0]?.color ?? OFF_PICKER;
+  const toneOf = (label: string): string => {
+    const core = styleCore(label);
+    return genreIdentity(label)?.color ?? (core ? genreIdentity(core)?.color : undefined) ?? lead;
+  };
+  for (const label of c.styles ?? []) fine.push({ label, color: toneOf(label), sub: true });
+  for (const f of (c.fill ?? []).filter((x) => x.sub)) fine.push({ label: f.label, color: toneOf(f.label), sub: true, ...(f.guess ? { guess: true } : {}), why: f.why });
+  const said = new Set<string>();
+  const once = (b: GenreBubble): boolean => !said.has(b.label.toLowerCase()) && (said.add(b.label.toLowerCase()), true);
+  const m = mains.filter(once);
+  const s = fine.filter(once);
+  // Room for a subgenre is kept whatever the number of main genres.
+  const keepMain = m.slice(0, s.length ? MAX_BUBBLES - 1 : MAX_BUBBLES);
+  return [...keepMain, ...s.slice(0, MAX_BUBBLES - keepMain.length)];
+}
+
+/** GENRE-ALL-001: what a filled-in bubble says about itself, for a pointer and for a screen reader. */
+export function bubbleNote(b: GenreBubble): string | null {
+  if (!b.why) return null;
+  return b.guess ? `Estimated: ${b.why.charAt(0).toLowerCase()}${b.why.slice(1)}` : b.why;
 }
 
 /** The genre names on a row's bubbles, in order (see genreBubbles). */

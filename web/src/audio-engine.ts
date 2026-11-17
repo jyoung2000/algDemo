@@ -9,7 +9,7 @@
  * allowed to touch, `reason()` explains why and playback simply continues unprocessed.
  */
 
-import { EQ_DEFAULTS, parseEq, type EqConfig } from './engine/eq';
+import { createEqGraph, EQ_DEFAULTS, parseEq, type EqConfig } from './engine/eq';
 import { createAudioBus, type AudioBus, type BusContext, type DeckId } from './engine/audio-bus';
 import { PLAY_THROUGH_DEFAULT, clampPlayThrough, clampSlider } from './engine/crossfade';
 
@@ -188,4 +188,16 @@ export function resetEngineForTests(): void {
   state.localMix = false;
   state.playThrough = PLAY_THROUGH_DEFAULT;
   listeners.clear();
+}
+
+/** RADIO-001. Windows PCM from the native bounded live buffer uses the same AudioContext and EQ
+ * implementation/settings as the song decks, without a second player or bypassing the EQ. Android
+ * uses the native engine and immediately disposes this graph after the native start handshake. */
+export function radioOutput(): { ctx: AudioContext; input: AudioNode; volume(v: number): void; dispose(): void } | null {
+  startEngine(); resumeEngine();
+  if (!state.ctx) return null;
+  const ctx = state.ctx, out = ctx.createGain(), input = ctx.createGain(); out.connect(ctx.destination);
+  const graph = createEqGraph(ctx as never, input, state.eq, out);
+  const off = subscribeEngine(() => graph.apply(state.eq));
+  return { ctx, input, volume: (v) => { out.gain.value = Math.min(1, Math.max(0, v)); }, dispose: () => { off(); graph.dispose(); input.disconnect(); out.disconnect(); } };
 }

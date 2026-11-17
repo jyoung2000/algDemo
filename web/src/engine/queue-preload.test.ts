@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { QueuePreloader } from './queue-preload';
+import { LOOK_BUDGET_MS, QueuePreloader } from './queue-preload';
 import type { Track } from '../api';
 
 const tracks = (n: number) => Array.from({ length: n }, (_, i) => ({ key: `t${i}`, title: `Song ${i}`, artist: 'Test' }) as Track);
@@ -728,4 +728,82 @@ it('tells subscribers when a song is dropped, so the list can update itself', as
   expect(r.loader.expiredKeys().has('t0')).toBe(true);
   expect(notices).toBeGreaterThan(before);
   off(); r.loader.dispose();
+});
+
+/**
+ * SHUFFLE-START-001. Owner: "shuffle shouldnt play songs that arent fully loaded". A list the app has
+ * not examined yet reads as "nothing held", so a shuffled start fell on its first song while songs
+ * already on disk waited. look() finds out what is held, and nothing else: no download, no queueing.
+ */
+function lookRig(held: string[], known: (t: Track) => string | null = t => `url:${t.key}`, askMs = 0) {
+  const states = new Map<string, string>();
+  const asked: string[] = [];
+  const ensure = vi.fn(async () => undefined);
+  const resolve = vi.fn(async (t: Track) => `url:${t.key}`);
+  const configure = vi.fn(async () => undefined);
+  const library = {
+    status: (u: string) => states.get(u) ?? 'unknown',
+    error: () => null,
+    subscribe: () => () => {},
+    ensure,
+    refresh: async (u: string) => {
+      asked.push(u);
+      if (askMs) await new Promise(r => setTimeout(r, askMs));
+      states.set(u, held.includes(u) ? 'ready' : 'missing');
+    },
+  };
+  const loader = new QueuePreloader({ resolve, known, library, configure });
+  return { loader, states, asked, ensure, resolve, configure };
+}
+
+it('look() learns which songs are already held, without downloading or queueing anything (SHUFFLE-START-001)', async () => {
+  const r = lookRig(['url:t1', 'url:t3']);
+  const list = tracks(4);
+  expect(list.filter(t => r.loader.isReady(t))).toEqual([]);
+  let notices = 0;
+  r.loader.subscribe(() => { notices++; });
+  await r.loader.look(list);
+  expect(list.filter(t => r.loader.isReady(t)).map(t => t.key)).toEqual(['t1', 't3']);
+  expect(notices).toBeGreaterThan(0);
+  expect(r.ensure).not.toHaveBeenCalled();
+  expect(r.resolve).not.toHaveBeenCalled();
+  expect(r.configure).not.toHaveBeenCalled();
+  expect(r.loader.snapshot().total).toBe(0);
+  r.loader.dispose();
+});
+
+it('look() asks only about links it has and has no answer for yet', async () => {
+  const r = lookRig(['url:t0'], t => (t.key === 't2' ? null : `url:${t.key}`));
+  r.states.set('url:t1', 'missing');
+  await r.loader.look(tracks(3));
+  expect(r.asked).toEqual(['url:t0']);
+  await r.loader.look(tracks(3));
+  expect(r.asked).toEqual(['url:t0']);
+  r.loader.dispose();
+});
+
+it('look() is over at once for a shell that cannot be asked', async () => {
+  const r = rig();
+  await r.loader.look(tracks(3));
+  expect(r.library.ensure).not.toHaveBeenCalled();
+  r.loader.dispose();
+});
+
+it('look() stops asking when its time is up and answers with what it has, so a long list cannot hold up the start', async () => {
+  const r = lookRig(Array.from({ length: 400 }, (_, i) => `url:t${i}`), undefined, 100);
+  const list = tracks(400);
+  let done = false;
+  void r.loader.look(list).then(() => { done = true; });
+  await vi.advanceTimersByTimeAsync(LOOK_BUDGET_MS + 150);
+  expect(done).toBe(true);
+  expect(r.asked.length).toBeGreaterThan(8);
+  expect(r.asked.length).toBeLessThan(60);
+  // What it did learn is usable, and the next look carries on with the rest.
+  expect(list.filter(t => r.loader.isReady(t)).length).toBe(r.asked.length);
+  const before = r.asked.length;
+  void r.loader.look(list);
+  await vi.advanceTimersByTimeAsync(LOOK_BUDGET_MS + 150);
+  expect(new Set(r.asked).size).toBe(r.asked.length);
+  expect(r.asked.length).toBeGreaterThan(before);
+  r.loader.dispose();
 });

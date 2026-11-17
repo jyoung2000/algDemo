@@ -144,11 +144,11 @@ body {
   color: var(--ink);
 }
 }
+/* FLAT-BTN-001: the selected tab is the play disc's blue, flat; it was a three-stop Aqua gel. */
 .side__item.is-on {
-  background: linear-gradient(var(--sel-top), var(--sel-mid) 60%, var(--sel-bot));
-  color: var(--sel-ink);
+  background: #0071e3;
+  color: #fff;
   font-weight: 700;
-  box-shadow: inset 0 0 0 1px var(--sel-border);
 }
 .side__count {
   margin: 0;
@@ -333,7 +333,7 @@ body {
   height: 30px;
   border-radius: 50%;
   border: 1px solid var(--hair);
-  background: linear-gradient(#fff, #f1f0ec);
+  background: #fff;
   display: grid;
   place-items: center;
   color: var(--ink-2);
@@ -373,21 +373,7 @@ body {
   justify-content: center;
   gap: 6px;
 }
-.push--big {
-  height: 30px;
-  border-image: var(--aq-def-30) 0 30 fill / 0 30px / 2px 6px 8px;
-  border-radius: 15px;
-  line-height: 28px;
-  padding: 0 22px;
-  font-weight: 700;
-  font-size: 13px;
-}
-.push--big:active:not([disabled]) {
-  border-image-source: var(--aq-def-30-down);
-}
-.push--big[disabled] {
-  border-image-source: var(--aq-btn-30-off);
-}
+/* FLAT-BTN-001: the size and face of .push--big are in flat-controls.css. */
 .push--danger {
   color: var(--danger);
 }
@@ -506,7 +492,7 @@ a.push {
   gap: 0;
 }
 .find__act {
-  /* Self-drawn rather than the gel border-image: that art has 30 px end caps and squashes on a small icon button. */
+  /* A bare icon: no pill around it. */
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1122,6 +1108,18 @@ a.push {
   border-radius: 50%;
   background: var(--tone, var(--accent));
   flex: none;
+}
+/* GENRE-ALL-001: a genre the app estimated, not one a service stated. Never by colour alone: the
+   outline is dashed and the dot hollow, and the bubble says where the estimate came from. */
+.genre--guess {
+  padding: 0 7px;
+  border: 1px dashed color-mix(in srgb, var(--tone, var(--ink-3)) 70%, var(--ink-3));
+  background: transparent;
+  color: var(--ink-2);
+}
+.genre--guess::before {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--tone, var(--ink-3));
 }
 .genre--tone {
   display: inline-flex;
@@ -2101,13 +2099,13 @@ a.push {
   height: 8px;
   border-radius: 4px;
   background: #e4e7ea;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
   overflow: hidden;
 }
+/* FLAT-BTN-001: a flat fill in the play disc's blue; it was the kit's gel gradient under a dark inset edge. */
 .meter span {
   display: block;
   height: 100%;
-  background: var(--gel-thumb);
+  background: #0071e3;
 }
 /* DL-GRADIENT-001: a DOWNLOAD meter runs blue -> green, because reaching the end is success. The
    plain .meter above still carries the Settings storage meter, where filling up is a warning. */
@@ -3662,24 +3660,28 @@ html {
 .rec__dl[data-dl='failed'] .rec__dl-rail,
 .rec__dl[data-dl='blocked'] .rec__dl-rail { width: 100%; background: var(--danger); opacity: 0.5; clip-path: none; }
 .rec__dl[data-dl='queued'] .rec__dl-rail { width: 100%; background: var(--hair); clip-path: none; }
-/* The glyph sits over the artwork corner, so the state survives without colour vision. */
+/* ROW-CHECK-001: a drawn mark on the artwork's corner, so the state survives without colour vision. It
+   lives inside the artwork button: pinned to the row's corner it landed on the Play button on a phone
+   and floated under the artwork on Windows. The grid centres the icon whatever the platform's font. */
 .rec__dl-mark {
   position: absolute;
-  left: 42px;
-  bottom: 4px;
-  width: 14px;
-  height: 14px;
-  border-radius: 7px;
+  right: -4px;
+  bottom: -4px;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
   background: var(--panel);
   border: 1px solid var(--hair);
   color: var(--ink-2);
-  font-size: 9px;
-  line-height: 12px;
-  text-align: center;
+  line-height: 0;
+  pointer-events: none;
 }
-.rec__dl[data-dl='ready'] .rec__dl-mark { color: var(--accent); border-color: var(--accent-soft); }
-.rec__dl[data-dl='failed'] .rec__dl-mark,
-.rec__dl[data-dl='blocked'] .rec__dl-mark { color: var(--danger); }
+.rec__dl-mark[data-dl='ready'] { color: var(--accent); border-color: #b8cff0; }
+.rec__dl-mark[data-dl='failed'],
+.rec__dl-mark[data-dl='blocked'] { color: var(--danger); }
 @media (prefers-reduced-motion: reduce) {
   .rec__dl-rail { transition: none; }
 }
@@ -3690,9 +3692,7 @@ html {
   overflow-wrap: anywhere;
   color: var(--ink-2);
 }
-/* Saved rows have no rank column to hang a glyph beside, so there the rail plus the
-   screen-reader text carries the state and the mark is suppressed. */
-.track .rec__dl-mark { display: none; }
+/* Saved rows carry the rail and the screen-reader text only; they render no mark. */
 /* Downloading, but the job has not reported a percent yet. A 0%-wide bar reads as stalled and a
    smooth fake animation would be inventing progress, so this shows motion WITHOUT a number. */
 .rec__dl[data-indeterminate] .rec__dl-rail {
@@ -3826,6 +3826,51 @@ html {
   gap: 5px;
   color: var(--ink-2);
   font-size: 12px;
+}
+/* ARTIST-SOURCES-001: one row per platform, saying what the page shows from it. Text, not buttons. */
+.artist__sources {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 3px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.artist__source {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+.artist__source > .aqua-icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.artist__source-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.artist__source-name {
+  color: var(--ink);
+  font-weight: 600;
+}
+.artist__source-miss {
+  color: var(--ink);
+}
+/* ARTIST-ALL-SOURCES-001: the other platforms being asked, and the ones that had no page. Quieter
+   than the rows above: they report, they give nothing to read from. */
+.artist__source--wait {
+  align-items: center;
+}
+.artist__source--wait > .sdot {
+  flex: 0 0 auto;
+}
+.artist__also {
+  display: block;
+  overflow-wrap: anywhere;
 }
 .album__actions {
   display: flex;

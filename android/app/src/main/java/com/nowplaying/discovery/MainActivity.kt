@@ -275,6 +275,7 @@ class MainActivity : Activity() {
         override fun shouldInterceptRequest(v: WebView, request: WebResourceRequest): WebResourceResponse? {
           val u = request.url
           if (u.scheme == "https" && u.host == APP_HOST) {
+            if (u.path == "/radio-native") return RadioNative.serve(this@MainActivity, u)
             // A downloaded full song at the app's own origin, so the page may route it through Web
             // Audio (a cross-origin element without CORS is silent there). Range requests, because an
             // <audio> element seeks with them and reports no duration without them.

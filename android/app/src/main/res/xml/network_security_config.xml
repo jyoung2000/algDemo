@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Standalone: the app opens only its own https origin (appassets.androidplatform.net, served from the APK)
-  and talks to the music services over https through the native bridge. No plain-http traffic is needed.
+  and talks to the music services over https through the native bridge. Only the dedicated radio gateway uses public plain-HTTP broadcast URLs after destination checks.
 -->
 <network-security-config>
-  <base-config cleartextTrafficPermitted="false" />
+  <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
+import { Glyph } from '@now-playing/aqua-ui/icons';
+import { SourceMark } from './SourceMark';
 import { RefreshGlyph } from './icons';
 import { api, ApiError, type AlbumSummary, type ArtistSummary, type ArtistTarget, type Evidence, type IdentifyResponse, type PlaylistSummary, type ResolveResponse, type SearchResponse, type SourceState, type Track } from './api';
 import { Art } from './Art';
@@ -10,7 +11,7 @@ import { SongCredits } from './SongCredits';
 import { ArtistCard, namesArtist } from './ArtistLinks';
 import { warmer } from './engine/warm-shell';
 import { namesAlbum } from './engine/album-key';
-import { PROVIDER_LABEL, classNames, fmtDuration, fmtRelease, looksLikeUrl, markKey } from './util';
+import { PROVIDER_LABEL, classNames, fmtDuration, fmtRelease, looksLikeUrl } from './util';
 import { TypeFilter, toggleType } from './TypeFilter';
 import { releaseMatches, songMatches, isAlbumTrack, isByArtist, isFeatureTrack, isSingleRelease, isSingleTrack, namesArtistIn, type ResultType } from './result-types';
 
@@ -1203,7 +1204,7 @@ export function TrackList({
             </div>
             <span className="track__dur">{fmtDuration(t.duration)}</span>
             <span className="track__src" title={`From ${PROVIDER_LABEL[t.provider] ?? t.provider}`}>
-              <ProviderMark provider={markKey(t.provider)} size={14} />
+              <SourceMark provider={t.provider} size={14} />
               <span className="track__srcname">{PROVIDER_LABEL[t.provider] ?? t.provider}</span>
             </span>
             <span className="track__actions">

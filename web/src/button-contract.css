@@ -9,8 +9,9 @@
  *   4. one keyboard focus ring;
  *   5. one look for switched off;
  *   6. at least 44px to hit on a touch screen.
- * A family keeps its own drawing (Aqua push, round icon, pill, flat row). Rules inside :where() weigh
- * nothing, so a family's own state always wins; they are the floor for a button that brings none.
+ * A family keeps its own shape (text pill, round icon, chip, flat row); the text buttons' flat faces are
+ * in flat-controls.css (FLAT-BTN-001). Rules inside :where() weigh nothing, so a family's own state
+ * always wins; they are the floor for a button that brings none.
  */
 :root {
   --btn-hover-tint: rgb(0 0 0 / 5%);
@@ -31,7 +32,7 @@ html {
   touch-action: manipulation;
   transition: transform 90ms ease;
 }
-/* The kit draws segments with the arrow; they are buttons like the rest. */
+/* The kit gives segments the arrow; they are buttons like the rest. */
 .seg__btn {
   cursor: pointer;
 }
@@ -40,10 +41,10 @@ html {
 }
 
 /* ------------------------------------------------------------------ 2. pressed */
-/* Compact controls dip, as the transport and the quiet controls always did. A full-width row, a text link
-   and the Aqua push (it swaps to its pressed drawing) bring their own below. */
+/* Compact controls dip, as the transport and the quiet controls always did. A full-width row and a text
+   link bring their own below. */
 :where(
-    :is(button, [role='button'], [role='tab'], a.openlink):not(.push, .album-row__open, .upnext__row, .sound__head, .artistlink, .song-credits__album, .linkbtn)
+    :is(button, [role='button'], [role='tab'], a.openlink):not(.album-row__open, .upnext__row, .sound__head, .artistlink, .song-credits__album, .linkbtn)
   ):active:where(:not(:disabled)) {
   transform: scale(var(--btn-press-scale));
 }
@@ -85,9 +86,6 @@ summary:active {
   .tpick__chip[aria-pressed='true']:hover {
     box-shadow: inset 0 0 0 999px var(--btn-press-tint);
   }
-  /* Aqua push and segments are drawings: darken the drawing rather than paint over it. */
-  .push:hover:not([disabled], [aria-disabled='true']),
-  .seg__btn:hover:not([aria-selected='true'], :disabled),
   .wheel__centre:hover {
     filter: brightness(0.95);
   }
@@ -131,19 +129,16 @@ summary:active {
 :root :is(button, [role='button'], [role='tab'], summary, a.push, a.openlink):focus-visible {
   outline: 2px solid var(--focus);
 }
-/* These drew a glow instead of the ring. The selected segment keeps its inset shade (the kit's value). */
+/* These drew a glow instead of the ring. */
 .push:focus-visible,
 .tbtn:focus-visible,
 .seg__btn:focus-visible {
   box-shadow: none;
 }
-.seg__btn[aria-selected='true']:focus-visible {
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
-}
 
 /* ------------------------------------------------------------------ 5. switched off */
-/* The push has its own switched-off drawing and the text link loses its underline. */
-:root button:disabled:not(.push, .linkbtn) {
+/* The text link loses its underline instead. */
+:root button:disabled:not(.linkbtn) {
   opacity: var(--btn-off-opacity);
 }
 
@@ -151,7 +146,6 @@ summary:active {
 @media (pointer: coarse) {
   .push,
   .addbtn,
-  .seg__btn,
   .whybtn,
   .openlink,
   .typefilter__btn,
@@ -163,79 +157,11 @@ summary:active {
   }
 }
 
-/* ------------------------------------------------------------------ 7. Aqua buttons at touch height */
-/* The Aqua pill is a drawing made for one height. Shown 44px tall it was the 22px (or 30px) drawing pulled
-   to twice its height: flattened ends, a smeared shadow, fat pinstripes. That is every Aqua button on the
-   phone, and on Windows the ones a layout makes 44px tall (Search, the Saved bar, album actions). They now
-   use a drawing made at 44px (main.tsx installs it). The outsets are geo(44) from the kit's aqua-art. Each
-   end slice is 30px: the 6px margin, the 22px round end and 2px of straight. The drawing is 72px wide, so
-   12px is left as the middle that stretches; the kit's own 36px slice would leave none and the pill would
-   paint as two ends with a hole between them. */
-/* The one Aqua link (Export my data) was an inline block: its words sat at the top of a tall pill. */
+/* ------------------------------------------------------------------ 7. the one text-button link */
+/* Export my data is a link dressed as a button; inline, its words sat at the top of a tall pill. */
 a.push {
   display: inline-flex;
 }
-@media (max-width: 899px), (pointer: coarse) {
-  .push {
-    height: var(--btn-touch);
-    min-height: var(--btn-touch);
-    min-width: 64px;
-    border-radius: 22px;
-    border-image: var(--aq-btn-44) 0 30 fill / 0 30px / 2px 6px 16px;
-  }
-  .push:active:not([disabled]) {
-    border-image-source: var(--aq-btn-44-down);
-  }
-  .push.push--big,
-  form:focus-within > .push.push--default,
-  form:has(.field:not(:placeholder-shown)) > .push.push--default {
-    border-image-source: var(--aq-def-44);
-  }
-  .push.push--big:active:not([disabled]),
-  form:focus-within > .push.push--default:active,
-  form:has(.field:not(:placeholder-shown)) > .push.push--default:active {
-    border-image-source: var(--aq-def-44-down);
-  }
-  .push[disabled] {
-    border-image-source: var(--aq-btn-44-off);
-  }
-  .seg {
-    border-radius: 22px;
-  }
-  .seg__btn {
-    height: var(--btn-touch);
-  }
-  .seg__btn:first-child {
-    border-radius: 22px 0 0 22px;
-  }
-  .seg__btn:last-child {
-    border-radius: 0 22px 22px 0;
-  }
-}
-:is(.budget-note > .push, .album__actions .push, .lists__create .push, .lists__bar .push, .banner--list > .push, .search__form .push) {
-  height: var(--btn-touch);
-  min-height: var(--btn-touch);
-  min-width: 64px;
-  border-radius: 22px;
-  border-image: var(--aq-btn-44) 0 30 fill / 0 30px / 2px 6px 16px;
-}
-:is(.budget-note > .push, .album__actions .push, .lists__create .push, .lists__bar .push, .banner--list > .push, .search__form .push):active:not([disabled]) {
-  border-image-source: var(--aq-btn-44-down);
-}
-:is(.budget-note > .push, .album__actions .push, .lists__create .push, .lists__bar .push, .banner--list > .push, .search__form .push).push--big,
-form:focus-within > :is(.budget-note > .push, .album__actions .push, .lists__create .push, .lists__bar .push, .banner--list > .push, .search__form .push).push--default,
-form:has(.field:not(:placeholder-shown)) > :is(.budget-note > .push, .album__actions .push, .lists__create .push, .lists__bar .push, .banner--list > .push, .search__form .push).push--default {
-  border-image-source: var(--aq-def-44);
-}
-:is(.budget-note > .push, .album__actions .push, .lists__create .push, .lists__bar .push, .banner--list > .push, .search__form .push).push--big:active:not([disabled]),
-form:focus-within > :is(.budget-note > .push, .album__actions .push, .lists__create .push, .lists__bar .push, .banner--list > .push, .search__form .push).push--default:active,
-form:has(.field:not(:placeholder-shown)) > :is(.budget-note > .push, .album__actions .push, .lists__create .push, .lists__bar .push, .banner--list > .push, .search__form .push).push--default:active {
-  border-image-source: var(--aq-def-44-down);
-}
-:is(.budget-note > .push, .album__actions .push, .lists__create .push, .lists__bar .push, .banner--list > .push, .search__form .push)[disabled] {
-  border-image-source: var(--aq-btn-44-off);
-}
-
 @media (prefers-reduced-motion: reduce) {
   :where(button, [role='button'], [role='tab'], summary, a.push, a.openlink) {
     transition: none;

@@ -1,0 +1,218 @@
+/*
+ * FLAT-BTN-001 — owner: "the find my next favorite and stop button arent uniform with the rest of the
+ * redesign ... replace and remove all the striped ipod style buttons".
+ *
+ * The app was redesigned flat: the blue play disc, the round icon buttons, the quiet controls, the plain
+ * sliders. Its text buttons, checkboxes, segments and storage meter were still the window kit's Aqua
+ * drawings: a glossy pinstriped pill, a gel checkbox. They are flat here, and main.tsx no longer installs
+ * the drawings at all. The kit keeps its own rules for the hub and the companion; this sheet loads after
+ * it and answers every one of them the app can reach, so no state can bring a drawing back.
+ *
+ * One button, two weights:
+ *   main action  — filled with the play disc's blue (Find my next favorite, Play songs, Search);
+ *   everything else — a white pill with the hairline edge the round icon buttons use (Stop, Cancel, Save).
+ * button-contract.css (loaded after this) adds what every button shares: the dip on a press, the focus
+ * ring, the dim when switched off, 44px on a touch screen.
+ */
+:root {
+  --flat-accent: #0071e3;
+  --flat-accent-hover: #1a80ea;
+  --flat-accent-press: #005bb8;
+  --flat-face: #fff;
+  --flat-face-hover: #f6f5f2;
+  --flat-face-press: #eceae5;
+  --flat-edge: var(--hair);
+  --flat-edge-strong: #c6c3bb;
+  --flat-h: 28px;
+  --flat-h-big: 36px;
+}
+/* ------------------------------------------------------------------ the button */
+.push {
+  box-sizing: border-box;
+  height: var(--flat-h);
+  min-width: 58px;
+  padding: 0 14px;
+  border: 1px solid var(--flat-edge);
+  border-image: none;
+  border-radius: 999px;
+  background: var(--flat-face);
+  box-shadow: none;
+  color: var(--ink);
+  font-weight: 500;
+  line-height: 1;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 90ms ease;
+}
+.push:active:not([disabled]) {
+  border-image-source: none;
+  border-color: var(--flat-edge-strong);
+  background: var(--flat-face-press);
+}
+.push[disabled] {
+  border-image-source: none;
+  color: var(--ink);
+}
+.push.push--default {
+  border-color: transparent;
+  background: var(--flat-accent);
+  color: #fff;
+  font-weight: 600;
+}
+.push.push--default:active:not([disabled]) {
+  border-color: transparent;
+  background: var(--flat-accent-press);
+}
+/* The kit turned a form's default button blue, and made it throb, only while the form was in use. */
+form:focus-within > .push--default,
+form:has(.field:not(:placeholder-shown)) > .push--default,
+form:focus-within > .push--default:active,
+form:has(.field:not(:placeholder-shown)) > .push--default:active {
+  border-image-source: none;
+  animation: none;
+}
+.push.push--danger {
+  color: var(--danger);
+}
+.push--big {
+  height: var(--flat-h-big);
+  padding: 0 22px;
+  font-size: 14px;
+  font-weight: 600;
+}
+/* Find my next favorite and Stop are one group: the same height, the main one filled, Stop quiet. */
+.go__row > .push--big {
+  flex: 0 0 auto;
+}
+@media (hover: hover) {
+  .push:hover:not([disabled], [aria-disabled='true']) {
+    border-color: var(--flat-edge-strong);
+    background: var(--flat-face-hover);
+  }
+  .push.push--default:hover:not([disabled], [aria-disabled='true']) {
+    border-color: transparent;
+    background: var(--flat-accent-hover);
+  }
+}
+/* 44px on a phone and in a narrow window... */
+@media (max-width: 899px), (pointer: coarse) {
+  .push {
+    height: var(--btn-touch);
+    min-height: var(--btn-touch);
+    min-width: 64px;
+    padding: 0 18px;
+  }
+  .go__row > .push--big.push--default {
+    flex: 1 1 auto;
+    width: auto;
+  }
+  .go__row > .push--big:not(.push--default) {
+    width: auto;
+  }
+}
+/* ...and on Windows too wherever the layout beside it is 44px tall (Search, the Saved bar, album actions). */
+:is(.budget-note > .push, .album__actions .push, .lists__create .push, .lists__bar .push, .banner--list > .push, .search__form .push) {
+  height: var(--btn-touch);
+  min-height: var(--btn-touch);
+  min-width: 64px;
+  padding: 0 18px;
+}
+/* ------------------------------------------------------------------ the checkbox */
+.box {
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--flat-edge-strong);
+  border-image: none;
+  border-radius: 5px;
+  background: var(--flat-face);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.optrow input:checked + .box,
+.chk input:checked + .box,
+.savemenu__row input:checked + .box {
+  border-image-source: none;
+  border-color: var(--flat-accent);
+  background: var(--flat-accent);
+}
+/* The tick the drawing carried, centred in the box. */
+.optrow input:checked + .box::after,
+.chk input:checked + .box::after,
+.savemenu__row input:checked + .box::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+.optrow:active .box,
+.chk:active .box {
+  border-image-source: none;
+  background: var(--flat-face-press);
+}
+.optrow:active input:checked + .box,
+.chk:active input:checked + .box {
+  border-image-source: none;
+  border-color: var(--flat-accent-press);
+  background: var(--flat-accent-press);
+}
+.optrow input:focus-visible + .box,
+.chk input:focus-visible + .box {
+  box-shadow: none;
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+/* ------------------------------------------------------------------ the segments */
+.seg {
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--flat-edge);
+  border-radius: 999px;
+  background: var(--flat-face);
+  box-shadow: none;
+}
+.seg__btn {
+  height: 24px;
+  padding: 0 12px;
+  border: 0;
+  border-image: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  transition: background-color 120ms ease, color 120ms ease, transform 90ms ease;
+}
+.seg__btn:first-child,
+.seg__btn:last-child {
+  padding: 0 12px;
+  border-width: 0;
+  border-radius: 999px;
+}
+/* Lit the way a pressed round icon button is lit. */
+.seg__btn[aria-selected='true'] {
+  background: var(--accent-soft);
+  box-shadow: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+.seg__btn:focus-visible {
+  box-shadow: none;
+}
+@media (hover: hover) {
+  .seg__btn:hover:not([aria-selected='true'], :disabled) {
+    background: var(--flat-face-hover);
+    color: var(--ink);
+  }
+}
+@media (max-width: 899px), (pointer: coarse) {
+  .seg__btn {
+    height: var(--btn-touch, 44px);
+    min-height: var(--btn-touch, 44px);
+    padding: 0 16px;
+  }
+  .seg__btn:first-child,
+  .seg__btn:last-child {
+    padding: 0 16px;
+  }
+}

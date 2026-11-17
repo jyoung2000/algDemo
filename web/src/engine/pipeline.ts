@@ -76,6 +76,10 @@ export async function pmap<T, R>(items: readonly T[], limit: number, fn: (x: T, 
 }
 
 type Rel = [Dict, string, string | null]; // track, relation, via
+/** matchRecordings' verdict for an exact title and artist where one side has no duration (identity.ts). */
+const NO_LENGTH = 'no duration to compare';
+/** Whether a provider or a listener, rather than a guess of ours, has named this song's genre. */
+const hasRealTag = (t: Dict): boolean => ((t['tags'] as Tag[] | undefined) ?? []).some((g) => g && !g.inferred);
 const NO_MATCH: { match: Track | null; uncertain: Track[] } = { match: null, uncertain: [] };
 const DAY_MS = 86_400_000;
 
@@ -398,32 +402,61 @@ export class Pipeline {
   /** Deezer details for the leading candidates: confident match, BPM, ISRC, album genres. */
   async enrich(job: Job, cands: Dict[], limit = 40): Promise<void> {
     const c = this.ctx(job);
-    await pmap(cands.slice(0, limit), 3, async (cand) => {
-      if (job.token.cancelled) return;
-      const links = cand['links'] as Dict;
-      if (!links['deezer']) {
-        const res = await this.call(job, `match:${String(cand['title']).slice(0, 24)}`, () => this.dz.findMatch(cand as never, c), NO_MATCH);
-        if (!res.match) return;
-        links['deezer'] = { url: res.match.url, id: res.match.platform_id };
-      }
-      const did = String(links['deezer'].id);
-      const full = await this.call<Dict | null>(job, `detail:${String(cand['title']).slice(0, 24)}`, async () => this.dz.withGenres(await this.dz.track(did, c), c) as Dict, null);
-      if (!full) return;
-      for (const f of ['preview', 'bpm', 'isrc', 'artwork']) if (!cand[f] && full[f]) cand[f] = full[f];
-      if (!(cand['tags'] as unknown[] | undefined)?.length && (full['tags'] as unknown[] | undefined)?.length) cand['tags'] = full['tags'];
-      const fr = full['release'] as Dict | null;
-      const cr = cand['release'] as Dict | null;
-      if (fr && (!cr || cr['precision'] !== 'day')) cand['release'] = fr;
-      cand['dz_id'] = did;
-    });
+    await pmap(cands.slice(0, limit), 3, (cand) => this.detail(job, cand, c));
     await this.genresFromMusicBrainz(job, cands.slice(0, limit));
     await this.subgenresFromMusicBrainz(job, cands.slice(0, limit));
+  }
+
+  /** One candidate's Deezer details. What Deezer says of its genre replaces a guess, never real metadata. */
+  private async detail(job: Job, cand: Dict, c: Ctx, genreOnly = false): Promise<void> {
+    if (job.token.cancelled) return;
+    const links = ((cand['links'] as Dict | undefined) ?? (cand['links'] = {})) as Dict;
+    if (!links['deezer']) {
+      const res = await this.call(job, `match:${String(cand['title']).slice(0, 24)}`, () => this.dz.findMatch(cand as never, c), NO_MATCH);
+      if (!res.match) {
+        // GENRE-LOAD-001: a song with no length cannot be proved the same recording, so nothing of
+        // the other song's is copied. Its genre is still read: the same title by the same artist is
+        // the same kind of music.
+        const alike = genreOnly ? res.uncertain.find((u) => (u as Dict)['match_note'] === NO_LENGTH) : undefined;
+        if (!alike || hasRealTag(cand)) return;
+        const read = await this.call<Dict | null>(job, `detail:${String(cand['title']).slice(0, 24)}`, async () => this.dz.withGenres(await this.dz.track(String(alike.platform_id), c), c) as Dict, null);
+        if ((read?.['tags'] as unknown[] | undefined)?.length) cand['tags'] = read!['tags'];
+        return;
+      }
+      links['deezer'] = { url: res.match.url, id: res.match.platform_id };
+    }
+    const did = String(links['deezer'].id);
+    const full = await this.call<Dict | null>(job, `detail:${String(cand['title']).slice(0, 24)}`, async () => this.dz.withGenres(await this.dz.track(did, c), c) as Dict, null);
+    if (!full) return;
+    for (const f of ['preview', 'bpm', 'isrc', 'artwork']) if (!cand[f] && full[f]) cand[f] = full[f];
+    if (!hasRealTag(cand) && (full['tags'] as unknown[] | undefined)?.length) cand['tags'] = full['tags'];
+    const fr = full['release'] as Dict | null;
+    const cr = cand['release'] as Dict | null;
+    if (fr && (!cr || cr['precision'] !== 'day')) cand['release'] = fr;
+    cand['dz_id'] = did;
+  }
+
+  /**
+   * GENRE-LOAD-001: `enrich` reads the 40 leading songs of an early ranking, but the songs finally
+   * shown are chosen later, so one of them could reach the list with no genre (or only a guess)
+   * although one small read would have named it. This reads those, in the order they are shown.
+   * Like the artist lookup below it has its own small allowance: by now the run's cap is usually spent.
+   */
+  async genresForShown(job: Job, shown: Dict[], limit = 24): Promise<void> {
+    const meter = job.meter ? job.meter.reserve(800_000) : null;
+    const c: Ctx = { token: job.token, ...(meter ? { meter } : {}) };
+    const todo = shown.filter((cand) => !hasRealTag(cand) && cand['dz_id'] === undefined).slice(0, limit);
+    await pmap(todo, 3, (cand) => this.detail(job, cand, c, true));
   }
 
   /**
    * Deezer names a rap song's album 'Rap/Hip Hop' and nothing finer. The artist's MusicBrainz tags say
    * which kind of hip-hop it is, so a song with only the family asks once per artist (capped per run,
    * cached for a month). The subgenre is added beside the family tag, never in place of it.
+   *
+   * GENRE-LOAD-001: a song with no genre of its own (none at all, or only a guess) asks too. It used
+   * to be skipped, so Sade or Michael Jackson could show no genre while MusicBrainz had one. What the
+   * listeners say then stands in place of the guess.
    */
   async subgenresFromMusicBrainz(job: Job, cands: Dict[], cap = 4): Promise<void> {
     const MONTH = 30 * 24 * 3600;
@@ -439,7 +472,8 @@ export class Pipeline {
     let asked = 0;
     for (const cand of cands) {
       const tags = (cand['tags'] as Tag[] | undefined) ?? [];
-      if (!needsSub(tags)) continue;
+      const bare = !hasRealTag(cand);
+      if (!bare && !needsSub(tags)) continue;
       const artist = artistName(cand);
       if (!artist || artist.length > 80) continue;
       const k = fold(artist);
@@ -451,7 +485,7 @@ export class Pipeline {
         done.set(k, subs);
       }
       if (subs.length) {
-        cand['tags'] = [...tags, ...subs];
+        cand['tags'] = bare ? [...subs] : [...tags, ...subs];
         job.sources['musicbrainz_artist'] = { labeled: Number((job.sources['musicbrainz_artist'] as Dict | undefined)?.['labeled'] ?? 0) + 1 };
       }
     }

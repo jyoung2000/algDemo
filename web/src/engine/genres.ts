@@ -33,7 +33,7 @@ const ALIASES: Record<string, string> = {
   kpop: 'k-pop', 'k pop': 'k-pop', jpop: 'j-pop', 'j pop': 'j-pop', 'city pop': 'j-pop',
   'heavy metal': 'metal', 'hard rock': 'rock', 'classic rock': 'rock', 'pop punk': 'pop-punk', 'post punk': 'post-punk', emo: 'emo', 'hardcore punk': 'punk',
   'singer songwriter': 'singer-songwriter', downtempo: 'downtempo', chillout: 'downtempo', ambient: 'ambient', 'new age': 'ambient',
-  afrobeats: 'afrobeats', afrobeat: 'african', amapiano: 'amapiano', 'african music': 'african', 'asian music': 'asian',
+  afrobeats: 'afrobeats', afrobeat: 'african', amapiano: 'amapiano', 'african music': 'african', 'asian music': 'asian', 'indian music': 'indian', 'traditional mexicano': 'latin',
   'brazilian music': 'brazilian', 'bossa nova': 'brazilian', mpb: 'brazilian', samba: 'brazilian',
   ska: 'ska', dancehall: 'dancehall', dub: 'dub',
   opera: 'classical', orchestral: 'classical', baroque: 'classical', bluegrass: 'country', americana: 'folk', 'folk rock': 'folk',

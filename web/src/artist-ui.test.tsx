@@ -15,9 +15,11 @@ import type { AlbumSummary, ArtistView as ArtistData, Track } from './api';
 const artistCall = vi.fn();
 const songsCall = vi.fn();
 const albumCall = vi.fn();
+// FEATURES-ALL-001: the features are their own request; none more unless a test says so.
+const featuresCall = vi.fn();
 vi.mock('./api', async (orig) => {
   const real = await orig<typeof Api>();
-  return { ...real, api: { ...real.api, artist: (a: unknown) => artistCall(a), artistSongs: (a: unknown) => songsCall(a), album: (a: unknown) => albumCall(a) } };
+  return { ...real, api: { ...real.api, artist: (a: unknown) => artistCall(a), artistSongs: (a: unknown) => songsCall(a), artistFeatures: (a: unknown) => featuresCall(a), album: (a: unknown) => albumCall(a), artistSources: () => Promise.resolve({ songs: [], albums: [], singles: [], sources: {} }) } };
 });
 const { ArtistView, ArtistNames, artistTargetsOf, namesArtist, SONGS_FOLDED } = await import('./Artists');
 const { AlbumView } = await import('./Albums');
@@ -46,6 +48,7 @@ beforeEach(() => {
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
+  featuresCall.mockResolvedValue({ features: [], complete: true });
 });
 afterEach(async () => {
   await act(async () => root.unmount());
@@ -53,6 +56,7 @@ afterEach(async () => {
   artistCall.mockReset();
   songsCall.mockReset();
   albumCall.mockReset();
+  featuresCall.mockReset();
 });
 const draw = async (el: React.ReactElement) => act(async () => root.render(el));
 const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
@@ -160,15 +164,16 @@ it('says it is still looking for the songs other artists have them on (ARTIST-FE
   // are not in that list arrive with the deferred read, which takes seconds. Saying nothing reads as
   // “this artist has no features”, so the wait is named while it is going on.
   artistCall.mockResolvedValue({ artist: { ...view, features: [] } });
+  songsCall.mockResolvedValue({ songs: every, opened: 4, failed: 0 });
   let land: (v: unknown) => void = () => {};
-  songsCall.mockReturnValue(new Promise((r) => (land = r)));
+  featuresCall.mockReturnValue(new Promise((r) => (land = r)));
   await draw(page());
   await flush();
-  expect(host.textContent).toContain('songs other artists have them on');
-  await act(async () => { land({ songs: every, features: [feature('late', 'Late Guest', 'Yeat')], opened: 4, failed: 0 }); });
+  expect(host.textContent).toContain('Looking for more songs other artists have Ken Carson on');
+  await act(async () => { land({ features: [feature('late', 'Late Guest', 'Yeat')], complete: true }); });
   await flush();
   expect(titles('Songs featuring Ken Carson')).toEqual(['Late Guest']);
-  expect(host.textContent).not.toContain('songs other artists have them on, too');
+  expect(host.textContent).not.toContain('Looking for more songs');
 });
 
 it('says so when only the most played songs could be listed, or some albums could not be read', async () => {

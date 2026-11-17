@@ -10,7 +10,7 @@ import type { ServiceClient, ServiceResponse } from './service-client';
 
 /** Everything callers use of the queue singleton; the local QueuePreloader satisfies it structurally. */
 export type QueueAudioPort = Pick<QueuePreloader,
-  'subscribe' | 'sourceHint' | 'readyUrl' | 'isReady' | 'expiredKeys' | 'snapshot' | 'snapshotFor' |
+  'subscribe' | 'sourceHint' | 'readyUrl' | 'isReady' | 'look' | 'expiredKeys' | 'snapshot' | 'snapshotFor' |
   'downloadAll' | 'update' | 'protect' | 'limits' | 'cardOf' | 'retryFailed' | 'dispose'>;
 
 /** What the service actor needs of its own (local) QueuePreloader. */
@@ -67,6 +67,8 @@ export class RemoteQueue implements QueueAudioPort {
   sourceHint(track: Track): string | null { return this.dtos.get(track.key)?.source ?? null; }
   readyUrl(track: Track): string | null { return this.dtos.get(track.key)?.ready ?? null; }
   isReady(track: Track): boolean { return this.readyUrl(track) !== null; }
+  /** SHUFFLE-START-001: have the service find out what it holds of this list; its answer says. */
+  async look(tracks: readonly Track[]): Promise<void> { await this.send('look', { tracks }); }
   expiredKeys(): ReadonlySet<string> { return this.expired; }
 
   snapshot(): QueueCacheStatus {

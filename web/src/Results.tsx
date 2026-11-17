@@ -1,14 +1,41 @@
 import { useState, type CSSProperties } from 'react';
-import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
-import type { ArtistTarget, FeedbackKind, PlaylistSummary, RecItem, Track } from './api';
-import type { CardCache } from './engine/queue-controls';
+import { Glyph, type GlyphName } from '@now-playing/aqua-ui/icons';
+import { SourceMark } from './SourceMark';
+import type { ArtistTarget, Characteristics, FeedbackKind, PlaylistSummary, RecItem, Track } from './api';
+import type { CacheState, CardCache } from './engine/queue-controls';
 import { Art } from './Art';
 import { matchRecordings } from './engine/identity';
 import { SaveMenu } from './SaveMenu';
 import { SongStar, inPlaylist } from './SongStar';
 import { SongCredits } from './SongCredits';
 import { SwipeLi } from './useSwipeRemove';
-import { PROVIDER_LABEL, TIER_LABEL, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreBubbles, markKey, playbackOfTrack, toneLabel } from './util';
+import { PROVIDER_LABEL, TIER_LABEL, bubbleNote, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreBubbles, playbackOfTrack, toneLabel, type GenreBubble } from './util';
+
+/**
+ * One genre bubble (TAGS-CANON-001: the Taste Picker's colour for its own genre). GENRE-ALL-001: it
+ * says whether it is the main genre or a subgenre, and an estimate is drawn as one (a dashed outline,
+ * never colour alone) and says where it came from.
+ */
+export function GenreBubbleView({ bubble: g }: { bubble: GenreBubble }) {
+  const note = bubbleNote(g);
+  return (
+    <span
+      className={classNames('genre', g.guess && 'genre--guess')}
+      data-kind={g.sub ? 'sub' : 'main'}
+      style={{ '--tone': g.color } as CSSProperties}
+      {...(note ? { title: note } : {})}
+      {...(g.guess && note ? { 'aria-label': `${g.label}, ${note.charAt(0).toLowerCase()}${note.slice(1)}` } : {})}
+    >
+      {g.label}
+    </span>
+  );
+}
+
+/**
+ * ROW-CHECK-001: whether the song's file is on this device, as a drawn mark on the artwork corner. It was a
+ * text character pinned to the row's corner, which landed on the Play button.
+ */
+const DL_ICON: Record<CacheState, GlyphName> = { ready: 'check', downloading: 'download', queued: 'history', failed: 'warning', blocked: 'error' };
 
 export interface FeedbackFlags {
   like?: boolean;
@@ -78,6 +105,8 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         const pb = playbackOfTrack(s);
         const seedPlayable = canPlayHere(pb);
         const seedReady = cacheOf?.(s.key)?.state === 'ready';
+        // GENRE-ALL-001: the engine sends a starting song's genres worked out; an older answer has only its tags.
+        const seedBubbles = genreBubbles(s.characteristics ?? ({ genres: (s.tags ?? []).map((g) => g.label || g.name) } as Characteristics));
         return (
           <SwipeLi key={`seed:${s.key}`} onRemove={() => onRemoveSeed(s.key)} className={classNames('rec', 'rec--seed', strong && 'is-strong', playingKey === s.key && 'is-playing')}>
             <span className="rec__rank" aria-hidden="true">
@@ -106,6 +135,12 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
             </div>
             <div className="rec__sub">
               <span className="rec__why1">Starting song{strong ? ' · counts double' : ''}</span>
+              {/* GENRE-LOAD-001: a starting song shows its genres like every other row. */}
+              {seedBubbles.length > 0 && (
+                <span className="rec__facts" aria-label="Song details">
+                  {seedBubbles.map((g) => <GenreBubbleView key={g.label} bubble={g} />)}
+                </span>
+              )}
             </div>
             <span className="rec__tier" />
             <span className="rec__dur" />
@@ -184,10 +219,10 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
             }}
           >
             {cache && (
-              // Glyph + text, never colour alone; the rail is decorative and sits on the bottom edge.
+              // Never colour alone: the words are here, the drawn mark is on the artwork corner (ROW-CHECK-001).
+              // The rail is decorative and sits on the bottom edge.
               <span className="rec__dl" data-dl={cache.state} data-indeterminate={cache.indeterminate || undefined}>
                 <span className="rec__dl-rail" aria-hidden="true" />
-                <span className="rec__dl-mark" aria-hidden="true">{cache.glyph}</span>
                 <span className="sr">{cache.keptText ? `${cache.text}. ${cache.keptText}.` : `${cache.text}.`}</span>
               </span>
             )}
@@ -199,6 +234,11 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               {playable && (
                 <span className="rec__playover" aria-hidden="true">
                   <Glyph name="play" size={16} />
+                </span>
+              )}
+              {cache && (
+                <span className="rec__dl-mark" data-dl={cache.state} aria-hidden="true">
+                  <Glyph name={DL_ICON[cache.state]} size={10} />
                 </span>
               )}
             </button>
@@ -224,11 +264,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               {(bubbles.length > 0 || facts.length > 0) && (
                 <span className="rec__facts" aria-label="Song details">
                   {/* TAGS-CANON-001: each bubble in the Taste Picker's colour for its own genre. */}
-                  {bubbles.map((g) => (
-                    <span key={g.label} className="genre" style={{ '--tone': g.color } as CSSProperties}>
-                      {g.label}
-                    </span>
-                  ))}
+                  {bubbles.map((g) => <GenreBubbleView key={g.label} bubble={g} />)}
                   {facts.map((f) => (
                     <span key={f} className="fact">
                       {f}
@@ -368,12 +404,12 @@ function Why({ item, id }: { item: RecItem; id: string }) {
       <p className="why__open">
         {item.playback.open.map((o) => (
           <a key={o.provider} className="openlink" href={o.url} target="_blank" rel="noreferrer noopener">
-            <ProviderMark provider={markKey(o.provider)} size={13} /> {o.label}
+            <SourceMark provider={o.provider} size={13} /> {o.label}
           </a>
         ))}
         {!item.playback.open.length && t.url && (
           <a className="openlink" href={t.url} target="_blank" rel="noreferrer noopener">
-            <ProviderMark provider={markKey(t.provider)} size={13} /> Open in {PROVIDER_LABEL[t.provider] ?? t.provider}
+            <SourceMark provider={t.provider} size={13} /> Open in {PROVIDER_LABEL[t.provider] ?? t.provider}
           </a>
         )}
       </p>

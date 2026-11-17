@@ -18,11 +18,15 @@ const song = (over: Partial<Dict> = {}): Dict => ({
   tags: [], ready: true, ...over,
 });
 
-const open = async (held: Dict[] = []) => {
+/** The services answer, and have nobody by that name. */
+const NOBODY = { request: async () => ({ status: 200, headers: {}, body: new TextEncoder().encode('{"data":[]}') }) };
+/** The services cannot be reached at all. */
+const UNREACHABLE = { request: async () => { throw new Error('getaddrinfo ENOTFOUND'); } };
+
+const open = async (held: Dict[] = [], port: { request: (...a: never[]) => Promise<unknown> } = NOBODY) => {
   const store = await Store.open(new MemoryBackend());
   for (const t of held) await store.put(`list_tracks`, { ...(store.get<Record<string, Dict>>('list_tracks') ?? {}), [String(t['key'])]: t });
-  const port = { request: async () => { throw new Error('offline in this test'); } };
-  const api = new LocalApi({ store, port, encoder: null, spotifySearch: () => async () => [] });
+  const api = new LocalApi({ store, port: port as never, encoder: null, spotifySearch: () => async () => [] });
   return { api, store };
 };
 
@@ -76,8 +80,71 @@ describe('an artist name the services do not know (ARTIST-FALLBACK-001)', () => 
     expect(body['failed']).toBe(0);
   }, 30_000);
 
+  it('answers the page\'s features request in that request\'s own shape too (FEATURES-ALL-001)', async () => {
+    const { api } = await open([song()]);
+    const artist = ((await ask(api, 'jackiegalama')).body as Dict)['artist'] as Dict;
+    const r = await api.handle('POST', '/api/artist/features', { id: artist['id'], name: artist['name'] });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ features: [], complete: true });
+  }, 30_000);
+
   it('keeps asking for a name with no id and no name as a bad request', async () => {
     const { api } = await open([]);
     expect((await api.handle('POST', '/api/artist', {})).status).toBe(400);
+    expect((await api.handle('POST', '/api/artist/features', {})).status).toBe(400);
+  }, 30_000);
+});
+
+/**
+ * ARTIST-SOURCES-001. The local page used to say "Neither Deezer nor YouTube Music has a page" even
+ * when the services had never been asked. The answer now carries what really happened to each.
+ */
+describe('why a service was not read (ARTIST-SOURCES-001)', () => {
+  it('says the services could not be reached, not that they have no page', async () => {
+    const { api } = await open([song()], UNREACHABLE);
+    const artist = ((await ask(api, 'jackiegalama')).body as Dict)['artist'] as Dict;
+    expect(artist['local']).toBe(true);
+    expect(artist['sources']).toMatchObject({ deezer: { state: 'failed', why: 'offline' }, ytmusic: { state: 'failed', why: 'offline' } });
+  }, 30_000);
+
+  it('says the allowance is used up when that is why they were not asked', async () => {
+    const { api, store } = await open([song()]);
+    store.addTransfer('search', 50_000_000_000);
+    const artist = ((await ask(api, 'jackiegalama')).body as Dict)['artist'] as Dict;
+    expect(artist['local']).toBe(true);
+    expect(artist['sources']).toMatchObject({ deezer: { state: 'failed', why: 'allowance' }, ytmusic: { state: 'failed', why: 'allowance' } });
+  }, 30_000);
+});
+
+/**
+ * ARTIST-ALL-SOURCES-001: the page asks what the other platforms have as soon as it is up. Like its
+ * other follow-up requests, this one answers in its own shape for a name no service has a page for.
+ */
+describe('what the other platforms have for an artist (ARTIST-ALL-SOURCES-001)', () => {
+  const sources = (api: LocalApi, name: string) => api.handle('POST', '/api/artist/sources', { name });
+
+  it('answers in its own shape, with every platform it asks accounted for', async () => {
+    const { api } = await open([song()]);
+    const r = await sources(api, 'jackiegalama');
+    expect(r.status).toBe(200);
+    const body = r.body as Dict;
+    expect(body['songs']).toEqual([]);
+    expect(body['albums']).toEqual([]);
+    expect(body['singles']).toEqual([]);
+    expect(Object.keys(body['sources'] as Dict).sort()).toEqual(['apple', 'audius', 'bandcamp', 'soundcloud']);
+    expect(body['artist']).toBeUndefined();
+  }, 30_000);
+
+  it('says a platform was not reached rather than that it has no page', async () => {
+    const { api } = await open([song()], UNREACHABLE);
+    const body = (await sources(api, 'jackiegalama')).body as Dict;
+    const s = body['sources'] as Record<string, { state: string; why?: string }>;
+    expect(s['audius']).toEqual({ state: 'failed', why: 'offline' });
+    expect(s['soundcloud']?.state).toBe('failed');
+  }, 60_000);
+
+  it('keeps asking for a name with no id and no name as a bad request', async () => {
+    const { api } = await open([]);
+    expect((await api.handle('POST', '/api/artist/sources', {})).status).toBe(400);
   }, 30_000);
 });

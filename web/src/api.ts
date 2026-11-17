@@ -3,7 +3,7 @@
  * server returns today; optional fields are the ones the server omits when a provider does not know them.
  */
 
-export type ProviderId = 'deezer' | 'ytmusic' | 'soundcloud' | 'spotify' | 'apple' | 'bandcamp' | 'audius' | 'hearthis' | 'archive';
+export type ProviderId = 'deezer' | 'ytmusic' | 'soundcloud' | 'spotify' | 'apple' | 'bandcamp' | 'audius' | 'hearthis' | 'archive' | 'radio';
 
 export interface Release {
   date: string;
@@ -22,6 +22,8 @@ export interface Tag {
 }
 
 export interface Track {
+  /** Live programme bookmark, not an on-demand recording. */
+  radio_station?: import('./engine/radio').RadioStation;
   id: string;
   provider: ProviderId;
   platform_id: string;
@@ -38,6 +40,8 @@ export interface Track {
   isrc?: string;
   release?: Release;
   tags?: Tag[];
+  /** GENRE-ALL-001: a starting song arrives with its genres worked out, like a queue row. */
+  characteristics?: Characteristics;
   preview?: string;
   explicit?: boolean;
   bpm?: number;
@@ -84,7 +88,7 @@ export interface SearchResponse {
  */
 export interface AlbumSummary {
   id: string;
-  provider: 'deezer' | 'apple' | 'ytmusic' | 'soundcloud';
+  provider: 'deezer' | 'apple' | 'ytmusic' | 'soundcloud' | 'bandcamp';
   title: string;
   artist: string;
   artwork: string | null;
@@ -106,7 +110,7 @@ export interface AlbumView extends AlbumSummary {
 }
 
 /** ARTIST-PAGE-001: `dz:<deezer id>` or `yt:<UC channel id>`; a name alone is looked up exactly. */
-export type ArtistTarget = { id?: string; name?: string };
+export type ArtistTarget = { id?: string; name?: string; refresh?: boolean; refreshToken?: string };
 
 export interface ArtistSummary {
   id: string;
@@ -116,6 +120,29 @@ export interface ArtistSummary {
   detail: string | null;
   url: string;
   alt?: string;
+}
+
+/**
+ * What one platform did for an artist page. ARTIST-ALL-SOURCES-001 adds `checked` (how many uploads
+ * or releases its page holds, new to the page or not) and `note` (an account the platform does not
+ * vouch for, read because its uploads are this artist's).
+ */
+export interface ArtistSourceState {
+  state: 'ok' | 'none' | 'failed';
+  count?: number;
+  detail?: string;
+  why?: 'allowance' | 'offline' | 'busy' | 'refused' | 'failed';
+  gave?: ('picture' | 'audience')[];
+  checked?: number;
+  note?: 'unverified';
+}
+
+/** ARTIST-ALL-SOURCES-001: what SoundCloud, Apple Music, Bandcamp and Audius add to an artist page. */
+export interface ArtistExtras {
+  songs: Track[];
+  albums: AlbumSummary[];
+  singles: AlbumSummary[];
+  sources: Record<string, ArtistSourceState>;
 }
 
 export interface ArtistView {
@@ -130,7 +157,8 @@ export interface ArtistView {
   albums: AlbumSummary[];
   singles: AlbumSummary[];
   links: { deezer?: string; ytmusic?: string };
-  sources: Record<string, { state: 'ok' | 'none' | 'failed'; count?: number; detail?: string }>;
+  /** ARTIST-SOURCES-001: what each service did; `why` when its page was not read, `gave` for the picture and audience. */
+  sources: Record<string, ArtistSourceState>;
   /** ARTIST-FALLBACK-001: no service had a page for this name; the songs are the ones held here. */
   local?: boolean;
 }
@@ -158,9 +186,27 @@ export interface Playback {
   embed: { provider: 'ytmusic' | 'soundcloud'; url: string } | null;
 }
 
+/** GENRE-ALL-001: something a row lacked of "a main genre and a subgenre", filled in by the engine. */
+export interface GenreFill {
+  label: string;
+  sub: boolean;
+  /** An estimate, not a fact and not a service's word: drawn as one. */
+  guess: boolean;
+  /** Where it came from, e.g. "Released in 1982" or "Most songs in this list". */
+  why: string;
+}
+
 export interface Characteristics {
   bpm: number | null;
   genres: string[];
+  /** GENRE-ALL-001: subgenre words the services use that the Taste Picker has no cell for ("Sophisti-pop"). */
+  styles?: string[];
+  /** GENRE-ALL-001: what the engine filled in so the row has a main genre and a subgenre. */
+  fill?: GenreFill[];
+  /** GENRE-ALL-001: the song's only main genre is one the picker has no place for ("Asian music"). */
+  main_off?: string;
+  /** GENRE-ALL-001: a lookup can still improve this row's genres. */
+  genre_pending?: boolean;
   explicit: boolean | null;
   duration: number | null;
   release_year: string | null;
@@ -505,7 +551,7 @@ export interface PlaylistSummary {
 
 export type PlaylistAction = 'create' | 'rename' | 'delete' | 'add' | 'remove' | 'set' | 'save_album';
 
-export type FeedbackKind = 'like' | 'dislike' | 'hide' | 'save' | 'replay' | 'complete' | 'skip' | 'unlike' | 'unsave' | 'undislike' | 'unhide';
+export type FeedbackKind = 'qualified' | 'like' | 'dislike' | 'hide' | 'save' | 'replay' | 'complete' | 'skip' | 'unlike' | 'unsave' | 'undislike' | 'unhide';
 
 export class ApiError extends Error {
   constructor(
@@ -591,9 +637,17 @@ export const api = {
     call<{ artist: ArtistView }>('/api/artist', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
   artistSongs: (target: ArtistTarget, signal?: AbortSignal) =>
     call<{ songs: Track[]; features?: Track[]; opened: number; failed: number; featuresComplete?: boolean }>('/api/artist/songs', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
+  /** FEATURES-ALL-001: the songs other artists have them on, asked for on their own so the song list never waits. */
+  artistFeatures: (target: ArtistTarget, signal?: AbortSignal) =>
+    call<{ features: Track[]; complete?: boolean; more?: boolean }>('/api/artist/features', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
+  /** ARTIST-ALL-SOURCES-001: the other platforms' songs and records for this artist, asked once the page is up. */
+  artistSources: (target: ArtistTarget, signal?: AbortSignal) =>
+    call<ArtistExtras>('/api/artist/sources', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
   /** `{ id }` opens that album; `{ track }` opens the album the song is on (404 `code: 'none'` when there is none). */
   album: (target: { id: string } | { track: Track }, signal?: AbortSignal) =>
     call<{ album: AlbumView }>('/api/album', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
+  radioGenres: (track: Track) => call<{ track: Track; characteristics: Characteristics }>('/api/radio/genres', { method: 'POST', body: json({ track }) }),
+  radioAnalyse: (track: Track, sessionId: string) => call<{ embedded: boolean; bpm: number | null; note?: string }>('/api/radio/analyse', { method: 'POST', body: json({ track, sessionId }) }),
   identifyAudio: (signature: string, ms: number, signal?: AbortSignal) =>
     call<IdentifyResponse>('/api/identify/audio', { method: 'POST', body: json({ signature, ms }), ...(signal ? { signal } : {}) }),
   resolve: async (url: string, signal?: AbortSignal): Promise<ResolveResponse> => {
@@ -661,6 +715,8 @@ export const api = {
   modelSelftest: () => call<CapabilityState & { cosine?: number }>('/api/model/selftest', { method: 'POST', body: '{}' }),
   sample: () => call<RecResult>('/api/sample'),
   last: () => call<RecResult>('/api/last'),
+  /** GENRE-LOAD-001: look up the genres of a few of the queue's rows that have none; `left` says how many remain. */
+  queueGenres: () => call<{ items: { key: string; tags: Track['tags']; characteristics: Characteristics }[]; left: number; spent?: boolean }>('/api/queue/genres', { method: 'POST', body: json({}) }),
   rerank: (exclude: string[]) => call<RerankResult>('/api/rerank', { method: 'POST', body: json({ exclude }) }),
   profile: () => call<Profile>('/api/profile'),
 };

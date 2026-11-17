@@ -28,7 +28,7 @@ import * as E from './engine';
 import { buildTaste, tasteSummary, tasteFit, type TasteProfile } from './taste';
 import { type Colour } from './taste-gather';
 import { buildTasteBlend, type TasteBlend } from './taste2';
-import { ARTIST_SUBS_KEY, MUSICBRAINZ_UA, lookupArtistSubs, withArtistSubs, type ArtistSubsMap } from './artist-subs';
+import { ARTIST_SUBS_KEY, MUSICBRAINZ_UA, artistName, lookupArtistSubs, withArtistSubs, type ArtistSubsMap } from './artist-subs';
 import { fold, matchRecordings } from './identity';
 import { findFullSong, type FullSongResult } from './full-song-chain';
 
@@ -46,7 +46,8 @@ import { seedWindow } from './seed-window';
 import type { Tag } from './genres';
 import { classify, classifyAll } from './classify';
 import { makeTag } from './genres';
-import { inferFromArtist, inferFromSeed, inferFromSound, recordArtistGenres } from './infer';
+import { inferFromArtist, inferFromSeed, inferFromSound, needsSub, recordArtistGenres } from './infer';
+import { fillGenres, mainGenre, stylesFor, subLabels } from './genre-fill';
 import { BlockedUrl, BudgetExceeded, Cancelled, FetchError, Http, type HttpPort, Meter } from './net';
 import { dl, downloadsAvailable } from './downloads';
 import { localAudioUrl } from './local-audio';
@@ -54,7 +55,8 @@ import { Job, Pipeline, pmap, type Embedder } from './pipeline';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
 import { Albums } from './albums';
-import { Artists, partitionFeatures } from './artists';
+import { ArtistNotOpened, Artists, partitionFeatures, type ArtistSource } from './artists';
+import { ArtistExtrasReader } from './artist-extras';
 import { albumKeyOf } from './album-key';
 import { SoundCloud } from './soundcloud';
 import { Bandcamp } from './bandcamp';
@@ -125,11 +127,13 @@ export function characteristicsOf(c: Dict, taste: TasteProfile | null): Dict {
 
 // `settings()` returns { ...DEFAULT_SETTINGS, ...stored }, so a new key defaults cleanly for an
 // install that predates it — no migration needed.
+/** FEATURES-FLOW-001: how long one request works on a look for features before answering with what it has. */
+const FEATURE_SLICE_MS = 2500;
 const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, cache_gb: 1, dl_parallel: 0, preload_target: 'all' as 'all' | 'count', preload_count: 20, discover_while_listening: true, rank_v2: true, eq: EQ_DEFAULTS, mix: 0, local_mix: true, play_through: PLAY_THROUGH_DEFAULT };
 /** How many songs one discovery run adds to the list: the user's choice in Settings. */
 export const QUEUE_SIZE_MIN = 5;
 export const QUEUE_SIZE_MAX = 60;
-const FEEDBACK_KINDS = new Set(['like', 'dislike', 'hide', 'save', 'replay', 'complete', 'skip', 'unlike', 'unsave', 'undislike', 'unhide']);
+const FEEDBACK_KINDS = new Set(['qualified', 'like', 'dislike', 'hide', 'save', 'replay', 'complete', 'skip', 'unlike', 'unsave', 'undislike', 'unhide']);
 /** PLAYLIST-QUEUE-001 store keys: the list now in the queue, the queue it replaced, the seed window. */
 const QUEUE_PLAYLIST_KEY = 'queue_playlist';
 /** Songs saved lists were made with (ALBUM-OPEN-001), by key, so a list made from an album shows every song. */
@@ -165,6 +169,8 @@ const CAPS = ['search', 'resolve_link', 'related_candidates', 'artist_candidates
 export const songVectorKey = (key: string): string => `song:${key}`;
 
 const ok = (body: unknown, status = 200): LocalResponse => ({ status, body });
+/** matchRecordings' verdict for an exact title and artist where one side has no duration (identity.ts). */
+const NO_LENGTH = 'no duration to compare';
 const fail = (status: number, message: string, extra: Dict = {}): LocalResponse => ({ status, body: { message, detail: message, ...extra } });
 const unixNow = (): number => Date.now() / 1000;
 /** The day the transfer counter is keyed by, same shape the store uses. */
@@ -228,6 +234,9 @@ export class LocalApi {
   readonly apple: AppleMusic;
   readonly albums: Albums;
   readonly artists: Artists;
+  readonly extras: ArtistExtrasReader;
+  /** FEATURES-FLOW-001: looks for features in progress, by artist id. */
+  private readonly featureLooks = new Map<string, ReturnType<Artists['featureLook']>>();
   readonly sp: Spotify;
   readonly genius: Genius;
   readonly shazam: Shazam;
@@ -256,8 +265,9 @@ export class LocalApi {
     this.hearthis = new HearThis(this.http, this.store);
     this.archive = new InternetArchive(this.http, this.store);
     this.apple = new AppleMusic(this.http, this.store);
-    this.albums = new Albums(this.http, this.dz, this.store, this.ytm, this.sc);
+    this.albums = new Albums(this.http, this.dz, this.store, this.ytm, this.sc, this.bandcamp);
     this.artists = new Artists(this.http, this.dz, this.ytm, this.store, this.albums);
+    this.extras = new ArtistExtrasReader(this.http, this.store, { sc: this.sc, bandcamp: this.bandcamp, audius: this.audius, albums: this.albums });
     this.sp = new Spotify(this.http, this.store);
     this.genius = new Genius(this.http);
     this.shazam = new Shazam(this.http);
@@ -297,6 +307,19 @@ export class LocalApi {
     return new Meter(8_000_000, 8_000_000, (c, n) => this.store.addTransfer(c, n));
   }
 
+  /**
+   * FEATURES-ALL-002: every page of an artist's features is up to a few hundred small Deezer reads
+   * and up to sixty YouTube Music search pages (about 55 KB each as they are asked for). One search's
+   * cap cut that short part-way and left the list saying "incomplete" on every look. Measured for a
+   * well known artist: about 4 MB. The day's allowance still bounds it. FEATURES-FLOW-001 takes the
+   * look a few seconds per request; each request's share is far under this cap.
+   */
+  private featureMeter(): Meter {
+    const daily = Math.trunc(Number(this.settings()['daily_mb']) * 1e6);
+    const used = Object.values(this.store.transferToday()).reduce((a, b) => a + b, 0);
+    return new Meter(12_000_000, Math.max(0, daily - used), (c, n) => this.store.addTransfer(c, n));
+  }
+
   private searchMeter(): Meter {
     const daily = Math.trunc(Number(this.settings()['daily_mb']) * 1e6);
     const used = Object.values(this.store.transferToday()).reduce((a, b) => a + b, 0);
@@ -318,9 +341,20 @@ export class LocalApi {
       if (m === 'GET' && path === '/api/search/albums') return ok(await this.searchAlbums(q.get('q') ?? ''));
       if (m === 'POST' && path === '/api/album') return await this.album(body ?? {});
       if (m === 'GET' && path === '/api/search/artists') return ok(await this.searchArtists(q.get('q') ?? ''));
-      if (m === 'POST' && path === '/api/artist') return await this.artist(body ?? {}, false);
-      if (m === 'POST' && path === '/api/artist/songs') return await this.artist(body ?? {}, true);
+      if (m === 'POST' && path === '/api/artist') return await this.artist(body ?? {}, 'page');
+      if (m === 'POST' && path === '/api/artist/songs') return await this.artist(body ?? {}, 'songs');
+      if (m === 'POST' && path === '/api/artist/features') return await this.artist(body ?? {}, 'features');
+      if (m === 'POST' && path === '/api/artist/sources') return await this.artist(body ?? {}, 'sources');
       if (m === 'POST' && path === '/api/identify/audio') return await this.identifyAudio(body ?? {});
+      if (m === 'POST' && path === '/api/radio/analyse') return await this.radioAnalyse(body ?? {});
+      if (m === 'POST' && path === '/api/radio/genres') {
+        const t = body?.['track'] as Dict; if (!t?.['key'] || !t?.['title']) return fail(400, 'A track is required');
+        const found = await this.lookUpGenres(t, this.searchMeter());
+        const tags = found.tags.length ? found.tags : this.knownGenres()(t);
+        const enriched = { ...found.track, tags };
+        const characteristics = this.genreFiller([{ track: enriched }])(enriched, characteristicsOf(enriched, null));
+        return ok({ track: cleanTrack(enriched), characteristics });
+      }
       if (m === 'POST' && path === '/api/resolve') return await this.resolve(String(body?.['url'] ?? ''));
       if (m === 'POST' && path === '/api/complete-spotify') return ok(await this.completeSpotify(String(body?.['title'] ?? ''), String(body?.['artist'] ?? '')));
       if (path === '/api/seeds') return m === 'PUT' ? await this.putSeeds(body ?? {}) : ok(this.seedsView());
@@ -344,6 +378,7 @@ export class LocalApi {
       if (m === 'POST' && path === '/api/queue/playlist') return await this.queueFromPlaylist(String(body?.['id'] ?? ''));
       if (m === 'POST' && path === '/api/queue/restore') return await this.restoreQueue();
       if (m === 'POST' && path === '/api/queue/add') return await this.queueAdd(body ?? {});
+      if (m === 'POST' && path === '/api/queue/genres') return await this.queueGenres(body ?? {});
       if (m === 'GET' && path === '/api/playlists/mix') return this.playlistMixRoute(q.get('id') ?? '');
       if (m === 'POST' && path === '/api/model/install') return ok({ installed: this.encoder !== null, downloaded: 0 });
       if (m === 'POST' && path === '/api/model/selftest') return await this.selftest();
@@ -351,7 +386,7 @@ export class LocalApi {
       if (m === 'GET' && path === '/api/profile') return ok(this.profile());
       if (m === 'GET' && path === '/api/last') {
         const r = this.store.get<Dict>('last_result');
-        return r ? ok(r) : fail(404, 'No earlier recommendations yet.');
+        return r ? ok(this.completed(this.withKnownGenres(r))) : fail(404, 'No earlier recommendations yet.');
       }
       const pv = /^\/api\/preview-url\/deezer\/(\d{1,20})$/.exec(path);
       if (m === 'GET' && pv) return await this.previewUrl(pv[1]!);
@@ -511,28 +546,73 @@ export class LocalApi {
   }
 
   /** `{ id?, name? }` opens that artist; with `every`, the songs on all their albums and singles too. */
-  private async artist(body: Dict, every: boolean): Promise<LocalResponse> {
-    const meter = this.searchMeter();
+  private async artist(body: Dict, want: 'page' | 'songs' | 'features' | 'sources'): Promise<LocalResponse> {
+    const every = want !== 'page';
+    const meter = want === 'features' ? this.featureMeter() : this.searchMeter();
+    const refreshToken = typeof body['refreshToken'] === 'string' && /^[A-Za-z0-9-]{1,80}$/.test(body['refreshToken']) ? body['refreshToken'] : undefined;
+    const ctx = { meter, refresh: body['refresh'] === true, refreshToken };
     const id = typeof body['id'] === 'string' ? body['id'].slice(0, 80) : '';
     const name = typeof body['name'] === 'string' ? body['name'].trim().slice(0, 200) : '';
     if (!id && !name) return fail(400, 'id or name required');
     try {
       const target = { ...(id ? { id } : {}), ...(name ? { name } : {}) };
-      const a = await this.artists.open(target, { meter });
+      const a = await this.artists.open(target, ctx);
       const clean = (list: readonly object[]) => list.map((t) => cleanTrack(t as Dict));
       if (!every) return ok({ artist: { ...a, songs: clean(a.songs) } });
-      const all = await this.artists.everySong(a, { meter });
-      return ok({ songs: clean(all.songs), features: clean(all.features), opened: all.opened, failed: all.failed, featuresComplete: all.featuresComplete });
+      // ARTIST-ALL-SOURCES-001: what SoundCloud, Apple Music, Bandcamp and Audius add, asked on its own
+      // so the page never waits on four more services, and one of them failing costs nothing else.
+      if (want === 'sources') {
+        const x = await this.extras.read(a, ctx);
+        return ok({ songs: clean(x.songs), albums: x.albums, singles: x.singles, sources: x.sources });
+      }
+      // FEATURES-ALL-001: the features are their own request, so the song list never waits on the few
+      // hundred small reads that confirm them, and one failing does not lose the other.
+      // FEATURES-FLOW-001: a look takes up to a minute, so it is taken a few seconds per request. Each
+      // answer has every feature confirmed so far and `more` while another request would add to it;
+      // the page lists them as they come. Work is done only while the page keeps asking.
+      if (want === 'features') {
+        // OPEN-HEAL-001: a look begun on a page that opened without a service is not carried on once
+        // the page has that service; the new look asks it too (what Deezer said is remembered).
+        const lookKey = `${a.id}|${a.links.deezer ? 'd' : ''}${a.links.ytmusic ? 'y' : ''}:${refreshToken || ''}`;
+        let job = this.featureLooks.get(lookKey);
+        if (!job) {
+          // A handful of looks at most are kept: one left half way is picked up if the page returns.
+          if (this.featureLooks.size >= 4) this.featureLooks.delete(this.featureLooks.keys().next().value as string);
+          job = this.artists.featureLook(a, ctx);
+          this.featureLooks.set(lookKey, job);
+        }
+        const found = await job.step(ctx, FEATURE_SLICE_MS);
+        if (!found.more) this.featureLooks.delete(lookKey);
+        return ok({ features: clean(found.features), complete: found.complete, more: found.more });
+      }
+      const all = await this.artists.everySong(a, ctx, { features: false });
+      return ok({ songs: clean(all.songs), features: [], opened: all.opened, failed: all.failed, featuresComplete: true });
     } catch (e) {
       // ARTIST-FALLBACK-001: song credits carry names no service has a page for - uploader handles,
       // small self-releases, a name spelt another way. Tapping one lands on what this app holds by
       // that name rather than on an error.
       if (e instanceof ProviderError && name) {
-        const local = this.localArtist(name);
+        // ARTIST-SOURCES-001: what happened to each service goes with the page, so it never says a
+        // service has no page for this name when the service was not read at all.
+        const local = this.localArtist(name, e instanceof ArtistNotOpened ? e.sources : undefined);
         // ARTIST-FALLBACK-002: the page asks for every song next, with the local id. That request gets
         // its own shape; answered with a second page, the screen had no song list and the app went blank.
+        if (want === 'features') return ok({ features: [], complete: true });
+        // A name Deezer and YouTube Music have no page for can still have one elsewhere: an account
+        // SoundCloud or Audius vouches for, or a page whose songs are the ones held here.
+        if (want === 'sources') {
+          const x = await this.extras.read({ id: String(local['id']), name, songs: local['songs'] as { title: string }[], features: local['features'] as { title: string }[], albums: [], singles: [] }, ctx);
+          return ok({ songs: x.songs.map((t) => cleanTrack(t as Dict)), albums: x.albums, singles: x.singles, sources: x.sources });
+        }
         if (every) return ok({ songs: local['songs'], features: local['features'], opened: 0, failed: 0, featuresComplete: true });
         return ok({ artist: local });
+      }
+      // Opened by id alone there is no name to fall back on: give the real reason, not "no artist named".
+      if (e instanceof ArtistNotOpened) {
+        const why = Object.values(e.sources).find((x) => x.state === 'failed')?.why;
+        if (why === 'allowance') return fail(429, 'The daily transfer allowance is used up.', { code: 'budget' });
+        if (why === 'offline') return fail(503, 'No connection.', { code: 'offline' });
+        if (why === 'busy') return fail(503, 'The artist service is busy.', { code: 'busy' });
       }
       return this.identifyFailure(e, 'artist');
     }
@@ -566,7 +646,7 @@ export class LocalApi {
   }
 
   /** The songs this app already holds credited to a name, as an artist page of its own. */
-  private localArtist(name: string): Dict {
+  private localArtist(name: string, seen?: Record<string, ArtistSource>): Dict {
     const held = [...this.knownTracks().values()].filter((t) =>
       ((t['artists'] as string[] | undefined) ?? (t['artist'] ? [String(t['artist'])] : [])).some((n) => fold(String(n)) === fold(name)),
     );
@@ -576,7 +656,12 @@ export class LocalApi {
       songs: (songs as Dict[]).map((t) => cleanTrack(t)),
       features: (features as Dict[]).map((t) => cleanTrack(t)),
       albums: [], singles: [], links: {},
-      sources: { deezer: { state: 'none' }, ytmusic: { state: 'none' } },
+      sources: Object.fromEntries(
+        (['deezer', 'ytmusic'] as const).map((p) => {
+          const s = seen?.[p];
+          return [p, s?.state === 'failed' ? { state: 'failed', why: s.why ?? 'failed' } : { state: 'none' }];
+        }),
+      ),
     };
   }
 
@@ -765,7 +850,17 @@ export class LocalApi {
    */
   private seedsView(): Dict {
     const pl = this.store.get<{ id: string; name: string }>(QUEUE_PLAYLIST_KEY);
-    return { seeds: this.store.seeds(), playlist: pl ? { id: pl.id, name: pl.name } : null, can_restore: (this.store.get(QUEUE_SAVED_KEY) ?? null) !== null };
+    // GENRE-LOAD-001: a starting song with no tags of its own is shown with what is already known of it.
+    const known = this.knownGenres();
+    const tagged = (this.store.seeds() as Dict[]).map((t) => {
+      if (((t['tags'] as unknown[] | undefined) ?? []).length) return t;
+      const tags = known(t);
+      return tags.length ? { ...t, tags } : t;
+    });
+    // GENRE-ALL-001: and with a main genre and a subgenre, like every row of the queue.
+    const fill = this.genreFiller(((this.store.get<Dict>('last_result')?.['items'] ?? []) as Dict[]), tagged);
+    const seeds = tagged.map((t) => ({ ...t, characteristics: fill(t, characteristicsOf(t, null)) }));
+    return { seeds, playlist: pl ? { id: pl.id, name: pl.name } : null, can_restore: (this.store.get(QUEUE_SAVED_KEY) ?? null) !== null };
   }
 
   /** Every track the engine holds a copy of, by key: feedback rows, the list, starting songs. */
@@ -828,10 +923,294 @@ export class LocalApi {
     const last = this.store.get<Dict>('last_result') ?? { phase: 'final', items: [], count: 0, asked: 0, sources: {}, audio: {}, timings: {}, transfer: {} };
     const rest = ((last['items'] ?? []) as Dict[]).filter((x) => String((x['track'] as Dict)['key']) !== key);
     const i = after ? rest.findIndex((x) => String((x['track'] as Dict)['key']) === after) : -1;
-    const items = [...rest.slice(0, i + 1), { ...item, added: true }, ...rest.slice(i + 1)].map((x, n) => ({ ...x, rank: n + 1 }));
+    // GENRE-LOAD-001: a song the listener adds never went through a discovery run, so its genres are
+    // worked out here from what is already known. What is not known is looked up by /api/queue/genres.
+    const added = this.withKnownGenres({ items: [{ ...item, added: true }] })['items'][0] as Dict;
+    const items = [...rest.slice(0, i + 1), added, ...rest.slice(i + 1)].map((x, n) => ({ ...x, rank: n + 1 }));
     const next = { ...last, items, count: items.length, saved_at: last['saved_at'] ?? unixNow() };
     await this.store.put('last_result', next);
-    return ok(next);
+    return ok(this.completed(next));
+  }
+
+  // ---- genres for the rows that have none (GENRE-LOAD-001) -------------------------------
+  /** A row is placed once its characteristics name a genre or a family. */
+  private static placed(item: Dict): boolean {
+    const c = item['characteristics'] as Dict | undefined;
+    return Boolean(c && (((c['genres'] as unknown[] | undefined) ?? []).length || c['family']));
+  }
+
+  /** Placed by a guess of ours alone ("pop, lent by the starting song"): shown, and still worth asking about. */
+  private static guessed(item: Dict): boolean {
+    const tags = ((item['track'] as Dict | undefined)?.['tags'] as Tag[] | undefined) ?? [];
+    return tags.length > 0 && tags.every((g) => g?.inferred);
+  }
+
+  /**
+   * What is already known of a song's genres, with no request: its own tags, what the services said
+   * when it was a starting song, what MusicBrainz's listeners call its artist, and only then a guess
+   * from the artist's other songs.
+   */
+  private knownGenres(): (t: Dict) => Tag[] {
+    const own = this.genresOfTrack();
+    return (t: Dict): Tag[] => {
+      const got = own(t);
+      if (got.some((g) => !g.inferred)) return got;
+      const artist = (this.store.get<ArtistSubsMap>(ARTIST_SUBS_KEY) ?? {})[fold(artistName(t))]?.tags ?? [];
+      return artist.length ? artist : got;
+    };
+  }
+
+  /** The row with its genres worked out from `tags`; everything else it carries is kept. */
+  private labelled(item: Dict, tags: Tag[], taste: TasteProfile | null): Dict {
+    const track = { ...(item['track'] as Dict), tags };
+    return { ...item, track, characteristics: { ...((item['characteristics'] as Dict | undefined) ?? {}), ...characteristicsOf(track, taste) } };
+  }
+
+  /** A stored queue with every unplaced row given what is already known about it. Asks nothing. */
+  private withKnownGenres(result: Dict): Dict {
+    const items = (result['items'] ?? []) as Dict[];
+    if (items.every((x) => LocalApi.placed(x))) return result;
+    const known = this.knownGenres();
+    let taste: TasteProfile | undefined;
+    const next = items.map((item) => {
+      if (LocalApi.placed(item) || !item['track']) return item;
+      const tags = known(item['track'] as Dict);
+      return tags.length ? this.labelled(item, tags, (taste ??= this.taste())) : item;
+    });
+    return { ...result, items: next };
+  }
+
+  // ---- a main genre and a subgenre on every row (GENRE-ALL-001) --------------------------
+  private static yearOf(t: Dict): number | null {
+    const d = (t['release'] as Dict | undefined)?.['date'];
+    const y = typeof d === 'string' ? Number(d.slice(0, 4)) : NaN;
+    return Number.isFinite(y) && y > 1900 ? y : null;
+  }
+
+  /**
+   * Whether a song has a main genre and nothing finer, and its artist is still worth a look: the
+   * artist's subgenres are remembered and not yet on the song, or its style words were never asked
+   * for (or were remembered before they were kept; that answer is still in the cache).
+   */
+  private wantsArtist(track: Dict): boolean {
+    const tags = (track['tags'] as Tag[] | undefined) ?? [];
+    if (!mainGenre(tags)) return false;
+    const name = artistName(track);
+    const k = fold(name);
+    if (!k || name.length > 80) return false;
+    const known = (this.store.get<ArtistSubsMap>(ARTIST_SUBS_KEY) ?? {})[k];
+    if (subLabels(tags).length || stylesFor(tags, known?.styles).length) return false;
+    if (known?.styles !== undefined) return needsSub(tags) && known.tags.length > 0;
+    return !this.store.cacheGet(`styletry:${k}`)?.value;
+  }
+
+  /** Whether a song with a main genre and no subgenre has no year yet, and Deezer has not been asked for one. */
+  private wantsYear(track: Dict): boolean {
+    const tags = (track['tags'] as Tag[] | undefined) ?? [];
+    if (!mainGenre(tags) || LocalApi.yearOf(track) || typeof track['year_hint'] === 'number') return false;
+    const known = (this.store.get<ArtistSubsMap>(ARTIST_SUBS_KEY) ?? {})[fold(artistName(track))];
+    if (subLabels(tags).length || stylesFor(tags, known?.styles).length) return false;
+    return !this.store.cacheGet(`yeartry:${String(track['key'] ?? '')}`)?.value;
+  }
+
+  /**
+   * What each row is shown with beyond its own tags: the style words its artist is known for, and
+   * whatever it still lacks of "a main genre and a subgenre", filled from what is known and marked
+   * with where it came from (genre-fill.ts). Worked out when a list is sent, never stored, so it
+   * always reflects what is known now. `genre_pending` tells the page a lookup can still improve it.
+   */
+  private genreFiller(items: Dict[], seeds: Dict[] = this.store.seeds() as Dict[]): (track: Dict, chars: Dict) => Dict {
+    const subs = this.store.get<ArtistSubsMap>(ARTIST_SUBS_KEY) ?? {};
+    const artistGenres = this.store.get<Record<string, Record<string, number>>>('artist_genres') ?? {};
+    const tagsOf = (t: Dict): Tag[] => (t['tags'] as Tag[] | undefined) ?? [];
+    const stylesOf = (t: Dict): string[] => stylesFor(tagsOf(t), subs[fold(artistName(t))]?.styles);
+    const list = [...seeds, ...items.map((x) => x['track'] as Dict)].filter(Boolean).map((t) => ({ tags: tagsOf(t), styles: stylesOf(t), year: LocalApi.yearOf(t) }));
+    return (track, chars) => {
+      const tags = tagsOf(track);
+      const styles = stylesOf(track);
+      const bpm = typeof track['bpm'] === 'number' ? (track['bpm'] as number) : null;
+      const yearHint = typeof track['year_hint'] === 'number' ? (track['year_hint'] as number) : null;
+      const fill = fillGenres({ tags, styles, year: LocalApi.yearOf(track), yearHint, bpm, artist: artistName(track), artistGenres, list });
+      const main = mainGenre(tags);
+      const unplaced = !tags.some((g) => g && !g.inferred);
+      const pending = unplaced ? !this.store.cacheGet(`genretry:${String(track['key'] ?? '')}`)?.value : this.wantsArtist(track) || this.wantsYear(track);
+      return { ...chars, styles, fill, ...(main && !main.onPicker ? { main_off: main.label } : {}), ...(pending ? { genre_pending: true } : {}) };
+    };
+  }
+
+  /** A list as it is sent to the page: every row with its styles and fills (see genreFiller). */
+  private completed(result: Dict): Dict {
+    const items = (result['items'] ?? []) as Dict[];
+    if (!items.length) return result;
+    const fill = this.genreFiller(items);
+    return { ...result, items: items.map((x) => (x['track'] ? { ...x, characteristics: fill(x['track'] as Dict, (x['characteristics'] as Dict | undefined) ?? {}) } : x)) };
+  }
+
+  /** Ask MusicBrainz what its listeners call an artist; a failure is not retried for a while, so the looking ends. */
+  private async askArtist(track: Dict, meter: Meter): Promise<void> {
+    const artist = artistName(track);
+    try {
+      await lookupArtistSubs(this.store, this.http, artist, { meter }, (key, fn) => cached(this.store, key, 'metadata', 30 * 24 * 3600, fn) as Promise<never>, unixNow());
+    } catch (e) {
+      if (e instanceof BudgetExceeded) throw e;
+      await this.store.cachePut(`styletry:${fold(artist)}`, 'metadata', true, 6 * 3600);
+    }
+  }
+
+  /**
+   * Look up the genres of the queue's rows that still have none, a few at a time: the song's album
+   * genre on Deezer (finding the song there first when it came from another service), then what
+   * MusicBrainz's listeners call its artist. Every answer is cached and charged to the day's
+   * allowance. A song nothing could place is not asked about again for a day, so the looking ends.
+   */
+  private async queueGenres(body: Dict): Promise<LocalResponse> {
+    const last = this.store.get<Dict>('last_result');
+    const items = ((last?.['items'] ?? []) as Dict[]).slice();
+    const more = (t: Dict): boolean => this.wantsArtist(t) || this.wantsYear(t);
+    const settled = (x: Dict): boolean => LocalApi.placed(x) && !LocalApi.guessed(x) && !more((x['track'] as Dict | undefined) ?? {});
+    if (!last || items.every(settled)) return ok({ items: [], left: 0 });
+    const limit = Math.max(1, Math.min(12, Math.trunc(Number(body['limit'])) || 6));
+    const known = this.knownGenres();
+    const meter = this.searchMeter();
+    const taste = this.taste();
+    // What each row shows now, to tell afterwards which rows changed.
+    const shown = (list: Dict[]): string[] => {
+      const fill = this.genreFiller(list);
+      return list.map((x) => {
+        const c = x['track'] ? fill(x['track'] as Dict, {}) : {};
+        return JSON.stringify([(x['track'] as Dict | undefined)?.['tags'] ?? [], c['styles'], c['fill'], c['main_off'] ?? null, c['genre_pending'] ?? false]);
+      });
+    };
+    const before = shown(items);
+    let asked = 0;
+    let left = 0;
+    let spent = false;
+    let stored = false;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]!;
+      const track = item['track'] as Dict | undefined;
+      if (settled(item) || !track) continue;
+      const key = String(track['key'] ?? '');
+      const had = LocalApi.placed(item);
+      let counted = false;
+      let waiting = false;
+      /** One look per row and call, however many services it takes; false when this call may ask no more. */
+      const mayAsk = (): boolean => {
+        if (counted) return true;
+        if (spent || asked >= limit) return false;
+        asked += 1;
+        counted = true;
+        return true;
+      };
+      let tags = known(track);
+      let dated = track;
+      try {
+        if (!tags.some((g) => !g.inferred) && !this.store.cacheGet(`genretry:${key}`)?.value) {
+          if (!mayAsk()) waiting = true;
+          else {
+            const found = await this.lookUpGenres(track, meter);
+            await this.store.cachePut(`genretry:${key}`, 'metadata', true, 24 * 3600);
+            await this.store.cachePut(`yeartry:${key}`, 'metadata', true, 30 * 24 * 3600);
+            dated = found.track;
+            if (found.tags.length) tags = found.tags;
+          }
+        }
+        // GENRE-ALL-001: a main genre and nothing finer. Ask what MusicBrainz's listeners call the
+        // artist (once), and put the subgenres they name on the song.
+        if (!waiting && this.wantsArtist({ ...dated, tags })) {
+          const k = fold(artistName(track));
+          if ((this.store.get<ArtistSubsMap>(ARTIST_SUBS_KEY) ?? {})[k]?.styles === undefined) {
+            if (!mayAsk()) waiting = true;
+            else await this.askArtist(track, meter);
+          }
+          if (!waiting) tags = ((withArtistSubs({ ...dated, tags }, this.store.get<ArtistSubsMap>(ARTIST_SUBS_KEY) ?? {}) as Dict)['tags'] as Tag[]) ?? tags;
+        }
+        // Still nothing finer: the year the song came out names its era. Deezer states it.
+        if (!waiting && this.wantsYear({ ...dated, tags })) {
+          if (!mayAsk()) waiting = true;
+          else {
+            await this.store.cachePut(`yeartry:${key}`, 'metadata', true, 30 * 24 * 3600);
+            try {
+              dated = LocalApi.dated(dated, await this.deezerFacts(track, { meter }));
+            } catch (e) {
+              if (e instanceof BudgetExceeded) throw e;
+            }
+          }
+        }
+      } catch (e) {
+        // The allowance is used up: say what is left rather than guess, and ask no more this time.
+        if (!(e instanceof BudgetExceeded)) throw e;
+        spent = true;
+        waiting = true;
+      }
+      if (waiting) left += 1;
+      const newTags = tags.length > 0 && !(had && !tags.some((g) => !g.inferred)) && JSON.stringify(tags) !== JSON.stringify(track['tags'] ?? []);
+      if (!newTags && dated === track) continue;
+      // Nothing new in the tags of a row already showing its guess: only its year is kept.
+      items[i] = newTags ? this.labelled({ ...item, track: dated }, tags, taste) : this.labelled({ ...item, track: dated }, (track['tags'] as Tag[] | undefined) ?? [], taste);
+      stored = true;
+    }
+    if (stored) await this.store.put('last_result', { ...last, items });
+    // Every row that now shows something else: the ones looked up, and any whose estimate moved with them.
+    const after = shown(items);
+    const fill = this.genreFiller(items);
+    const out: Dict[] = [];
+    items.forEach((x, i) => {
+      const track = x['track'] as Dict | undefined;
+      if (!track || after[i] === before[i]) return;
+      out.push({ key: String(track['key'] ?? ''), tags: track['tags'] ?? [], characteristics: fill(track, (x['characteristics'] as Dict | undefined) ?? {}) });
+    });
+    return ok({ items: out, left, ...(spent ? { spent: true } : {}) });
+  }
+
+  /**
+   * What Deezer states about a song: its album's genres and its release date. `proven` says the
+   * Deezer song is this recording; a row with no length can only be matched by title and artist,
+   * which is enough for the kind of music and its era but is not claimed as this song's own date.
+   */
+  private async deezerFacts(track: Dict, c: Ctx): Promise<{ tags: Tag[]; release: Dict | null; proven: boolean }> {
+    let did = track['provider'] === 'deezer' ? String(track['platform_id'] ?? '') : String(((track['links'] as Dict | undefined)?.['deezer'] as Dict | undefined)?.['id'] ?? '');
+    let proven = Boolean(did);
+    if (!did) {
+      const found = await this.dz.findMatch(track as never, c);
+      proven = Boolean(found.match);
+      const same = found.match ?? found.uncertain.find((u) => (u as Dict)['match_note'] === NO_LENGTH) ?? null;
+      did = String(same?.platform_id ?? '');
+    }
+    if (!did) return { tags: [], release: null, proven: false };
+    const full = await this.dz.withGenres(await this.dz.track(did, c), c);
+    const rel = (full as Dict)['release'] as Dict | undefined;
+    return { tags: (full.tags as Tag[]).filter((g) => g && typeof g.name === 'string'), release: typeof rel?.['date'] === 'string' ? rel : null, proven };
+  }
+
+  /** The track with a release year Deezer stated: its own date when proven, a marked hint otherwise. */
+  private static dated(track: Dict, facts: { release: Dict | null; proven: boolean }): Dict {
+    if (!facts.release || LocalApi.yearOf(track)) return track;
+    if (facts.proven) return { ...track, release: facts.release };
+    const y = Number(String(facts.release['date']).slice(0, 4));
+    return Number.isFinite(y) && y > 1900 ? { ...track, year_hint: y } : track;
+  }
+
+  /** The genres of a song nothing has placed, and its year: Deezer first, then MusicBrainz's word for the artist. */
+  private async lookUpGenres(track: Dict, meter: Meter): Promise<{ tags: Tag[]; track: Dict }> {
+    const c: Ctx = { meter };
+    let dated = track;
+    try {
+      const facts = await this.deezerFacts(track, c);
+      dated = LocalApi.dated(track, facts);
+      if (facts.tags.length) return { tags: facts.tags, track: dated };
+    } catch (e) {
+      if (e instanceof BudgetExceeded) throw e;
+    }
+    const artist = artistName(track);
+    if (!artist || artist.length > 80) return { tags: [], track: dated };
+    try {
+      const tags = await lookupArtistSubs(this.store, this.http, artist, { meter }, (key, fn) => cached(this.store, key, 'metadata', 30 * 24 * 3600, fn) as Promise<never>, unixNow());
+      return { tags, track: dated };
+    } catch (e) {
+      if (e instanceof BudgetExceeded) throw e;
+      return { tags: [], track: dated };
+    }
   }
 
   /** Bring back the queue a saved list replaced: its starting songs and the songs discovered for it. */
@@ -1007,7 +1386,7 @@ export class LocalApi {
   private jobStatus(id: string): LocalResponse {
     const j = this.jobs.get(id);
     if (!j) return fail(404, 'unknown job');
-    return ok({ job: j.id, phase: j.phase, progress: j.progress, done: j.done, error: j.error, result: j.result, elapsed_ms: Math.round((unixNow() - j.started) * 1000), sources: j.sources });
+    return ok({ job: j.id, phase: j.phase, progress: j.progress, done: j.done, error: j.error, result: j.result ? this.completed(j.result) : j.result, elapsed_ms: Math.round((unixNow() - j.started) * 1000), sources: j.sources });
   }
 
   private cancelJob(id: string): LocalResponse {
@@ -1232,6 +1611,13 @@ export class LocalApi {
         }
       }
       this.fillMeasuredBpm([...seedViews, ...cands]);
+      // GENRE-LOAD-001: the songs about to be shown that still have no genre are read first, so a
+      // guess is only made for a song no service could place.
+      {
+        const byKey = new Map(cands.map((c) => [String(c['key']), c]));
+        job.progress = 'Reading genres for the songs found';
+        await p.genresForShown(job, E.select(E.scoreAll(cands as never, ctx), ctx).map((x) => byKey.get(x.track.key)).filter((c): c is Dict => Boolean(c)));
+      }
       // Genre inference for songs no provider labeled: the artist's other songs, then the sound,
       // then the recommending seed. Inferred tags are marked and never overwrite real metadata.
       await recordArtistGenres(this.store, [...seedViews, ...cands]);
@@ -1306,7 +1692,7 @@ export class LocalApi {
     const out = this.serialise(chosen, ctx, 'live', pool.job) as Dict;
     out['taste'] = tasteSummary(ctx.taste);
     out['pool'] = pool.cands.length;
-    return ok(out);
+    return ok(this.completed(out));
   }
 
   /** Songs the catalogue gave no tempo for get the one measured from their preview, when there is one. */
@@ -1379,7 +1765,7 @@ export class LocalApi {
     const meta = {
       duration: num(body['duration'], 1, 36000),
       coverage: num(body['coverage'], 0, 36000),
-      medium: str(body['medium'], ['preview', 'full', 'embed']),
+      medium: str(body['medium'], ['preview', 'full', 'embed', 'radio']),
       session: str(body['session']),
       origin: str(body['origin']),
       confidence: num(body['confidence'], 0, 1),
@@ -1598,6 +1984,11 @@ export class LocalApi {
       } else if (action === 'add') {
         if (!key) return fail(400, 'Which song?');
         lists = addToPlaylists(lists, ids, key, unixNow());
+        // Radio/programme bookmarks may never have been liked or heard to completion. Retain the
+        // actual selected entry so its station and metadata still resolve after reopening the app.
+        const snapshot = (Array.isArray(body['tracks']) ? body['tracks'] : [])
+          .find((t): t is Dict => Boolean(t) && typeof t === 'object' && (t as Dict)['key'] === key);
+        if (snapshot) await this.rememberListTracks([snapshot]);
       } else if (action === 'remove') {
         if (!key) return fail(400, 'Which song?');
         lists = removeFromPlaylists(lists, ids, key);
@@ -1641,6 +2032,27 @@ export class LocalApi {
    * the daily allowance is about network transfer and none happens here. Already-embedded songs are
    * reported rather than re-run, so playing a song twice costs nothing.
    */
+  /** RADIO-001: a bounded acoustic SAMPLE, never labelled a complete song. No raw audio leaves
+   * this device. A full-song vector already held is never overwritten by a radio clip. */
+  private async radioAnalyse(body: Dict): Promise<LocalResponse> {
+    let raw = String(body['pcm'] ?? ''); const t = body['track'] as Dict | undefined;
+    const sessionId = String(body['sessionId'] ?? '');
+    if (/^[a-f0-9-]{36}$/i.test(sessionId)) {
+      const sample = await fetch('/radio-native?q=' + encodeURIComponent(JSON.stringify({ op: 'sample', id: sessionId }))).then(r => r.json()) as { pcm?: string };
+      raw = sample.pcm || '';
+    }
+    if (!t?.['key'] || !raw || raw.length > 600000 || !/^[A-Za-z0-9+/=]+$/.test(raw)) return fail(400, 'A recognised track and a bounded PCM sample are required.');
+    if (!this.encoder) return ok({ embedded: false, bpm: null, note: 'Acoustic model unavailable on this device' });
+    const bytes = atob(raw); if (bytes.length % 2 || bytes.length < 16000 * 2 * 4) return fail(400, 'At least four seconds of 16 kHz PCM are required.');
+    const n = bytes.length / 2, y = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { let v = bytes.charCodeAt(i * 2) | bytes.charCodeAt(i * 2 + 1) << 8; if (v >= 32768) v -= 65536; let next = i + 1 < n ? bytes.charCodeAt((i + 1) * 2) | bytes.charCodeAt((i + 1) * 2 + 1) << 8 : v; if (next >= 32768) next -= 65536; for (let k = 0; k < 3; k++) y[i * 3 + k] = (v + (next - v) * k / 3) / 32768; }
+    const r = await this.encoder.analyse(y, true, 2); const rec = songVectorKey(String(t['key']));
+    if (r.tooShort) return ok({ embedded: false, bpm: r.bpm, note: 'Not enough usable broadcast audio' });
+    if (r.vector && !this.store.vectorSource(rec, A.MODEL_ID, A.PREPROCESS_ID)) await this.store.vectorPut(rec, A.MODEL_ID, A.PREPROCESS_ID, r.vector, 'radio-clip-12s');
+    if (r.bpm) await this.store.put(`bpm:${rec}`, r.bpm);
+    return ok({ embedded: !!r.vector, bpm: r.bpm, note: 'Measured from a short live broadcast sample' });
+  }
+
   private async embedLocal(body: Dict): Promise<LocalResponse> {
     if (!this.encoder) return fail(409, 'The audio model is not available on this device.');
     const t = body['track'] as Dict | undefined;
@@ -1649,7 +2061,7 @@ export class LocalApi {
     if (!t || !url || !key) return fail(400, 'A track with its key and its local source link are both needed.');
     const rec = songVectorKey(key);
     const had = this.store.vectorSource(rec, A.MODEL_ID, A.PREPROCESS_ID);
-    if (had) return ok({ embedded: false, already: true, source: had, segments: null, seconds: null });
+    if (had && !had.startsWith('radio-clip')) return ok({ embedded: false, already: true, source: had, segments: null, seconds: null });
     // TASTE-FULL-BOUND-001: the whole file is decoded to raw audio in the page (~0.8 MB a second of
     // song) before its few segments are picked, so a long song is left out rather than risk the page.
     const seconds = Number(t['duration']);

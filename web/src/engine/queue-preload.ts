@@ -19,6 +19,8 @@ export interface QueueCacheStatus {
 interface Library {
   status(url: string): string;
   observe?(urls: readonly string[]): void;
+  /** Ask the shell about one link now, without starting a download. */
+  refresh?(url: string): Promise<void>;
   error(url: string): string | null;
   ensure(url: string, label: string, retry: boolean, background: boolean): Promise<void>;
   subscribe(fn: () => void): () => void;
@@ -87,6 +89,12 @@ const SWAP_SOURCE_AFTER = 2;
  * re-stated, and a song parked for cache room is exempt — a full cache is not the song's fault.
  */
 const GIVE_UP_AFTER = 10 * 60_000;
+/**
+ * SHUFFLE-START-001: how long one look() may keep asking the shell what it holds. A whole-list Play
+ * waits on it, so a very long list gets a partial answer in time rather than a full one too late;
+ * the next look carries on with what is still unknown.
+ */
+export const LOOK_BUDGET_MS = 800;
 
 export class QueuePreloader {
   private entries = new Map<string, Entry>();
@@ -168,6 +176,28 @@ export class QueuePreloader {
   }
   /** Whether this song can start playing from local disk right now. */
   isReady(track: Track): boolean { return this.readyUrl(track) !== null; }
+  /**
+   * SHUFFLE-START-001: find out which of these songs the shell already holds. A list the loader was
+   * never given reads as "nothing held" until someone asks, so a shuffled start fell on a song still
+   * to be loaded while finished files waited. This only asks: it downloads nothing, queues nothing
+   * and leaves the wanted set alone. It asks about links already known for a song and not answered
+   * for yet, a few at a time, so asking again is free. It stops asking after LOOK_BUDGET_MS and
+   * starts somewhere different each time, so a long list is learned over a few looks, not only its top.
+   */
+  async look(tracks: readonly Track[]): Promise<void> {
+    const library = this.backend.library;
+    if (typeof library.refresh !== 'function') return;
+    const unknown = [...new Set(tracks.map(t => this.sourceHint(t)).filter((u): u is string => Boolean(u) && library.status(u!) === 'unknown'))];
+    if (!unknown.length) return;
+    const from = Math.floor(Math.random() * unknown.length);
+    const urls = [...unknown.slice(from), ...unknown.slice(0, from)];
+    const until = Date.now() + LOOK_BUDGET_MS;
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(4, urls.length) }, async () => {
+      while (next < urls.length && Date.now() < until) await library.refresh!(urls[next++]!).catch(() => undefined);
+    }));
+    this.emit();
+  }
   /** Songs no source could supply within GIVE_UP_AFTER; the list drops these silently. */
   expiredKeys(): ReadonlySet<string> { return this.expired; }
   snapshot(): QueueCacheStatus {

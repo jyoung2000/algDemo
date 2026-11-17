@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
+import { Glyph } from '@now-playing/aqua-ui/icons';
+import { SourceMark } from './SourceMark';
 import { ShuffleGlyph } from './icons';
 import { api, type ArtistTarget, type Playback, type Track } from './api';
 import { ArtistNames } from './ArtistLinks';
@@ -22,7 +23,7 @@ import { queueAudio } from './engine/queue-audio';
 import { clearResume, writeResume } from './engine/resume';
 import { type DeckId } from './engine/audio-bus';
 import { PreviewMixer } from './engine/preview-mixer';
-import { COMPLETE_S, ListenMeter, PROVIDER_LABEL, SKIP_MAX_S, SKIP_MIN_S, artistOf, classNames, fmtDuration, isSilent, markKey, qualifiesCompletion, toggleMuteState, type RepeatMode } from './util';
+import { COMPLETE_S, ListenMeter, PROVIDER_LABEL, SKIP_MAX_S, SKIP_MIN_S, artistOf, classNames, fmtDuration, isSilent, qualifiesCompletion, toggleMuteState, type RepeatMode } from './util';
 
 export interface Playing {
   track: Track;
@@ -913,7 +914,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
           label stays as the accessible name. */}
       {(playing.playback.open.length ? playing.playback.open : t?.url ? [{ provider: t.provider, label: `Open in ${PROVIDER_LABEL[t.provider] ?? t.provider}`, url: t.url }] : []).map((o) => (
         <a key={o.provider} className="openlink" href={o.url} target="_blank" rel="noreferrer noopener" aria-label={o.label}>
-          <ProviderMark provider={markKey(o.provider)} size={13} /> {o.label.replace(/^Open in\s+/i, '')}<span className="openlink__out" aria-hidden="true">↗</span>
+          <SourceMark provider={o.provider} size={13} /> {o.label.replace(/^Open in\s+/i, '')}<span className="openlink__out" aria-hidden="true">↗</span>
         </a>
       ))}
     </div>

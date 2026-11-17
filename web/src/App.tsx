@@ -1,4 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Radio } from './Radio';
+import { RadioPlayer } from './RadioPlayer';
+import { radioSession } from './engine/radio-client';
+import type { RadioStation } from './engine/radio';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { api, type PlaylistMix, newEventId, type FeedbackKind, type JobStatus, type Playback, type PlaylistSummary, type RecItem, type RecResult, type SavedItem, type Settings, type TasteSummary, type Track } from './api';
 import { Art } from './Art';
@@ -16,6 +20,7 @@ import { QueuePreparation } from './QueuePreparation';
 import { ListDownloadBar, ListDownloadButton, ListFolderButton } from './ListDownloadBar';
 import { useCardCache } from './useCardCache';
 import { useKeptKeys } from './useKeptKeys';
+import { useQueueGenres } from './useQueueGenres';
 import { savedTracks, playbackRows, preparationTracks, contextRows, addTargetOf, addedRow, insertAfter, SEARCH_CONTEXT } from './engine/queue-context';
 import { decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pickCarContext, pushMediaLibrary, pushMediaState, pushMediaTracks, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { engineAvailable, engineSend, listenFromEvent, markEngineEvent, subscribeEngineState } from './engine/native-engine';
@@ -24,11 +29,11 @@ import { setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-
 import { PLAY_THROUGH_DEFAULT } from './engine/crossfade';
 import { dl, downloadsAvailable } from './engine/downloads';
 import { readResume } from './engine/resume';
-import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, canPlayHere, classNames, describeTaste, dropExpired, expiredKeysOf, fmtBytes, keepFocus, historyBack, mergeRerank, nextRepeat, playbackOfTrack, readyFilter, stepQueue, type RepeatMode } from './util';
+import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, canPlayHere, classNames, describeTaste, dropExpired, expiredKeysOf, fmtBytes, LIST_LOOK_MS, keepFocus, historyBack, listStart, mergeRerank, nextRepeat, playbackOfTrack, readyFilter, settledWithin, stepQueue, type RepeatMode } from './util';
 import { queueAudio } from './engine/queue-audio';
 import { CarCatalog } from './engine/car-catalog';
 
-type Tab = 'discover' | 'saved' | 'profile' | 'downloads' | 'settings';
+type Tab = 'discover' | 'radio' | 'saved' | 'profile' | 'downloads' | 'settings';
 
 /** One slider from Familiar to Adventurous, in steps of 0.01. Its label reads the position in words. */
 function adventureLabel(a: number): string {
@@ -108,6 +113,14 @@ export function App() {
   const [runErr, setRunErr] = useState<string | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [playing, setPlaying] = useState<Playing | null>(null);
+  const radioStation = useSyncExternalStore(radioSession.subscribe, () => radioSession.get().station);
+  useEffect(() => { void radioSession.restore(); }, []);
+  const tune = (s: RadioStation) => {
+    startTokenRef.current++;
+    engineSend({ op: 'pause' });
+    setPlaying(null);
+    void radioSession.start(s);
+  };
   const [flags, setFlags] = useState<Record<string, FeedbackFlags>>({});
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [shuffle, setShuffle] = useState(() => readFlag(SHUFFLE_KEY) === 'on');
@@ -324,8 +337,8 @@ export function App() {
         setHidden(new Set());
         setFocusKey(null);
         setTab('discover');
-        const first = r.seeds[0];
-        if (first) play(playbackRows([first])[0]!, { newRound: true });
+        // SHUFFLE-START-001: shuffled, the list opens on a song already held in full.
+        startList(r.seeds, (first) => play(playbackRows([first])[0]!, { newRound: true }));
         const name = r.playlist?.name ?? 'The list';
         flash(`“${name}” is your now playing queue: ${r.seeds.length} starting ${r.seeds.length === 1 ? 'song' : 'songs'}. Finding new music from ${r.seeds.length === 1 ? 'it' : 'them'}…${r.missing ? ` ${r.missing} could not be looked up.` : ''}`);
         void run(true);
@@ -395,7 +408,12 @@ export function App() {
     }
     setPlayingContext(context);
   };
+  /** SHUFFLE-START-001: bumped by every play, so a list start still looking gives way to it. */
+  const startTokenRef = useRef(0);
   const play = (it: RecItem, o?: { newRound?: boolean; back?: boolean; keepList?: boolean }) => {
+    if (it.track.provider === 'radio' && it.track.radio_station) { tune(it.track.radio_station); return; }
+    if (radioSession.get().station) { void radioSession.stop().then(() => play(it, o)); return; }
+    startTokenRef.current++;
     // Playing from the queue leaves any saved list behind, so the queue's own rule applies again.
     if (!o?.keepList) { playingListRef.current = null; enterPlayingContext(null); }
     playedRef.current.add(it.track.key);
@@ -405,7 +423,11 @@ export function App() {
     setPlaying({ track: it.track, playback: it.playback });
     setFocusKey(it.track.key);
   };
-  const previewTrack = (t: Track) => setPlaying({ track: t, playback: playbackOfTrack(t) });
+  const previewTrack = (t: Track) => {
+    if (t.provider === 'radio' && t.radio_station) { tune(t.radio_station); return; }
+    if (radioSession.get().station) { void radioSession.stop().then(() => previewTrack(t)); return; }
+    startTokenRef.current++; setPlaying({ track: t, playback: playbackOfTrack(t) });
+  };
   /** SEARCH-QUEUE-001: a song played from a search list, with that list as what the skip buttons walk. */
   const playFromSearch = (t: Track, list: Track[]) => {
     playingListRef.current = null;
@@ -415,6 +437,34 @@ export function App() {
     historyRef.current = [...historyRef.current.slice(-199), t.key];
     previewTrack(t);
   };
+  /** A song played from the Saved view; `listId` is the list it came from, so that list's rule judges it. */
+  const playFromSaved = (t: Track, listId?: string) => {
+    playingListRef.current = listId ?? null;
+    enterPlayingContext(listId ?? 'all');
+    heardRef.current.add(t.key);
+    historyRef.current = [...historyRef.current.slice(-199), t.key];
+    previewTrack(t);
+  };
+  /**
+   * SHUFFLE-START-001: start a whole list. Shuffled, it opens on a song already held in full. A list
+   * the app has not examined reads as "nothing held" (or as holding only the song it happens to be
+   * playing), so it first asks what is held: file checks only, nothing when every song has been
+   * examined already, and bounded by LIST_LOOK_MS. Anything the listener plays meanwhile wins.
+   */
+  const startList = (list: readonly Track[], go: (t: Track) => void) => {
+    const ready = readyFilter(queueAudio, downloadsAvailable());
+    const token = ++startTokenRef.current;
+    const begin = () => {
+      if (token !== startTokenRef.current) return;
+      const t = listStart(list, { shuffle, ready });
+      if (t) go(t);
+    };
+    const look = (queueAudio as { look?: (tracks: readonly Track[]) => Promise<unknown> }).look;
+    if (!shuffle || !ready || !list.length || typeof look !== 'function') return begin();
+    void settledWithin(Promise.resolve().then(() => look.call(queueAudio, list)), LIST_LOOK_MS).then(begin);
+  };
+  const playAll = (list: Track[]) => startList(list, (t) => playFromSearch(t, list));
+  const playAllSaved = (list: Track[], listId: string) => startList(list, (t) => playFromSaved(t, listId));
   // PLAYLIST-QUEUE-001: with a saved list in the now playing queue, its songs play first, in the list's
   // order, then the songs discovered from them. Otherwise the queue is the discovered songs, as before.
   const queueRows = useMemo(() => {
@@ -837,6 +887,8 @@ export function App() {
 
   // ---------------------------------------------------------------- render
   const running = Boolean(job && !job.done);
+  // GENRE-LOAD-001: the rows with no genre are looked up a few at a time, once no run is going.
+  useQueueGenres(result, running, setResult);
   // ALLOWANCE-SEEN-001: every source the last discovery asked was refused for the day's allowance.
   const allowanceSpent = Object.values(result?.sources ?? {}).some((s) => s.state === 'budget');
   const sample = Boolean(result?.sample);
@@ -858,13 +910,13 @@ export function App() {
     const ro = new ResizeObserver(set);
     ro.observe(rail);
     return () => ro.disconnect();
-  }, [docked, Boolean(playing)]);
+  }, [docked, Boolean(playing), Boolean(radioStation)]);
 
   // The phone dock is measured the same way: its rows (title, progress, controls, song actions) wrap
   // differently by width and language, so a fixed --dock-h would either cover the last song or leave a gap.
   useEffect(() => {
     const root = document.documentElement;
-    if (!docked || !playing) {
+    if (!docked || (!playing && !radioStation)) {
       root.style.removeProperty('--dock-h');
       return;
     }
@@ -878,10 +930,10 @@ export function App() {
       ro.disconnect();
       root.style.removeProperty('--dock-h');
     };
-  }, [docked, Boolean(playing)]);
+  }, [docked, Boolean(playing), Boolean(radioStation)]);
 
   return (
-    <div className={classNames('app', docked && 'app--docked', playing && docked && 'has-dock', !docked && 'has-strip')}>
+    <div className={classNames('app', docked && 'app--docked', (playing || radioStation) && docked && 'has-dock', !docked && 'has-strip')}>
       <a className="skip" href="#main">
         Skip to content
       </a>
@@ -896,6 +948,7 @@ export function App() {
           {(
             [
               ['discover', 'Discover', 'discover'],
+              ['radio', 'Radio', 'note'],
               ['saved', 'Saved', 'heart'],
               ['profile', 'Profile', 'eq'],
               ...(dls.on ? ([['downloads', 'Downloads', 'download']] as const) : []),
@@ -934,6 +987,7 @@ export function App() {
             target={top.page.target}
             onBack={closeAlbum}
             onPreview={playFromSearch}
+            onPlayAll={playAll}
             onOpenAlbum={(a) => openAlbum({ id: a.id })}
             onOpenArtist={openArtist}
             seedKeys={new Set(seeds.map((s) => s.key))}
@@ -956,6 +1010,7 @@ export function App() {
             onOpenArtist={openArtist}
             onBack={closeAlbum}
             onPreview={playFromSearch}
+            onPlayAll={playAll}
             seedKeys={new Set(seeds.map((s) => s.key))}
             onAdd={onAdd}
             onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
@@ -1027,7 +1082,7 @@ export function App() {
                   {running ? 'Finding…' : 'Find my next favorite'}
                 </button>
                 {running && (
-                  <button className="push" type="button" onClick={cancel}>
+                  <button className="push push--big" type="button" onClick={cancel}>
                     Stop
                   </button>
                 )}
@@ -1231,6 +1286,8 @@ export function App() {
           </div>
         )}
 
+        {tab === 'radio' && <div className="tabpane" hidden={albumOpen}><Radio onTune={tune} /></div>}
+
         {tab === 'saved' && (
           <div className="tabpane" hidden={albumOpen}>
           <SavedView
@@ -1238,15 +1295,8 @@ export function App() {
             lists={lists}
             onLists={setLists}
             onVisibleList={setVisibleSavedList}
-            onPreview={(t, listId) => {
-              // Remember which list this play came from, so a finished song is judged by that
-              // list's rule rather than the discovery queue's.
-              playingListRef.current = listId ?? null;
-              enterPlayingContext(listId ?? 'all');
-              heardRef.current.add(t.key);
-              historyRef.current = [...historyRef.current.slice(-199), t.key];
-              previewTrack(t);
-            }}
+            onPreview={playFromSaved}
+            onPlayAll={playAllSaved}
             onRemoveSaved={removeSaved}
             onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
             cacheOf={cardCache}
@@ -1308,9 +1358,9 @@ export function App() {
       </main>
 
       <aside className="rail" aria-label="Player">
-        <QueuePreparation tracks={cacheTracks} parallel={settings?.dl_parallel ?? 0}
-          preload={{ target: settings?.preload_target ?? 'all', count: settings?.preload_count ?? 20 }} />
-        <Player
+        {!radioStation && <QueuePreparation tracks={cacheTracks} parallel={settings?.dl_parallel ?? 0}
+          preload={{ target: settings?.preload_target ?? 'all', count: settings?.preload_count ?? 20 }} />}
+        {radioStation ? <RadioPlayer docked={docked} onOpenArtist={openArtist} /> : <Player
           onOpenArtist={openArtist}
           playing={playing}
           upNext={upNext}
@@ -1348,7 +1398,7 @@ export function App() {
             const it = activeItems.find((x) => x.track.key === k);
             if (it) play(it, { keepList: true });
           }}
-        />
+        />}
       </aside>
     </div>
   );

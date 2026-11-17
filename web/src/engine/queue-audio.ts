@@ -75,6 +75,7 @@ export class SwitchingQueue implements QueueAudioPort {
   sourceHint(t: Track) { return this.target.sourceHint(t); }
   readyUrl(t: Track) { return this.target.readyUrl(t); }
   isReady(t: Track) { return this.target.isReady(t); }
+  look(tracks: readonly Track[]) { return this.target.look(tracks); }
   expiredKeys() { return this.target.expiredKeys(); }
   snapshot() { return this.target.snapshot(); }
   snapshotFor(tracks: readonly Track[]) { return this.target.snapshotFor(tracks); }

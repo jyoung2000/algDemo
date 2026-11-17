@@ -150,6 +150,9 @@ object EngineHub {
 
   private fun dispatch(p: EnginePlayer, cmd: JSONObject) {
     when (cmd.optString("op")) {
+      "radio-meta" -> p.pageRadioMetadata(cmd.optString("id"), cmd.optString("title"), cmd.optString("artist"), cmd.optString("artwork"))
+      "radio" -> p.pageRadio(cmd.optString("id"), cmd.optString("title"), cmd.optString("station"))
+      "radio-shuffle" -> p.radioShuffleChanged()
       "load" -> {
         val song = songFrom(cmd.optJSONObject("song")) ?: run { Log.w(TAG, "load without a usable song"); return }
         val mediaId = cmd.optString("mediaId").takeIf { it.isNotEmpty() && it.length <= 1024 && !cmd.isNull("mediaId") }

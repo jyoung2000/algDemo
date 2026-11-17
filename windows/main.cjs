@@ -38,6 +38,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 let win = null;
 
 const TOOLS = app.isPackaged ? path.join(process.resourcesPath, 'tools') : path.join(__dirname, '..', '.data', 'tools');
+const radio = require('./radio.cjs').createRadio({ toolsDir: TOOLS, favouritesPath: path.join(app.commandLine.getSwitchValue('user-data-dir') || app.getPath('userData'), 'radio-stations.json') });
 const MUSIC_CHOICE = path.join(app.getPath('userData'), 'music-folder.json');
 function savedMusicFolder() {
   try {
@@ -108,6 +109,7 @@ ipcMain.on('aw:playback', (event, playing) => {
   }
 });
 app.on('before-quit', () => {
+  radio.shutdown();
   downloads?.shutdown();
   if (suspensionBlocker !== null) powerSaveBlocker.stop(suspensionBlocker);
 });
@@ -195,6 +197,10 @@ app.whenReady().then(() => {
   protocol.handle('https', async (req) => {
     const url = new URL(req.url);
     if (url.host !== APP_HOST) return net.fetch(req, { bypassCustomProtocolHandlers: true });
+    if (url.pathname === '/radio-native') {
+      try { const q = url.searchParams.get('q') || '{}'; if (q.length > 1000000) throw Error('Radio request too large'); const value = await radio.handle(JSON.parse(q)); return Response.json(value, { headers: { 'Cache-Control': 'no-store' } }); }
+      catch (e) { return Response.json({ error: e.message }, { status: 400 }); }
+    }
     // A downloaded full song, served at the app's own origin so the page may route it through Web
     // Audio (a cross-origin element without CORS is silent there). Range requests, because an
     // <audio> element seeks with them and will not report a duration without them.

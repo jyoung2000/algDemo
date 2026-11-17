@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Glyph, ProviderMark } from '@now-playing/aqua-ui/icons';
+import { Glyph } from '@now-playing/aqua-ui/icons';
+import { SourceMark } from './SourceMark';
 import { api, ApiError, type AlbumView as AlbumData, type ArtistTarget, type PlaylistSummary, type Track } from './api';
 import { Art } from './Art';
 import { ALBUM_KIND, albumFrom } from './AlbumShelf';
-import { markKey } from './util';
 import { ListSaveButton } from './ListSaveButton';
 import { albumFolderName } from './engine/list-save';
 import { TrackList } from './Search';
@@ -21,6 +21,8 @@ interface Props {
   target: AlbumTarget;
   onBack: () => void;
   onPreview: (t: Track, list: Track[]) => void;
+  /** SHUFFLE-START-001: play the whole album; the app chooses the song it starts on. */
+  onPlayAll?: (list: Track[]) => void;
   seedKeys: Set<string>;
   onAdd: (t: Track) => void;
   onDownload?: ((t: Track) => void) | undefined;
@@ -50,7 +52,7 @@ function length(sec: number | null): string | null {
  * buttons walk it; Save album keeps it in Saved, under Albums (ALBUM-SAVE-001); download and folder work as on
  * any list. Playing it teaches the album taste (ALBUM-TASTE-001) like any other listening.
  */
-export function AlbumView({ target, onBack, onPreview, seedKeys, onAdd, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys, playingKey, onOpenArtist }: Props) {
+export function AlbumView({ target, onBack, onPreview, onPlayAll, seedKeys, onAdd, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys, playingKey, onOpenArtist }: Props) {
   const [st, setSt] = useState<State>({ state: 'loading' });
   const [note, setNote] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -124,12 +126,12 @@ export function AlbumView({ target, onBack, onPreview, seedKeys, onAdd, onDownlo
                 )}
                 <span className="album__meta">{meta}</span>
                 <span className="album__src">
-                  <ProviderMark provider={markKey(a.provider)} size={13} /> {albumFrom(a)}
+                  <SourceMark provider={a.provider} size={13} /> {albumFrom(a)}
                 </span>
               </div>
             </div>
             <div className="album__actions">
-              <button className="push push--default" type="button" disabled={!a.tracks.length} onClick={() => onPreview(a.tracks[0]!, a.tracks)}>
+              <button className="push push--default" type="button" disabled={!a.tracks.length} onClick={() => (onPlayAll ? onPlayAll(a.tracks) : onPreview(a.tracks[0]!, a.tracks))}>
                 <Glyph name="play" size={14} /> Play album
               </button>
               {(() => {

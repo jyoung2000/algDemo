@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ProviderMark } from '@now-playing/aqua-ui/icons';
+import { SourceMark } from './SourceMark';
 import { RefreshGlyph } from './icons';
 import { api, type Health, type Settings as S, type Status } from './api';
 import { parseHistoryFile, type ImportSummary } from './engine/import';
 import { MicSettings } from './MicSettings';
 import { QueueDownloadSettings } from './QueueDownloadSettings';
 import { AudioSettings } from './AudioSettings';
-import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, classNames, fmtBytes, markKey } from './util';
+import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, classNames, fmtBytes } from './util';
 import './discovery-settings.css';
 
 const CAPS: [string, string][] = [
@@ -424,7 +424,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, sour
             {Object.entries(health.providers).map(([p, caps]) => (
               <div className="captable__row" role="row" key={p}>
                 <span role="rowheader" className="captable__src">
-                  <ProviderMark provider={markKey(p)} size={13} /> {PROVIDER_LABEL[p] ?? p}
+                  <SourceMark provider={p} size={13} /> {PROVIDER_LABEL[p] ?? p}
                 </span>
                 {CAPS.map(([c]) => {
                   const s = caps[c];

@@ -2,6 +2,7 @@ package com.nowplaying.discovery.engine
 
 import android.content.BroadcastReceiver
 import android.content.Context
+import com.nowplaying.discovery.RadioCatalog
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioAttributes
@@ -96,6 +97,29 @@ class EnginePlayer(
   private val streamer = Executors.newSingleThreadExecutor { r -> Thread(r, "AirwaveStream").apply { isDaemon = true } }
   /** The song now playing from its source rather than from a file (STREAM-DL-001). */
   private var streamingKey: String? = null
+  private var radioLive = false
+
+  /** RADIO-001: the same native engine and EQ, fed by a bounded live PCM source. */
+  fun pageRadioMetadata(id: String, title: String, artist: String, artwork: String = "") {
+    if (!radioLive || loadedKey != "radio:$id" || title.isBlank()) return
+    val old = queue.current ?: return
+    queue.set(listOf(Entry(old.song.copy(title = title.take(200), artist = artist.take(200), artwork = artwork.takeIf { it.isNotBlank() }))), 0)
+    invalidateState(); emitSoon()
+  }
+
+  fun pageRadio(id: String, title: String, station: String) {
+    val live = com.nowplaying.discovery.RadioNative.session?.takeIf { it.id == id } ?: return
+    loadGeneration++; restored = false; stopLanded()
+    radioLive = true; loadedKey = "radio:$id"; waitingFor = null; streamingKey = null
+    val song = MediaHub.Song("radio:$id", title, station, "Live radio", null, -1, true, null)
+    queue.set(listOf(Entry(song)), 0); queue.shuffle = false; queue.repeat = PlayQueue.Repeat.OFF
+    cue = null; cueFor = null; preparedNextKey = null; ended = false; error = null
+    engine.setNext(null, null); engine.setRepeatOne(false)
+    if (!requestFocus()) return
+    playWhenReady = true; holdWake(true)
+    engine.load(song.id, live.ring, 0, true); engine.play()
+    invalidateState(); emitSoon()
+  }
 
   /** A queue entry: the song, and the id it was chosen under (a playlist-scoped car id keeps its context). */
   data class Entry(val song: MediaHub.Song, val mediaId: String = song.id)
@@ -152,6 +176,7 @@ class EnginePlayer(
    * the newest [rev] the page had seen; a load from before a change the service made is stale.
    */
   fun pageLoad(song: MediaHub.Song, mediaId: String?, positionMs: Long, play: Boolean, pageRev: Int) {
+    if (radioLive) { radioLive = false; com.nowplaying.discovery.RadioNative.stop(); com.nowplaying.discovery.RadioNative.shuffle = false }
     val id = mediaId ?: song.id
     val current = queue.current
     Log.i(TAG, "page load ${song.id.take(60)} link=${song.source != null} play=$play rev=$pageRev/$rev")
@@ -178,6 +203,7 @@ class EnginePlayer(
 
   /** What the page will play after the current song; null for nothing (end of list, repeat-one). */
   fun pageCue(song: MediaHub.Song?) {
+    if (radioLive) return
     val now = queue.current?.song?.id
     val wanted = song?.takeIf { it.source != null && it.id != now }
     if (wanted?.id == cue?.id && wanted?.source == cue?.source && cueFor == now) return
@@ -199,6 +225,9 @@ class EnginePlayer(
   fun pageRepeat(mode: Int) = applyRepeat(mode)
   fun pageShuffle(on: Boolean) { queue.shuffle = on }
 
+  /** RADIO-SHUFFLE-001: a radio op changed the station-shuffle flag; the session must mirror it. */
+  fun radioShuffleChanged() { if (radioLive) { invalidateState(); emitSoon() } }
+
   /**
    * The page pushed its list or library (a new queue, a download finished, a song was evicted).
    * While the page is the authority its list is the queue — the current song stays current, kept
@@ -206,6 +235,7 @@ class EnginePlayer(
    * waiting for its file starts once the file is here.
    */
   fun libraryChanged(list: List<MediaHub.Song>, shuffle: Boolean, repeat: Int) {
+    if (radioLive) return
     if (pageLive && list.isNotEmpty()) {
       val current = queue.current
       val entries = list.map { s -> if (current != null && s.id == current.song.id) Entry(s, current.mediaId) else Entry(s) }
@@ -289,14 +319,14 @@ class EnginePlayer(
     publishedState = state
     val playing = playWhenReady && state == Player.STATE_READY
     return State.Builder()
-      .setAvailableCommands(COMMANDS)
+      .setAvailableCommands(if (radioLive) radioCommands() else COMMANDS)
       .setPlaybackState(state)
       .setPlayerError(error)
       .setPlayWhenReady(playWhenReady, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
       .setPlaylist(playlist)
       .setCurrentMediaItemIndex(queue.index.coerceAtLeast(0))
       .setContentPositionMs(if (playing) PositionSupplier.getExtrapolating(positionMs, 1f) else PositionSupplier.getConstant(positionMs))
-      .setShuffleModeEnabled(queue.shuffle)
+      .setShuffleModeEnabled(if (radioLive) com.nowplaying.discovery.RadioNative.shuffle else queue.shuffle)
       .setRepeatMode(
         when (queue.repeat) {
           PlayQueue.Repeat.ONE -> Player.REPEAT_MODE_ONE
@@ -335,6 +365,8 @@ class EnginePlayer(
   override fun handleSetMediaItems(mediaItems: MutableList<MediaItem>, startIndex: Int, startPositionMs: Long): ListenableFuture<*> {
     val start = if (startIndex == C.INDEX_UNSET) 0 else startIndex.coerceIn(0, (mediaItems.size - 1).coerceAtLeast(0))
     val chosen = mediaItems.getOrNull(start)?.mediaId
+    // Radio is native even with a live page: never send station ids through music lookup/playId.
+    if (chosen != null && RadioCatalog.stationId(chosen) != null) return RadioCatalog.play(context, chosen)
     if (pageLive && chosen != null) {
       // The page knows the playlist context, the shuffle round and how to fetch a song it lacks.
       page?.command(JSONObject().put("type", "playId").put("id", chosen))
@@ -405,7 +437,32 @@ class EnginePlayer(
     return Futures.immediateVoidFuture()
   }
 
+  /**
+   * RADIO-001: live radio keeps Previous/Next, which SWITCH STATIONS in the station list the
+   * listener is browsing (owner: "skipping back and forth should let you skip and progress
+   * stations"). Seeking forward inside the broadcast stays impossible; rewinding into the retained
+   * five minutes is the separate Rewind control. Repeat means nothing for a broadcast; shuffle
+   * stays and makes Previous/Next tune a RANDOM other station of the list (RADIO-SHUFFLE-001).
+   */
+  private fun radioCommands(): Player.Commands {
+    val station = com.nowplaying.discovery.RadioNative.session?.station
+    val builder = COMMANDS.buildUpon().removeAll(Player.COMMAND_SEEK_FORWARD, Player.COMMAND_SET_REPEAT_MODE)
+    if (station == null || !RadioCatalog.canSkip(station)) {
+      builder.removeAll(Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM, Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+    }
+    return builder.build()
+  }
+
   override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> {
+    if (radioLive) {
+      when (seekCommand) {
+        Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> return RadioCatalog.skip(context, 1)
+        Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> return RadioCatalog.skip(context, -1)
+        Player.COMMAND_SEEK_BACK -> pageSeek((engine.snapshot.positionFrames * 1000 / SAMPLE_RATE - 15000).coerceAtLeast(0))
+        Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM -> pageSeek(positionMs)
+      }
+      return Futures.immediateVoidFuture()
+    }
     when (seekCommand) {
       Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> skip(forward = true)
       Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> {
@@ -431,6 +488,13 @@ class EnginePlayer(
   }
 
   override fun handleSetShuffleModeEnabled(shuffleModeEnabled: Boolean): ListenableFuture<*> {
+    if (radioLive) {
+      // RADIO-SHUFFLE-001: while radio is live the car's shuffle makes skips tune a random other
+      // station; it never touches the song queue's round, and the session's flag mirrors it.
+      com.nowplaying.discovery.RadioNative.shuffle = shuffleModeEnabled
+      invalidateState()
+      return Futures.immediateVoidFuture()
+    }
     queue.shuffle = shuffleModeEnabled
     if (pageLive) page?.command(JSONObject().put("type", "shuffle").put("on", shuffleModeEnabled))
     else { preparedNextKey = null; prepareNext() }
@@ -454,6 +518,8 @@ class EnginePlayer(
 
   private fun changePlayWhenReady(play: Boolean) {
     if (play && !requestFocus()) return
+    // Car, lock-screen, focus and noisy-device controls share the phone radio pause state.
+    if (radioLive) com.nowplaying.discovery.RadioNative.session?.paused = !play
     playWhenReady = play
     if (play) {
       if (restored) loadCurrent(pendingStartMs, chosen = true)
@@ -606,6 +672,7 @@ class EnginePlayer(
 
   /** With the mixer on, open the next song on the spare deck so the blend can start on time. */
   private fun prepareNext() {
+    if (radioLive) return
     val next = if (mix > 0) upcoming() else null
     if (next == null || loadedKey == null) {
       if (preparedNextKey != null) engine.setNext(null, null)

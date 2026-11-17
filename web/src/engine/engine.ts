@@ -229,6 +229,7 @@ export function buildFeedback(events: FeedbackEvent[], nowTs: number, cfg: Engin
   const hidden = new Set<string>();
   const sorted = [...events].sort((x, y) => x.ts - y.ts || (x.event_id < y.event_id ? -1 : x.event_id > y.event_id ? 1 : 0));
   for (const e of sorted) {
+    if ((e.track as (typeof e.track & { kind?: string }))?.kind === 'radio-programme') continue;
     if (seen.has(e.event_id) || !(e.kind in FEEDBACK_WEIGHTS) || e.kind === 'seed') continue;
     seen.add(e.event_id);
     const w = FEEDBACK_WEIGHTS[e.kind]! * decay(e.ts, nowTs, cfg.feedbackHalfLifeDays);
@@ -284,6 +285,7 @@ export function buildFeedback2(events: FeedbackEvent[], nowTs: number, cfg: Engi
   const albumNames: Record<string, string> = {};
   const sorted = [...events].sort((x, y) => x.ts - y.ts || (x.event_id < y.event_id ? -1 : x.event_id > y.event_id ? 1 : 0));
   for (const e of sorted) {
+    if ((e.track as (typeof e.track & { kind?: string }))?.kind === 'radio-programme') continue;
     if (seen.has(e.event_id) || !(e.kind in FEEDBACK_WEIGHTS) || e.kind === 'seed') continue;
     seen.add(e.event_id);
     if (e.kind === 'skip') {

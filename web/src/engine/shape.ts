@@ -9,7 +9,7 @@ export type Dict = Record<string, any>;
 
 export const TRACK_FIELDS = [
   'id', 'provider', 'platform_id', 'key', 'title', 'artists', 'artist', 'album', 'version', 'versions', 'duration', 'artwork', 'url',
-  'isrc', 'release', 'tags', 'preview', 'explicit', 'bpm', 'kind', 'warning', 'incomplete', 'embed_url', 'artist_ids', 'album_id',
+  'radio_station', 'isrc', 'release', 'tags', 'preview', 'explicit', 'bpm', 'kind', 'warning', 'incomplete', 'embed_url', 'artist_ids', 'album_id',
 ] as const;
 
 export const SOURCE_LABELS: Record<string, string> = {

@@ -19,14 +19,18 @@ import { parseItunes } from './apple';
 import { fold } from './identity';
 import { parseSongFlat, YT_ALBUM, type YouTubeMusic } from './ytmusic';
 import type { SoundCloud } from './soundcloud';
+import type { Bandcamp } from './bandcamp';
 import { ALBUM_SUFFIX, albumKeyOf, cleanAlbumTitle, isBodyOfWork, namesAlbum, type AlbumOf } from './album-key';
 import type { Track } from './track';
 import type { Store } from './store';
+import { artistCache } from './refresh-cache';
 
 // Untyped JSON from Deezer and iTunes, read field by field as the other provider adapters do.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = Record<string, any>;
 export interface Ctx {
+  refresh?: boolean;
+  refreshToken?: string;
   meter?: Meter;
   token?: CancelToken;
 }
@@ -35,9 +39,9 @@ export type AlbumKind = 'album' | 'ep' | 'mixtape' | 'compilation' | 'single';
 export const ALBUM_KIND_LABEL: Record<AlbumKind, string> = { album: 'Album', ep: 'EP', mixtape: 'Mixtape', compilation: 'Compilation', single: 'Single' };
 
 export interface AlbumSummary {
-  /** `dz:<deezer id>`, `ap:<itunes collection id>`, `yt:<MPREb_ page id>` or `sc:<set id>`. */
+  /** `dz:<deezer id>`, `ap:<itunes collection id>`, `yt:<MPREb_ page id>`, `sc:<set id>` or `bc:<band id>:<a|t><item id>`. */
   id: string;
-  provider: 'deezer' | 'apple' | 'ytmusic' | 'soundcloud';
+  provider: 'deezer' | 'apple' | 'ytmusic' | 'soundcloud' | 'bandcamp';
   title: string;
   artist: string;
   artwork: string | null;
@@ -299,6 +303,7 @@ export class Albums {
     private readonly store?: Store,
     private readonly yt?: YouTubeMusic,
     private readonly sc?: SoundCloud,
+    private readonly bandcamp?: Bandcamp,
   ) {}
 
   private async get(url: string, c: Ctx, category: 'metadata' | 'search', maxBytes: number): Promise<Json> {
@@ -311,13 +316,13 @@ export class Albums {
   }
 
   private searchDeezer(q: string, limit: number, c: Ctx): Promise<AlbumSummary[]> {
-    return cached(this.store, `dz:albsearch:${fold(q)}:${limit}`, 'search', 15 * 60, async () =>
+    return cached(artistCache(this.store, c), `dz:albsearch:${fold(q)}:${limit}`, 'search', 15 * 60, async () =>
       parseDeezerAlbums(await this.get(`${DZ}/search/album?q=${encodeURIComponent(q)}&limit=${limit}`, c, 'metadata', 800_000)),
     );
   }
 
   private searchApple(q: string, limit: number, c: Ctx): Promise<AlbumSummary[]> {
-    return cached(this.store, `ap:albsearch:${q.trim().toLowerCase()}:${limit}`, 'search', 15 * 60, async () =>
+    return cached(artistCache(this.store, c), `ap:albsearch:${q.trim().toLowerCase()}:${limit}`, 'search', 15 * 60, async () =>
       parseItunesAlbums(await this.get(`https://itunes.apple.com/search?term=${encodeURIComponent(q.trim())}&entity=album&limit=${limit}`, c, 'search', 400_000)),
     );
   }
@@ -325,13 +330,13 @@ export class Albums {
   private searchYt(q: string, c: Ctx): Promise<AlbumSummary[]> {
     const yt = this.yt;
     if (!yt) return Promise.reject(new ProviderError('YouTube Music is not available here.'));
-    return cached(this.store, `yt:albsearch:${fold(q)}`, 'search', 15 * 60, async () => parseYtAlbumSearch(await yt.albumSearch(q, c)));
+    return cached(artistCache(this.store, c), `yt:albsearch:${fold(q)}`, 'search', 15 * 60, async () => parseYtAlbumSearch(await yt.albumSearch(q, c)));
   }
 
   private searchSc(q: string, limit: number, c: Ctx): Promise<AlbumSummary[]> {
     const sc = this.sc;
     if (!sc) return Promise.reject(new ProviderError('SoundCloud is not available here.'));
-    return cached(this.store, `sc:albsearch:${fold(q)}:${limit}`, 'search', 15 * 60, async () =>
+    return cached(artistCache(this.store, c), `sc:albsearch:${fold(q)}:${limit}`, 'search', 15 * 60, async () =>
       parseScAlbums(await sc.api(`/search/albums?q=${encodeURIComponent(q)}&limit=${limit}&offset=0`, c)),
     );
   }
@@ -363,16 +368,38 @@ export class Albums {
   open(id: string, c: Ctx = {}): Promise<AlbumView> {
     const yt = /^yt:(.+)$/.exec(id);
     if (yt && YT_ALBUM.test(yt[1]!)) return this.openYt(yt[1]!, c);
+    const bc = /^bc:(\d{1,15}):([at])(\d{1,15})$/.exec(id);
+    if (bc) return this.openBandcamp(Number(bc[1]), bc[2] as 'a' | 't', Number(bc[3]), c);
     const m = /^(dz|ap|sc):(\d{1,15})$/.exec(id);
     if (!m) return Promise.reject(new ProviderError('That is not an album this app can open.'));
     if (m[1] === 'sc') return this.openSc(m[2]!, c);
     return m[1] === 'dz' ? this.openDeezer(m[2]!, c) : this.openApple(m[2]!, c);
   }
 
+  /**
+   * ARTIST-ALL-SOURCES-001: a Bandcamp album, or a track released on its own, as an album page. Only
+   * the songs Bandcamp streams whole are listed; one it only sells has nothing to play.
+   */
+  private openBandcamp(bandId: number, type: 'a' | 't', itemId: number, c: Ctx): Promise<AlbumView> {
+    const bandcamp = this.bandcamp;
+    if (!bandcamp) return Promise.reject(new ProviderError('Bandcamp is not available here.'));
+    const id = `bc:${bandId}:${type}${itemId}`;
+    return cached(artistCache(this.store, c), `bc:albumview2:${id}`, 'album', 7 * DAY, async () => {
+      const r = await bandcamp.release(bandId, type, itemId, c);
+      if (!r) throw new ProviderError('Bandcamp has no release with that id.');
+      const tracks = r.tracks.map((t) => ({ ...t, album_id: id }) as Track);
+      return {
+        id, provider: 'bandcamp' as const, title: r.title, artist: r.artist, artwork: r.artwork, year: r.year,
+        kind: albumKind(r.isAlbum ? null : 'single', r.title, r.total), count: tracks.length, url: r.url,
+        tracks, duration: sumDuration(tracks), genres: r.genres,
+      };
+    });
+  }
+
   private openYt(bid: string, c: Ctx): Promise<AlbumView> {
     const yt = this.yt;
     if (!yt) return Promise.reject(new ProviderError('YouTube Music is not available here.'));
-    return cached(this.store, `yt:albumview:${bid}`, 'album', 7 * DAY, async () => parseYtAlbum(await yt.albumPage(bid, c), bid, yt));
+    return cached(artistCache(this.store, c), `yt:albumview:${bid}`, 'album', 7 * DAY, async () => parseYtAlbum(await yt.albumPage(bid, c), bid, yt));
   }
 
   /** A SoundCloud set lists its first songs in full and the rest by id only; those are fetched by id. */
@@ -380,7 +407,7 @@ export class Albums {
     const sc = this.sc;
     if (!sc) return Promise.reject(new ProviderError('SoundCloud is not available here.'));
     // v2: views cached before ALBUM-ALL-SONGS-001 left out preview-only songs.
-    return cached(this.store, `sc:albumview2:${sid}`, 'album', 7 * DAY, async () => {
+    return cached(artistCache(this.store, c), `sc:albumview2:${sid}`, 'album', 7 * DAY, async () => {
       const d = await sc.api(`/playlists/${sid}?representation=full`, c);
       if (!d || d['kind'] !== 'playlist') throw new ProviderError('SoundCloud has no album with that id.');
       const rows = ((d['tracks'] as Json[] | undefined) ?? []).filter((t) => t && t['id']);
@@ -410,7 +437,7 @@ export class Albums {
 
   private openDeezer(aid: string, c: Ctx): Promise<AlbumView> {
     // v2: views cached before ALBUM-ALL-SONGS-001 left out songs Deezer cannot stream here.
-    return cached(this.store, `dz:albumview2:${aid}`, 'album', 7 * DAY, async () => {
+    return cached(artistCache(this.store, c), `dz:albumview2:${aid}`, 'album', 7 * DAY, async () => {
       const d = await this.get(`${DZ}/album/${aid}`, c, 'metadata', 1_500_000);
       let rows = ((d['tracks']?.['data'] as Json[] | undefined) ?? []);
       if (typeof d['nb_tracks'] === 'number' && d['nb_tracks'] > rows.length) {
@@ -433,7 +460,7 @@ export class Albums {
   }
 
   private openApple(cid: string, c: Ctx): Promise<AlbumView> {
-    return cached(this.store, `ap:albumview:${cid}`, 'album', 7 * DAY, async () => {
+    return cached(artistCache(this.store, c), `ap:albumview:${cid}`, 'album', 7 * DAY, async () => {
       const d = await this.get(`https://itunes.apple.com/lookup?id=${cid}&entity=song&limit=200`, c, 'search', 800_000);
       const results = (d['results'] as Json[] | undefined) ?? [];
       const head = results.find((x) => x['wrapperType'] === 'collection');
@@ -456,7 +483,7 @@ export class Albums {
     const aid = typeof t.album_id === 'string' || typeof t.album_id === 'number' ? String(t.album_id) : '';
     if (/^\d{1,15}$/.test(aid)) return this.open(`dz:${aid}`, c);
     // ALBUM-SEARCH-002: a YouTube Music or SoundCloud album song names the album it came from.
-    if (/^(yt|sc):/.test(aid)) return this.open(aid, c);
+    if (/^(yt|sc|bc):/.test(aid)) return this.open(aid, c);
     const album = cleanAlbumTitle(String(t.album ?? ''));
     const artist = primaryArtist(t);
     if (!album || !artist) return null;

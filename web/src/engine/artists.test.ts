@@ -9,8 +9,8 @@ import { dirname, join } from 'node:path';
 import { Albums } from './albums';
 import { Artists, parseDeezerArtists, parseYtArtistPage, parseYtArtistSearch, parseYtSongRows, parseYtDiscography, artistTargetOf, partitionFeatures, nextSearchIndex } from './artists';
 import { Deezer } from './deezer';
-import { YouTubeMusic } from './ytmusic';
-import { Http, HostPacer, type HttpPort, type HttpRequest } from './net';
+import { YouTubeMusic, parseSearchSongsPage } from './ytmusic';
+import { Http, HostPacer, Meter, type HttpPort, type HttpRequest } from './net';
 import type { Track } from './track';
 import type { Store } from './store';
 
@@ -38,8 +38,13 @@ function mapStore() {
 function world(routes: Record<string, unknown>, store?: Store, tap?: (req: HttpRequest) => unknown) {
   const seen: { url: string; body?: string }[] = [];
   const port: HttpPort = {
+    // Waits between retries are not what these tests are about: they end at once.
+    async delay() {},
     async request(req: HttpRequest) {
-      const tapped = tap?.(req);
+      // A tap may take its time: a promise is waited for, as a slow service would be.
+      const tapped = await tap?.(req);
+      // `{ __status: 403 }` from a tap is the service answering with that status.
+      if (tapped && typeof tapped === 'object' && '__status' in tapped) return { status: Number((tapped as { __status: number }).__status), headers: {}, body: enc('{}') };
       if (tapped !== undefined) return { status: 200, headers: {}, body: enc(JSON.stringify(tapped)) };
       const body = req.body === null || req.body === undefined ? undefined : typeof req.body === 'string' ? req.body : new TextDecoder().decode(req.body as unknown as Uint8Array);
       seen.push({ url: req.url, ...(body ? { body } : {}) });
@@ -60,11 +65,19 @@ function world(routes: Record<string, unknown>, store?: Store, tap?: (req: HttpR
   return { artists: new Artists(http, dz, yt, store, new Albums(http, dz, undefined, yt)), seen };
 }
 
+/** The requests of the name search itself; FEATURES-ALL-001 asks two more searches beside it. */
+const named = (seen: { url: string }[]) => seen.filter((x) => x.url.includes('/search/track') && new URL(x.url).searchParams.get('q') === 'Ken Carson');
+
 const FULL = {
+  // FEATURES-ALL-001: the two extra feature searches find nothing unless a test gives them rows.
+  'api.deezer.com/search/track?q=feat%20Ken%20Carson': { data: [] },
+  'api.deezer.com/search/track?q=track%3A%22Ken%20Carson%22': { data: [] },
   'api.deezer.com/search/artist': DZ_SEARCH,
   'api.deezer.com/artist/2568121/top': DZ_TOP,
   'api.deezer.com/artist/2568121/albums': DZ_ALBUMS,
   'api.deezer.com/artist/2568121': DZ_ARTIST,
+  // FEATURES-ALL-002: the songs search (asked for features) finds nothing unless a test gives it rows.
+  'music.youtube.com/youtubei/v1/search#EgWKAQIIAWoMEA4QChADEAQQCRAF': {},
   'music.youtube.com/youtubei/v1/search#': YT_SEARCH,
   [`music.youtube.com/youtubei/v1/browse#${UC}`]: YT_PAGE,
   [`music.youtube.com/youtubei/v1/browse#${SONGS_LIST}`]: YT_SONGS,
@@ -123,7 +136,19 @@ describe('reading artists', () => {
         moreContentButton: { buttonRenderer: { navigationEndpoint: { browseEndpoint: { browseId: UC, params: 'ggMIegYIAxoCGAI%3D' } } } },
       },
     };
-    expect(parseYtArtistPage(copy).more).toEqual([{ kind: 'albums', params: 'ggMIegYIAxoCGAI%3D' }]);
+    expect(parseYtArtistPage(copy).more).toEqual([{ kind: 'albums', browseId: UC, params: 'ggMIegYIAxoCGAI%3D' }]);
+
+    // DISCOGRAPHY-MORE-001. Measured 2026-11-16: the link now names the list by its own id, "MPAD" and
+    // the artist's channel. Asked for under the channel id alone, YouTube Music answers the artist
+    // page again, so the singles past the first ten were never listed.
+    const link = shelf.musicCarouselShelfRenderer.header.musicCarouselShelfBasicHeaderRenderer.moreContentButton.buttonRenderer.navigationEndpoint.browseEndpoint;
+    link.browseId = `MPAD${UC}`;
+    expect(parseYtArtistPage(copy).more).toEqual([{ kind: 'albums', browseId: `MPAD${UC}`, params: 'ggMIegYIAxoCGAI%3D' }]);
+    // A link to anything that is not this artist's own list is not followed.
+    link.browseId = 'MPADUCbbbbbbbbbbbbbbbbbbbbbb';
+    expect(parseYtArtistPage(copy, UC).more).toEqual([]);
+    link.browseId = 'VLOLAK5uy_ndKAxiDLpQ_SjzkCc7BP09MEEIhDl9NRc';
+    expect(parseYtArtistPage(copy, UC).more).toEqual([]);
 
     const grid = {
       contents: { singleColumnBrowseResultsRenderer: { tabs: [{ tabRenderer: { content: { sectionListRenderer: { contents: [{ gridRenderer: { items: [
@@ -377,7 +402,7 @@ describe('every song the artist has released (ARTIST-PAGE-001)', () => {
     // Every page was asked for, every candidate read, and only the confirmed ones kept.
     expect(all.features).toHaveLength(59);
     expect(all.features.map((t) => t.title)).not.toContain('Guest 9060');
-    expect(w.seen.filter((s) => s.url.includes('/search/track')).map((s) => new URL(s.url).searchParams.get('index'))).toEqual([null, '20', '40']);
+    expect(named(w.seen).map((s) => new URL(s.url).searchParams.get('index'))).toEqual([null, '20', '40']);
     expect(w.seen.filter((s) => /\/track\/90\d\d/.test(s.url))).toHaveLength(60);
     expect(all.featuresComplete).toBe(true);
   });
@@ -391,6 +416,7 @@ describe('every song the artist has released (ARTIST-PAGE-001)', () => {
     const w = world({ ...FULL, 'api.deezer.com/track/9501': g(9501), 'api.deezer.com/track/9502': g(9502) }, undefined, (req) => {
       const u = new URL(req.url);
       if (u.pathname !== '/search/track') return undefined;
+      if (u.searchParams.get('q') !== 'Ken Carson') return { data: [] };
       const agent = Object.entries(req.headers ?? {}).find(([k]) => k.toLowerCase() === 'user-agent')?.[1];
       uas.push(agent);
       if (u.searchParams.get('index') === '1') return { data: agent === 'AirwaveDiscovery/0.18.13' ? [g(9502)] : [] };
@@ -417,7 +443,9 @@ describe('every song the artist has released (ARTIST-PAGE-001)', () => {
     const all = await w.artists.everySong(a);
     expect(all.features.map((t) => t.title)).toEqual(['Guest 9601']);
     expect([...kept.m.keys()].some((k) => k.startsWith('artistsongs4:dz:2568121:'))).toBe(true);
-    expect([...kept.m.keys()].some((k) => k.startsWith('artistview2:2568121:'))).toBe(true);
+    // artistview3: the view also says what each service gave (ARTIST-SOURCES-001). artistview4: its
+    // YouTube Music shelves are read whole, by the list's own id (DISCOGRAPHY-MORE-001).
+    expect([...kept.m.keys()].some((k) => k.startsWith('artistview4:2568121:'))).toBe(true);
     // Only the artist namespaces moved: the old rows are left for the store's own expiry, not wiped.
     expect(kept.m.get('artistsongs3:dz:2568121:21')).toBe(old);
   });
@@ -481,18 +509,18 @@ describe('every song the artist has released (ARTIST-PAGE-001)', () => {
     const first = await w.artists.everySong(a);
     expect(first.features.map((t) => t.title)).toEqual(['Guest 9301', 'Guest 9302']);
     expect(first.featuresComplete).toBe(false);
-    expect(w.seen.filter((s) => s.url.includes('/search/track'))).toHaveLength(2);
+    expect(named(w.seen)).toHaveLength(2);
     expect(w.seen.some((s) => s.url.includes('evil.example'))).toBe(false);
     // Incomplete, so not kept: the next look asks Deezer again.
     await w.artists.everySong(a);
-    expect(w.seen.filter((s) => s.url.includes('/search/track'))).toHaveLength(4);
+    expect(named(w.seen)).toHaveLength(4);
     expect([...m.keys()].some((k) => k.startsWith('artistsongs'))).toBe(false);
     // Positive control: a complete answer (one page, no next link) is kept, and the second look is served from it.
     const w2 = world({ ...FULL, 'api.deezer.com/search/track': { data: [g(9301)] }, 'api.deezer.com/track/9301': g(9301) }, kept.store);
     const b = await w2.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
     expect((await w2.artists.everySong(b)).featuresComplete).toBe(true);
     await w2.artists.everySong(b);
-    expect(w2.seen.filter((s) => s.url.includes('/search/track'))).toHaveLength(1);
+    expect(named(w2.seen)).toHaveLength(1);
     expect([...kept.m.keys()].some((k) => k.startsWith('artistsongs4:'))).toBe(true);
     // Only Deezer's own search, on this query, with a plain index, is a page of it.
     expect(nextSearchIndex(evil, 'Ken Carson')).toBeNull();
@@ -539,5 +567,585 @@ describe('which artist a song opens', () => {
     const a = await artists.open({ name: 'Ken Carson' });
     expect(a.id).toBe('dz:2568121');
     expect(a.songs.map((t) => t.title)).toContain('Fighting My Demons');
+  });
+});
+
+/**
+ * ARTIST-SOURCES-001. Owner: "when opening an artist page dont just list deezer, list all the different
+ * platforms / sources the artist information is coming from". The page says what each service gave,
+ * and a service that was not read says why, so the engine has to carry both.
+ */
+describe('what each service gave, and why one was not read (ARTIST-SOURCES-001)', () => {
+  it('says which service the picture and the audience figure came from', async () => {
+    const a = await world(FULL).artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    expect(a.picture).toBeTruthy();
+    expect(a.sources['deezer']!.gave).toEqual(['picture']);
+    expect(a.sources['ytmusic']!.gave).toEqual(['audience']);
+  });
+  it('says one service could not be reached while the other still answers', async () => {
+    const yt = Object.fromEntries(Object.entries(FULL).filter(([k]) => k.startsWith('music.youtube.com')));
+    const { artists } = world(yt, undefined, (req) => { if (req.url.includes('api.deezer.com')) throw new Error('getaddrinfo ENOTFOUND api.deezer.com'); return undefined; });
+    const a = await artists.open({ name: 'Ken Carson' });
+    expect(a.sources['deezer']).toMatchObject({ state: 'failed', why: 'offline' });
+    expect(a.sources['ytmusic']).toMatchObject({ state: 'ok', gave: ['picture', 'audience'] });
+  });
+  it('says the allowance is used up when that is why neither service was read', async () => {
+    const { artists } = world(FULL);
+    const spent = new Meter(6_000_000, 0);
+    await expect(artists.open({ name: 'Ken Carson' }, { meter: spent })).rejects.toMatchObject({
+      sources: { deezer: { state: 'failed', why: 'allowance' }, ytmusic: { state: 'failed', why: 'allowance' } },
+    });
+  });
+  it('says neither has a page only when both answered and had none', async () => {
+    const { artists } = world({ 'api.deezer.com/search/artist': { data: [] }, 'music.youtube.com/youtubei/v1/search#': {} });
+    await expect(artists.open({ name: 'jackiegalama' })).rejects.toMatchObject({ sources: { deezer: { state: 'none' }, ytmusic: { state: 'none' } } });
+  });
+});
+
+describe('every feature Deezer can be asked for (FEATURES-ALL-001)', () => {
+  const KC = { id: 2568121, name: 'Ken Carson' };
+  const g = (id: number, title = `Guest ${id}`, on = true) =>
+    ({ id, title, title_short: title, artist: { id: 7, name: 'Lead' }, contributors: on ? [{ id: 7, name: 'Lead' }, KC] : [{ id: 7, name: 'Lead' }], album: { id: 77, title: 'Guest LP' }, duration: 100, link: `https://www.deezer.com/track/${id}`, readable: true, rank: 1 });
+  const FEAT = 'api.deezer.com/search/track?q=feat%20Ken%20Carson';
+  const TITLED = 'api.deezer.com/search/track?q=track%3A%22Ken%20Carson%22';
+  const PLAIN = 'api.deezer.com/search/track?q=Ken%20Carson';
+
+  it('asks three ways, because the name search alone leaves features out', async () => {
+    // Measured on Deezer for one artist: the name search confirmed 54 features, and asking for
+    // "feat <name>" and for the name in a song's title confirmed 35 more.
+    const w = world({
+      ...FULL,
+      [FEAT]: { data: [g(9701), g(9702, 'On the feat search')] },
+      [TITLED]: { data: [g(9702, 'On the feat search'), g(9703, 'Song (feat. Ken Carson)'), g(9704, 'Ken Carson Type Beat', false)] },
+      [PLAIN]: { data: [g(9701)] },
+      'api.deezer.com/track/9701': g(9701),
+      'api.deezer.com/track/9702': g(9702, 'On the feat search'),
+      'api.deezer.com/track/9703': g(9703, 'Song (feat. Ken Carson)'),
+      'api.deezer.com/track/9704': g(9704, 'Ken Carson Type Beat', false),
+    });
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const found = await w.artists.everyFeature(a);
+    // Each once, the name search's first, and never the row that only has the words in its title.
+    expect(found.features.map((t) => t.title)).toEqual(['Guest 9701', 'On the feat search', 'Song (feat. Ken Carson)']);
+    expect(found.complete).toBe(true);
+    expect(w.seen.filter((x) => x.url.includes('/search/track')).map((x) => new URL(x.url).searchParams.get('q'))).toEqual(['Ken Carson', 'feat Ken Carson', 'track:"Ken Carson"']);
+    // One read each, however many of the searches offered the row.
+    expect(w.seen.filter((x) => /\/track\/970\d/.test(x.url))).toHaveLength(4);
+  });
+
+  it('says the list is incomplete when one of the three cannot be asked, and keeps what the others found', async () => {
+    const kept = mapStore();
+    const routes: Record<string, unknown> = { ...FULL, [PLAIN]: { data: [g(9711)] }, 'api.deezer.com/track/9711': g(9711) };
+    delete routes[TITLED];
+    const w = world(routes, kept.store);
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const found = await w.artists.everyFeature(a);
+    expect(found.features.map((t) => t.title)).toEqual(['Guest 9711']);
+    expect(found.complete).toBe(false);
+    // Not kept, so the next look asks again; a complete answer is kept.
+    expect([...kept.m.keys()].some((k) => k.startsWith('artistfeats'))).toBe(false);
+    const w2 = world({ ...FULL, [PLAIN]: { data: [g(9711)] }, 'api.deezer.com/track/9711': g(9711) }, kept.store);
+    expect((await w2.artists.everyFeature(a)).complete).toBe(true);
+    const asked = w2.seen.length;
+    await w2.artists.everyFeature(a);
+    expect(w2.seen.length).toBe(asked);
+  });
+
+  it('lists the songs without waiting for the features when asked to', async () => {
+    const w = world({ ...FULL, [PLAIN]: { data: [g(9721)] }, 'api.deezer.com/track/9721': g(9721) });
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const all = await w.artists.everySong(a, {}, { features: false });
+    expect(all.songs.length).toBeGreaterThan(0);
+    expect(all.features).toEqual([]);
+    expect(w.seen.some((x) => x.url.includes('/search/track'))).toBe(false);
+    expect(w.seen.some((x) => x.url.includes('/track/9721'))).toBe(false);
+  });
+
+  it('asks for nothing when the artist has no Deezer page', async () => {
+    const w = world({ ...FULL, 'api.deezer.com/search/artist': { data: [] } });
+    const a = await w.artists.open({ id: `yt:${UC}`, name: 'Ken Carson' });
+    expect(await w.artists.everyFeature(a)).toEqual({ features: [], complete: true });
+    expect(w.seen.some((x) => x.url.includes('/search/track'))).toBe(false);
+  });
+
+  it('never puts a quote from a name into the title search', async () => {
+    const w = world({ ...FULL, 'api.deezer.com/search/track': { data: [] } });
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    await w.artists.everyFeature({ ...a, name: 'Ken "KC" Carson' });
+    const qs = w.seen.filter((x) => x.url.includes('/search/track')).map((x) => new URL(x.url).searchParams.get('q'));
+    expect(qs[2]).toBe('track:"Ken KC Carson"');
+  });
+});
+
+/**
+ * FEATURES-ALL-002. Owner: "the artist page only loads like 8 features, ensure it loads all pages".
+ *
+ * Measured 2026-11-16 through the app's own engine. Deezer confirmed 5 features for Guri Lahoria; a
+ * YouTube Music songs search for the same name, read to its end, held 9 songs other artists lead that
+ * link this artist's own channel. The app never asked YouTube Music for features at all, and its
+ * search answers 20 rows a page: features were found as far down as page 12.
+ */
+describe('features from YouTube Music too, every page (FEATURES-ALL-002)', () => {
+  const OTHER = 'UCbbbbbbbbbbbbbbbbbbbbbb';
+  const link = (name: string, id: string) => ({ text: name, navigationEndpoint: { browseEndpoint: { browseId: id } } });
+  /** A search row as YouTube Music sends it: title with its video, then the linked artists. */
+  const yrow = (vid: string, title: string, artists: [string, string][]) => ({
+    musicResponsiveListItemRenderer: {
+      flexColumns: [
+        { musicResponsiveListItemFlexColumnRenderer: { text: { runs: [{ text: title, navigationEndpoint: { watchEndpoint: { videoId: vid } } }] } } },
+        { musicResponsiveListItemFlexColumnRenderer: { text: { runs: [...artists.flatMap(([n, id], i) => [...(i ? [{ text: ' & ' }] : []), link(n, id)]), { text: ' \u2022 ' }, { text: '3:01' }] } } },
+      ],
+    },
+  });
+  const own = (n: number) => yrow(`own${String(n).padStart(8, '0')}`, `Own ${n}`, [['Ken Carson', UC]]);
+  const guest = (vid: string, title: string, lead = 'Lead') => yrow(vid, title, [[lead, OTHER], ['Ken Carson', UC]]);
+  const stranger = (n: number) => yrow(`str${String(n).padStart(8, '0')}`, `Ken Carson type beat ${n}`, [['Someone', OTHER]]);
+  const TOKEN = (q: string, p: number) => `tok${p}${'x'.repeat(24)}${q.startsWith('feat') ? 'F' : 'N'}`;
+  const first = (rows: unknown[], next: string | null) => ({ contents: { tabbedSearchResultsRenderer: { tabs: [{ tabRenderer: { content: { sectionListRenderer: { contents: [{ musicShelfRenderer: { contents: rows, ...(next ? { continuations: [{ nextContinuationData: { continuation: next } }] } : {}) } }] } } } }] } } });
+  const later = (rows: unknown[], next: string | null) => ({ continuationContents: { musicShelfContinuation: { contents: rows, ...(next ? { continuations: [{ nextContinuationData: { continuation: next } }] } : {}) } } });
+
+  /** A world whose YouTube Music songs search answers `pages[query][n]`; everything else as FULL. */
+  function ytWorld(pages: Record<string, unknown[][]>, routes: Record<string, unknown> = {}, fail: (q: string, page: number) => boolean = () => false, refuse: (url: string) => boolean = () => false, slow: (q: string, page: number) => boolean = () => false) {
+    const asked: string[] = [];
+    const count = { plain: 0 };
+    let urls: string[] | null = null;
+    const kept = mapStore();
+    const w = world({ ...FULL, 'api.deezer.com/search/track?q=Ken%20Carson': { data: [] }, ...routes }, kept.store, (req) => {
+      if (!req.url.includes('/youtubei/v1/search')) return undefined;
+      const b = JSON.parse(typeof req.body === 'string' ? req.body : new TextDecoder().decode(req.body as unknown as Uint8Array)) as Record<string, unknown>;
+      // The artists tab of a search is not the songs search: left to the routes.
+      if (typeof b['query'] === 'string' && b['params'] !== 'EgWKAQIIAWoMEA4QChADEAQQCRAF') return undefined;
+      urls?.push(req.url);
+      if (refuse(req.url)) throw new Error('400');
+      const token = typeof b['continuation'] === 'string' ? b['continuation'] : null;
+      const q = token ? (token.endsWith('F') ? 'feat Ken Carson' : 'Ken Carson') : String(b['query']);
+      const n = token ? Number(/^tok(\d+)/.exec(token)![1]) : 0;
+      if (!new URL(req.url).searchParams.has('fields')) count.plain += 1;
+      if (slow(q, n)) return { __status: 403 };
+      asked.push(`${q}#${n}`);
+      if (fail(q, n)) throw new Error('YouTube Music is down');
+      const list = pages[q] ?? [[]];
+      const rows = list[n] ?? [];
+      const next = n + 1 < list.length ? TOKEN(q, n + 1) : null;
+      return n === 0 ? first(rows, next) : later(rows, next);
+    });
+    return { ...w, asked, m: kept.m, tapUrls: (into: string[]) => { urls = into; }, get plain() { return count.plain; } };
+  }
+
+  it('reads a songs search row by row, first page or a later one, with every linked artist', () => {
+    const a = parseSearchSongsPage(first([guest('gst00000001', 'On the first page'), own(1)], 'tok1' + 'x'.repeat(24)));
+    expect(a.items.map((x) => [x.title, x.artists.map((y) => y.id)])).toEqual([['On the first page', [OTHER, UC]], ['Own 1', [UC]]]);
+    expect(a.next).toBe('tok1' + 'x'.repeat(24));
+    const b = parseSearchSongsPage(later([guest('gst00000002', 'On a later page')], null));
+    expect(b.items.map((x) => x.videoId)).toEqual(['gst00000002']);
+    expect(b.next).toBeNull();
+    expect(parseSearchSongsPage({})).toEqual({ items: [], next: null });
+  });
+
+  it('adds the songs other artists lead that link this artist\u2019s own channel, from every page', async () => {
+    const w = ytWorld({
+      'Ken Carson': [[own(1), own(2)], [guest('gst00000001', 'Second page guest'), own(3)], [own(4)], [guest('gst00000002', 'Fourth page guest', 'Another')]],
+      'feat Ken Carson': [[guest('gst00000001', 'Second page guest'), guest('gst00000003', 'Only on the feat search')]],
+    });
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const found = await w.artists.everyFeature(a);
+    expect(found.features.filter((t) => t.provider === 'ytmusic').map((t) => t.title)).toEqual(['Second page guest', 'Fourth page guest', 'Only on the feat search']);
+    expect(found.features.find((t) => t.title === 'Fourth page guest')!.artists).toEqual(['Another', 'Ken Carson']);
+    expect(found.complete).toBe(true);
+    expect(w.asked.filter((x) => x.startsWith('Ken Carson#'))).toEqual(['Ken Carson#0', 'Ken Carson#1', 'Ken Carson#2', 'Ken Carson#3']);
+  });
+
+  it('never claims a row that only has the name in its words, or one this artist leads', async () => {
+    const w = ytWorld({ 'Ken Carson': [[stranger(1), own(1), yrow('nam00000001', 'By a namesake', [['Lead', OTHER], ['Ken Carson', 'UCcccccccccccccccccccccc']])]], 'feat Ken Carson': [[]] });
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    expect((await w.artists.everyFeature(a)).features.filter((t) => t.provider === 'ytmusic')).toEqual([]);
+  });
+
+  it('lists a song once when Deezer and YouTube Music both have it', async () => {
+    const dzGuest = { id: 9801, title: 'Both Have It (feat. Ken Carson)', title_short: 'Both Have It', artist: { id: 7, name: 'Lead' }, contributors: [{ id: 7, name: 'Lead' }, { id: 2568121, name: 'Ken Carson' }], album: { id: 77, title: 'LP' }, duration: 100, link: 'https://www.deezer.com/track/9801' };
+    const w = ytWorld(
+      { 'Ken Carson': [[guest('gst00000001', 'Both Have It'), guest('gst00000002', 'YouTube only')]], 'feat Ken Carson': [[]] },
+      { 'api.deezer.com/search/track?q=Ken%20Carson': { data: [dzGuest] }, 'api.deezer.com/track/9801': dzGuest },
+    );
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const found = await w.artists.everyFeature(a);
+    expect(found.features.map((t) => [t.title, t.provider])).toEqual([['Both Have It (feat. Ken Carson)', 'deezer'], ['YouTube only', 'ytmusic']]);
+  });
+
+  it('stops once the artist is no longer on the pages, instead of reading a search to its last page', async () => {
+    const quiet = Array.from({ length: 12 }, (_, i) => [stranger(i)]);
+    const w = ytWorld({ 'Ken Carson': [[guest('gst00000001', 'Early guest')], ...quiet], 'feat Ken Carson': [[]] });
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const found = await w.artists.everyFeature(a);
+    expect(found.features.filter((t) => t.provider === 'ytmusic').map((t) => t.title)).toEqual(['Early guest']);
+    // Three pages in a row without the artist end the search; that is its end, not a failure.
+    expect(w.asked.filter((x) => x.startsWith('Ken Carson#'))).toHaveLength(4);
+    expect(found.complete).toBe(true);
+  });
+
+  it('keeps what was found when a page fails, says the list is incomplete, and does not keep that answer', async () => {
+    const w = ytWorld({ 'Ken Carson': [[guest('gst00000001', 'Before the failure')], [guest('gst00000002', 'Never read')]], 'feat Ken Carson': [[]] }, {}, (q, n) => q === 'Ken Carson' && n === 1);
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const found = await w.artists.everyFeature(a);
+    expect(found.features.filter((t) => t.provider === 'ytmusic').map((t) => t.title)).toEqual(['Before the failure']);
+    expect(found.complete).toBe(false);
+    expect([...w.m.keys()].some((k) => k.startsWith('artistfeats'))).toBe(false);
+  });
+
+  it('asks YouTube Music only for the parts of a page it reads', async () => {
+    // Measured: a songs search page counted 692 KB against the day's allowance as it was asked for,
+    // and 54 KB with the parts named. Twenty-five pages is 1.3 MB instead of 17 MB.
+    const urls: string[] = [];
+    const w = ytWorld({ 'Ken Carson': [[own(1)], [guest('gst00000001', 'Second page guest')]], 'feat Ken Carson': [[]] });
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    w.tapUrls(urls);
+    await w.artists.everyFeature(a);
+    expect(urls.length).toBeGreaterThan(2);
+    for (const u of urls) {
+      const q = new URL(u).searchParams;
+      expect(q.get('prettyPrint')).toBe('false');
+      const fields = q.get('fields') ?? '';
+      // Both shapes a page comes in, and everything a row is read from.
+      for (const part of ['tabbedSearchResultsRenderer', 'musicShelfContinuation', 'continuations', 'flexColumns', 'fixedColumns', 'watchEndpoint', 'thumbnail', 'badges']) expect(fields, part).toContain(part);
+    }
+  });
+
+  it('asks again for the whole page when the short form is refused', async () => {
+    let refused = 0;
+    const w = ytWorld({ 'Ken Carson': [[guest('gst00000001', 'Still found')]], 'feat Ken Carson': [[]] }, {}, () => false, (url) => {
+      if (!new URL(url).searchParams.has('fields')) return false;
+      refused += 1;
+      return true;
+    });
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const found = await w.artists.everyFeature(a);
+    expect(refused).toBeGreaterThan(0);
+    expect(found.features.filter((t) => t.provider === 'ytmusic').map((t) => t.title)).toEqual(['Still found']);
+    expect(found.complete).toBe(true);
+  });
+
+  it('waits and asks again when YouTube Music says to slow down, instead of giving the page up', async () => {
+    // Measured 2026-11-16: paged quickly, the songs search answers 403 now and then; the same
+    // request 700 ms later answers. Before, that one 403 ended the search and left the list short.
+    let refusals = 2;
+    const w = ytWorld({ 'Ken Carson': [[guest('gst00000001', 'After the wait')]], 'feat Ken Carson': [[]] }, {}, () => false, () => false, (q, n) => q === 'Ken Carson' && n === 0 && refusals-- > 0);
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const found = await w.artists.everyFeature(a);
+    expect(found.features.filter((t) => t.provider === 'ytmusic').map((t) => t.title)).toEqual(['After the wait']);
+    expect(found.complete).toBe(true);
+    expect(refusals).toBeLessThan(1);
+  });
+
+  it('says the list is incomplete when YouTube Music keeps refusing a page', async () => {
+    const w = ytWorld({ 'Ken Carson': [[guest('gst00000001', 'Never read')]], 'feat Ken Carson': [[guest('gst00000002', 'Still found')]] }, {}, () => false, () => false, (q) => q === 'Ken Carson');
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const found = await w.artists.everyFeature(a);
+    expect(found.features.filter((t) => t.provider === 'ytmusic').map((t) => t.title)).toEqual(['Still found']);
+    expect(found.complete).toBe(false);
+    // The page as it is asked for in full is no remedy for "slow down": it is not asked for.
+    expect(w.plain).toBe(0);
+  });
+
+  it('asks YouTube Music for an artist Deezer does not have', async () => {
+    const w = ytWorld({ 'Ken Carson': [[guest('gst00000001', 'YouTube Music guest')]], 'feat Ken Carson': [[]] }, { 'api.deezer.com/search/artist': { data: [] } });
+    const a = await w.artists.open({ id: `yt:${UC}` });
+    const found = await w.artists.everyFeature(a);
+    expect(found.features.map((t) => t.title)).toEqual(['YouTube Music guest']);
+    expect(w.seen.some((x) => x.url.includes('api.deezer.com/search/track'))).toBe(false);
+  });
+});
+
+/**
+ * FEATURES-FLOW-001. Owner: "ensure features and artist discography information loads, ensure
+ * everything loads as seamless as possible".
+ *
+ * Measured 2026-11-16: a full look for features took 23 to 52 seconds (Deezer allows about nine reads
+ * a second, and each candidate is one read), and the page showed none of them until the last one was
+ * in. The look can now be taken a few seconds at a time: each step gives everything confirmed so far.
+ */
+describe('features a little at a time (FEATURES-FLOW-001)', () => {
+  const guest = (id: number, title: string) => ({ id, title, title_short: title, artist: { id: 7, name: 'Lead' }, contributors: [{ id: 7, name: 'Lead' }, { id: 2568121, name: 'Ken Carson' }], album: { id: 77, title: 'LP' }, duration: 100, link: `https://www.deezer.com/track/${id}` });
+  const stranger = (id: number) => ({ ...guest(id, `Not Theirs ${id}`), contributors: [{ id: 7, name: 'Lead' }] });
+  const guests = Array.from({ length: 8 }, (_, i) => guest(9801 + i, `Guest ${i + 1}`));
+  const routesFor = (rows: { id: number }[]) => ({ ...FULL, 'api.deezer.com/search/track?q=Ken%20Carson': { data: rows }, ...Object.fromEntries(rows.map((g) => [`api.deezer.com/track/${g.id}`, g])) });
+  const reads = (seen: { url: string }[]) => seen.filter((x) => /\/track\/\d+$/.test(x.url)).length;
+
+  it('gives what is confirmed so far at each step, and never moves or drops a row it has given', async () => {
+    const w = world(routesFor(guests), mapStore().store);
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const look = w.artists.featureLook(a);
+    const steps: { features: Track[]; complete: boolean; more: boolean }[] = [];
+    do { steps.push(await look.step({}, 0)); } while (steps[steps.length - 1]!.more && steps.length < 40);
+    expect(steps.length).toBeGreaterThan(1);
+    // The first step already has some, and not yet all.
+    expect(steps[0]!.features.length).toBeGreaterThan(0);
+    expect(steps[0]!.features.length).toBeLessThan(guests.length);
+    for (let i = 1; i < steps.length; i++) {
+      const before = steps[i - 1]!.features.map((t) => t.key);
+      expect(steps[i]!.features.slice(0, before.length).map((t) => t.key)).toEqual(before);
+    }
+    const last = steps[steps.length - 1]!;
+    expect(last.more).toBe(false);
+    expect(last.complete).toBe(true);
+    expect(last.features.map((t) => t.title).sort()).toEqual(guests.map((g) => g.title).sort());
+  });
+
+  it('gives the same list in one go as it does in steps', async () => {
+    const whole = world(routesFor(guests), mapStore().store);
+    const a = await whole.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const all = await whole.artists.everyFeature(a);
+    expect(all.features.map((t) => t.title)).toEqual(guests.map((g) => g.title));
+    expect(all.complete).toBe(true);
+  });
+
+  it('keeps a whole answer, and gives it at once the next time', async () => {
+    const kept = mapStore();
+    const w = world(routesFor(guests), kept.store);
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    await w.artists.everyFeature(a);
+    const asked = w.seen.length;
+    const again = await w.artists.featureLook(a).step({}, 0);
+    expect(again.more).toBe(false);
+    expect(again.features).toHaveLength(guests.length);
+    expect(w.seen.length).toBe(asked);
+  });
+
+  it('answers on time when a service is holding a request, and has that service\u2019s rows the next time', async () => {
+    // Measured 2026-11-16: YouTube Music now and then holds a search page six to nine seconds. A
+    // step lasted as long as its slowest request (12.9 s and 19.5 s were seen for a 2.5 s step), so
+    // the page sat with nothing new on it. The step now answers when its time is up.
+    const OTHER = 'UCbbbbbbbbbbbbbbbbbbbbbb';
+    const link = (name: string, id: string) => ({ text: name, navigationEndpoint: { browseEndpoint: { browseId: id } } });
+    const ytRow = { musicResponsiveListItemRenderer: { flexColumns: [
+      { musicResponsiveListItemFlexColumnRenderer: { text: { runs: [{ text: 'Held Back', navigationEndpoint: { watchEndpoint: { videoId: 'held0000001' } } }] } } },
+      { musicResponsiveListItemFlexColumnRenderer: { text: { runs: [link('Lead', OTHER), { text: ' & ' }, link('Ken Carson', UC), { text: ' \u2022 ' }, { text: '3:01' }] } } },
+    ] } };
+    const shelf = { contents: { tabbedSearchResultsRenderer: { tabs: [{ tabRenderer: { content: { sectionListRenderer: { contents: [{ musicShelfRenderer: { contents: [ytRow] } }] } } } }] } } };
+    const w = world(routesFor(guests.slice(0, 2)), mapStore().store, (req) => {
+      if (!req.url.includes('/youtubei/v1/search')) return undefined;
+      const b = JSON.parse(String(req.body)) as Record<string, unknown>;
+      if (b['params'] !== 'EgWKAQIIAWoMEA4QChADEAQQCRAF') return undefined;
+      return new Promise((r) => setTimeout(() => r(b['query'] === 'Ken Carson' ? shelf : {}), 400));
+    });
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const look = w.artists.featureLook(a);
+    const t0 = Date.now();
+    const first = await look.step({}, 30);
+    expect(Date.now() - t0).toBeLessThan(300);
+    expect(first.features.map((t) => t.title)).toEqual(['Guest 1', 'Guest 2']);
+    expect(first.more).toBe(true);
+    let last = first;
+    for (let i = 0; last.more && i < 60; i++) last = await look.step({}, 30);
+    expect(last.more).toBe(false);
+    expect(last.features.map((t) => t.title)).toEqual(['Guest 1', 'Guest 2', 'Held Back']);
+    expect(last.complete).toBe(true);
+  });
+
+  it('lets the artist\u2019s own songs be read first: the look for features waits for them on Deezer', async () => {
+    // SONGS-FIRST-001. Measured 2026-11-16 on the phone: Deezer answers about nine reads a second,
+    // and with the song list and the feature look asking at once the songs took 12 to 16 seconds.
+    // The songs are what the page is for, so they go first; the features follow at once after.
+    const order: string[] = [];
+    const w = world(routesFor(guests), mapStore().store, (req) => {
+      const u = new URL(req.url);
+      if (u.host !== 'api.deezer.com') return undefined;
+      if (/^\/album\/\d+/.test(u.pathname)) { order.push('album'); return new Promise((r) => setTimeout(() => r({ __status: 404 }), 15)); }
+      if (/^\/track\/\d+$/.test(u.pathname) || u.pathname === '/search/track') order.push('feature');
+      return undefined;
+    });
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    order.length = 0;
+    const [songs, feats] = await Promise.all([w.artists.everySong(a, {}, { features: false }), w.artists.everyFeature(a)]);
+    expect(songs.opened).toBeGreaterThan(4);
+    expect(feats.features).toHaveLength(guests.length);
+    // Every Deezer album and single of theirs was asked for before the look read anything.
+    expect(order.filter((x) => x === 'album').length).toBeGreaterThan(3);
+    expect(order.includes('feature')).toBe(true);
+    expect(order.lastIndexOf('album')).toBeLessThan(order.indexOf('feature'));
+  });
+
+  it('remembers the songs it has already looked at, so a look again reads only the rest', async () => {
+    // One candidate cannot be read the first time: the answer is incomplete and is not kept. The
+    // seven it did read, and the stranger it ruled out, are not read a second time.
+    const rows = [...guests, stranger(9900)];
+    let down = true;
+    const kept = mapStore();
+    const w = world(routesFor(rows), kept.store, (req) => (down && req.url.endsWith('/track/9808') ? { __status: 404 } : undefined));
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const first = await w.artists.everyFeature(a);
+    expect(first.complete).toBe(false);
+    expect(first.features).toHaveLength(7);
+    const before = reads(w.seen);
+    down = false;
+    const second = await w.artists.everyFeature(a);
+    expect(second.complete).toBe(true);
+    expect(second.features.map((t) => t.title).sort()).toEqual(guests.map((g) => g.title).sort());
+    expect(reads(w.seen) - before).toBe(1);
+  });
+});
+
+/**
+ * OPEN-FLOW-001. Owner: "ensure everything loads as seamless as possible".
+ *
+ * Measured 2026-11-16: an artist page is up in about 1.2 s when both services answer, and took 8 to
+ * 9 s when YouTube Music held a request before refusing it (Asake 9.4 s, Tyla 8.8 s), with Deezer's
+ * whole answer in hand from the first half second. The page no longer waits on the second service.
+ */
+describe('an artist page does not wait on a slow service (OPEN-FLOW-001)', () => {
+  const grid = (titles: string[]) => ({ contents: { singleColumnBrowseResultsRenderer: { tabs: [{ tabRenderer: { content: { sectionListRenderer: { contents: [{ gridRenderer: { items: titles.map((t, i) => (
+    { musicTwoRowItemRenderer: { title: { runs: [{ text: t }] }, subtitle: { runs: [{ text: 'Single' }, { text: ' \u2022 ' }, { text: '2020' }] }, navigationEndpoint: { browseEndpoint: { browseId: `MPREb_more${String(i).padStart(6, '0')}` } } } }
+  )) } }] } } } }] } } });
+  const withMore = (browseId: string) => {
+    const copy = JSON.parse(JSON.stringify(YT_PAGE));
+    const secs = copy.contents.singleColumnBrowseResultsRenderer.tabs[0].tabRenderer.content.sectionListRenderer.contents;
+    const shelves = secs.filter((x: Record<string, unknown>) => x['musicCarouselShelfRenderer']);
+    const set = (shelf: { musicCarouselShelfRenderer: { header: unknown } }, title: string, params: string) => {
+      shelf.musicCarouselShelfRenderer.header = { musicCarouselShelfBasicHeaderRenderer: { title: { runs: [{ text: title }] }, moreContentButton: { buttonRenderer: { navigationEndpoint: { browseEndpoint: { browseId, params } } } } } };
+    };
+    set(shelves[0], 'Albums', 'ggMIegYIAxoCGAI%3D');
+    set(shelves[1], 'Singles & EPs', 'ggMIegYIAhoCAQI%3D');
+    return copy;
+  };
+  /** A store that says how long each answer was kept for. */
+  function ttlStore() {
+    const m = new Map<string, unknown>();
+    const kept: Record<string, number> = {};
+    return { kept, store: { cacheGet: (k: string) => (m.has(k) ? { value: m.get(k), created: 0, stale: false } : null), cachePut: async (k: string, _kind: string, v: unknown, ttl: number) => { m.set(k, v); kept[k] = ttl; } } as unknown as Store };
+  }
+  /** As `world`, with YouTube Music's requests answered by `yt` (which may take its time). */
+  function slowWorld(routes: Record<string, unknown>, yt: (body: Record<string, unknown>, url: string) => Promise<unknown>, store?: Store, graceMs = 30) {
+    const asked: Record<string, unknown>[] = [];
+    const port: HttpPort = {
+      async delay() {},
+      async request(req: HttpRequest) {
+        const u = new URL(req.url);
+        if (u.host === 'music.youtube.com') {
+          const b = JSON.parse(String(req.body)) as Record<string, unknown>;
+          asked.push({ ...b, url: req.url });
+          const v = await yt(b, req.url);
+          if (v && typeof v === 'object' && '__status' in v) return { status: Number((v as { __status: number }).__status), headers: {}, body: enc('{}') };
+          return { status: 200, headers: {}, body: enc(JSON.stringify(v)) };
+        }
+        const key = u.host + u.pathname + u.search;
+        const hit = Object.keys(routes).find((k) => key.startsWith(k));
+        return hit ? { status: 200, headers: {}, body: enc(JSON.stringify(routes[hit])) } : { status: 404, headers: {}, body: enc('{}') };
+      },
+    };
+    const http = new Http(port, new HostPacer({}, 0));
+    const dz = new Deezer(http);
+    const ytm = new YouTubeMusic(http);
+    return { artists: new Artists(http, dz, ytm, store, new Albums(http, dz, undefined, ytm), { ytGraceMs: graceMs }), asked };
+  }
+  const later = <T,>(ms: number, v: T) => new Promise<T>((r) => setTimeout(() => r(v), ms));
+  const answer = (b: Record<string, unknown>, page: unknown = YT_PAGE) => (b['query'] ? YT_SEARCH : b['browseId'] === UC && !b['params'] ? page : {});
+
+  it('opens with what Deezer gave when YouTube Music is slow, says so, and asks again soon', async () => {
+    const t = ttlStore();
+    const w = slowWorld(FULL, (b) => later(b['browseId'] ? 400 : 0, answer(b)), t.store);
+    const t0 = Date.now();
+    const a = await w.artists.open({ name: 'Ken Carson' });
+    expect(Date.now() - t0).toBeLessThan(300);
+    expect(a.songs.length).toBeGreaterThan(0);
+    expect(a.sources['deezer']?.state).toBe('ok');
+    expect(a.sources['ytmusic']).toMatchObject({ state: 'failed', why: 'busy' });
+    // Kept a couple of minutes, not hours: the next visit asks YouTube Music again.
+    const ttl = Object.entries(t.kept).find(([k]) => k.startsWith('artistview'))?.[1];
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(300);
+  });
+
+  it('finishes reading the slow service after the page has opened, and has the whole page the next time (OPEN-HEAL-001)', async () => {
+    const t = ttlStore();
+    const w = slowWorld(FULL, (b) => later(b['browseId'] ? 150 : 0, answer(b)), t.store);
+    const a = await w.artists.open({ name: 'Ken Carson' });
+    expect(a.sources['ytmusic']).toMatchObject({ state: 'failed', why: 'busy' });
+    await later(450, null);
+    const b = await w.artists.open({ name: 'Ken Carson' });
+    expect(b.sources['ytmusic']?.state).toBe('ok');
+    expect(b.links.ytmusic).toContain(UC);
+    expect(b.sources['deezer']?.state).toBe('ok');
+    expect(b.songs.length).toBeGreaterThanOrEqual(a.songs.length);
+    // What was already on its way was waited for, not asked for a second time.
+    expect(w.asked.filter((x) => x['browseId'] === UC && !x['params'])).toHaveLength(1);
+    expect(w.asked.filter((x) => x['query'])).toHaveLength(1);
+    // The whole page is kept as a whole page is.
+    expect(Object.entries(t.kept).find(([k]) => k.startsWith('artistview'))?.[1]).toBeGreaterThanOrEqual(3600);
+  });
+
+  it('leaves the page as it opened when the slow service ends by refusing (OPEN-HEAL-001)', async () => {
+    const t = ttlStore();
+    const w = slowWorld(FULL, (b) => later(b['browseId'] ? 150 : 0, b['browseId'] ? { __status: 404 } : answer(b)), t.store);
+    const a = await w.artists.open({ name: 'Ken Carson' });
+    await later(450, null);
+    const b = await w.artists.open({ name: 'Ken Carson' });
+    expect(b.sources['ytmusic']?.state).toBe('failed');
+    expect(b.songs.length).toBe(a.songs.length);
+    expect(Object.entries(t.kept).find(([k]) => k.startsWith('artistview'))?.[1]).toBeLessThanOrEqual(300);
+  });
+
+  it('keeps a page both services answered for hours', async () => {
+    const t = ttlStore();
+    const w = slowWorld(FULL, async (b) => answer(b), t.store);
+    const a = await w.artists.open({ name: 'Ken Carson' });
+    expect(a.sources['ytmusic']?.state).toBe('ok');
+    expect(Object.entries(t.kept).find(([k]) => k.startsWith('artistview'))?.[1]).toBeGreaterThanOrEqual(3600);
+  });
+
+  it('keeps a page one service refused only briefly', async () => {
+    const t = ttlStore();
+    const w = slowWorld(FULL, async (b) => (b['browseId'] ? { __status: 404 } : answer(b)), t.store);
+    const a = await w.artists.open({ name: 'Ken Carson' });
+    expect(a.sources['ytmusic']?.state).toBe('failed');
+    expect(Object.entries(t.kept).find(([k]) => k.startsWith('artistview'))?.[1]).toBeLessThanOrEqual(300);
+  });
+
+  it('still waits for YouTube Music when it is the only service with the artist', async () => {
+    const w = slowWorld({ ...FULL, 'api.deezer.com/search/artist': { data: [] } }, (b) => later(b['browseId'] === UC ? 120 : 0, b['browseId'] === SONGS_LIST ? YT_SONGS : b['continuation'] ? YT_CONT : answer(b)), undefined, 20);
+    const a = await w.artists.open({ name: 'Ken Carson' });
+    expect(a.id).toBe(`yt:${UC}`);
+    expect(a.songs.length).toBeGreaterThan(0);
+  });
+
+  it('waits and asks again when YouTube Music refuses the artist page for a moment', async () => {
+    let refusals = 2;
+    const w = slowWorld(FULL, async (b) => (b['browseId'] === UC && !b['params'] && refusals-- > 0 ? { __status: 403 } : answer(b)), undefined, 5000);
+    const a = await w.artists.open({ name: 'Ken Carson' });
+    expect(a.sources['ytmusic']?.state).toBe('ok');
+    expect(a.links.ytmusic).toContain(UC);
+  });
+
+  it('reads the whole list behind each shelf by the list\u2019s own id, both at once, asking only for what it reads', async () => {
+    const page = withMore(`MPAD${UC}`);
+    let open = 0;
+    let most = 0;
+    const w = slowWorld(FULL, async (b) => {
+      if (b['browseId'] !== `MPAD${UC}`) return answer(b, page);
+      open += 1;
+      most = Math.max(most, open);
+      await later(30, null);
+      open -= 1;
+      return grid(b['params'] === 'ggMIegYIAhoCAQI%3D' ? ['Deep Single One', 'Deep Single Two'] : ['Deep Album']);
+    }, undefined, 5000);
+    const a = await w.artists.open({ name: 'Ken Carson' });
+    expect(a.singles.map((x) => x.title)).toEqual(expect.arrayContaining(['Deep Single One', 'Deep Single Two']));
+    expect([...a.albums, ...a.singles].map((x) => x.title)).toContain('Deep Album');
+    expect(most).toBe(2);
+    const lists = w.asked.filter((b) => b['browseId'] === `MPAD${UC}`);
+    expect(lists).toHaveLength(2);
+    // Measured: 546 KB as the list comes, 90 KB with the parts named.
+    for (const b of lists) expect(new URL(String(b['url'])).searchParams.get('fields')).toContain('gridRenderer');
+    // Never the artist page a second time under the list's params.
+    expect(w.asked.some((b) => b['browseId'] === UC && b['params'])).toBe(false);
+  });
+
+  it('opens with the shelf\u2019s own few when the whole list is slow, rather than waiting for it', async () => {
+    const page = withMore(`MPAD${UC}`);
+    const w = slowWorld(FULL, (b) => later(b['browseId'] === `MPAD${UC}` ? 400 : 0, b['browseId'] === `MPAD${UC}` ? grid(['Too Late']) : answer(b, page)), undefined, 60);
+    const t0 = Date.now();
+    const a = await w.artists.open({ name: 'Ken Carson' });
+    expect(Date.now() - t0).toBeLessThan(350);
+    expect(a.sources['ytmusic']?.state).toBe('ok');
+    expect([...a.albums, ...a.singles].map((x) => x.title)).not.toContain('Too Late');
+    expect([...a.albums, ...a.singles].some((x) => x.provider === 'ytmusic' || x.provider === 'deezer')).toBe(true);
   });
 });

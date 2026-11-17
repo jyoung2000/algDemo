@@ -7,6 +7,7 @@
  */
 import type { Tag } from './genres';
 import { fold } from './identity';
+import { stylesFromArtist } from './genre-fill';
 import { needsSub, subsFromArtist } from './infer';
 import type { Http, Meter } from './net';
 import type { Dict } from './shape';
@@ -20,6 +21,11 @@ const MAX_ARTISTS = 600;
 export interface ArtistSubs {
   at: number;
   tags: Tag[];
+  /**
+   * GENRE-ALL-001: the style words MusicBrainz's listeners use for the artist that the Taste Picker
+   * has no cell for ("sophisti-pop", "smooth jazz"). Absent on an entry saved before these were kept.
+   */
+  styles?: string[];
 }
 export type ArtistSubsMap = Record<string, ArtistSubs>;
 
@@ -52,13 +58,13 @@ export async function lookupArtistSubs(
     http.getJson<Dict>(url, { maxBytes: 100_000, ...(opt.meter ? { meter: opt.meter } : {}), category: 'metadata', headers: { 'user-agent': MUSICBRAINZ_UA, accept: 'application/json' }, ...(opt.token ? { token: opt.token } : {}) }),
   );
   const tags = subsFromArtist(body, artist);
-  await remember(store, k, tags, now);
+  await remember(store, k, tags, now, stylesFromArtist(body, artist));
   return tags;
 }
 
-export async function remember(store: Store, k: string, tags: Tag[], now: number): Promise<void> {
+export async function remember(store: Store, k: string, tags: Tag[], now: number, styles: string[] = []): Promise<void> {
   const map = store.get<ArtistSubsMap>(ARTIST_SUBS_KEY) ?? {};
-  map[k] = { at: now, tags };
+  map[k] = { at: now, tags, styles };
   const keys = Object.keys(map);
   if (keys.length > MAX_ARTISTS) for (const old of keys.sort((a, b) => map[a]!.at - map[b]!.at).slice(0, keys.length - MAX_ARTISTS)) delete map[old];
   await store.put(ARTIST_SUBS_KEY, map);

@@ -44,6 +44,8 @@ vi.mock('./api', async (orig) => {
       searchArtists: () => Promise.resolve(artists),
       artist: (a: unknown) => artistCall(a),
       artistSongs: (a: unknown) => songsCall(a),
+      artistFeatures: () => Promise.resolve({ features: [], complete: true }),
+      artistSources: () => Promise.resolve({ songs: [], albums: [], singles: [], sources: {} }),
     },
   };
 });

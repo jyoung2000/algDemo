@@ -9,6 +9,7 @@
  * with a separate bounded database so it can never be a second writer on the phone page's Store.
  */
 import { api, type Track } from './api';
+import { radioSession } from './engine/radio-client';
 import { CarCatalog } from './engine/car-catalog';
 import { openIdbBackend } from './engine/idb';
 import { LocalApi } from './engine/local-api';
@@ -104,6 +105,10 @@ async function startService(n: FullBridge): Promise<void> {
       identifyAudio: (samples) => catalog.identifyClip(samples),
     });
     n.apiReady();
+    // RADIO-001: the service page remains alive with the phone closed, naming broadcasts and
+    // crediting only unique, recognised music actually consumed by the same native engine.
+    void radioSession.restore();
+    setInterval(() => void radioSession.restore(), 5000);
   } catch (e) {
     try { n.engineFailed(opened); } catch { /* the bridge is gone with the page */ }
     throw e;

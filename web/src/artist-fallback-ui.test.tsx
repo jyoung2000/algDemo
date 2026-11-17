@@ -27,7 +27,7 @@ const artist = vi.fn();
 const artistSongs = vi.fn();
 vi.mock('./api', async (orig) => {
   const real = await orig<Record<string, unknown>>();
-  return { ...real, api: { ...(real['api'] as object), artist: (...a: unknown[]) => artist(...a), artistSongs: (...a: unknown[]) => artistSongs(...a) } };
+  return { ...real, api: { ...(real['api'] as object), artist: (...a: unknown[]) => artist(...a), artistSongs: (...a: unknown[]) => artistSongs(...a), artistFeatures: () => Promise.resolve({ features: [], complete: true }), artistSources: () => Promise.resolve({ songs: [], albums: [], singles: [], sources: {} }) } };
 });
 
 let root: Root;

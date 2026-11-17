@@ -23,6 +23,8 @@ interface Props {
   onLists: (lists: PlaylistSummary[]) => void;
   /** `listId` is the list the play started from, so the engine can apply that list's rule. */
   onPreview: (track: Track, listId?: string) => void;
+  /** SHUFFLE-START-001: play the whole saved album; the app chooses the song it starts on. */
+  onPlayAll?: (list: Track[], listId: string) => void;
   onRemoveSaved: (track: Track) => void;
   onDownload?: (track: Track) => void;
   /** Per-song cache state for the row rail; absent where there is no local downloader. */
@@ -50,7 +52,7 @@ const ALL = 'all';
  * and the owner asked for that control to go. A whole list can become the now playing queue instead,
  * and then every song in it is a starting song (PLAYLIST-QUEUE-001).
  */
-export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onDownload, cacheOf, onVisibleList, onUseAsQueue, queueListId, onOpenAlbum, onOpenAlbumId, onOpenArtist }: Props) {
+export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemoveSaved, onDownload, cacheOf, onVisibleList, onUseAsQueue, queueListId, onOpenAlbum, onOpenAlbumId, onOpenArtist }: Props) {
   const [view, setView] = useState<string>(ALL);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -258,7 +260,7 @@ export function SavedView({ saved, lists, onLists, onPreview, onRemoveSaved, onD
             {[ALBUM_KIND[albumOf.kind as AlbumSummary['kind']] ?? 'Album', albumOf.artist, albumOf.year].filter(Boolean).join(' · ')}
           </p>
           {rows.length > 0 && (
-            <button className="push push--default" type="button" onClick={() => onPreview(rows[0]!.track, current.id)}>
+            <button className="push push--default" type="button" onClick={() => (onPlayAll ? onPlayAll(rows.map((r) => r.track), current.id) : onPreview(rows[0]!.track, current.id))}>
               <Glyph name="play" size={12} /> Play album
             </button>
           )}

@@ -48,6 +48,10 @@ object CarSearch {
   /** The kind picked on the Search tab, while it still applies. */
   fun picked(now: Long): CarSearchType? = picked?.takeIf { now - it.second in 0..STICKY_MS }?.first
 
+  /** Explicit typed/assistant station requests, independent of the music-result filter enum. */
+  fun radioQuery(raw: String): String? = Regex("^(?:play |listen to )?(?:radio(?: station)?|station)\\s+(.+)$", RegexOption.IGNORE_CASE)
+    .matchEntire(raw.trim().replace(Regex("\\s+"), " "))?.groupValues?.get(1)?.trim()?.takeIf { it.isNotBlank() }?.take(100)
+
   private val LEADS: List<Pair<Regex, CarSearchType>> = listOf(
     Regex("^(?:what(?:'s| is) this song|what song is (?:this|playing)|identify(?: this| the)?(?: song| music)?|shazam(?: this)?|name this song|listen)$") to CarSearchType.IDENTIFY,
     Regex("^(?:(?:the |an? )?albums? (?:called |named )?|(?:search |find )(?:the |an? )?albums? (?:called |named )?)") to CarSearchType.ALBUMS,

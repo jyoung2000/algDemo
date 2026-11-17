@@ -60,3 +60,12 @@ describe('words that must not be given the wrong subgenre', () => {
     expect(place('trap')?.sub ?? '').toMatch(/Trap/i);
   });
 });
+
+describe('no genre Deezer states for an album is thrown away (GENRE-ALL-001)', () => {
+  // Measured 2026-11-16 against api.deezer.com/genre: two of its 28 genres named nothing here, so
+  // a Punjabi record filed under "Indian Music" reached the page with no genre at all.
+  it('keeps "Indian Music" as its own genre and files "Traditional Mexicano" under Latin', () => {
+    expect(makeTag('Indian Music', 'Deezer album genre', 'album', 0.8)?.name).toBe('indian');
+    expect(place('Traditional Mexicano')?.family).toBe('R&B/Afro/Latin');
+  });
+});

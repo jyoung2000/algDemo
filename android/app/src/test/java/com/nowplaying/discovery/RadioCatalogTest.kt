@@ -1,0 +1,137 @@
+package com.nowplaying.discovery
+
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Test
+
+class RadioCatalogTest {
+  private fun row(id: String, name: String) = JSONObject().put("id", id).put("name", name).put("url", "https://streams.example/$id")
+
+  @Test fun normalizedPhoneRowsAndDirectoryRowsHaveTheSameIdentity() {
+    val phone = RadioCatalog.normalize(row("kexp", "KEXP"))!!
+    val api = RadioCatalog.normalize(JSONObject("""{"stationuuid":"kexp","name":"KEXP","url_resolved":"https://streams.example/kexp","countrycode":"US","state":"Washington","tags":"rock,indie","geo_lat":47.6}"""))!!
+    assertEquals(phone.id, api.id)
+    assertEquals(phone.url, api.url)
+    assertEquals("US", api.json().getString("countryCode"))
+    assertEquals("Washington", api.json().getString("region"))
+    assertEquals(2, api.json().getJSONArray("tags").length())
+    assertEquals(47.6, api.json().getDouble("latitude"), 0.001)
+    assertNull(RadioCatalog.normalize(row("bad", "Bad").put("url", "file:///private")))
+    assertNull(RadioCatalog.normalize(row("bad", "Bad").put("url", "http://127.0.0.1/")))
+  }
+
+  @Test fun favouritesPersistAcrossStoreRecreationAndDeduplicate() {
+    var disk = "[]"
+    val store = RadioFavouritesStore({ disk }, { disk = it })
+    store.replace(JSONArray().put(row("z", "Zulu")).put(row("a", "Alpha")).put(row("a", "Alpha")))
+    val restored = RadioFavouritesStore({ disk }, { disk = it })
+    assertEquals(listOf("a", "z"), restored.rows().map { it.id })
+    restored.toggle(RadioCatalog.normalize(row("a", "Alpha"))!!)
+    assertEquals(listOf("z"), RadioFavouritesStore({ disk }, { disk = it }).rows().map { it.id })
+    restored.replace(JSONArray())
+    assertEquals("[]", disk)
+  }
+
+  @Test fun corruptPersistenceIsRecoverableWithoutDiscardingValidRows() {
+    var disk = "not json"
+    val store = RadioFavouritesStore({ disk }, { disk = it })
+    assertTrue(store.rows().isEmpty())
+    store.replace(JSONArray().put(JSONObject()).put(row("k", "KEXP")))
+    assertEquals("k", store.rows().single().id)
+  }
+
+  @Test fun directoryPagesAreAlphabeticalBoundedAndRetryMirrors() {
+    val urls = mutableListOf<String>()
+    val directory = RadioDirectory { url ->
+      urls += url
+      if (url.contains("de1.")) error("offline")
+      JSONArray().put(row("z", "Zulu")).put(row("a", "Alpha")).toString()
+    }
+    assertEquals(listOf("a", "z"), directory.stations("KEXP & friends", 100).map { it.id })
+    assertEquals(2, urls.size)
+    assertTrue(urls.last().contains("name=KEXP+%26+friends"))
+    assertTrue(urls.last().contains("order=name"))
+    assertTrue(urls.last().contains("offset=100"))
+    assertTrue(urls.last().contains("limit=100"))
+    directory.stations("KEXP & friends", 100)
+    assertEquals("same page is cached", 2, urls.size)
+  }
+
+  @Test fun selectionUsesItsOwnContextAndWrapsBothWays() {
+    RadioCatalog.rememberStations(JSONArray().put(row("a", "Alpha")).put(row("b", "Beta")))
+    RadioCatalog.selectContext("a")
+    RadioCatalog.rememberStations(JSONArray().put(row("z", "Zulu")))
+    assertEquals("b", RadioCatalog.adjacent("a", 1)?.id)
+    assertEquals("b", RadioCatalog.adjacent("a", -1)?.id)
+    assertEquals("a", RadioCatalog.adjacent("b", 1)?.id)
+    assertNull(RadioCatalog.adjacent("unknown", 1))
+  }
+
+  @Test fun directoryFailureIsNotReportedAsAnEmptySuccessfulSearch() {
+    val directory = RadioDirectory { error("offline") }
+    try { directory.stations("KEXP", 0); fail("must fail honestly") } catch (e: IllegalStateException) {
+      assertTrue(e.message!!.contains("unavailable"))
+    }
+    try { directory.stations("KEXP", -1); fail("invalid page") } catch (_: IllegalArgumentException) { }
+    try { directory.stations("x".repeat(101), 0); fail("unbounded query") } catch (_: IllegalArgumentException) { }
+  }
+
+  @Test fun failedPersistenceDoesNotReportSuccess() {
+    val store = RadioFavouritesStore({ "[]" }, { error("disk full") })
+    try { store.replace(JSONArray().put(row("a", "Alpha"))); fail("must fail") } catch (e: IllegalStateException) {
+      assertEquals("disk full", e.message)
+    }
+    assertTrue(store.rows().isEmpty())
+  }
+
+  @Test fun directoryResponseIsBoundedAndDeduplicated() {
+    val directory = RadioDirectory { JSONArray((0..150).map { row("id$it", "Station $it") }).toString() }
+    assertEquals(100, directory.stations("", 0).size)
+    val duplicate = RadioDirectory { JSONArray().put(row("a", "Alpha")).put(row("a", "Alpha")).put(JSONObject()).toString() }
+    assertEquals(1, duplicate.stations("", 0).size)
+  }
+
+  @Test fun unrelatedBrowsesDoNotChangeTheTunedSkipContext() {
+    RadioCatalog.rememberStations(JSONArray().put(row("c", "Charlie")).put(row("d", "Delta")).put(row("e", "Echo")))
+    RadioCatalog.selectContext("d")
+    assertTrue(RadioCatalog.canSkip("d"))
+    RadioCatalog.rememberStations(JSONArray().put(row("c", "Charlie")))
+    assertEquals("e", RadioCatalog.adjacent("d", 1)?.id)
+    assertEquals("c", RadioCatalog.adjacent("d", -1)?.id)
+    RadioCatalog.selectContext("missing")
+    assertFalse(RadioCatalog.canSkip("d"))
+  }
+
+  @Test fun shuffledSkipsAreUniformOverTheOtherStationsAndNeverTheCurrentOne() {
+    RadioCatalog.rememberStations(JSONArray().put(row("sh-a", "Alpha")).put(row("sh-b", "Beta")).put(row("sh-c", "Chi")).put(row("sh-d", "Delta")))
+    RadioCatalog.selectContext("sh-a")
+    try {
+      val random = kotlin.random.Random(42)
+      val picks = (1..240).map { RadioCatalog.randomOther("sh-a", random)!!.id }
+      assertFalse("never the tuned station", picks.contains("sh-a"))
+      assertEquals("every other station is reachable", setOf("sh-b", "sh-c", "sh-d"), picks.toSet())
+      val adjacentId = RadioCatalog.adjacent("sh-a", 1)!!.id
+      assertTrue("random skips are not locked to the adjacent station", picks.any { it != adjacentId })
+      val counts = picks.groupingBy { it }.eachCount()
+      assertTrue("uniform draw, not a biased one: $counts", counts.values.all { it in 40..160 })
+    } finally { RadioCatalog.selectContext("missing-radio-test-context") }
+  }
+
+  @Test fun shuffledSkipHasNoTargetWithoutAnotherStationInTheList() {
+    RadioCatalog.rememberStations(JSONArray().put(row("sh-solo", "Solo")))
+    RadioCatalog.selectContext("sh-solo")
+    try {
+      assertNull("fewer than two stations behaves as an ordered skip", RadioCatalog.randomOther("sh-solo"))
+      assertNull("a station outside its list has no random target", RadioCatalog.randomOther("sh-unknown"))
+    } finally { RadioCatalog.selectContext("missing-radio-test-context") }
+  }
+
+  @Test fun typedAndVoiceRadioSearchDoesNotStealMusicQueries() {
+    assertEquals("KEXP", CarSearch.radioQuery("radio KEXP"))
+    assertEquals("KEXP", CarSearch.radioQuery("play radio KEXP"))
+    assertEquals("BBC Radio 6", CarSearch.radioQuery("station BBC Radio 6"))
+    assertNull(CarSearch.radioQuery("Radiohead"))
+    assertNull(CarSearch.radioQuery("song Radio Gaga"))
+  }
+}

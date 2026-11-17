@@ -102,8 +102,8 @@ class AutoBrowseTest {
       assertTrue("car host can offer search", rootResult.params?.extras?.getBoolean("android.media.browse.SEARCH_SUPPORTED") == true)
       val sections = await { b.getChildren(root.mediaId, 0, 10, null) }.value!!
       // CAR-SEARCH-TYPES-001: Search is the fourth (last) tab, holding the search icons.
-      assertEquals(listOf("songs", "playlists", "albums", "search"), sections.map { it.mediaId })
-      assertEquals(listOf("Now playing queue", "Playlists", "Albums", "Search"), sections.map { it.mediaMetadata.title.toString() })
+      assertEquals(listOf("songs", "playlists", "radio", "search"), sections.map { it.mediaId })
+      assertEquals(listOf("Now playing queue", "Playlists", "Radio", "Search"), sections.map { it.mediaMetadata.title.toString() })
       assertTrue("top-level sections are browsable, not dead-end play buttons", sections.all { it.mediaMetadata.isBrowsable == true && it.mediaMetadata.isPlayable == false })
       assertEquals("Your playback queue", sections[0].mediaMetadata.subtitle?.toString())
       assertEquals("Your saved playlists", sections[1].mediaMetadata.subtitle?.toString())
@@ -124,7 +124,7 @@ class AutoBrowseTest {
       assertEquals(emptyList<String>(), ids(await { b.getChildren("songs", 2, 1, null) }))
 
       val playlists = await { b.getChildren("playlists", 0, 50, null) }.value!!
-      assertEquals(listOf("playlist/p1"), playlists.map { it.mediaId })
+      assertEquals(listOf("albums", "playlist/p1"), playlists.map { it.mediaId })
       assertTrue("playlist folder is browsable", playlists.first().mediaMetadata.isBrowsable == true)
 
       // ALBUM-SAVE-001: a saved album is under Albums, not Playlists, with its artist and cover, songs in order.
@@ -161,6 +161,60 @@ class AutoBrowseTest {
       assertEquals(listOf("s2"), ids(await { b.getSearchResult("a", 1, 1, null) }))
     } finally {
       instr.runOnMainSync { b.release() }
+    }
+  }
+
+  /** AUTO-QUEUE-001: a found single joins the queue front; an album or saved playlist replaces it. */
+  @Test
+  fun aFoundSingleJoinsTheQueueFrontWhileCollectionsReplaceIt() {
+    seed()
+    val browser = AtomicReference<MediaBrowser>()
+    val built = CountDownLatch(1)
+    instr.runOnMainSync {
+      val token = SessionToken(ctx, ComponentName(ctx, PlaybackService::class.java))
+      val f = MediaBrowser.Builder(ctx, token).buildAsync()
+      f.addListener({ browser.set(f.get()); built.countDown() }, Runnable::run)
+    }
+    assertTrue("browser connected", built.await(15, TimeUnit.SECONDS))
+    val b = browser.get()
+    fun tap(mediaId: String) {
+      instr.runOnMainSync {
+        b.setMediaItem(MediaItem.Builder().setMediaId(mediaId).build())
+        b.prepare()
+      }
+      instr.waitForIdleSync()
+    }
+    fun awaitQueue(ids: List<String>, current: String) {
+      val deadline = System.currentTimeMillis() + 10000
+      var seen: Pair<List<String>, String?>? = null
+      while (System.currentTimeMillis() < deadline) {
+        val out = AtomicReference<Pair<List<String>, String?>>()
+        instr.runOnMainSync { out.set((0 until b.mediaItemCount).map { b.getMediaItemAt(it).mediaId } to b.currentMediaItem?.mediaId) }
+        seen = out.get()
+        if (seen == (ids to current)) return
+        Thread.sleep(100)
+      }
+      assertEquals(ids to current, seen)
+    }
+    try {
+      instr.runOnMainSync { b.stop(); b.clearMediaItems() }
+      // An empty queue still restores the tapped song's surrounding list (CAR-SKIP-001).
+      tap("s1")
+      awaitQueue(listOf("s1", "s2"), current = "s1")
+      // A found single (not in the queue) plays NOW at the front; the queue survives behind it.
+      tap("s3")
+      awaitQueue(listOf("s3", "s1", "s2"), current = "s3")
+      // A song already queued plays in place: no duplicate, no reorder, no wipe.
+      tap("s2")
+      awaitQueue(listOf("s3", "s1", "s2"), current = "s2")
+      // A saved album replaces the whole queue with the album, positioned on the tapped track.
+      tap("playlist/A1/track/g2")
+      awaitQueue(listOf("playlist/A1/track/g1", "playlist/A1/track/g2"), current = "playlist/A1/track/g2")
+      // A saved playlist replaces the whole queue with the playlist.
+      tap("playlist/p1/track/s3")
+      awaitQueue(listOf("playlist/p1/track/s3"), current = "playlist/p1/track/s3")
+    } finally {
+      instr.runOnMainSync { b.stop(); b.clearMediaItems(); b.release() }
     }
   }
 }

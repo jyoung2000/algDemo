@@ -46,6 +46,12 @@ class PlaybackService : MediaLibraryService() {
     }
   }
   private var shownCarButtons: List<String> = emptyList()
+  private var radioSearchUntil = 0L
+  private val radioListener: () -> Unit = { mainHandler.post {
+    refreshCarButtons()
+    session?.notifyChildrenChanged(RadioCatalog.FAVOURITES, RadioCatalog.favouriteCount().coerceAtLeast(1), null)
+    session?.notifyChildrenChanged(RadioCatalog.ROOT, 3, null)
+  }; Unit }
   /** CAR-SEARCH-TYPES-001: Identify records on its own thread; never on the session's. */
   private val listenExec = java.util.concurrent.Executors.newSingleThreadExecutor()
   private val mainHandler by lazy { android.os.Handler(mainLooper) }
@@ -81,6 +87,8 @@ class PlaybackService : MediaLibraryService() {
       .setMediaButtonPreferences(carButtons())
       .build()
     player.addListener(carButtonListener)
+    RadioCatalog.addListener(radioListener)
+    RadioCatalog.load(this).addListener({ mainHandler.post { refreshCarButtons() } }, MoreExecutors.directExecutor())
     // CAR-CATALOG-SERVICE-001: the car's catalogue searches no longer need the phone page.
     catalog = CatalogEngine(this).also { it.start() }
   }
@@ -101,6 +109,7 @@ class PlaybackService : MediaLibraryService() {
   }
 
   override fun onDestroy() {
+    RadioCatalog.removeListener(radioListener)
     MediaHub.removeListener(libraryListener)
     player.removeListener(carButtonListener)
     listenExec.shutdownNow()
@@ -120,6 +129,12 @@ class PlaybackService : MediaLibraryService() {
    * is what Android Auto draws.
    */
   private fun carButtons(): List<CommandButton> {
+    RadioNative.session?.station?.let { station ->
+      val starred = RadioCatalog.isFavourite(station)
+      return listOf(CommandButton.Builder(if (starred) CommandButton.ICON_STAR_FILLED else CommandButton.ICON_STAR_UNFILLED)
+        .setDisplayName(if (starred) "Remove favourite station" else "Favourite station")
+        .setSessionCommand(STAR).setSlots(CommandButton.SLOT_OVERFLOW).build())
+    }
     val id = currentSongId()
     val (starred, disliked) = CarFeedback.state(id)
     val shuffle = player.shuffleModeEnabled
@@ -156,6 +171,44 @@ class PlaybackService : MediaLibraryService() {
     val id = player.currentMediaItem?.mediaId ?: return null
     val scoped = Regex("^playlist/([^/]+)/track/([^/]+)$").matchEntire(id) ?: return id
     return Uri.decode(scoped.groupValues[2])
+  }
+
+  private fun radioFolder(id: String): MediaItem? = when (id) {
+    RadioCatalog.ROOT -> folderItem(id, "Radio", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "World radio and favourite stations")
+    RadioCatalog.FAVOURITES -> folderItem(id, "Favourite stations", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Shared with your phone")
+    RadioCatalog.SEARCH -> folderItem(id, "Search stations", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Tap the search button, or say radio KEXP")
+    else -> if (id.matches(Regex("radio/az/[0-9]{1,7}"))) folderItem(id, "Stations A–Z", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "World stations in alphabetical order") else null
+  }
+
+  private fun radioResults(words: String): ListenableFuture<List<MediaItem>> = Futures.catching(
+    Futures.transform(RadioCatalog.stations(this, words), { rows -> rows.orEmpty().map(RadioCatalog::item).ifEmpty {
+      listOf(note("No stations found", "Try another station name"))
+    } }, MoreExecutors.directExecutor()),
+    Exception::class.java, { listOf(note("Station search didn't finish", "Try Favourite stations or search again")) }, MoreExecutors.directExecutor(),
+  )
+
+  private fun radioChildren(id: String): ListenableFuture<List<MediaItem>> = when {
+    id == RadioCatalog.ROOT -> Futures.immediateFuture(listOfNotNull(radioFolder(RadioCatalog.FAVOURITES), radioFolder(RadioCatalog.AZ), radioFolder(RadioCatalog.SEARCH)))
+    id == RadioCatalog.FAVOURITES -> Futures.transform(RadioCatalog.favouriteItems(this), { it.orEmpty().ifEmpty {
+      listOf(note("No favourite stations yet", "Star a playing station here or on your phone"))
+    } }, MoreExecutors.directExecutor())
+    id == RadioCatalog.SEARCH -> {
+      radioSearchUntil = android.os.SystemClock.elapsedRealtime() + CarSearch.STICKY_MS
+      Futures.immediateFuture(listOf(note("Search stations is on", "Tap the search button and type a station name, or say radio KEXP")))
+    }
+    else -> {
+      val offset = id.removePrefix("radio/az/").toIntOrNull()
+      if (offset == null || offset !in 0..1_000_000) Futures.immediateFailedFuture(IllegalArgumentException("Invalid radio page"))
+      else Futures.transform(RadioCatalog.stations(this, offset = offset), { rows ->
+        val stations = rows.orEmpty().map(RadioCatalog::item)
+        stations + if (rows.orEmpty().isNotEmpty() && offset <= 999900) listOf(folderItem("radio/az/${offset + RadioCatalog.PAGE_SIZE}", "More stations A–Z", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED))
+        else if (stations.isEmpty()) listOf(note("End of stations", "Go back or search for a station")) else emptyList()
+      }, MoreExecutors.directExecutor())
+    }
+  }
+
+  private fun radioWords(query: String): String? = CarSearch.radioQuery(query) ?: query.trim().take(100).takeIf {
+    it.isNotBlank() && android.os.SystemClock.elapsedRealtime() < radioSearchUntil && CarSearch.parse(query).first == CarSearchType.ALL
   }
 
   // ------------------------------------------------------------------ CAR-SEARCH-TYPES-001
@@ -229,6 +282,7 @@ class PlaybackService : MediaLibraryService() {
    * tiles of a leading seven-tile row and no song beneath it (DHU 2026-11-15), so results must lead.
    */
   private fun searchItems(query: String): ListenableFuture<List<MediaItem>> {
+    radioWords(query)?.let { return radioResults(it) }
     val (type, words) = CarSearch.parse(query, CarSearch.picked(android.os.SystemClock.elapsedRealtime()))
     if (type == CarSearchType.IDENTIFY) return identifyItems()
     if (words.isBlank()) return Futures.immediateFuture(emptyList())
@@ -302,6 +356,12 @@ class PlaybackService : MediaLibraryService() {
       customCommand: SessionCommand,
       args: Bundle,
     ): ListenableFuture<SessionResult> {
+      RadioNative.session?.station?.let { station ->
+        if (customCommand.customAction != ACTION_STAR) return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
+        return Futures.catching(Futures.transform(RadioCatalog.toggle(this@PlaybackService, station), {
+          SessionResult(SessionResult.RESULT_SUCCESS)
+        }, MoreExecutors.directExecutor()), Exception::class.java, { SessionResult(SessionError.ERROR_UNKNOWN) }, MoreExecutors.directExecutor())
+      }
       when (customCommand.customAction) {
         ACTION_SHUFFLE -> player.shuffleModeEnabled = !player.shuffleModeEnabled
         ACTION_STAR -> {
@@ -347,19 +407,29 @@ class PlaybackService : MediaLibraryService() {
       pageSize: Int,
       params: LibraryParams?,
     ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
+      if (parentId == RadioCatalog.ROOT || parentId.startsWith("radio/")) {
+        if (radioFolder(parentId) == null) return Futures.immediateFuture(LibraryResult.ofError(SessionError.ERROR_BAD_VALUE))
+        radioSearchUntil = android.os.SystemClock.elapsedRealtime() + CarSearch.STICKY_MS
+        return Futures.catching(Futures.transform(radioChildren(parentId), {
+          LibraryResult.ofItemList(ImmutableList.copyOf(page(it.orEmpty(), page, pageSize)), params)
+        }, MoreExecutors.directExecutor()), Exception::class.java, {
+          LibraryResult.ofItemList(ImmutableList.copyOf(page(listOf(note("Station directory is unavailable", "Try Favourite stations or retry")), page, pageSize)), params)
+        }, MoreExecutors.directExecutor())
+      }
+      radioSearchUntil = 0
       val items: List<MediaItem> = when {
         parentId == ROOT -> listOfNotNull(
           folderItem(FOLDER_SONGS, "Now playing queue", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Your playback queue"),
           folderItem(FOLDER_PLAYLISTS, "Playlists", MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS, "Your saved playlists"),
-          // ALBUM-SAVE-001: saved albums have their own section, shown once one is saved.
-          if (MediaHub.savedAlbums().isNotEmpty()) folderItem(FOLDER_ALBUMS, "Albums", MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS, "Your saved albums") else null,
-          // CAR-SEARCH-TYPES-001: the search icons (Android Auto shows at most four tabs; this is the last).
+          // Android Auto shows at most four tabs. Albums remain under Playlists and via search.
+          radioFolder(RadioCatalog.ROOT),
           searchFolder(),
         )
         parentId == FOLDER_SEARCH -> searchTab()
         parentId == IDENTIFY -> return Futures.transform(identifyItems(), { LibraryResult.ofItemList(ImmutableList.copyOf(page(it!!, page, pageSize)), params) }, MoreExecutors.directExecutor())
         parentId.startsWith(TYPE_PREFIX) -> {
           val type = CarSearchType.of(parentId.removePrefix(TYPE_PREFIX)) ?: return Futures.immediateFuture(LibraryResult.ofError(SessionError.ERROR_BAD_VALUE))
+          radioSearchUntil = 0
           CarSearch.pick(type, android.os.SystemClock.elapsedRealtime())
           val hint = note(if (type == CarSearchType.ALL) "Tap the search button and say anything" else "Tap the search button. ${type.hint}", "${type.title} search is on")
           val last = CarSearch.lastWords
@@ -396,7 +466,9 @@ class PlaybackService : MediaLibraryService() {
         }
         parentId.startsWith(HINT_PREFIX) -> emptyList()
         parentId == FOLDER_SONGS -> MediaHub.songs.map { songItem(it) }
-        parentId == FOLDER_PLAYLISTS -> MediaHub.savedLists().map {
+        parentId == FOLDER_PLAYLISTS -> listOfNotNull(
+          if (MediaHub.savedAlbums().isNotEmpty()) folderItem(FOLDER_ALBUMS, "Albums", MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS, "Your saved albums") else null,
+        ) + MediaHub.savedLists().map {
           folderItem("$PLAYLIST_PREFIX${Uri.encode(it.id)}", it.title, MediaMetadata.MEDIA_TYPE_PLAYLIST)
         }
         parentId == FOLDER_ALBUMS -> MediaHub.savedAlbums().map { albumItem(it) }
@@ -417,6 +489,12 @@ class PlaybackService : MediaLibraryService() {
       browser: MediaSession.ControllerInfo,
       mediaId: String,
     ): ListenableFuture<LibraryResult<MediaItem>> {
+      radioFolder(mediaId)?.let { return Futures.immediateFuture(LibraryResult.ofItem(it, null)) }
+      RadioCatalog.stationId(mediaId)?.let { id ->
+        return Futures.catching(Futures.transform(RadioCatalog.async { RadioCatalog.resolve(this@PlaybackService, id) }, { station ->
+          if (station == null) LibraryResult.ofError(SessionError.ERROR_BAD_VALUE) else LibraryResult.ofItem(RadioCatalog.item(station), null)
+        }, MoreExecutors.directExecutor()), Exception::class.java, { LibraryResult.ofError(SessionError.ERROR_BAD_VALUE) }, MoreExecutors.directExecutor())
+      }
       val item: MediaItem? = when {
         mediaId == ROOT -> folderItem(ROOT, "Airwave Discovery", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
         mediaId == FOLDER_SONGS -> folderItem(FOLDER_SONGS, "Now playing queue", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Your playback queue")
@@ -443,6 +521,9 @@ class PlaybackService : MediaLibraryService() {
       return if (item != null) Futures.immediateFuture(LibraryResult.ofItem(item, null))
       else Futures.immediateFuture(LibraryResult.ofError(SessionError.ERROR_BAD_VALUE))
     }
+
+    override fun onSubscribe(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, parentId: String, params: LibraryParams?): ListenableFuture<LibraryResult<Void>> =
+      if (radioFolder(parentId) != null) Futures.immediateFuture(LibraryResult.ofVoid()) else super.onSubscribe(session, browser, parentId, params)
 
     override fun onSearch(
       session: MediaLibrarySession,
@@ -506,14 +587,23 @@ class PlaybackService : MediaLibraryService() {
       startIndex: Int,
       startPositionMs: Long,
     ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+      // AUTO-QUEUE-001: the queue as it stands when the driver taps, read on the session thread.
+      val queueNow = (0 until player.mediaItemCount).map { player.getMediaItemAt(it) }
       return Futures.transform(Futures.allAsList(mediaItems.map(::resolveAsync)), { resolved ->
         val items = resolved!!
-        // CAR-SKIP-001: a head unit can request a single item. Restore its surrounding list so
-        // track skips have real destinations. Timeline length alone does not determine the host's
-        // button choice; the platform command/action policy is verified separately.
-        val whole = if (items.size == 1) listAround(items[0]) else null
-        if (whole != null) MediaSession.MediaItemsWithStartPosition(whole.items, whole.index, startPositionMs)
-        else MediaSession.MediaItemsWithStartPosition(items, startIndex, startPositionMs)
+        // AUTO-QUEUE-001: a single found song plays at the FRONT of the current queue and keeps
+        // the rest of it (a song already queued plays in place). Albums and saved playlists carry
+        // scoped ids, skip this plan, and REPLACE the queue with their whole collection below.
+        val plan = if (items.size == 1) CarQueue.planFor(items[0], queueNow) { it.mediaId } else null
+        if (plan != null) MediaSession.MediaItemsWithStartPosition(plan.items.toMutableList(), plan.index, startPositionMs)
+        else {
+          // CAR-SKIP-001: a head unit can request a single item. Restore its surrounding list so
+          // track skips have real destinations. Timeline length alone does not determine the host's
+          // button choice; the platform command/action policy is verified separately.
+          val whole = if (items.size == 1) listAround(items[0]) else null
+          if (whole != null) MediaSession.MediaItemsWithStartPosition(whole.items, whole.index, startPositionMs)
+          else MediaSession.MediaItemsWithStartPosition(items, startIndex, startPositionMs)
+        }
       }, MoreExecutors.directExecutor())
     }
 
@@ -543,6 +633,9 @@ class PlaybackService : MediaLibraryService() {
     private fun resolveAsync(item: MediaItem): ListenableFuture<MediaItem> {
       val query = item.requestMetadata.searchQuery
       if (!query.isNullOrBlank()) {
+        radioWords(query)?.let { words -> return Futures.transform(RadioCatalog.stations(this@PlaybackService, words), { rows ->
+          RadioCatalog.item(rows?.firstOrNull() ?: throw IllegalArgumentException("No stations found"))
+        }, MoreExecutors.directExecutor()) }
         val album = asksForAlbum(item.requestMetadata.extras)
         return Futures.transform(MediaHub.searchCatalog(query, album = album), { hits ->
           // ALBUM-CAR-001: "play the album …", or words naming an album, play that album from its start.
@@ -554,6 +647,9 @@ class PlaybackService : MediaLibraryService() {
           songItem(song)
         }, MoreExecutors.directExecutor())
       }
+      RadioCatalog.stationId(item.mediaId)?.let { id -> return Futures.transform(RadioCatalog.async {
+        RadioCatalog.resolve(this@PlaybackService, id) ?: throw IllegalArgumentException("Unknown station")
+      }, { RadioCatalog.item(it!!) }, MoreExecutors.directExecutor()) }
       val scoped = scopedSong(item.mediaId)
       if (scoped != null) return Futures.immediateFuture(songItem(scoped, item.mediaId))
       val song = MediaHub.findSong(item.mediaId)
