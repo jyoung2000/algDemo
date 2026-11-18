@@ -1,0 +1,24 @@
+/* ARTIST-SPACING-001 (owner 2026-11-17: "on the artist page ensure the buttons aren't touching and
+   are properly spaced"). Measured before: 4px between the play/download row and the type-filter
+   chips, 8px between action buttons. Now one rhythm: 12px between buttons in a row, 16px between
+   rows of controls, and wrapped rows keep the same gap vertically. */
+.artist .album__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+}
+.artist .typefilter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.artist .artist__songs-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}

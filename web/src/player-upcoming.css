@@ -1,0 +1,36 @@
+/* CURRENT-PRIMARY-001: full-opacity current identity left, future cover quietly at far right.
+   The second artwork owns a grid cell; never overlay it on the progress/transport hit targets. */
+.np__upcoming {
+  grid-area: upcoming;
+  position: relative;
+  justify-self: end;
+  align-self: center;
+  width: 64px;
+  height: 64px;
+  min-width: 0;
+}
+.np__upcoming .art {
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  opacity: 0.42;
+  filter: saturate(0.7);
+  mask-image: linear-gradient(to right, #000 55%, rgb(0 0 0 / 45%));
+}
+.np.np--panel.has-upcoming {
+  /* NP-PROG-ORDER-001: the progress bar always sits ABOVE the transport controls, on every
+     platform; the upcoming cover takes a fourth column instead of stealing the controls row. */
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 1fr) 264px 64px;
+  grid-template-areas: 'main prog side upcoming' 'main tx side upcoming';
+}
+@media (max-width: 899px) {
+  .np.np--docked.has-upcoming {
+    grid-template-columns: minmax(0, 1fr) 56px;
+    grid-template-areas: 'main upcoming' 'controls controls';
+    column-gap: 12px;
+    row-gap: 16px;
+  }
+  .np.np--docked.has-upcoming .np__main { grid-area: main; }
+  .np.np--docked.has-upcoming .np__dockctl { grid-area: controls; }
+  .np.np--docked.has-upcoming .np__upcoming { width: 48px; height: 48px; }
+}

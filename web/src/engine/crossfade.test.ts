@@ -99,7 +99,7 @@ describe('the mixing slider', () => {
     for (const bad of [0.2, 1.5, Number.NaN, undefined]) {
       expect(mixPlan(100, 200, 200, { minPlayedFraction: bad }).startAt, String(bad)).toBeCloseTo(190, 5);
     }
-    expect(clampPlayThrough(80)).toBe(80);
+    expect(clampPlayThrough(80)).toBe(100); // legacy setting migrates to full completion
     expect(clampPlayThrough(49)).toBe(PLAY_THROUGH_MIN);
     expect(clampPlayThrough(120)).toBe(100);
     expect(clampPlayThrough(Number.NaN)).toBe(PLAY_THROUGH_DEFAULT);

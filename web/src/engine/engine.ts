@@ -3,8 +3,9 @@
  * deterministic: same seeds, candidates, feedback, vectors, settings and `now` give the same queue.
  * Dates are passed as ISO strings (YYYY-MM-DD) and `now` as a Date at UTC midnight, matching Python's date.
  */
+import { applyRankingFormula, rankingInputs } from './ranking-formula';
 import * as G from './genres';
-import { AFFINITY_FACTORS, DEFAULT_ENGINE, FEEDBACK_WEIGHTS, type EngineConfig, type Weights, type Factor } from './config';
+import { AFFINITY_FACTORS, DEFAULT_ENGINE, FEEDBACK_WEIGHTS, FRESH_WEIGHT_MULTIPLIER, MODE_MULTIPLIERS, type EngineConfig, type Weights, type Factor } from './config';
 import { splitArtists } from './identity';
 import { TASTE_WEIGHT, tasteFit, type TasteProfile } from './taste';
 import { tasteFit2, type TasteBlend } from './taste2';
@@ -95,6 +96,7 @@ export interface Scored {
   exposurePenalty: number;
   reasons: Reason[];
   uncertainty: string[];
+  formulaError?: string;
   newRelease: boolean;
 }
 
@@ -419,15 +421,8 @@ export function blend(near: number, far: number, a: number): number {
 export function modeWeights(w: Weights, adventurous: number, fresh = false): Record<Factor, number> {
   const d: Record<Factor, number> = { ...w };
   const a = Math.min(1, Math.max(0, adventurous));
-  // factor: (multiplier at Familiar, multiplier at Adventurous)
-  const mult: Partial<Record<Factor, [number, number]>> = {
-    audio: [1.3, 1.0],
-    artist: [1.3, 0.7],
-    provider: [1.2, 1.0],
-    novelty: [0.3, 2.5],
-  };
-  for (const [key, [near, far]] of Object.entries(mult) as [Factor, [number, number]][]) d[key] *= blend(near, far, a);
-  if (fresh) d.freshness *= 5.0;
+  for (const [key, [near, far]] of Object.entries(MODE_MULTIPLIERS) as [Factor, [number, number]][]) d[key] *= blend(near, far, a);
+  if (fresh) d.freshness *= FRESH_WEIGHT_MULTIPLIER;
   return d;
 }
 
@@ -519,6 +514,8 @@ export function scoreOne(c: Track, ctx: Context): Scored {
   const perSeedFactors: Record<string, Record<string, number | null>> = {};
   const perSeedWsum: Record<string, number> = {};
   const perSeedWs: Record<string, Record<string, number>> = {};
+  /** COVERAGE-FULL-001: the part of the genre weight set aside because the services say the same thing. */
+  const perSeedSetAside: Record<string, number> = {};
   for (const s of ctx.seeds) {
     const f = seedFactors(c, s, ctx);
     const ws: Record<string, number> = {};
@@ -526,7 +523,10 @@ export function scoreOne(c: Track, ctx: Context): Scored {
       const v = f[k];
       if (v !== null && v !== undefined && w[k] > 0) ws[k] = w[k];
     }
-    if ('genre' in ws && 'provider' in ws && (f.provider ?? 0) > 0) ws.genre! *= 1.0 - cfg.genreProviderOverlap;
+    if ('genre' in ws && 'provider' in ws && (f.provider ?? 0) > 0) {
+      perSeedSetAside[s.key] = ws.genre! * cfg.genreProviderOverlap;
+      ws.genre! *= 1.0 - cfg.genreProviderOverlap;
+    }
     const total = Object.values(ws).reduce((x, y) => x + y, 0);
     perSeedFactors[s.key] = f;
     perSeedWsum[s.key] = total;
@@ -572,7 +572,9 @@ export function scoreOne(c: Track, ctx: Context): Scored {
   const ca = artistSet(c);
   const inSeeds = [...ca].some((a) => seedArtists.has(a));
   const inRelated = [...ca].some((a) => relatedAll.has(a));
-  if (inSeeds) g.novelty = 0.0;
+  // NOVELTY-UNKNOWN-001: with no artist named, whether the artist is new is unknown, not "new".
+  if (ctx.rankV2 && ca.size === 0) g.novelty = null;
+  else if (inSeeds) g.novelty = 0.0;
   else if (inRelated) g.novelty = 0.5; // liking an artist is rewarded by feedback; it must not also cost novelty
   else g.novelty = 1.0;
   let num = blendVal * seedW;
@@ -589,29 +591,36 @@ export function scoreOne(c: Track, ctx: Context): Scored {
   let affinity = den > 0 ? num / den : 0.0;
   // Listening taste blends in only when the caller passes it; without it the score is unchanged.
   // v2 passes a long/recent/session blend whose weight grows with evidence (confidence-aware).
+  // ALGO-MANAGER-001: the active algorithm's taste weight; the default is exactly TASTE_WEIGHT.
+  const tasteW = cfg.tasteWeight ?? TASTE_WEIGHT;
   if (ctx.rankV2 && ctx.taste2) {
     const tf2 = tasteFit2(c, ctx.taste2);
     if (tf2) {
       g.taste = tf2.value;
-      affinity = affinity * (1 - tf2.weight) + tf2.weight * tf2.value;
+      const w2 = tasteW === TASTE_WEIGHT ? tf2.weight : Math.min(1, tf2.weight * (tasteW / TASTE_WEIGHT));
+      affinity = affinity * (1 - w2) + w2 * tf2.value;
     }
   } else {
     const tf = ctx.taste ? tasteFit(c, ctx.taste) : null;
     if (tf) {
       g.taste = tf.value;
-      affinity = affinity * (1 - TASTE_WEIGHT) + TASTE_WEIGHT * tf.value;
+      affinity = affinity * (1 - tasteW) + tasteW * tf.value;
     }
   }
   // coverage over affinity factors (seed factors of the best seed + feedback when present)
   // v2: when no seed in the run has a vector, nothing can have audio evidence, so audio is not
   // "missing" — it is impossible, and it leaves the denominator instead of flattening everyone.
-  let allAff = AFFINITY_FACTORS.reduce((x, k) => x + w[k], 0);
+  const covFeedback = cfg.seedFeedbackWeight ?? w.feedback;
+  let allAff = AFFINITY_FACTORS.reduce((x, k) => x + (k === 'feedback' ? covFeedback : w[k]), 0);
   if (ctx.rankV2) {
     const anySeedVector = ctx.seeds.some((s) => ctx.vectors.has(s.key));
     if (!anySeedVector) allAff -= w.audio;
+    // COVERAGE-FULL-001: weight set aside as a repeat of the services' evidence is not evidence that is missing.
+    // It left the "known" side above; it leaves the "could be known" side too, so full evidence reads as 1.
+    if (bestKey !== null) allAff -= perSeedSetAside[bestKey] ?? 0;
   }
-  const have = seedW + (g.feedback !== null && g.feedback !== undefined ? w.feedback : 0.0);
-  const coverage = allAff ? Math.min(1, have / allAff) : 0.0;
+  const have = seedW + (g.feedback !== null && g.feedback !== undefined ? covFeedback : 0.0);
+  const coverage = allAff > 1e-12 ? Math.min(1, have / allAff) : 0.0;
   const final = affinity * (cfg.coverageFloor + (1 - cfg.coverageFloor) * coverage);
   const factors: Record<string, number | null> = bestKey ? { ...perSeedFactors[bestKey] } : {};
   Object.assign(factors, g);
@@ -624,9 +633,11 @@ export function scoreOne(c: Track, ctx: Context): Scored {
   }
   const imp = ctx.impressions[c.key] ?? 0;
   const pen = Math.min(cfg.exposurePenaltyMax, cfg.exposurePenalty * imp);
+  const custom = cfg.rankingFormula ? applyRankingFormula(cfg.rankingFormula, rankingInputs(final, affinity, coverage, factors, cfg.coverageFloor)) : null;
   return {
     track: c,
-    final,
+    final: custom?.score ?? final,
+    ...(custom?.error ? { formulaError: custom.error } : {}),
     affinity,
     coverage,
     bestSeed: bestKey,
@@ -653,6 +664,10 @@ export function scoreAll(candidates: Track[], ctx: Context): Scored[] {
   assignTiers(out, ctx);
   for (const s of out) {
     const [reasons, uncertainty] = explain(s, ctx);
+    if ((ctx.cfg ?? DEFAULT_ENGINE).rankingFormula) {
+      if (s.formulaError) uncertainty.push(`Custom formula could not score this song; built-in score used: ${s.formulaError}`);
+      else reasons.unshift({ factor: 'formula', text: 'Ranked with your custom discovery formula. Built-in factor weights are reference values.', weight: 1 });
+    }
     s.reasons = reasons;
     s.uncertainty = uncertainty;
   }

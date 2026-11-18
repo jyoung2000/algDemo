@@ -1,0 +1,97 @@
+/* SKELETON-001 shapes. Colors stay on the app's neutral ramp; the sweep is a narrow bright band
+   (the "tuning needle") rather than a broad washed shimmer, so it reads as scanning, not fog. */
+.skel {
+  display: inline-block;
+  position: relative;
+  overflow: hidden;
+  background: rgb(0 0 0 / 7%);
+  border-radius: 6px;
+  min-height: 12px;
+}
+.skel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    100deg,
+    transparent 38%,
+    rgb(0 113 227 / 10%) 48%,
+    rgb(255 255 255 / 75%) 50%,
+    rgb(0 113 227 / 10%) 52%,
+    transparent 62%
+  );
+  animation: skel-tune 1.3s ease-in-out infinite;
+}
+.skel--line {
+  height: 12px;
+  width: 100%;
+  border-radius: 4px;
+}
+.skel--art {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  flex: none;
+}
+.skel--pill {
+  height: 24px;
+  width: 64px;
+  border-radius: 12px;
+  flex: none;
+}
+.skel--block {
+  width: 100%;
+  height: 80px;
+  border-radius: 10px;
+}
+.skel-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+.skel-row__text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.skel-list {
+  display: block;
+}
+/* Staggered rows: the scan runs down the list instead of flashing every row at once. */
+.skel-list .skel-row:nth-child(2) .skel::after { animation-delay: 0.12s; }
+.skel-list .skel-row:nth-child(3) .skel::after { animation-delay: 0.24s; }
+.skel-list .skel-row:nth-child(4) .skel::after { animation-delay: 0.36s; }
+.skel-list .skel-row:nth-child(5) .skel::after { animation-delay: 0.48s; }
+.skel-list .skel-row:nth-child(6) .skel::after { animation-delay: 0.6s; }
+.skel-list .skel-row:nth-child(n + 7) .skel::after { animation-delay: 0.72s; }
+@keyframes skel-tune {
+  to { transform: translateX(100%); }
+}
+/* The handover: live data develops into focus — slight blur and desaturation clearing while a
+   left-to-right wipe uncovers it, echoing the loading sweep's direction. */
+.skel-develop {
+  animation: skel-develop 0.45s ease-out both;
+}
+@keyframes skel-develop {
+  from {
+    opacity: 0;
+    filter: blur(6px) saturate(0.4);
+    clip-path: inset(0 100% 0 0);
+  }
+  60% {
+    clip-path: inset(0 0 0 0);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0) saturate(1);
+    clip-path: inset(0 0 0 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel::after { animation: none; }
+  .skel-develop { animation: none; }
+}

@@ -32,6 +32,9 @@ enum class TransitionStyle(val id: String) {
  * Main-thread calls ([attach], [setEq], [crossfadeTo], [transitionTo], [cut], [setMasterGain]) act at
  * [currentTime], between quanta; [process] renders one 128-frame quantum.
  */
+/** audio-bus.ts `TransitionShape`: when the low end changes hands, in seconds from the transition's start. */
+data class TransitionShape(val swapAt: Double, val swapSeconds: Double)
+
 class MixBus(val ctx: RenderContext = RenderContext(), initialEq: EqConfig = EqConfig.DEFAULTS) {
   class Deck internal constructor(
     val id: String,
@@ -116,7 +119,12 @@ class MixBus(val ctx: RenderContext = RenderContext(), initialEq: EqConfig = EqC
     return liveDeck
   }
 
-  fun transitionTo(target: String, seconds: Double, style: TransitionStyle): String {
+  /**
+   * audio-bus.ts `transitionTo`. With a [shape] (DJ-XFADE-001) the low end changes hands at a chosen
+   * moment, quickly, the way a DJ swaps the bass on a beat; without one the lows cross gradually
+   * over the first half, exactly as before.
+   */
+  fun transitionTo(target: String, seconds: Double, style: TransitionStyle, shape: TransitionShape? = null): String {
     if (target == liveDeck || !decks.containsKey(target)) return liveDeck
     val from = decks[liveDeck]
     val to = decks[target]
@@ -129,6 +137,24 @@ class MixBus(val ctx: RenderContext = RenderContext(), initialEq: EqConfig = EqC
     if (to != null) restFilters(to, at)
     if (to != null) rampCurve(to.gain.gain, 1.0, at, span)
     if (from != null) rampCurve(from.gain.gain, 0.0, at, span)
+    val shaped = shape != null && shape.swapAt.isFinite() && shape.swapSeconds.isFinite() &&
+      (style == TransitionStyle.BASS_SWAP || style == TransitionStyle.FILTER)
+    if (shaped) {
+      val swapSeconds = max(CUT_SECONDS, min(shape!!.swapSeconds, span - CUT_SECONDS))
+      val swapStart = at + max(CUT_SECONDS, min(shape.swapAt, span - swapSeconds))
+      val swapEnd = swapStart + swapSeconds
+      if (to != null) {
+        rampParam(to.bass.gain, BASS_DUCK_DB, at, at + CUT_SECONDS)
+        to.bass.gain.setValueAtTime(BASS_DUCK_DB.toFloat(), swapStart)
+        chainParam(to.bass.gain, BASS_DUCK_DB, 0.0, swapStart, swapEnd)
+      }
+      if (from != null) {
+        laterRamp(from.bass.gain, BASS_DUCK_DB, at, swapStart, swapEnd)
+        if (style == TransitionStyle.FILTER && at + span - swapEnd > CUT_SECONDS) laterRamp(from.sweep.frequency, SWEEP_TOP_HZ, at, swapEnd, at + span, true)
+      }
+      liveDeck = target
+      return liveDeck
+    }
     if (style == TransitionStyle.BASS_SWAP || style == TransitionStyle.FILTER) {
       if (to != null) {
         rampParam(to.bass.gain, BASS_DUCK_DB, at, at + CUT_SECONDS)
@@ -226,6 +252,15 @@ class MixBus(val ctx: RenderContext = RenderContext(), initialEq: EqConfig = EqC
   private fun chainParam(param: AudioParam, from: Double, value: Double, start: Double, end: Double) {
     param.linearRampToValueAtTime(value.toFloat(), end)
     automation[param] = Automation(start, max(0.0, end - start), doubleArrayOf(from, value))
+  }
+
+  /** audio-bus.ts `laterRamp`: hold what is there until [start], then ramp to [value] by [end]. */
+  private fun laterRamp(param: AudioParam, value: Double, at: Double, start: Double, end: Double, exponential: Boolean = false) {
+    val from = hold(param, at)
+    val exp = exponential && from > 0 && value > 0
+    param.setValueAtTime(from.toFloat(), start)
+    if (exp) param.exponentialRampToValueAtTime(value.toFloat(), end) else param.linearRampToValueAtTime(value.toFloat(), end)
+    automation[param] = Automation(start, max(0.0, end - start), doubleArrayOf(from, value), exp)
   }
 
   private fun rampCurve(param: AudioParam, to: Double, start: Double, seconds: Double) {

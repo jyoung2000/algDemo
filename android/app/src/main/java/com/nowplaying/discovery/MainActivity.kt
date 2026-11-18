@@ -10,6 +10,8 @@ import android.net.Uri
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
@@ -67,6 +69,15 @@ class MainActivity : Activity() {
   private var notificationRequested = false
   private var mediaControllerFuture: ListenableFuture<MediaController>? = null
   private var mediaController: MediaController? = null
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private val openAfterCreate = Runnable {
+    if (!isFinishing && !isDestroyed) {
+      NativeLibraryState.init(this)
+      // WEBVIEW-WARM-001: the phone WebView is made once its provider has loaded off the main thread.
+      WebViewWarmup.whenReady(openWeb)
+    }
+  }
+  private val openWeb = Runnable { if (!isFinishing && !isDestroyed) open() }
 
   /**
    * The page as the engine sees it. It is the authority on what plays only while it is in front of
@@ -102,12 +113,12 @@ class MainActivity : Activity() {
     setContentView(root)
     edgeToEdge()
     Downloads.warmUp(this) // unpacks yt-dlp, Python and ffmpeg in the background
-    NativeLibraryState.init(this)
     // SERVICE-API-001: this Activity starts the service (startNativeSession), whose engine page opens the
     // original database; the page loaded here is its client unless that engine never opens it (EngineOwner).
     ServiceApi.owner.reserveForService(SystemClock.elapsedRealtime())
     ServiceApi.core.toUi = apiReplies
-    open()
+    // Preferences and WebView/Chromium startup can block on a cold boot; keep them out of onCreate.
+    mainHandler.post(openAfterCreate)
     startNativeSession()
     playFromSearch(intent)
   }
@@ -532,9 +543,11 @@ class MainActivity : Activity() {
     EngineHub.fromPage("{\"op\":\"hello\"}")
   }
   override fun onDestroy() {
+    mainHandler.removeCallbacks(openAfterCreate)
+    WebViewWarmup.cancel(openWeb)
     EngineHub.detachPage(enginePage)
     MediaHub.clearCommandSink(mediaCommandSink)
-    web?.let { ServiceApi.releaseUi(it, apiReplies) }
+    ServiceApi.releaseUi(web ?: this, apiReplies)
     mediaController?.release()
     mediaControllerFuture?.let { MediaController.releaseFuture(it) }
     mediaController = null

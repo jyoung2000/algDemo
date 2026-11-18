@@ -7,6 +7,14 @@ import org.junit.Test
 
 /** CAR-SEARCH-TYPES-001: the spoken lead words and the kinds of result the car's icons narrow to. */
 class CarSearchTest {
+  @Test fun directStationCallSignsAndFrequenciesAreRecognizedWithoutHijackingExplicitMusicKinds() {
+    for (q in listOf("WGCI", "wgci", "W G C I", "play WGCI")) assertEquals("WGCI", CarSearch.radioQuery(q))
+    for (q in listOf("107", "107.5", "107.5 WGCI", "WGCI 107.5")) assertEquals(q, CarSearch.radioQuery(q))
+    for (q in listOf("album 107", "single WGCI", "artist KISS", "song called Work", "Ken Carson")) assertEquals(q, null, CarSearch.radioQuery(q))
+    assertEquals(null, CarSearch.radioQuery("WGCI", sticky = CarSearchType.ARTISTS))
+    assertEquals("WGCI", CarSearch.radioQuery("radio WGCI", sticky = CarSearchType.ARTISTS))
+  }
+
   @Test fun spokenLeadWordsPickTheKindAndAreNotSearchedFor() {
     assertEquals(CarSearchType.ALBUMS to "A Great Chaos", CarSearch.parse("album A Great Chaos"))
     assertEquals(CarSearchType.ALBUMS to "Pink Floyd", CarSearch.parse("the album called Pink Floyd"))

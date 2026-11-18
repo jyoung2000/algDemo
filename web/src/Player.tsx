@@ -7,11 +7,12 @@ import { ArtistNames } from './ArtistLinks';
 import { warmer } from './engine/warm-shell';
 import { PREVIEW_ROUTE } from './engine/shape';
 import { Art } from './Art';
+import './player-upcoming.css';
 import { Volume } from './Volume';
 import { PlayerActions, type TrackActionProps } from './PlayerActions';
 import { Wheel } from './Wheel';
 import { loadYouTube, youtubeEmbedUrl, type YTPlayer } from './youtube';
-import { attachElement, bus as audioBus, eqConfig, mixSlider, playThrough, resumeEngine, setUnprocessable, subscribeEngine } from './audio-engine';
+import { attachElement, bus as audioBus, eqConfig, savedSettingsApplied, mixSlider, playThrough, resumeEngine, setUnprocessable, subscribeEngine } from './audio-engine';
 import { localLibrary, sourceUrlFor } from './engine/local-audio';
 import { rescueSource } from './engine/rescue';
 import { pickStream } from './engine/stream-pick';
@@ -186,8 +187,10 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const lastLevel = useRef(vol.value);
   const repeatRef = useRef(repeat);
   repeatRef.current = repeat;
-  const onEndRef = useRef<(engineHeard?: number) => void>(() => undefined);
+  const onEndRef = useRef<(engineHeard?: number) => void | Promise<void>>(() => undefined);
   const key = playing?.track.key ?? null;
+  const keyRef = useRef(key);
+  keyRef.current = key;
   /**
    * Inside the Android app the service's native engine plays (plan ruling 2026-11-08): this page
    * chooses the song and what follows, and mirrors what the engine reports. The two <audio> decks
@@ -238,12 +241,16 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
    */
   const stayPreview = !downloadsAvailable() && key !== null && previewOnly.current.has(key);
   const promotedSource = key ? cuedSources.current.get(key) ?? null : null;
+  // FOLDER-IMPORT-SOURCE-001: a file the listener imported is itself the source of truth. Its
+  // catalogue key can match a streamed copy in the queue cache; that cache must not silently
+  // replace the user's file, even when the cached copy is already ready.
+  const importedSource = String(playing?.track.provider) === 'imported' && playing?.track.url?.startsWith('imported:') ? playing.track.url : null;
   // FAST-PLAY-001: a song whose file the queue already holds needs no resolution at all.
-  const readySource = playing && downloadsAvailable() ? readyLocalUrl(playing.track) : null;
+  const readySource = playing && downloadsAvailable() && !importedSource ? readyLocalUrl(playing.track) : null;
   // A previously verified link is worth a direct native disk check on cold start. It is NOT
   // considered ready for shuffle until that check succeeds; don't repeat a catalog search first.
-  const hintedSource = playing && downloadsAvailable() && !readySource ? knownLocalUrl(playing.track) : null;
-  const needsLookup = Boolean(playing && !knownId && !promotedSource && !readySource && !hintedSource && (!scEmbed || downloadsAvailable())) && !stayPreview;
+  const hintedSource = playing && downloadsAvailable() && !importedSource && !readySource ? knownLocalUrl(playing.track) : null;
+  const needsLookup = Boolean(playing && !importedSource && !knownId && !promotedSource && !readySource && !hintedSource && (!scEmbed || downloadsAvailable())) && !stayPreview;
   const lookedUp = found?.key === key;
   const lookingUp = needsLookup && !lookedUp;
   const candidate = stayPreview ? null : knownId ?? (lookedUp ? found.id : null);
@@ -277,7 +284,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
         shell: canLocal,
       })
     : null;
-  const localSource = promotedSource ?? readySource ?? hintedSource ?? wantSource ?? foundSource ?? rescue;
+  const localSource = importedSource ?? promotedSource ?? readySource ?? hintedSource ?? wantSource ?? foundSource ?? rescue;
   const nextTrackForCache = upNext[0]?.track;
   const upcomingSource = nextTrackForCache?.provider === 'ytmusic' ? sourceUrlFor(nextTrackForCache.platform_id) : null;
   const localStatus = localSource ? localLibrary.status(localSource) : 'missing';
@@ -604,7 +611,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   useEffect(() => {
     if (native) return;
     if (mix <= 0 || !onDeck || !nextKey || repeatingOne) {
-      mixer.current?.cancel();
+      if (mix <= 0 || !onDeck) mixer.current?.cancel();
+      else void mixer.current?.prepare(null); // dropping lookahead must not erase this song's entrance
       setMixNote(repeatingOne && mix > 0 ? 'Repeating this song — nothing to blend into.' : null);
       return;
     }
@@ -612,14 +620,14 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     const cuePreview = () => {
       if (!live) return;
       if (canLocal) {
-        mixer.current?.cancel();
-        setMixNote('Waiting for the next full song to download — no preview blend.');
+        void mixer.current?.prepare(null);
+        setMixNote('Waiting for the next full song to download — current song stays primary.');
       } else void mixer.current?.prepare({ key: nextKey, preview: nextPreview });
     };
     const cueFull = (source: string | null) => {
       if (!canLocal || !source) {
-        mixer.current?.cancel();
-        setMixNote('Next song has a full version, so it will play whole — no blend.');
+        void mixer.current?.prepare(null);
+        setMixNote('Next full song is not ready yet; current song continues.');
         return;
       }
       cuedSources.current.set(nextKey, source);
@@ -630,8 +638,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
         const ready = localLibrary.src(source);
         if (ready) void mixer.current?.prepare({ key: nextKey, preview: ready });
         else {
-          mixer.current?.cancel();
-          setMixNote(localLibrary.status(source) === 'running' ? 'Downloading the next song so it can be blended in…' : 'Next song has a full version, so it will play whole — no blend.');
+          void mixer.current?.prepare(null);
+          setMixNote(localLibrary.status(source) === 'running' ? 'Downloading the next song for after this one…' : 'Next full song is not ready yet; current song continues.');
         }
       });
     };
@@ -651,6 +659,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       .then((r) => {
         if (!live) return;
         if (r.id) cueFull(sourceUrlFor(r.id));
+        // FOLDER-IMPORT-PLAY-001: an imported file answers with its own link; cue it like any held song.
+        else if (r.url?.startsWith('imported:')) cueFull(r.url);
         else if (canLocal && nextTrack.url) cueFull(rescueSource({ links: [{ url: nextTrack.url }], shell: true }));
         else cuePreview();
       })
@@ -689,9 +699,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   };
 
   const seek = (s: number) => {
-    // A blend in flight is tied to the outgoing playhead; moving it would leave the two songs
-    // overlapping on the wrong beats, so the blend is dropped and this song continues alone.
-    mixer.current?.cancel();
+    // Keep the next source preloaded, but reset any entrance automation on the current song.
+    mixer.current?.seeked();
     if (native) engineSend({ op: 'seek', positionMs: Math.round(Math.max(0, s) * 1000) });
     else if (mode === 'full') yt.current?.seekTo(s, true);
     else if (audio.current) audio.current.currentTime = s;
@@ -727,7 +736,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       else if (n === 2) onListen('replay', playing.track, l, meta);
     }
   };
-  onEndRef.current = (engineHeard?: number) => {
+  onEndRef.current = async (engineHeard?: number) => {
     recordEnd(engineHeard);
     if (repeatRef.current === 'one') {
       // Repeating this song means there is no next song to blend into.
@@ -750,7 +759,9 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     }
     // If a blend ran, the next song is already playing on the other deck. Hand the deck over so
     // the load effect leaves it running instead of restarting it from zero.
-    const blended = mixer.current?.finish() ?? null;
+    const endedKey = keyRef.current;
+    const blended = native ? null : await mixer.current?.handoff(mix) ?? null;
+    if (keyRef.current !== endedKey) return; // a manual skip won while play() was pending
     if (blended) {
       promoted.current = blended.key;
       // Remember before onNext: the re-render that makes this song current happens immediately,
@@ -779,6 +790,11 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   };
 
   const t = playing?.track;
+  // CURRENT-PRIMARY-001: lookahead is supplementary; never use it as current metadata.
+  const upcoming = repeat === 'one' ? undefined : upNext.find((u) => u.key !== t?.key);
+  const upcomingUrl = upcoming ? cuedSources.current.get(upcoming.key) ?? (upcoming.track ? readyLocalUrl(upcoming.track) : null) ?? upcomingSource : null;
+  const upcomingState = upcomingUrl ? localLibrary.status(upcomingUrl) : 'idle';
+  const loadingNext = upcomingState === 'running' || /^(Preparing|Downloading|Waiting for the next)/i.test(mixNote ?? '');
   const transport = (
     <div className="transport" role="group" aria-label="Playback">
       <button
@@ -875,27 +891,27 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       <Glyph name="warning" size={12} /> {err}
     </p>
   ) : pending ? (
-    <p className="np__note">
+    <p className="np__note vh">
       {askingLocal ? 'Loading the full song…' : fetchingLocal ? 'Downloading the full song to the player…' : 'Finding the full song…'}
     </p>
   ) : mode === 'full' ? (
-    <p className="np__note">
+    <p className="np__note vh">
       {loading ? 'Loading the full song…' : localStatus === 'running' ? 'Full song in YouTube’s player while this app downloads it for the equaliser and mixer.' : 'Full song, played by YouTube’s own player.'}
     </p>
   ) : blending ? (
-    <p className="np__note np__note--mix" aria-live="polite">{note}</p>
+    <p className="np__note np__note--mix vh" aria-live="polite">{note}</p>
   ) : mode === 'local' && streaming ? (
-    <p className="np__note">{loading ? 'Starting the full song from its source…' : localStatus === 'ready' ? 'Full song from its source — through the equaliser and mixer. Download finished.' : 'Full song, streaming from its source while it downloads — through the equaliser and mixer.'}</p>
+    <p className="np__note vh">{loading ? 'Starting the full song from its source…' : localStatus === 'ready' ? 'Full song from its source — through the equaliser and mixer. Download finished.' : 'Full song, streaming from its source while it downloads — through the equaliser and mixer.'}</p>
   ) : mode === 'local' ? (
-    <p className="np__note">{loading ? 'Loading the full song…' : 'Full song, downloaded — through the equaliser and mixer.'}</p>
+    <p className="np__note vh">{loading ? 'Loading the full song…' : importedSource ? 'Full local file — through the equaliser and mixer.' : 'Full song, downloaded — through the equaliser and mixer.'}</p>
   ) : src ? (
-    <p className="np__note">
+    <p className="np__note vh">
       {loading ? 'Loading the preview…' : badVideo ? '30-second preview from Deezer: YouTube won’t play the full song here.' : '30-second preview from Deezer: no full version was found.'}
     </p>
   ) : embed ? (
-    <p className="np__note">Playing in the {PROVIDER_LABEL[embed.provider]} player. Airwave can’t see its progress or volume, so it records nothing about this listen.</p>
+    <p className="np__note vh">Playing in the {PROVIDER_LABEL[embed.provider]} player. Airwave can’t see its progress or volume, so it records nothing about this listen.</p>
   ) : rescue === null && !canLocal ? (
-    <p className="np__note">No player here for this song. Open it in its app.</p>
+    <p className="np__note vh">No player here for this song. Open it in its app.</p>
   ) : canLocal ? (
     <p className="np__note np__note--bad">
       <Glyph name="warning" size={12} /> {localSource ? `Could not load the full song${localError ? `: ${localError}` : '.'} Press play to retry.` : 'No downloadable full recording was found for this song.'}
@@ -906,7 +922,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     </p>
   );
 
-  const openLinks = playing && (
+  // FOLDER-IMPORT-PLAY-001: an imported file has no service page to open; an "imported ↗" link was noise.
+  const openLinks = playing && !t?.url?.startsWith('imported:') && (
     <div className="np__open">
       {/* Each link shows its service's mark and name with ↗ after it — the arrow reads as "opens
           elsewhere" without a verb, where an 11px link glyph read as a stray "x". Two full "Open in …" pills did not fit the desktop
@@ -954,7 +971,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // before it blends, and the volume.
   useEffect(() => {
     if (!native) return;
-    const push = () => engineSend({ op: 'settings', eq: eqConfig(), mix: mixSlider(), playThrough: playThrough() });
+    // EQ-RESTORE-001: never the blank defaults this page holds before the saved settings load; the engine has the saved sound already.
+    const push = () => { if (savedSettingsApplied()) engineSend({ op: 'settings', eq: eqConfig(), mix: mixSlider(), playThrough: playThrough() }); };
     push();
     return subscribeEngine(push);
   }, [native]);
@@ -1029,7 +1047,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     };
   });
   return (
-    <section className={classNames('np', docked ? 'np--docked' : 'np--panel', !playing && 'is-empty')} aria-label="Now playing">
+    <section className={classNames('np', docked ? 'np--docked' : 'np--panel', !playing && 'is-empty', !!playing && !!upcoming && 'has-upcoming')} aria-label="Now playing">
       {/*
         Two permanent decks. They are never keyed or conditionally rendered, because a
         MediaElementAudioSourceNode can be created once per element for the page's lifetime: a
@@ -1143,6 +1161,13 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
               )}
             </div>
           </div>
+          {upcoming && (
+            <div className="np__upcoming" role="group" aria-label={`Coming up next: ${upcoming.title} — ${upcoming.artist}`}
+              aria-busy={loadingNext} title={`${loadingNext ? 'Loading next' : 'Up next'}: ${upcoming.title} — ${upcoming.artist}`}>
+              <Art src={upcoming.artwork} size={docked ? 48 : 64} />
+              <span className="vh">{loadingNext ? 'Loading next' : 'Up next'}: {upcoming.title} — {upcoming.artist}</span>
+            </div>
+          )}
           {docked ? (
             <div className="np__dockctl">
               {progress}

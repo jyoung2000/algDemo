@@ -6,6 +6,50 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RadioCatalogTest {
+  @Test fun aSeenFrequencyCallSignStaysInTheSameNumberIndex() {
+    RadioCatalog.rememberStations(JSONArray().put(row("alias-test-wgci", "107.5 WGCI")))
+    assertTrue(RadioCatalog.cachedAliases(initial = "1").any { it.id == "alias-test-wgci" })
+    assertTrue(RadioCatalog.cachedAliases(query = "107").any { it.id == "alias-test-wgci" })
+    assertFalse(RadioCatalog.cachedAliases(initial = "2").any { it.id == "alias-test-wgci" })
+  }
+
+  @Test fun lettersAndNumbersShareTheSameRealStationAliases() {
+    for (name in listOf("107.5 WGCI", "WGCI 107.5", "107.5 FM - WGCI", "WGCI-FM 107,5")) {
+      assertTrue(RadioNames.matchesInitial(name, "W")); assertTrue(RadioNames.matchesInitial(name, "1"))
+      for (q in listOf("wgci", "W G C I", "107", "WGCI 107.5", "107.5 WGCI")) assertTrue("$name / $q", RadioNames.matchesQuery(name, q))
+      assertFalse(RadioNames.matchesInitial(name, "2")); assertFalse(RadioNames.matchesQuery(name, "106.5"))
+    }
+    assertFalse(RadioNames.matchesInitial("KEXP 90.3 (MP3 128kbps)", "1"))
+    assertTrue(RadioNames.matchesInitial("KEXP 90.3 (MP3 128kbps)", "9"))
+  }
+  @Test fun directoryCanFindNumericFirstStationsUnderWAnd1OrTyped107() {
+    val urls = mutableListOf<String>()
+    val d = RadioDirectory { u -> urls += u; JSONArray().put(row("wgci", "107.5 WGCI")).put(row("other", "Radio 9107")).toString() }
+    assertEquals(listOf("wgci"), d.letterPage("W", 0).stations.map { it.id })
+    assertEquals(listOf("wgci"), d.letterPage("1", 0).stations.map { it.id })
+    assertEquals(listOf("wgci"), d.stations("107", 0).map { it.id })
+    assertEquals(listOf("wgci"), d.stations("W G C I", 0).map { it.id })
+    assertTrue(urls.last().contains("name=WGCI"))
+  }
+
+  @Test fun alphabetFoldsAccentsAndKeepsNumericAndOtherScriptsReachable() {
+    assertEquals("E", RadioCatalog.initial(" Énergie")); assertEquals("K", RadioCatalog.initial("kexp"))
+    assertEquals("W", RadioCatalog.initial("107.5 WGCI")); assertEquals("#", RadioCatalog.initial("日本"))
+    assertEquals(27, RadioCatalog.LETTERS.size)
+  }
+  @Test fun letterBrowseScansBeyondNonmatchingRowsWithAnHonestRawCursor() {
+    val urls = mutableListOf<String>()
+    val d = RadioDirectory { u -> urls += u; if (u.contains("offset=0")) JSONArray((0..119).map { row("r$it", "Radio K") }).toString() else JSONArray().put(row("k", "KEXP")).toString() }
+    val page = d.letterPage("K", 0)
+    assertEquals(listOf("KEXP"), page.stations.map { it.name }); assertNull(page.nextOffset)
+    assertEquals(2, urls.size); assertTrue(urls.last().contains("offset=120")); assertTrue(urls.first().contains("name=K"))
+  }
+  @Test fun boundedEmptyLetterBatchDoesNotClaimThatNoStationsExist() {
+    var calls = 0; val d = RadioDirectory { calls++; JSONArray((0..119).map { row("r$it", "Radio K") }).toString() }
+    val page = d.letterPage("K", 0)
+    assertTrue(page.stations.isEmpty()); assertEquals(240, page.nextOffset); assertEquals(2, calls)
+  }
+
   private fun row(id: String, name: String) = JSONObject().put("id", id).put("name", name).put("url", "https://streams.example/$id")
 
   @Test fun normalizedPhoneRowsAndDirectoryRowsHaveTheSameIdentity() {

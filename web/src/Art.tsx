@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
+import './art.css';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 
 /** Album art with a quiet placeholder when there is none or it fails to load. Loaded by the browser from the provider's CDN. */
@@ -9,7 +10,9 @@ export function Art({ src, size, alt = '' }: { src?: string | null; size: number
   const broken = Boolean(src) && failed === src;
   if (!src || broken) {
     return (
-      <span className="art art--none" style={{ width: size, height: size }} aria-hidden={alt ? undefined : true}>
+      // ART-SIZE-001: size through a custom property, not inline width/height, so a context rule
+      // (e.g. the player's 64px cover) sizes the placeholder exactly as it sizes a real cover.
+      <span className="art art--none" style={{ '--art-size': `${size}px` } as CSSProperties} aria-hidden={alt ? undefined : true}>
         <Glyph name="note" size={Math.round(size * 0.42)} />
       </span>
     );

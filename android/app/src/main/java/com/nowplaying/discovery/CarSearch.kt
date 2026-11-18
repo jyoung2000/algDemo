@@ -49,8 +49,17 @@ object CarSearch {
   fun picked(now: Long): CarSearchType? = picked?.takeIf { now - it.second in 0..STICKY_MS }?.first
 
   /** Explicit typed/assistant station requests, independent of the music-result filter enum. */
-  fun radioQuery(raw: String): String? = Regex("^(?:play |listen to )?(?:radio(?: station)?|station)\\s+(.+)$", RegexOption.IGNORE_CASE)
+  fun explicitRadioQuery(raw: String): String? = Regex("^(?:play |listen to )?(?:radio(?: station)?|station)\\s+(.+)$", RegexOption.IGNORE_CASE)
     .matchEntire(raw.trim().replace(Regex("\\s+"), " "))?.groupValues?.get(1)?.trim()?.takeIf { it.isNotBlank() }?.take(100)
+
+  /** Station-shaped plain queries try real station results; the service falls back to music if none match. */
+  fun radioQuery(raw: String, sticky: CarSearchType? = null): String? {
+    explicitRadioQuery(raw)?.let { return it }
+    val words = raw.trim().replace(Regex("^(?:play |listen to |tune to |find |search for )", RegexOption.IGNORE_CASE), "").trim()
+    if (parse(words, sticky).first != CarSearchType.ALL) return null
+    val alias = RadioNames.parts(words) ?: return null
+    return if (alias.call != null && alias.frequency == null) alias.call else words.take(100)
+  }
 
   private val LEADS: List<Pair<Regex, CarSearchType>> = listOf(
     Regex("^(?:what(?:'s| is) this song|what song is (?:this|playing)|identify(?: this| the)?(?: song| music)?|shazam(?: this)?|name this song|listen)$") to CarSearchType.IDENTIFY,

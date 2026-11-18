@@ -3,6 +3,7 @@
  * needs no server. `handle()` takes what the UI would have sent to /api/* and returns what the server
  * would have answered, status code included. Jobs run as async tasks; the browser polls them as before.
  */
+import { applyAlgorithmPatch, engineFromSettings, settingsWithAlgorithms } from './algorithms';
 import * as A from './audio';
 import { DEFAULT_ENGINE, TRANSFER, engineWithWeights } from './config';
 import { EQ_DEFAULTS, parseEq } from './eq';
@@ -38,6 +39,8 @@ import { findFullSong, type FullSongResult } from './full-song-chain';
  * rest of the day. Uploads appear over time, so a miss is a snapshot, not a verdict.
  */
 const NO_SOURCE_TTL = 15 * 60;
+/** FOLDER-IMPORT-001: an imported song's file answer should outlive any listening session. */
+const IMPORTED_SOURCE_TTL = 10 * 365 * 86400;
 
 import { buildProfile } from './profile';
 import { playlistMix } from './playlist-mix';
@@ -68,6 +71,7 @@ import type { Store } from './store';
 import { YouTubeMusic } from './ytmusic';
 import { Genius, Shazam } from './listen/providers';
 import { resolveHits, type Evidence } from './listen/identify';
+import { canMatch, confidentMatch, enrichImported, statedTags, uniqueTags } from './imported-genres';
 
 export interface LocalDeps {
   store: Store;
@@ -152,6 +156,27 @@ function withAlbumOf(t: Dict, from: Dict | undefined): Dict {
   for (const f of ALBUM_FIELDS) if ((out[f] === undefined || out[f] === null || out[f] === '') && from[f]) out[f] = from[f];
   return out;
 }
+
+/** IMPORT-GENRES-001: what a confident catalogue match lent an imported song, kept on every copy of it. */
+const IMPORT_FACTS = ['tags', 'artwork', 'duration', 'release', 'year_hint', 'catalogue_match', 'file_genre'] as const;
+const blank = (v: unknown) => v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
+
+/**
+ * IMPORT-GENRES-001: a fresher copy of an imported song (one played, queued or re-imported) does not
+ * know the genres, cover and length its saved-list copy was given; fill only what it lacks.
+ */
+function withImportFactsOf(t: Dict, from: Dict | undefined): Dict {
+  if (!from || from['provider'] !== 'imported') return t;
+  // SAVED-GENRES-001: the same song streamed earlier (a catalogue copy with this key) lacks what a
+  // confident match gave the imported copy. Lend only its genre facts and cover; never the file link.
+  const facts = t['provider'] === 'imported' ? IMPORT_FACTS : from['catalogue_match'] ? LENT_TO_CATALOGUE : [];
+  let out = t;
+  for (const f of facts) {
+    if (blank(out[f]) && !blank(from[f])) out = { ...out, [f]: from[f] };
+  }
+  return out;
+}
+const LENT_TO_CATALOGUE = ['tags', 'artwork', 'release', 'year_hint'] as const;
 const QUEUE_SAVED_KEY = 'queue_saved';
 const SEED_CURSOR_KEY = 'seed_cursor';
 /** COLOR-DISCOVERY-001: how far previous runs have read into the listener's colours. */
@@ -284,7 +309,8 @@ export class LocalApi {
       stored['fresh'] ??= old === 'new';
       if (old === 'similar') stored['adventurous'] = Math.min(Number(stored['adventurous'] ?? 0.5), 0.25);
     }
-    return { ...DEFAULT_SETTINGS, ...stored };
+    // ALGO-MANAGER-001: legacy weights/ranking_formula migrate into the active user algorithm "My formula".
+    return settingsWithAlgorithms({ ...DEFAULT_SETTINGS, ...stored, play_through: 100 }); // FULL-COMPLETION-001 migrates stored early-overlap values
   }
 
   /**
@@ -364,6 +390,7 @@ export class LocalApi {
       if (job) return m === 'DELETE' ? this.cancelJob(job[1]!) : this.jobStatus(job[1]!);
       if (m === 'POST' && path === '/api/feedback') return await this.feedback(body ?? {});
       if (m === 'POST' && path === '/api/import/history') return await this.importHistory(body ?? {});
+      if (m === 'POST' && path === '/api/import/local') return await this.importLocal(body ?? {});
       if (m === 'GET' && path === '/api/feedback/state') return ok(this.feedbackState());
       if (m === 'POST' && path === '/api/impressions') return await this.impressions(body ?? {});
       if (m === 'POST' && path === '/api/full-song') return await this.fullSong(body ?? {});
@@ -867,8 +894,14 @@ export class LocalApi {
   private knownTracks(): Map<string, Dict> {
     const byKey = new Map<string, Dict>();
     // Songs a list was made with (an album saved as a list); any fresher copy below replaces them.
-    for (const [k, t] of Object.entries(this.store.get<Record<string, Dict>>(LIST_TRACKS_KEY) ?? {})) byKey.set(k, t);
-    const put = (k: string, t: Dict) => byKey.set(k, withAlbumOf(t, byKey.get(k)));
+    const held = this.store.get<Record<string, Dict>>(LIST_TRACKS_KEY) ?? {};
+    for (const [k, t] of Object.entries(held)) byKey.set(k, t);
+    // SAVED-GENRES-001: lend from the list's own (imported) copy too, not only the copy just replaced:
+    // a song held as a feedback row, a queue item and a starting song is replaced three times.
+    const put = (k: string, t: Dict) => {
+      const prev = byKey.get(k);
+      byKey.set(k, withImportFactsOf(withImportFactsOf(withAlbumOf(t, prev), prev), held[k]));
+    };
     for (const r of this.store.feedback()) if (r.track) put(r.key, r.track as Dict);
     for (const it of (this.store.get<Dict>('last_result')?.['items'] ?? []) as { track: Dict }[]) {
       if (it.track) put(String(it.track['key']), it.track);
@@ -1055,6 +1088,85 @@ export class LocalApi {
       if (e instanceof BudgetExceeded) throw e;
       await this.store.cachePut(`styletry:${fold(artist)}`, 'metadata', true, 6 * 3600);
     }
+  }
+
+  // ---- IMPORT-GENRES-001: imported songs' genres, cover and length ------------------------
+
+  /** Pause between two imported songs looked up in the background, so a big folder never floods a service. */
+  importedGenresGapMs = 400;
+  private importedGenresRun: Promise<void> | null = null;
+
+  /** Imported songs held for saved lists that have no genre yet, can be looked up, and were not tried lately. */
+  private importedWanting(): Dict[] {
+    const held = this.store.get<Record<string, Dict>>(LIST_TRACKS_KEY) ?? {};
+    const inLists = new Set(this.storedPlaylists().flatMap((l) => l.entries.map((e) => e.key)));
+    return Object.entries(held)
+      .filter(([k, t]) => inLists.has(k) && t?.['provider'] === 'imported' && !t['catalogue_match'] && !statedTags(t).length && canMatch(t) && !this.store.cacheGet(`importtry:${k}`)?.value)
+      .map(([, t]) => t);
+  }
+
+  /** Start, once, the background lookup of every imported song still without a genre. No route awaits it. */
+  private kickImportedGenres(): void {
+    if (this.importedGenresRun) return;
+    this.importedGenresRun = this.importedGenresLoop()
+      .catch(() => undefined)
+      .finally(() => { this.importedGenresRun = null; });
+  }
+
+  /** Resolves once no background lookup of imported songs is running. */
+  async importedGenresSettled(): Promise<void> {
+    while (this.importedGenresRun) await this.importedGenresRun;
+  }
+
+  /** One song at a time, each answer saved on the list's copy at once, so the page fills in as it goes. */
+  private async importedGenresLoop(): Promise<void> {
+    for (let n = 0; n < 2000; n++) {
+      const next = this.importedWanting()[0];
+      if (!next) return;
+      const key = String(next['key']);
+      let found: Dict | null = null;
+      let ttl = 7 * 24 * 3600; // no confident match: not asked again for a week
+      try {
+        found = await this.lookUpImported(next, this.searchMeter());
+        if (found) ttl = 30 * 24 * 3600;
+      } catch (e) {
+        if (e instanceof BudgetExceeded) return; // the day's allowance is spent: the next start carries on
+        ttl = 6 * 3600; // a service failed: try again later
+      }
+      await this.store.cachePut(`importtry:${key}`, 'metadata', true, ttl);
+      if (found) {
+        const held = { ...(this.store.get<Record<string, Dict>>(LIST_TRACKS_KEY) ?? {}) };
+        if (held[key]) {
+          held[key] = found;
+          await this.store.put(LIST_TRACKS_KEY, held);
+        }
+      }
+      if (this.importedGenresGapMs > 0) await new Promise((r) => setTimeout(r, this.importedGenresGapMs));
+    }
+  }
+
+  /**
+   * The song as a confident Deezer match describes it, or null when there is none: the album's
+   * genres (MusicBrainz's subgenres for the artist when no finer genre is stated, the queue's own
+   * GENRE-ALL-001 step), the cover and the length. The playback link stays the file.
+   */
+  private async lookUpImported(song: Dict, meter: Meter): Promise<Dict | null> {
+    const c: Ctx = { meter };
+    const q = `${String(((song['artists'] as unknown[]) ?? [])[0] ?? '')} ${String(song['title'] ?? '')}`.trim();
+    const hit = confidentMatch(song as never, await this.dz.search(q, 10, c));
+    if (!hit) return null;
+    const full = await this.dz.withGenres(await this.dz.track(String(hit.match.platform_id), c), c);
+    let out: Dict = enrichImported(song, { tags: (full.tags as Tag[]) ?? [], artwork: full.artwork, duration: full.duration }, song['file_genre']);
+    out['catalogue_match'] = { provider: 'deezer', id: String(hit.match.platform_id), proven: hit.proven };
+    const rel = (full as Dict)['release'] as Dict | undefined;
+    out = LocalApi.dated(out, { release: typeof rel?.['date'] === 'string' ? rel : null, proven: hit.proven });
+    if (statedTags(out).length && this.wantsArtist(out)) {
+      if ((this.store.get<ArtistSubsMap>(ARTIST_SUBS_KEY) ?? {})[fold(artistName(out))]?.styles === undefined) await this.askArtist(out, meter);
+      out = withArtistSubs(out, this.store.get<ArtistSubsMap>(ARTIST_SUBS_KEY) ?? {});
+      // TAGS-CANON-001: the artist's words may repeat a genre the album named ("hip hop" beside "Rap/Hip Hop").
+      out = { ...out, tags: uniqueTags((out['tags'] as Tag[] | undefined) ?? []) };
+    }
+    return out;
   }
 
   /**
@@ -1259,13 +1371,19 @@ export class LocalApi {
     if (!list) return fail(404, 'That list no longer exists.');
     const known = this.knownTracks();
     const tracks = list.entries.map((e) => known.get(e.key)).filter((t): t is Dict => Boolean(t));
-    const genresOf = this.genresOfTrack();
+    const ownGenres = this.genresOfTrack();
+    // IMPORT-GENRES-001: an imported song counts only with genres of its own (a confident match);
+    // no guess from a same-named artist colours a list of the listener's own files.
+    const genresOf = (t: Dict): Tag[] => (t['provider'] === 'imported' ? statedTags(t) : ownGenres(t));
     // A song the engine holds no copy of still counts as one of the list's songs, just not placed.
     return ok({ id: list.id, name: list.name, ...playlistMix(tracks, genresOf, unixNow()), songs: list.entries.length });
   }
 
   private async putSettings(body: Dict): Promise<LocalResponse> {
     const cur = this.settings();
+    // ALGO-MANAGER-001: algorithms, active_algorithm and the legacy ranking_formula/weights keys.
+    try { Object.assign(cur, applyAlgorithmPatch(cur, body)); }
+    catch (e) { return fail(400, (e as Error).message); }
     if ('fresh' in body) cur['fresh'] = Boolean(body['fresh']);
     if ('adventurous' in body) cur['adventurous'] = Math.min(1, Math.max(0, Number(body['adventurous'])));
     for (const k of ['audio', 'sample_mode', 'rank_v2', 'discover_while_listening']) if (k in body) cur[k] = Boolean(body[k]);
@@ -1297,21 +1415,14 @@ export class LocalApi {
       if (!Number.isFinite(n) || n < 1 || n > 500) return fail(400, 'preload_count must be between 1 and 500');
       cur['preload_count'] = n;
     }
-    if ('weights' in body) {
-      try {
-        engineWithWeights(body['weights']);
-      } catch (e) {
-        return fail(400, (e as Error).message);
-      }
-      cur['weights'] = body['weights'];
-    }
     // The EQ and the mixer are stored through their own parsers, so a hand-edited or stale value
     // cannot put an out-of-range gain or a NaN slider into the audio graph.
     if ('eq' in body) cur['eq'] = parseEq(body['eq']);
     if ('mix' in body) cur['mix'] = clampSlider(Number(body['mix']));
     if ('play_through' in body) cur['play_through'] = clampPlayThrough(body['play_through']);
+    delete cur['ranking_formula']; // derived from the active algorithm on every read, never stored
     await this.store.put('settings', cur);
-    return ok(cur);
+    return ok(settingsWithAlgorithms(cur));
   }
 
   // ---- recommend -----------------------------------------------------------------------
@@ -1414,7 +1525,7 @@ export class LocalApi {
     });
     const cfg = ctx.cfg ?? DEFAULT_ENGINE;
     return {
-      phase, items, count: items.length, asked: cfg.queueSize, fresh: ctx.settings.fresh, adventurous: ctx.settings.adventurous,
+      phase, items, count: items.length, asked: cfg.queueSize, ranking_formula: cfg.rankingFormula ?? null, fresh: ctx.settings.fresh, adventurous: ctx.settings.adventurous,
       sources: job.sources, audio: { ...job.audio }, timings: job.timings, transfer: job.meter ? { ...job.meter.counts } : {}, candidates: job.timings['candidates'],
     };
   }
@@ -1435,7 +1546,7 @@ export class LocalApi {
       return { ...batch, items, count: items.length, discovery: { added: items.length - now.length, limit, trigger } };
     };
     try {
-      const cfg = { ...engineWithWeights(settings['weights']), queueSize: Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize) };
+      const cfg = { ...engineFromSettings(settings), queueSize: Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize) };
       const es = E.normaliseSettings({ fresh: Boolean(settings['fresh']), adventurous: settings['adventurous'] });
       job.meter = p.meter(settings);
       job.phase = 'profiling';
@@ -1679,7 +1790,8 @@ export class LocalApi {
     // must not trim it here: a smaller limit would otherwise drop songs the listener still has.
     const ctx: E.Context = {
       ...pool.ctx,
-      cfg: { ...cfg, queueSize: Math.max(pool.cands.length, 1) },
+      // ALGO-MANAGER-001: the algorithm active NOW ranks the pool, over the run's own engine base.
+      cfg: { ...engineFromSettings(settings, cfg), queueSize: Math.max(pool.cands.length, 1) },
       feedback: v2 ? E.withSavedAlbums(E.buildFeedback2(this.store.feedback() as never, unixNow(), cfg), this.savedAlbumKeys()) : E.buildFeedback(this.store.feedback() as never, unixNow(), cfg),
       impressions: this.store.impressions(unixNow() - cfg.exposureWindowDays * 86400),
       taste: this.taste(),
@@ -1845,7 +1957,7 @@ export class LocalApi {
   /** Everything the recommender tracks and how it uses it, for the "Your profile" screen. */
   private profile(): Dict {
     const settings = this.settings();
-    const cfg = { ...engineWithWeights(settings['weights']), queueSize: Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize) };
+    const cfg = { ...engineFromSettings(settings), queueSize: Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize) };
     const now = unixNow();
     return buildProfile({
       events: this.store.feedback(),
@@ -1899,18 +2011,41 @@ export class LocalApi {
     const lists = this.storedPlaylists();
     const played = this.playedKeys();
     const byKey = this.knownTracks();
+    // IMPORT-GENRES-001: imported songs still waiting for their genres are looked up in the background;
+    // opening the app (which reads the lists) starts it, so nothing waits for a song to be queued.
+    const wanting = new Set(this.importedWanting().map((t) => String(t['key'])));
+    if (wanting.size) this.kickImportedGenres();
     return {
-      lists: lists.map((l) => ({
-        id: l.id,
-        name: l.name,
-        created: l.created,
-        count: l.entries.length,
-        unplayed: unplayedCount(l, played),
-        discovery_ready: playlistFullyPlayed(l, played),
-        album: l.album ?? null,
-        items: l.entries.map((e) => ({ key: e.key, added: e.added, track: byKey.get(e.key) ?? null, played: played.has(e.key) })),
-      })),
+      lists: lists.map((l) => {
+        const pending = l.entries.filter((e) => wanting.has(e.key)).length;
+        const items = l.entries.map((e) => ({ key: e.key, added: e.added, track: byKey.get(e.key) ?? null, played: played.has(e.key) }));
+        return {
+          id: l.id,
+          name: l.name,
+          created: l.created,
+          count: l.entries.length,
+          unplayed: unplayedCount(l, played),
+          discovery_ready: playlistFullyPlayed(l, played),
+          album: l.album ?? null,
+          items: this.importedCharacteristics(items),
+          ...(pending ? { genre_pending: pending } : {}),
+        };
+      }),
     };
+  }
+
+  /**
+   * IMPORT-GENRES-001 / GENRE-ALL-001: an imported song a confident match placed is shown like any
+   * other row: its stated genres, then what genre-fill.ts estimates for what it still lacks (drawn as
+   * an estimate). A song with no confident identity gets nothing, so it shows no genre at all.
+   */
+  private importedCharacteristics<T extends { track: Dict | null }>(items: T[]): T[] {
+    // SAVED-GENRES-001: any saved song with stated tags is shown with its genres (GENRE-ALL-001); an
+    // imported one only once a confident match confirmed who it is.
+    const placed = (t: Dict | null): t is Dict => Boolean(t && statedTags(t).length && (t['provider'] !== 'imported' || t['catalogue_match']));
+    if (!items.some((x) => placed(x.track))) return items;
+    const fill = this.genreFiller(items.filter((x) => x.track) as unknown as Dict[]);
+    return items.map((x) => (placed(x.track) ? { ...x, characteristics: fill(x.track, characteristicsOf(x.track, null)) } : x));
   }
 
   private async savePlaylists(lists: Playlist[]): Promise<void> {
@@ -1920,6 +2055,8 @@ export class LocalApi {
     const wanted = new Set(lists.flatMap((l) => l.entries.map((e) => e.key)));
     const kept = Object.fromEntries(Object.entries(held).filter(([k]) => wanted.has(k)));
     if (Object.keys(kept).length !== Object.keys(held).length) await this.store.put(LIST_TRACKS_KEY, kept);
+    // IMPORT-GENRES-001: a list just saved with imported songs starts their lookup in the background.
+    if (this.importedWanting().length) this.kickImportedGenres();
   }
 
   /** ALBUM-SAVE-001: the saved albums as album-taste keys (primary artist and title, folded). */
@@ -1935,8 +2072,12 @@ export class LocalApi {
     const held = { ...(this.store.get<Record<string, Dict>>(LIST_TRACKS_KEY) ?? {}) };
     for (const t of tracks) {
       const k = String(t['key']);
+      const before = held[k];
       delete held[k];
-      held[k] = cleanTrack(t);
+      const clean = cleanTrack(t);
+      // IMPORT-GENRES-001: the file's own genre word, kept only to use once the song's identity is confirmed.
+      if (t['provider'] === 'imported' && typeof t['file_genre'] === 'string' && t['file_genre']) clean['file_genre'] = t['file_genre'].slice(0, 100);
+      held[k] = withImportFactsOf(clean, before);
     }
     await this.store.put(LIST_TRACKS_KEY, held);
   }
@@ -2088,6 +2229,11 @@ export class LocalApi {
     if (!raw || typeof raw !== 'object' || !raw['title'] || !Array.isArray(raw['artists'] ?? [])) return fail(400, 'A track with a title is needed.');
     const t: Dict = { ...raw, artists: ((raw['artists'] as unknown[]) ?? []).map(String).slice(0, 6), title: String(raw['title']).slice(0, 200) };
     const exclude = (Array.isArray(body['exclude']) ? (body['exclude'] as unknown[]).map(String) : []).slice(0, 8);
+    // FOLDER-IMPORT-PLAY-001: an imported file is its own full song. Answer from the track itself,
+    // before the cache key (whose duration part differs between import and saved-list copies).
+    if (t['provider'] === 'imported' && typeof t['url'] === 'string' && t['url'].startsWith('imported:') && t['url'].length <= 2000) {
+      return ok({ id: null, url: t['url'], source: 'imported' });
+    }
     const own = t['provider'] === 'ytmusic' && t['platform_id'] ? String(t['platform_id']) : null;
     if (own && !exclude.includes(`https://music.youtube.com/watch?v=${own}`)) return ok({ id: own, source: 'own' });
     const key = `fullsong:${t['title']}|${(t['artists'] as string[]).join('|')}|${t['duration']}`;
@@ -2137,6 +2283,30 @@ export class LocalApi {
     // A miss expires quickly: uploads appear over time, and the owner wants the list to fill in.
     await this.store.cachePut(key, 'meta', out, got ? 7 * 86400 : NO_SOURCE_TTL);
     return ok(out);
+  }
+
+  /**
+   * FOLDER-IMPORT-001: register imported local songs with the source chain. Each one is written
+   * into the full-song cache as its own answer ({ url: 'imported:<path>' }), under EXACTLY the key
+   * fullSong() builds for the track, so playing an imported song resolves to its own file without
+   * ever searching the music services. Idempotent: the settings page re-registers on each import
+   * and whenever it opens, which also heals an entry the LRU cache evicted.
+   */
+  private async importLocal(body: Dict): Promise<LocalResponse> {
+    const songs = Array.isArray(body['songs']) ? (body['songs'] as unknown[]).slice(0, 2000) : [];
+    let registered = 0;
+    for (const raw of songs) {
+      if (!raw || typeof raw !== 'object') continue;
+      const s = raw as Dict;
+      const url = typeof s['url'] === 'string' ? s['url'] : '';
+      if (!url.startsWith('imported:') || url.length > 2000 || !s['title']) continue;
+      // The same normalisation fullSong() applies to the track it is asked about.
+      const t: Dict = { ...s, artists: ((s['artists'] as unknown[]) ?? []).map(String).slice(0, 6), title: String(s['title']).slice(0, 200) };
+      const key = `fullsong:${t['title']}|${(t['artists'] as string[]).join('|')}|${t['duration']}`;
+      await this.store.cachePut(key, 'meta', { id: null, url, source: 'imported' }, IMPORTED_SOURCE_TTL);
+      registered++;
+    }
+    return ok({ registered });
   }
 
   // ---- status / reset / self-test --------------------------------------------------------

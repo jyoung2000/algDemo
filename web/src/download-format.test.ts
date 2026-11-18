@@ -40,14 +40,25 @@ describe('the format control fits a phone and still explains itself', () => {
     }
   });
 
-  it('explains the chosen format in a paragraph that wraps', () => {
-    expect(ui).toMatch(/const FORMAT_NOTE: Record<DlFormat, string>/);
-    expect(ui).toContain('<p className="dl__note" id="dl-format-note">{FORMAT_NOTE[d.format]}</p>');
-    expect(css).toMatch(/\.dl__note \{[^}]*max-width: 62ch;/);
+  // DL-SIMPLE-001 (owner 2026-11-17): "remove the text and drop down input". The Downloads
+  // section keeps only the link field and Download button; the tool follows the link and the
+  // saved format (default original) is used, so no menu or explanatory paragraph is shown.
+  it('shows no Tool or Format menus and no explanatory paragraphs', () => {
+    expect(ui).not.toMatch(/<select className/);
+    expect(ui).not.toContain('id="dl-format-note"');
+    expect(ui).not.toMatch(/yt-dlp fetches from YouTube/);
   });
 
-  it('ties the note to the select for a screen reader', () => {
-    expect(ui).toMatch(/aria-describedby="dl-format-note"/);
+  // LOCAL-MUSIC-001 (owner 2026-11-17): "remove the download text box and download button".
+  it('has no link field or Download button; the section is called Local music', () => {
+    expect(ui).not.toMatch(/type="url"/);
+    expect(ui).not.toMatch(/>\s*Download\s*</);
+    expect(ui).toContain('<h2 id="dl-h">Local music</h2>');
+  });
+
+  it('shows the local music folder as its own labelled block', () => {
+    expect(ui).toContain('Local music folder');
+    expect(ui).toMatch(/className="localfolder__path" aria-labelledby="localfolder-label"/);
   });
 
   it('says plainly that mp3 re-encodes and that flac and wav restore nothing', () => {

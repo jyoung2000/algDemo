@@ -1,0 +1,18 @@
+.artist__songs-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-width: 0;
+  margin: 0;
+}
+.artist__songs-heading .albums__h { margin: 0; }
+.artist__section-play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  flex-shrink: 0;
+}

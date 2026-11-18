@@ -4,6 +4,9 @@ import { PROVIDER_LABEL, classNames, fmtBytes } from './util';
 import { TastePicker, type TrailPoint } from './TastePicker';
 import { familyName, placeGenre, placeSong } from './taste-map';
 import { Art } from './Art';
+import { AlgorithmManager } from './AlgorithmManager';
+import { formulaText } from './engine/algorithms';
+import { useAlgorithms } from './useAlgorithms';
 
 /** What each scoring factor means, in the words the rest of the app uses. */
 const FACTOR_TEXT: Record<string, [string, string]> = {
@@ -17,20 +20,6 @@ const FACTOR_TEXT: Record<string, [string, string]> = {
   novelty: ['Discovery', 'An artist that is not already in your starting songs.'],
   taste: ['Listening taste', 'Genres and tempo learned from what you finish and what you skip.'],
 };
-
-/** The formula as one readable line per step, built from the engine's numbers. */
-function formulaText(f: Profile['formula']): string {
-  const aff = f.affinity.factors.map((x) => `${x.weight}·${x.factor}`).join(' + ');
-  const glob = f.affinity.global.map((x) => `${x.weight}·${x.factor}`).join(' + ');
-  return [
-    `seed fit = Σ w·factor / Σ w over [${aff}] (only factors with evidence)`,
-    `blend = ${f.affinity.best_seed_share}·seed fit(best seed) + ${(1 - f.affinity.best_seed_share).toFixed(2)}·emphasis-weighted mean of seed fits`,
-    `affinity = (blend·seedWeight + Σ w·global over [${glob}]) / (seedWeight + Σ w)`,
-    `affinity' = affinity × (1 − ${f.taste.weight}) + ${f.taste.weight} × taste`,
-    `final = affinity' × (${f.coverage.floor} + (1 − ${f.coverage.floor}) × coverage)`,
-    `ranked = final − min(${f.exposure.max}, ${f.exposure.per_show} × shows)`,
-  ].join('\n');
-}
 
 const KIND_LABEL: Record<string, string> = {
   complete: 'Full listens',
@@ -99,6 +88,9 @@ export function ProfileView() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  // ALGO-MANAGER-001: the same active algorithm Settings shows; its numbers drive the formula below.
+  const algs = useAlgorithms(null);
+  const alg = algs.active;
 
   const load = () => {
     setBusy(true);
@@ -109,10 +101,12 @@ export function ProfileView() {
       .finally(() => setBusy(false));
   };
   useEffect(load, []);
+  const manager = <AlgorithmManager state={algs} onChanged={load} />;
 
   if (!p) {
     return (
       <div className="profile">
+        {manager}
         <section className="card">
           <h2>Your profile</h2>
           {err ? <p className="state state--bad">{err}</p> : <p className="state">Loading what the recommender knows…</p>}
@@ -212,6 +206,7 @@ export function ProfileView() {
 
   return (
     <div className="profile">
+      {manager}
       <section className="card" aria-labelledby="pf-h">
         <div className="card__head">
           <h2 id="pf-h">Your profile</h2>
@@ -431,35 +426,45 @@ export function ProfileView() {
       <section className="card" aria-labelledby="pf-formula">
         <h2 id="pf-formula">Recommendation formula</h2>
         <p className="note">
-          The score the app gives each candidate, with the numbers it uses right now. The slider and the new-releases switch change the
-          weights; the values below are read from the engine, not typed in.
+          The score the app gives each candidate, from the active algorithm “{alg.name}” (the same one shown at the top and in Settings). The
+          slider and the new-releases switch then scale some weights; the Now column is read from the engine.
         </p>
-        <pre className="formula">{formulaText(p.formula)}</pre>
+        <pre className="formula">{formulaText(alg)}</pre>
         <table className="ptable">
           <thead>
             <tr>
               <th scope="col">Term</th>
               <th scope="col">Value</th>
+              <th scope="col">Now</th>
               <th scope="col">Meaning</th>
             </tr>
           </thead>
           <tbody>
-            {p.formula.affinity.factors.map((f) => (
-              <tr key={f.factor}>
-                <th scope="row">{(FACTOR_TEXT[f.factor] ?? [f.factor])[0]}</th>
-                <td>{f.weight}</td>
-                <td>{(FACTOR_TEXT[f.factor] ?? ['', ''])[1]}</td>
+            {(['audio', 'genre', 'artist', 'provider', 'feedback', 'tempo'] as const).map((k) => (
+              <tr key={`seed-${k}`}>
+                <th scope="row">{(FACTOR_TEXT[k] ?? [k])[0]} (seed fit)</th>
+                <td>{alg.params.seedWeights[k]}</td>
+                <td>{p.formula.affinity.factors.find((f) => f.factor === k)?.weight ?? '—'}</td>
+                <td>{(FACTOR_TEXT[k] ?? ['', ''])[1]}</td>
               </tr>
             ))}
-            {p.formula.affinity.global.map((f) => (
-              <tr key={f.factor}>
-                <th scope="row">{(FACTOR_TEXT[f.factor] ?? [f.factor])[0]}</th>
-                <td>{f.weight}</td>
-                <td>{(FACTOR_TEXT[f.factor] ?? ['', ''])[1]}</td>
+            {(['feedback', 'freshness', 'novelty'] as const).map((k) => (
+              <tr key={`global-${k}`}>
+                <th scope="row">{(FACTOR_TEXT[k] ?? [k])[0]} (global)</th>
+                <td>{alg.params.globalWeights[k]}</td>
+                <td>{p.formula.affinity.global.find((f) => f.factor === k)?.weight ?? '—'}</td>
+                <td>{(FACTOR_TEXT[k] ?? ['', ''])[1]}</td>
               </tr>
             ))}
             <tr>
+              <th scope="row">Best starting song share</th>
+              <td>{alg.params.bestSeedShare}</td>
+              <td>{p.formula.affinity.best_seed_share}</td>
+              <td>Share of the blend taken from the single best-matching starting song.</td>
+            </tr>
+            <tr>
               <th scope="row">Listening taste</th>
+              <td>{alg.params.tasteWeight}</td>
               <td>{p.formula.taste.weight}</td>
               <td>
                 Blended into the affinity; a song's genres and tempo, with events counting half after {p.formula.taste.half_life_days} days.
@@ -467,11 +472,15 @@ export function ProfileView() {
             </tr>
             <tr>
               <th scope="row">Coverage floor</th>
+              <td>{alg.params.coverageFloor}</td>
               <td>{p.formula.coverage.floor}</td>
               <td>The score kept when a song has little evidence.</td>
             </tr>
             <tr>
               <th scope="row">Repeat penalty</th>
+              <td>
+                {alg.params.exposurePerShow} per show, max {alg.params.exposureMax}
+              </td>
               <td>
                 {p.formula.exposure.per_show} per show, max {p.formula.exposure.max}
               </td>
@@ -484,7 +493,7 @@ export function ProfileView() {
       <section className="card" aria-labelledby="pf-algo">
         <h2 id="pf-algo">How songs are scored</h2>
         <p className="note">
-          Each candidate gets a score from these factors. The weights shift with the Familiar–Adventurous slider ({pct(p.algorithm.settings.adventurous)} adventurous
+          Each candidate gets a score from these factors. Base is the active algorithm “{alg.name}”; the weights shift with the Familiar–Adventurous slider ({pct(p.algorithm.settings.adventurous)} adventurous
           {p.algorithm.settings.fresh ? ', new releases on' : ''}). A factor with no evidence for a song is left out for that song instead of counting as zero.
         </p>
         <table className="ptable">
@@ -520,7 +529,7 @@ export function ProfileView() {
             })}
           </tbody>
         </table>
-        <p className="note">Listening taste is blended in last at a fixed {pct(p.algorithm.weights.find((w) => w.factor === 'taste')?.base ?? 0)}, once you have played something.</p>
+        <p className="note">Listening taste is blended in last at {pct(alg.params.tasteWeight)}, once you have played something.</p>
         <dl className="kv">
           {Object.entries(p.algorithm.tiers).map(([k, v]) => (
             <div key={k}>

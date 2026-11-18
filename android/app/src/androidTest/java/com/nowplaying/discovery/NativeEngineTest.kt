@@ -12,6 +12,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.nowplaying.discovery.engine.AudioOutput
 import com.nowplaying.discovery.engine.BlendPlan
 import com.nowplaying.discovery.engine.BlendPlanner
+import com.nowplaying.discovery.engine.CuePlanner
+import com.nowplaying.discovery.engine.TrackCues
 import com.nowplaying.discovery.engine.DecodedSource
 import com.nowplaying.discovery.engine.EnginePlayer
 import com.nowplaying.discovery.dsp.TransitionStyle
@@ -333,5 +335,94 @@ class NativeEngineTest {
     // Opening (decoding the start of the file) takes about 200 ms on the emulator; a look is 1000 ms away.
     assertTrue("opened within 500 ms of landing, not on the next look ($openedMs ms)", openedMs < 500)
     assertEquals("one listener while alive, none after release", 0, listeners.size)
+  }
+
+  @Test fun servicePlayerWaitsForDecoderEndThenFadesNextFromZeroDespiteLegacyCues() = assertServiceCompletionHandoff(60)
+
+  @Test fun servicePlayerPreparesNextSilentlyAndHandsOverAtEndWithMixerOff() = assertServiceCompletionHandoff(0)
+
+  private fun assertServiceCompletionHandoff(mix: Int) {
+    // Real EnginePlayer queue/opener/analyst/decoder/output: a blocked next-file open must never
+    // steal main metadata, and malicious legacy planners/cues must never shorten the original.
+    val songs = listOf(
+      MediaHub.Song("dj-a", "Outgoing", "A", null, null, 8000, ready = true, source = "x:dj-a"),
+      MediaHub.Song("dj-b", "Incoming", "B", null, null, 4000, ready = true, source = "x:dj-b"),
+    )
+    val files = mapOf("dj-a" to wav("dj-a.wav", 440.0, 8.0), "dj-b" to wav("dj-b.wav", 660.0, 4.0))
+    val nextOpening = java.util.concurrent.CountDownLatch(1)
+    val releaseNext = java.util.concurrent.CountDownLatch(1)
+    val planned = java.util.concurrent.atomic.AtomicInteger()
+    val out = PacedOutput()
+    val player = AtomicReference<EnginePlayer>()
+    instr.runOnMainSync {
+      val p = EnginePlayer(ctx, Looper.getMainLooper(),
+        planner = BlendPlanner { _, _, _, _ -> planned.incrementAndGet(); BlendPlan(1.0, 1.0, TransitionStyle.BLEND) },
+        cuePlanner = CuePlanner { _, _, _, _, _, _ ->
+          planned.incrementAndGet()
+          BlendPlan(1.0, 1.0, TransitionStyle.BASS_SWAP, endAt = 2.0, inStart = 0.5, rate = 0.94)
+        },
+        measure = { uri ->
+          val duration = if (uri.lastPathSegment == "dj-a.wav") 8.0 else 4.0
+          TrackCues(duration, 0.5, 2.0, 1.0, null, null)
+        },
+        resolve = {
+          if (it.id == "dj-b") {
+            nextOpening.countDown()
+            check(releaseNext.await(5, java.util.concurrent.TimeUnit.SECONDS)) { "next opener was not released" }
+          }
+          files[it.id]
+        },
+        lookup = { id -> songs.firstOrNull { it.id == id } },
+        output = out, manageFocus = false,
+      )
+      p.setMix(mix); p.setPlayThrough(50)
+      p.setMediaItems(songs.map { MediaItem.Builder().setMediaId(it.id).build() }, 0, 0)
+      p.prepare(); p.play(); player.set(p)
+    }
+    val seen = ArrayList<String>()
+    var firstIncomingFrame = -1
+    var state = Player.STATE_IDLE
+    var events = org.json.JSONArray()
+    try {
+      assertTrue("next prepares even with mixer off", nextOpening.await(5, java.util.concurrent.TimeUnit.SECONDS))
+      instr.runOnMainSync {
+        assertEquals("preparing next cannot replace main metadata", "dj-a", player.get().currentMediaItem?.mediaId)
+        assertEquals("page main matches live source", "dj-a", player.get().snapshotForPage().getString("id"))
+      }
+      releaseNext.countDown()
+      val deadline = System.currentTimeMillis() + 20_000
+      while (System.currentTimeMillis() < deadline) {
+        instr.runOnMainSync {
+          state = player.get().playbackState
+          val id = player.get().currentMediaItem?.mediaId
+          if (id != null && seen.lastOrNull() != id) seen += id
+          if (id == "dj-b" && firstIncomingFrame < 0) firstIncomingFrame = synchronized(out.left) { out.left.size }
+          if (id == "dj-b") assertEquals("page and native metadata agree", id, player.get().snapshotForPage().getString("id"))
+          events = player.get().pending()
+        }
+        if (state == Player.STATE_ENDED) break
+        Thread.sleep(5)
+      }
+    } finally {
+      releaseNext.countDown()
+      instr.runOnMainSync { player.get().release() }
+    }
+    assertEquals("finished both full songs", Player.STATE_ENDED, state)
+    assertTrue("main changes only after original PCM (allow one queued output chunk): $firstIncomingFrame", firstIncomingFrame >= 8 * 48000 - 1024)
+    assertEquals(listOf("dj-a", "dj-b"), seen)
+    assertEquals("legacy overlap planners cannot drive live playback", 0, planned.get())
+    assertTrue("handoff records complete original", events.getJSONObject(0).getJSONObject("from").getLong("heardMs") >= 8000)
+    val pcm = synchronized(out.left) { out.left.toFloatArray() }
+    val onset = pcm.indexOfFirst { abs(it) > 0.01f }
+    assertTrue("first song was audible", onset >= 0)
+    val (aHz, aRms) = measure(pcm.copyOfRange(onset + 48000, onset + 48000 * 2))
+    val (tailHz, tailRms) = measure(pcm.copyOfRange(onset + (7.6 * 48000).toInt(), onset + (7.95 * 48000).toInt()))
+    val (bHz, _) = measure(pcm.copyOfRange(onset + 48000 * 9, onset + 48000 * 10))
+    assertEquals(440.0, aHz, 3.0); assertEquals("original tail is still the original", 440.0, tailHz, 3.0)
+    assertTrue("original tail is not faded", tailRms > aRms * 0.95)
+    assertEquals(660.0, bHz, 3.0)
+    val end = pcm.indexOfLast { abs(it) > 0.01f }
+    val playedSeconds = (end - onset) / 48000.0
+    assertTrue("all 8 + 4 seconds, with no original-song overlap: $playedSeconds", playedSeconds in 11.98..12.4)
   }
 }

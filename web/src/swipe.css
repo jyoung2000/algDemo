@@ -1,0 +1,11 @@
+/* SWIPE-DIR-001: while a finger drags a row, tint it to say what letting go will do.
+   Left = save to a list (accent blue); right = remove from the queue (red). Touch only — the
+   attribute is set by useSwipeRemove for touch/pen pointers and cleared on release. */
+[data-swipe-dir='save'] {
+  background-color: rgb(0 113 227 / 10%);
+  box-shadow: inset -4px 0 0 rgb(0 113 227 / 55%);
+}
+[data-swipe-dir='remove'] {
+  background-color: rgb(255 59 48 / 9%);
+  box-shadow: inset 4px 0 0 rgb(255 59 48 / 55%);
+}

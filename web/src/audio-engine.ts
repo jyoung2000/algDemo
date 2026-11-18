@@ -12,6 +12,7 @@
 import { createEqGraph, EQ_DEFAULTS, parseEq, type EqConfig } from './engine/eq';
 import { createAudioBus, type AudioBus, type BusContext, type DeckId } from './engine/audio-bus';
 import { PLAY_THROUGH_DEFAULT, clampPlayThrough, clampSlider } from './engine/crossfade';
+import { engineAvailable as nativeEngineAvailable, engineSend } from './engine/native-engine';
 
 export type EngineReason =
   | 'ready'
@@ -21,14 +22,14 @@ export type EngineReason =
   | 'cross-origin-without-cors';
 
 export const REASON_TEXT: Record<EngineReason, string> = {
-  // True whether or not a song happens to be playing right now: the graph exists and previews go
-  // through it. Saying "processing this preview" while nothing plays was a claim about work the
+  // True whether or not a song happens to be playing right now: the graph processes full songs
+  // played by this app. Saying "processing this song" while nothing plays would claim work the
   // engine was not doing.
-  ready: 'Songs played by this app — downloaded full songs and 30-second previews — go through the equaliser and mixer.',
+  ready: 'Full songs played by this app — from the queue cache or a saved file — go through the equaliser and mixer.',
   'not-started': 'Starts with the first song you play.',
   'no-web-audio': 'This browser cannot process audio.',
   'iframe-playback':
-    'This song plays in YouTube’s or SoundCloud’s own player, which Airwave cannot reach. Downloaded full songs and 30-second previews go through the equaliser and mixer.',
+    'This song plays in YouTube’s or SoundCloud’s own player, which Airwave cannot reach. Full songs played inside Airwave go through the equaliser and mixer.',
   'cross-origin-without-cors': 'This preview’s server did not allow processing, so it plays unprocessed.',
 };
 
@@ -114,9 +115,24 @@ export function attachElement(element: HTMLMediaElement | null, deck: DeckId): E
 }
 
 export const bus = (): AudioBus | null => state.bus;
+let radioGraph: ReturnType<typeof createEqGraph> | null = null;
+
+// The mixer can be off for previews. Player then does not attach either element, so intercept its
+// play event (which precedes media playback) and route the permanent deck before it makes sound.
+// Also handles a deck first used after settings were restored; leave unrelated media untouched.
+if (typeof document !== 'undefined') document.addEventListener('play', (event) => {
+  const element = event.target;
+  if (nativeEngineAvailable() || !(element instanceof HTMLAudioElement)) return;
+  const id = element.dataset.deck;
+  if (id !== 'a' && id !== 'b') return;
+  if (attachElement(element, id) === 'ready') {
+    if (state.mix === 0) state.bus?.cut(id);
+    resumeEngine();
+  }
+}, true);
 
 /** A read-only picture of the live graph for the UI and for checks on a real build (ENGINE-PEEK-001). */
-export const peekEngine = () => ({ reason: state.reason, mix: state.mix, eq: state.eq, localMix: state.localMix, playThrough: state.playThrough, bus: state.bus?.peek() ?? null });
+export const peekEngine = () => ({ reason: state.reason, mix: state.mix, eq: state.eq, localMix: state.localMix, playThrough: state.playThrough, bus: state.bus?.peek() ?? null, radio: radioGraph?.peek() ?? null });
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, '__airwaveEngine', { value: { peek: peekEngine }, configurable: true, enumerable: false, writable: false });
 }
@@ -132,9 +148,23 @@ export function setUnprocessable(kind: 'iframe-playback' | null): void {
 
 export const eqConfig = (): EqConfig => state.eq;
 
+/** EQ-RESTORE-001: until the listener's saved settings have loaded, this module holds blank defaults (EQ off, no
+ * mixer). The Android service has already restored the saved sound by itself, so nothing may send these defaults
+ * to it: on a real phone that switched the EQ off for two seconds under music that was already playing. */
+let savedApplied = false;
+export const savedSettingsApplied = (): boolean => savedApplied;
+export function markSavedSettingsApplied(): void {
+  if (savedApplied) return;
+  savedApplied = true;
+  notify();
+}
+
 export function setEqConfig(raw: unknown): EqConfig {
   state.eq = parseEq(raw);
   state.bus?.setEq(state.eq);
+  // Radio unmounts Player, so its settings subscription cannot forward later EQ changes.
+  // Send directly from the page-level setting as well; EngineHub persists it for car cold starts.
+  if (nativeEngineAvailable()) engineSend({ op: 'settings', eq: state.eq });
   notify();
   return state.eq;
 }
@@ -183,21 +213,24 @@ export function resetEngineForTests(): void {
   state.ctx = null;
   state.bus = null;
   state.reason = 'not-started';
+  radioGraph = null;
   state.eq = EQ_DEFAULTS;
   state.mix = 0;
   state.localMix = false;
   state.playThrough = PLAY_THROUGH_DEFAULT;
+  savedApplied = false;
   listeners.clear();
 }
 
 /** RADIO-001. Windows PCM from the native bounded live buffer uses the same AudioContext and EQ
  * implementation/settings as the song decks, without a second player or bypassing the EQ. Android
  * uses the native engine and immediately disposes this graph after the native start handshake. */
-export function radioOutput(): { ctx: AudioContext; input: AudioNode; volume(v: number): void; dispose(): void } | null {
+export function radioOutput(): { ctx: AudioContext; input: AudioNode; volume(v: number): void; peek(): ReturnType<ReturnType<typeof createEqGraph>['peek']>; dispose(): void } | null {
   startEngine(); resumeEngine();
   if (!state.ctx) return null;
   const ctx = state.ctx, out = ctx.createGain(), input = ctx.createGain(); out.connect(ctx.destination);
   const graph = createEqGraph(ctx as never, input, state.eq, out);
+  radioGraph = graph;
   const off = subscribeEngine(() => graph.apply(state.eq));
-  return { ctx, input, volume: (v) => { out.gain.value = Math.min(1, Math.max(0, v)); }, dispose: () => { off(); graph.dispose(); input.disconnect(); out.disconnect(); } };
+  return { ctx, input, volume: (v) => { out.gain.value = Math.min(1, Math.max(0, v)); }, peek: () => graph.peek(), dispose: () => { off(); if (radioGraph === graph) radioGraph = null; graph.dispose(); input.disconnect(); out.disconnect(); } };
 }

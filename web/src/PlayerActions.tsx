@@ -38,8 +38,8 @@ export function PlayerActions({ flags, songKey, lists, downloadState, downloadAv
     if (downloadState === 'done' || downloadState === 'working' || !downloadAvailable) { onDownloads(); return; }
     setStarting(true);
     setError('');
-    try { if (!(await onDownload())) setError('Download failed. Open Downloads to retry.'); }
-    catch { setError('Download failed. Open Downloads to retry.'); }
+    try { if (!(await onDownload())) setError('Download failed. Open Settings → Downloads to retry.'); }
+    catch { setError('Download failed. Open Settings → Downloads to retry.'); }
     finally { setStarting(false); }
   };
   return <div className="np__track-actions" role="group" aria-label="This song">

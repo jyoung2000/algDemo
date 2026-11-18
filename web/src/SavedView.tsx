@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 
-import { api, type AlbumSummary, type ArtistTarget, type PlaylistMix, type PlaylistSummary, type SavedItem, type Track } from './api';
+import { api, type AlbumSummary, type ArtistTarget, type Characteristics, type PlaylistMix, type PlaylistSummary, type SavedItem, type Track } from './api';
 import { Art } from './Art';
 import { ListDownloadBar } from './ListDownloadBar';
 import { ListSaveButton } from './ListSaveButton';
@@ -13,9 +13,13 @@ import { SoundCard } from './SoundCard';
 import { listMixNote } from './list-mix-note';
 import { PLAYLIST_NAME_MAX } from './engine/playlists';
 import type { CardCache } from './engine/queue-controls';
-import { classNames } from './util';
+import { classNames, genreBubbles } from './util';
+import { GenreBubbleView } from './Results';
+import { RowPlayButton, playOnDoubleClick } from './RowPlay';
+import { listStrip, listTaste } from './list-strip';
 import './save-menu.css';
 import './saved-lists.css';
+import './list-strip.css';
 
 interface Props {
   saved: SavedItem[] | null;
@@ -78,7 +82,9 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
   const albumOf = current?.album ?? null;
   // PLAYLIST-MIX-001: the open list's own sound, read again when its songs change.
   const [mix, setMix] = useState<PlaylistMix | null>(null);
-  const mixSig = current ? `${current.id}:${current.items.map((i) => i.key).join(',')}` : '';
+  // IMPORT-GENRES-001: and again as the background lookup gives its songs genres.
+  const tagged = current ? current.items.filter((i) => Array.isArray(i.track?.tags) && i.track!.tags!.length).length : 0;
+  const mixSig = current ? `${current.id}:${current.items.map((i) => i.key).join(',')}:${tagged}` : '';
   useEffect(() => {
     if (!current || !current.count) return;
     let live = true;
@@ -89,6 +95,25 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mixSig]);
   const shown = current && mix?.id === current.id ? mix : null;
+  // LIST-STRIP-001: what the list's own song tags say, so the strip draws as soon as any song has a
+  // stated genre, even before the engine's mix answer comes back.
+  const ownTaste = current ? listTaste(current.items.map((i) => i.track)) : null;
+  const pendingOf = (l: PlaylistSummary) => Number((l as PlaylistSummary & { genre_pending?: number }).genre_pending ?? 0);
+  const looking = current ? pendingOf(current) : 0;
+  // IMPORT-GENRES-001: while the engine is still looking up imported songs, read the lists again now
+  // and then so their genres, covers and strips fill in without the listener doing anything.
+  const anyPending = lists.some((l) => pendingOf(l) > 0);
+  useEffect(() => {
+    if (!anyPending) return;
+    let live = true;
+    const t = window.setInterval(() => {
+      api.playlists().then((r) => live && onLists(r.lists), () => undefined);
+    }, 4000);
+    return () => {
+      live = false;
+      window.clearInterval(t);
+    };
+  }, [anyPending, onLists]);
   useEffect(() => { onVisibleList?.(view); }, [view, onVisibleList]);
 
   // A list deleted elsewhere must not leave the page showing an empty mystery.
@@ -144,12 +169,13 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
   // What the chosen view shows. A list holds keys, so its songs come from the saved rows where
   // possible and from the engine's own copy of the track otherwise.
   const byKey = new Map((saved ?? []).map((s) => [s.track.key, s.track]));
-  const rows: { track: Track; played?: boolean }[] =
+  const rows: { track: Track; played?: boolean; characteristics?: Characteristics }[] =
     current === null
       ? (saved ?? []).map((s) => ({ track: s.track }))
       : current.items
-          .map((i) => ({ track: byKey.get(i.key) ?? (i.track as Track | null), played: i.played }))
-          .filter((r): r is { track: Track; played: boolean } => Boolean(r.track));
+          // IMPORT-GENRES-001: an imported song's list copy carries the cover and genres it was given.
+          .map((i) => ({ track: (String(i.track?.provider) === 'imported' ? i.track : byKey.get(i.key) ?? i.track) as Track | null, played: i.played, characteristics: (i as typeof i & { characteristics?: Characteristics }).characteristics }))
+          .filter((r): r is { track: Track; played: boolean; characteristics: Characteristics | undefined } => Boolean(r.track));
 
   return (
     <section className="card" aria-labelledby="saved-h">
@@ -178,6 +204,8 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
             >
               {l.name}
               <span className="lists__count">{l.count}</span>
+              {/* LIST-STRIP-001: the list's colour strip, from its songs' genres (empty until any has one). */}
+              <ListStripBar tracks={l.items.map((i) => i.track)} />
             </button>
           ))}
           {!creating && (
@@ -207,6 +235,7 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
                   <span className="lists__album-artist">{l.album!.artist}</span>
                 </span>
                 <span className="lists__count">{l.count}</span>
+                <ListStripBar tracks={l.items.map((i) => i.track)} />
               </button>
             ))}
           </div>
@@ -348,15 +377,21 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
       )}
 
       {current && current.count > 0 && (
+        <ListStripBar tracks={current.items.map((i) => i.track)} header pending={looking} />
+      )}
+
+      {current && current.count > 0 && (
         <SoundCard
           key={current.id}
-          taste={shown?.taste ?? null}
+          taste={shown?.taste ?? ownTaste?.taste ?? null}
           listening={false}
           title={`Sound of “${current.name}”`}
           label="This list's mix"
           historyKey={`airwave.sound.list.${current.id}`}
           idleText={shown ? listMixNote(shown) : 'Reading the list…'}
-          emptyText={shown ? `No genre known yet for the ${shown.songs} songs in this list. Play it as your queue and discovery looks them up.` : 'Reading the list…'}
+          emptyText={looking
+            ? `Looking up the genres of ${looking} ${looking === 1 ? 'song' : 'songs'} in this list. The mix fills in as they arrive.`
+            : shown ? `No genre known yet for the ${shown.songs} songs in this list. Play it as your queue and discovery looks them up.` : 'Reading the list…'}
         />
       )}
 
@@ -370,10 +405,12 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
         <>
         <ListDownloadBar tracks={rows.map((r) => r.track)} label={current ? current.name : 'All saved'} />
         <ul className="well tracks tracks--saved">
-          {rows.map(({ track, played }) => {
+          {rows.map(({ track, played, characteristics }) => {
             const cache = cacheOf?.(track.key) ?? null;
+            // IMPORT-GENRES-001 / SAVED-GENRES-001: every saved song the engine placed shows its genre bubbles.
+            const bubbles = genreBubbles(characteristics);
             return (
-            <li key={track.key} className="track" data-dl={cache?.state}
+            <li key={track.key} className="track" data-dl={cache?.state} onDoubleClick={playOnDoubleClick(() => onPreview(track, current?.id))}
               style={cache ? ({ '--dl': `${cache.progress}%` } as CSSProperties) : undefined}>
               {cache && (
                 <span className="rec__dl" data-dl={cache.state} data-indeterminate={cache.indeterminate || undefined}>
@@ -385,6 +422,11 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
               <div className="track__text">
                 <span className="track__title">{track.title}</span>
                 <SongCredits track={track} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} />
+                {bubbles.length > 0 && (
+                  <span className="rec__facts list-strip__facts" aria-label="Song details">
+                    {bubbles.map((g) => <GenreBubbleView key={g.label} bubble={g} />)}
+                  </span>
+                )}
               </div>
               {current && (
                 <span className={classNames('track__played', played && 'is-on')}>
@@ -392,9 +434,7 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
                 </span>
               )}
               <span className="track__actions">
-                <button className="iconbtn" type="button" aria-label={`Play ${track.title}`} onClick={() => onPreview(track, current?.id)}>
-                  <Glyph name="play" size={14} />
-                </button>
+                <RowPlayButton track={track} cache={cache} onPlay={() => onPreview(track, current?.id)} />
                 {onDownload && (
                   <button className="iconbtn" type="button" aria-label={`Download ${track.title}`} title="Download" onClick={() => onDownload(track)}>
                     <Glyph name="download" size={14} />
@@ -436,5 +476,25 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * LIST-STRIP-001: a list's colour strip - the Sound card's gradient (same palette, same mapping)
+ * drawn from the list's songs' stated genres. Neutral and labelled honestly until any song has one.
+ */
+function ListStripBar({ tracks, header = false, pending = 0 }: { tracks: (Track | null)[]; header?: boolean; pending?: number }) {
+  const s = listStrip(tracks);
+  const words = s.gradient
+    ? `Genre mix: ${s.label}${s.placed < s.songs ? ` (${s.placed} of ${s.songs} songs placed)` : ''}`
+    : pending > 0 ? 'Genre mix: looking up genres' : `Genre mix: ${s.label.toLowerCase()}`;
+  return (
+    <span
+      className={classNames('list-strip', header && 'list-strip--header', !s.gradient && 'list-strip--empty')}
+      role="img"
+      aria-label={words}
+      title={words}
+      style={s.gradient ? ({ '--list-strip': s.gradient } as CSSProperties) : undefined}
+    />
   );
 }

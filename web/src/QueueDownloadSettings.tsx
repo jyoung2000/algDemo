@@ -88,14 +88,14 @@ export function QueueDownloadSettings({ settings, onSettings }: {
         above always wins: songs that will not fit say so instead of pushing others out.
       </p>
       <div className="discovery-settings__heading">
-        <span id="kept-folder-label">Kept music folder</span>
+        <span id="kept-folder-label">Music & radio download folder</span>
         <button type="button" className="push" onClick={choose} disabled={picking}
           aria-describedby="kept-folder-help">{picking ? 'Choosing…' : 'Choose folder'}</button>
       </div>
       <p className="note" id="kept-folder-help">
         {/* The path can be long, and Android can only report a label, never a real path. */}
         <span className="qdl__path" title={folder ?? undefined}>{folder ? `Saves to ${folder}` : 'No folder selected'}</span>
-        {' '}Songs you download are kept here permanently. The queue cache above is separate, lives in
+        {' '}Songs and radio recording excerpts you download are kept here permanently. The queue cache above is separate, lives in
         the app's own storage, and clears itself as it fills.
       </p>
       {err && <p className="note note--bad" role="alert">{err}</p>}

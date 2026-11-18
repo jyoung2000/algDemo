@@ -1,0 +1,8 @@
+/* TAG-SPACE-001 (owner 2026-11-17): "add slight spaces between tags". Every row of genre bubbles (song
+   rows, saved rows, the list sound card, the player and radio) keeps 8px between bubbles on a line and
+   6px between wrapped lines, so two bubbles never touch. */
+/* body + :is() outranks each list's own one-class gap rule whatever order the files load in. */
+body :is(.rec__facts, .list-strip__facts, .sound__facts, .radio-player__tags, .radio-station__tags, :has(> .genre)) {
+  column-gap: 8px;
+  row-gap: 6px;
+}

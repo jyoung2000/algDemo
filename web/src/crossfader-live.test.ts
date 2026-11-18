@@ -9,14 +9,17 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, createElement } from 'react';
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { Player, type Playing, type UpNext } from './Player';
 import { PREVIEW_ROUTE } from './engine/shape';
 import { resetEngineForTests, setEqConfig, setLocalMix, setMixSlider } from './audio-engine';
+import { queueAudio } from './engine/queue-audio';
 import { EQ_DEFAULTS } from './engine/eq';
 
-const { lookedUp, fullVersions, held, started, nativeShell, embedded } = vi.hoisted(() => ({
+const { lookedUp, fullVersions, importedAnswers, held, started, nativeShell, embedded } = vi.hoisted(() => ({
   lookedUp: [] as string[],
+  /** FOLDER-IMPORT-PLAY-001: songs the lookup answers with their own imported file link. */
+  importedAnswers: new Map<string, string>(),
   /** Songs the page asked the model to analyse from the local file (FULL-SONG-EMBED-001). */
   embedded: [] as string[],
   nativeShell: { value: false },
@@ -50,6 +53,8 @@ vi.mock('./api', () => ({
     // so the lookup answers "none found" and the preview path is the one under test.
     fullSong: (t: { key: string }) => {
       lookedUp.push(t.key);
+      const imported = importedAnswers.get(t.key);
+      if (imported) return Promise.resolve({ id: null, url: imported, source: 'imported' });
       return Promise.resolve({ id: fullVersions.has(t.key) ? 'dQw4w9WgXcQ' : null, confident: fullVersions.has(t.key) });
     },
     // Once a full song is on disk the player asks the model to hear it (FULL-SONG-EMBED-001). It is
@@ -159,6 +164,7 @@ const setPaused = (el: HTMLAudioElement, v: boolean) => {
 const settle = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); };
 
 beforeEach(() => {
+  vi.clearAllMocks();
   ramps.length = 0; sourced.clear();
   lookedUp.length = 0; fullVersions.clear(); held.clear(); started.length = 0; nativeShell.value = false;
   embedded.length = 0;
@@ -169,7 +175,13 @@ beforeEach(() => {
   resetEngineForTests();
   setMixSlider(0);
 });
-afterEach(() => { cleanup(); resetEngineForTests(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); resetEngineForTests(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+function sourceEnded(a: HTMLAudioElement) {
+  Object.defineProperty(a,'ended',{configurable:true,value:true});
+  a.currentTime=Number.isFinite(a.duration)?a.duration:30;setPaused(a,true);
+  a.dispatchEvent(new Event('ended'));
+}
 
 describe('the crossfader, rendered', () => {
   it('renders two permanent decks that opted into cross-origin processing', async () => {
@@ -207,46 +219,21 @@ describe('the crossfader, rendered', () => {
     expect(reason()).toBe('ready');
   });
 
-  it('overlaps the two songs and fades between them at the planned point', async () => {
-    setMixSlider(100);
-    render(createElement(Player, { ...props, playing: playing('one'), upNext: upNext('two') }));
-    await settle();
-    const [a, b] = decks() as [HTMLAudioElement, HTMLAudioElement];
-    setPaused(a, false);
-
-    // Early in the song nothing should start.
-    a.currentTime = 4;
-    await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
-    await settle();
-    expect(b.paused).toBe(true);
-
-    // 30s preview, 40% ceiling -> a 12s blend begins at 18s.
-    a.currentTime = 28.6; // the 95% point of a 30s deck has passed (MIXER-PLAY-THROUGH-001)
-    await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
-    await settle();
-    expect(b.src).toBe('https://cdn.test/two.mp3');
-    expect(b.paused).toBe(false);
-    expect(a.paused).toBe(false); // both audible at once: that is the blend
-    const faded = ramps.filter((r) => r.param.includes('gain') && r.param.includes('curve'));
-    expect(faded.length).toBeGreaterThanOrEqual(2); // one curve out, one in
+  it('keeps the outgoing source alone through 100%, then starts the next from zero',async()=>{
+    setMixSlider(100);render(createElement(Player,{...props,playing:playing('one'),upNext:upNext('two')}));await settle();
+    const [a,b]=decks() as [HTMLAudioElement,HTMLAudioElement];setPaused(a,false);
+    for(const at of [28.6,29.999,30,31]) {a.currentTime=at;await act(async()=>{a.dispatchEvent(new Event('timeupdate'));});expect(b.paused).toBe(true);}
+    expect(props.onNext).not.toHaveBeenCalled();
+    await act(async()=>{sourceEnded(a);});await settle();
+    expect(b.paused).toBe(false);expect(a.paused).toBe(true);expect(b.currentTime).toBe(0);expect(props.onNext).toHaveBeenCalledOnce();
   });
 
-  it('says what it is doing, and only while it can actually do it', async () => {
-    setMixSlider(100);
-    const { container, rerender } = render(createElement(Player, { ...props, playing: playing('one'), upNext: upNext('two') }));
-    await settle();
-    expect(container.querySelector('.np__note--mix')?.textContent).toMatch(/Ready to blend|Preparing/);
-
-    // A song in YouTube's own player cannot be blended; the line must not claim otherwise.
-    rerender(createElement(Player, {
-      ...props, upNext: upNext('two'),
-      playing: {
-        track: track('yt') as Playing['track'],
-        playback: { kind: 'full', video_id: 'abc', preview: null, open: [], embed: null } as Playing['playback'],
-      },
-    }));
-    await settle();
-    expect(container.querySelector('.np__note--mix')).toBeNull();
+  it('describes waiting for full completion without claiming early beatmatching',async()=>{
+    setMixSlider(100);const {container}=render(createElement(Player,{...props,playing:playing('one'),upNext:upNext('two')}));await settle();
+    expect(container.querySelector('.np__note--mix')?.textContent).toMatch(/after 100%|Preparing/);
+    const [a]=decks() as [HTMLAudioElement];a.currentTime=29.5;await act(async()=>{a.dispatchEvent(new Event('timeupdate'));});
+    expect(container.querySelector('.np__note--mix')?.textContent).not.toMatch(/bass.swap|filter|beat.matched/i);
+    expect(container.querySelector('.np__main .np__title')?.textContent).toBe('Song one');
   });
 
   it('plays the full song whenever one exists, mixer on or off — the owner’s rule', async () => {
@@ -274,7 +261,7 @@ describe('the crossfader, rendered', () => {
     await settle();
     expect(lookedUp).toContain('two');
     expect(decks()[1]?.getAttribute('src')).toBeNull();
-    expect(container.querySelector('.np__note--mix')?.textContent).toMatch(/full version/i);
+    expect(container.querySelector('.np__note--mix')?.textContent).toMatch(/Next full song is not ready/);
 
     // A next song with no full version is cued as before.
     fullVersions.delete('two');
@@ -283,58 +270,20 @@ describe('the crossfader, rendered', () => {
     expect(decks()[1]?.getAttribute('src')).toBe('https://cdn.test/three.mp3');
   });
 
-  it('leaves the blended-in song playing instead of restarting it', async () => {
-    setMixSlider(100);
-    const onNext = vi.fn();
-    const { rerender } = render(createElement(Player, { ...props, onNext, playing: playing('one'), upNext: upNext('two') }));
-    await settle();
-    const [a, b] = decks() as [HTMLAudioElement, HTMLAudioElement];
-    setPaused(a, false);
-    a.currentTime = 28.6; // the 95% point of a 30s deck has passed (MIXER-PLAY-THROUGH-001)
-    await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
-    await settle();
-    b.currentTime = 11;
-    const playsBefore = (b.play as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
-    // The lookahead has already asked about 'two' once, before cueing it. That is the only time.
-    const lookupsBefore = lookedUp.filter((k) => k === 'two').length;
-
-    await act(async () => { a.dispatchEvent(new Event('ended')); });
-    await settle();
-    expect(onNext).toHaveBeenCalledTimes(1);
-
-    // App now reports the next song as current. The element must keep its playhead.
-    rerender(createElement(Player, { ...props, onNext, playing: playing('two'), upNext: [] }));
-    await settle();
-    expect(b.currentTime).toBe(11);
-    expect((b.play as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(playsBefore);
-    expect(b.paused).toBe(false);
-    // The regression this locks down: the blended-in song used to be looked up on YouTube like any
-    // new song, and while that lookup ran its source counted as unresolved — so the load effect
-    // paused the deck and stripped its src, killing the song the blend had just handed over.
-    expect(lookedUp.filter((k) => k === 'two')).toHaveLength(lookupsBefore);
-    expect(b.getAttribute('src')).toBe('https://cdn.test/two.mp3');
+  it('keeps the promoted incoming playhead instead of restarting it',async()=>{
+    setMixSlider(100);const onNext=vi.fn();const view=render(createElement(Player,{...props,onNext,playing:playing('one'),upNext:upNext('two')}));await settle();
+    const [a,b]=decks() as [HTMLAudioElement,HTMLAudioElement];await act(async()=>{sourceEnded(a);});await settle();
+    expect(b.paused).toBe(false);const before=vi.mocked(HTMLMediaElement.prototype.play).mock.contexts.filter(x=>x===b).length;b.currentTime=2;
+    view.rerender(createElement(Player,{...props,onNext,playing:playing('two'),upNext:upNext('three')}));await settle();
+    expect(b.currentTime).toBe(2);expect(vi.mocked(HTMLMediaElement.prototype.play).mock.contexts.filter(x=>x===b).length).toBe(before);
+    expect(view.container.querySelector('.np__main .np__title')?.textContent).toBe('Song two');expect(onNext).toHaveBeenCalledOnce();
   });
 
-  it('drops a blend when the listener seeks, leaving only the current song', async () => {
-    setMixSlider(100);
-    const { container } = render(createElement(Player, { ...props, playing: playing('one'), upNext: upNext('two') }));
-    await settle();
-    const [a, b] = decks() as [HTMLAudioElement, HTMLAudioElement];
-    setPaused(a, false);
-    a.currentTime = 28.6; // the 95% point of a 30s deck has passed (MIXER-PLAY-THROUGH-001)
-    await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
-    await settle();
-    expect(b.paused).toBe(false);
-
-    // fireEvent.change, not a raw 'input' event: React tracks a controlled input's last value and
-    // drops an event whose value it believes it already has.
-    const slider = container.querySelector('.prog input') as HTMLInputElement;
-    await act(async () => {
-      fireEvent.change(slider, { target: { value: '5' } });
-    });
-    await settle();
-    expect(b.paused).toBe(true);
-    expect(a.paused).toBe(false);
+  it('seeking while next waits leaves only current playing',async()=>{
+    setMixSlider(100);render(createElement(Player,{...props,playing:playing('one'),upNext:upNext('two')}));await settle();
+    const [a,b]=decks() as [HTMLAudioElement,HTMLAudioElement];
+    fireEvent.change(screen.getByRole('slider',{name:/Position in the/}),{target:{value:'10'}});
+    expect(b.paused).toBe(true);expect(a.currentTime).toBe(10);
   });
 
   it('blends nothing while repeating one song, because there is no next song', async () => {
@@ -417,6 +366,35 @@ describe('full songs through the decks (LOCAL-AUDIO-001)', () => {
     expect(container.querySelector('.np__note')?.textContent).not.toMatch(/YouTube/);
   });
 
+  it('prefers the imported file over a same-key catalogue copy already held in the queue, with EQ on', async () => {
+    // Observed live: "Real Test Mix" played a downloaded YouTube copy instead of the file imported
+    // from that playlist. Its shared song key made the queue's readyUrl win before the file's own URL.
+    const IMP = 'imported:C:\\Music\\Mix\\Artist - One.opus';
+    held.add(IMP); held.add(SRC);
+    vi.spyOn(queueAudio, 'readyUrl').mockReturnValue(SRC);
+    setEqConfig({ ...EQ_DEFAULTS, on: true, presetId: 'bass-booster', gains: [7, 5.5, 4, 2, 0, 0, 0, 0, 0, 0] });
+    const ownFile = { ...playing('one'), track: { ...playing('one').track, provider: 'imported', url: IMP } } as unknown as Playing;
+    render(createElement(Player, { ...props, playing: ownFile, upNext: [] }));
+    await settle(); await settle();
+    expect(globalThis.fetch).toHaveBeenCalledWith(`/local-audio?u=${encodeURIComponent(IMP)}`);
+    expect(globalThis.fetch).not.toHaveBeenCalledWith(`/local-audio?u=${encodeURIComponent(SRC)}`);
+    const { peekEngine } = await import('./audio-engine');
+    expect(peekEngine().bus?.decks.a?.eq.on).toBe(true);
+    expect(lookedUp).not.toContain('one'); // an imported file does not need a catalogue lookup
+  });
+
+  it('pre-loads an imported next song on the second deck so it gets the same entrance as any song', async () => {
+    const IMP = 'imported:C:\\Music\\Mix\\Artist - Two.opus';
+    held.add(SRC); held.add(IMP); importedAnswers.set('two', IMP);
+    setMixSlider(70);
+    const next: UpNext[] = [{ key: 'two', title: 'Two', artist: 'Artist', artwork: null, preview: null, track: { ...track('two'), provider: 'imported', url: IMP } as unknown as UpNext['track'] }];
+    render(createElement(Player, { ...props, playing: withVideo('one'), upNext: next }));
+    await settle(); await settle();
+    expect(decks()[1]?.getAttribute('src')).toBe(LOCAL); // cued on the spare deck, not left for a cold load
+    expect(decks()[1]?.paused).toBe(true);               // and silent until the current song ends
+    importedAnswers.clear();
+  });
+
   it('builds the graph for the equaliser alone, mixer off', async () => {
     held.add(SRC);
     setEqConfig({ ...EQ_DEFAULTS, on: true });
@@ -496,8 +474,9 @@ describe('full songs through the decks (LOCAL-AUDIO-001)', () => {
     a.currentTime = 28.6; // the 95% point of a 30s deck has passed (MIXER-PLAY-THROUGH-001)
     await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
     await settle();
-    expect(b.paused).toBe(false);
-    expect(a.paused).toBe(false);
+    expect(b.paused).toBe(true);expect(a.paused).toBe(false);
+    await act(async()=>{sourceEnded(a);});await settle();
+    expect(b.paused).toBe(false);expect(b.currentTime).toBe(0);
   });
 
   it('keeps the blended-into full song on its deck after the handoff — no restart, no YouTube', async () => {
@@ -518,10 +497,9 @@ describe('full songs through the decks (LOCAL-AUDIO-001)', () => {
     a.currentTime = 28.6; // the 95% point of a 30s deck has passed (MIXER-PLAY-THROUGH-001)
     await act(async () => { a.dispatchEvent(new Event('timeupdate')); });
     await settle();
-    expect(b.paused).toBe(false);
-    b.currentTime = 7;
-    // The outgoing song ends: the player promotes deck B and asks for the next song.
-    await act(async () => { a.dispatchEvent(new Event('ended')); });
+    expect(b.paused).toBe(true);
+    await act(async()=>{sourceEnded(a);});await settle();
+    expect(b.paused).toBe(false);b.currentTime=7;
     expect(onNext).toHaveBeenCalled();
     view.rerender(createElement(Player, { ...props, onNext, playing: two, upNext: [] }));
     await settle();
@@ -543,5 +521,30 @@ describe('full songs through the decks (LOCAL-AUDIO-001)', () => {
     await settle();
     expect(started).toEqual([SRC]);
     expect(container.querySelector('.np__note--mix')?.textContent).toMatch(/Downloading the next song/i);
+  });
+});
+
+
+describe('CURRENT-PRIMARY-001 upcoming is secondary artwork only', () => {
+  it.each([false,true])('keeps current art, title and progress primary when next metadata or loading events change (docked=%s)', async (docked) => {
+    setMixSlider(60);
+    const current={...playing('one'),track:{...playing('one').track,artwork:'https://art.test/current.jpg'}};
+    const upcoming=[{...upNext('two')[0]!,artwork:'https://art.test/next.jpg'}];
+    const {container,rerender}=render(createElement(Player,{...props,docked,playing:current,upNext:upcoming}));
+    await settle();
+    expect(container.querySelector('.np__main .np__title')?.textContent).toBe('Song one');
+    expect(container.querySelector('.np__main img')?.getAttribute('src')).toBe('https://art.test/current.jpg');
+    expect(container.querySelector('.np__upcoming img')?.getAttribute('src')).toBe('https://art.test/next.jpg');
+    expect(container.querySelector('.np__upcoming')?.textContent).toMatch(/Up next|Loading next/);
+    const [a,b]=decks() as [HTMLAudioElement,HTMLAudioElement];a.currentTime=12;
+    await act(async()=>{a.dispatchEvent(new Event('timeupdate'));});
+    b.currentTime=29;
+    await act(async()=>{b.dispatchEvent(new Event('timeupdate'));b.dispatchEvent(new Event('waiting'));});
+    expect((container.querySelector('.prog input') as HTMLInputElement).value).toBe('12');
+    rerender(createElement(Player,{...props,docked,playing:current,upNext:[{...upcoming[0]!,title:'Different upcoming title'}]}));
+    await settle();
+    expect(container.querySelector('.np__main .np__title')?.textContent).toBe('Song one');
+    expect(container.querySelector('.np__main img')?.getAttribute('src')).toBe('https://art.test/current.jpg');
+    expect(container.querySelector('.np__upcoming')?.textContent).toContain('Different upcoming title');
   });
 });

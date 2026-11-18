@@ -9,6 +9,8 @@
  * and the gain ramps live in `audio-bus.ts`.
  */
 
+import { gridUsable, type TrackCues } from './track-cues';
+
 /** The five words under the slider. */
 export const MIX_LABELS = ['Off', 'Subtle', 'Smooth', 'Creative', 'Long & Creative'] as const;
 export type MixLabel = (typeof MIX_LABELS)[number];
@@ -42,16 +44,14 @@ export const MIN_PLAYED_FRACTION = 0.95;
  * "Play before blending" slider in Settings. 50% is as early as the slider goes; 100% is no
  * overlap at all, a clean handoff at the end of the song.
  */
-export const PLAY_THROUGH_MIN = 50;
+export const PLAY_THROUGH_MIN = 100;
 export const PLAY_THROUGH_MAX = 100;
-export const PLAY_THROUGH_DEFAULT = Math.round(MIN_PLAYED_FRACTION * 100);
-export const clampPlayThrough = (v: unknown): number => {
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.round(clamp(n, PLAY_THROUGH_MIN, PLAY_THROUGH_MAX)) : PLAY_THROUGH_DEFAULT;
-};
-/** The fraction the plan uses for a setting, or the default when the value is out of range or missing. */
+export const PLAY_THROUGH_DEFAULT = 100;
+/** FULL-COMPLETION-001: migrate even old saved 50–95% values; not a user-adjustable overlap. */
+export const clampPlayThrough = (_v: unknown): number => PLAY_THROUGH_DEFAULT;
+/** Legacy offline-plan arithmetic, retained for analysis/parity only; live players require source end. */
 const playedFraction = (v: number | undefined): number =>
-  v !== undefined && Number.isFinite(v) && v >= PLAY_THROUGH_MIN / 100 && v <= PLAY_THROUGH_MAX / 100 ? v : MIN_PLAYED_FRACTION;
+  v !== undefined && Number.isFinite(v) && v >= 0.5 && v <= 1 ? v : MIN_PLAYED_FRACTION;
 /**
  * No blend may eat more than this share of the INCOMING track. It starts from its beginning under
  * the fade, so this keeps a short preview from being mostly fade-in.
@@ -180,7 +180,26 @@ export interface MixInputs {
   minPlayedFraction?: number;
   outBpm?: number | null;
   inBpm?: number | null;
+  /**
+   * Where the outgoing song's music really ends and where its beats fall, measured from its audio
+   * (DJ-XFADE-001). With these the blend is placed on the music instead of on the file.
+   */
+  outCues?: TrackCues | null;
+  /** The same for the incoming song. Used only together with `outCues`. */
+  inCues?: TrackCues | null;
+  /** The largest tempo change this player can make without changing pitch. Default MAX_TEMPO_NUDGE. */
+  maxNudge?: number;
 }
+
+/**
+ * How the blend sits on the beat.
+ * - `locked`: both grids are known and close enough that the incoming song is nudged onto the
+ *   outgoing tempo, so the two stay in step for the whole blend.
+ * - `entry`: the incoming song comes in on the outgoing song's beat, but the tempos differ, so the
+ *   low end changes hands early instead of layering two rhythms.
+ * - `none`: no trustworthy grid; nothing is claimed.
+ */
+export type BeatFit = 'locked' | 'entry' | 'none';
 
 export interface MixPlan {
   /** Seconds of overlap actually scheduled. 0 means a clean handoff. */
@@ -198,18 +217,34 @@ export interface MixPlan {
   rate: number;
   /** What the transition is allowed to do. */
   style: TransitionStyle;
+  /** Where in the outgoing track the blend is complete and the incoming song takes over. */
+  endAt: number;
+  /** Where the incoming song is started from: its first sound, not the start of its file. */
+  inStart: number;
+  /**
+   * Seconds into the blend at which the low end changes hands, or null for the plain crossfade
+   * automation (no measured cues, or a style without a bass handoff).
+   */
+  swapAt: number | null;
+  /** How long that handoff takes. */
+  swapSeconds: number;
+  beat: BeatFit;
   /** One read-only line for the UI, e.g. "Smooth • about 9 seconds". */
   description: string;
 }
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
-function describe(label: MixLabel, seconds: number, reason: MixReason, bars = 0, tempo: TempoRelation = 'unknown'): string {
+function describe(label: MixLabel, seconds: number, reason: MixReason, bars = 0, tempo: TempoRelation = 'unknown', fit?: { beat: BeatFit; bpm: number }): string {
   if (reason === 'off') return 'Off • songs play one after another';
   if (reason === 'too-short-to-blend') return `${label} • too short to blend, clean handoff`;
   const about = seconds >= 10 ? `${Math.round(seconds)}` : `${round1(seconds)}`;
   const tail = reason === 'kept-for-song' ? ', kept so the song plays through' : reason === 'shortened-for-pair' ? ', shortened for this pair' : '';
   // A bar-quantised blend is worth saying so: it is the difference between a volume ramp and a mix.
+  if (fit) {
+    const how = fit.beat === 'locked' ? `, beat-matched at ${Math.round(fit.bpm)} BPM` : fit.beat === 'entry' ? ', in on the beat' : '';
+    return `${label} • about ${about} seconds${tail}${how}`;
+  }
   const beat = bars > 0 ? `, ${bars} ${bars === 1 ? 'bar' : 'bars'} on the beat` : tempo === 'unrelated' ? ', tempos too far apart to beat-match' : '';
   return `${label} • about ${about} seconds${tail}${beat}`;
 }
@@ -238,14 +273,16 @@ export function mixPlan(slider: number, outSeconds: number, inSeconds: number, i
   const known = (n: number) => Number.isFinite(n) && n > 0;
   const style = transitionStyle(s);
   const tempo = tempoRelation(inputs.outBpm, inputs.inBpm);
-  const flat = { label, requested, bars: 0, tempo, rate: 1, style } as const;
+  const fileEnd = known(outSeconds) ? outSeconds : 0;
+  const flat = { label, requested, bars: 0, tempo, rate: 1, style, endAt: fileEnd, inStart: 0, swapAt: null, swapSeconds: 0, beat: 'none' } as const;
 
   if (s <= 0) {
-    return { ...flat, seconds: 0, startAt: known(outSeconds) ? outSeconds : 0, style: 'cut', reason: 'off', description: describe(label, 0, 'off') };
+    return { ...flat, seconds: 0, startAt: fileEnd, style: 'cut', reason: 'off', description: describe(label, 0, 'off') };
   }
   if (!known(outSeconds) || !known(inSeconds)) {
-    return { ...flat, seconds: 0, startAt: known(outSeconds) ? outSeconds : 0, reason: 'too-short-to-blend', description: describe(label, 0, 'too-short-to-blend') };
+    return { ...flat, seconds: 0, startAt: fileEnd, reason: 'too-short-to-blend', description: describe(label, 0, 'too-short-to-blend') };
   }
+  if (inputs.outCues) return cuedPlan(s, outSeconds, inSeconds, inputs, inputs.outCues);
 
   // The outgoing song's tail (95% played first) and the incoming song's share, whichever is tighter.
   const songCeiling = outSeconds * (1 - playedFraction(inputs.minPlayedFraction));
@@ -268,6 +305,119 @@ export function mixPlan(slider: number, outSeconds: number, inSeconds: number, i
     rate: tempoNudge(inputs.outBpm, inputs.inBpm),
     reason,
     description: describe(label, seconds, reason, quantised.bars, tempo),
+  };
+}
+
+/** After the song leaves its own level, the blend may run this much longer to cover the ring-out. */
+export const TAIL_GRACE_SECONDS = 1;
+/** A song already fading when the blend may begin still gets this long, so the entry is not a jump. */
+export const FAST_BLEND_SECONDS = 2;
+/** A beat-placed blend needs at least this many beats; fewer is a plain fade. */
+export const MIN_BLEND_BEATS = 2;
+/** Where the low end changes hands: halfway when the songs are in step, a third in when they are not. */
+export const SWAP_FRACTION_LOCKED = 0.5;
+export const SWAP_FRACTION_FREE = 1 / 3;
+
+/** `out / in` folded by octaves into [sqrt(1/2), sqrt(2)), so half and double time compare as equal. */
+export function foldedRatio(outBpm: number, inBpm: number): number {
+  let ratio = outBpm / inBpm;
+  if (!Number.isFinite(ratio) || ratio <= 0) return NaN;
+  while (ratio >= Math.SQRT2) ratio /= 2;
+  while (ratio < Math.SQRT1_2) ratio *= 2;
+  return ratio;
+}
+
+/**
+ * The blend for a pair whose outgoing song has been measured (DJ-XFADE-001).
+ *
+ * The owner's rule is kept exactly: nothing of the next song is heard before `minPlayedFraction` of
+ * the outgoing FILE has played. What changes is where the blend ends — on the music, not on the
+ * file — and that it starts on a beat and hands the low end over the way a DJ does.
+ */
+function cuedPlan(s: number, outSeconds: number, inSeconds: number, inputs: MixInputs, out: TrackCues): MixPlan {
+  const label = mixLabel(s);
+  const requested = requestedSeconds(s);
+  const style = transitionStyle(s);
+  const inCues = inputs.inCues ?? null;
+  const floor = outSeconds * playedFraction(inputs.minPlayedFraction);
+  const end = clamp(Number.isFinite(out.end) ? out.end : outSeconds, 0, outSeconds);
+  const fullEnd = clamp(Number.isFinite(out.fullEnd) ? out.fullEnd : end, 0, end);
+  const inStart = inCues && Number.isFinite(inCues.start) ? clamp(inCues.start, 0, Math.max(0, inSeconds - MIN_USEFUL_SECONDS)) : 0;
+  const outGrid = gridUsable(out.tail) ? out.tail : null;
+  const inGrid = outGrid && gridUsable(inCues?.head) ? inCues!.head! : null;
+  const ratio = outGrid && inGrid ? foldedRatio(outGrid.bpm, inGrid.bpm) : NaN;
+  const maxNudge = Number.isFinite(inputs.maxNudge) ? clamp(inputs.maxNudge as number, 0, MAX_TEMPO_NUDGE) : MAX_TEMPO_NUDGE;
+  const lockable = Number.isFinite(ratio) && Math.abs(ratio - 1) <= maxNudge;
+  const tempo: TempoRelation = !outGrid || !inGrid ? 'unknown' : !lockable ? 'unrelated' : Math.abs(outGrid.bpm / inGrid.bpm - 1) <= maxNudge ? 'same' : 'half-or-double';
+  const base = { label, requested, tempo, style } as const;
+  // No blend: hand over when the music stops, not when the file does, so there is no dead air.
+  const handoff = (): MixPlan => ({ ...base, seconds: 0, startAt: end, endAt: end, inStart, bars: 0, rate: 1, swapAt: null, swapSeconds: 0, beat: 'none', reason: 'too-short-to-blend', description: describe(label, 0, 'too-short-to-blend') });
+
+  const window = end - floor;
+  if (window < MIN_USEFUL_SECONDS) return handoff();
+  // Finish as the song leaves its level. A song already fading at `floor` still gets a short blend.
+  // (Stretching the blend to cover a quiet opening of the next song was measured on the real
+  // library and made the dip worse: it holds the incoming song down for longer.)
+  const finish = clamp(fullEnd + TAIL_GRACE_SECONDS, floor + Math.min(FAST_BLEND_SECONDS, window), end);
+  const songCeiling = finish - floor;
+  const pairCeiling = (inSeconds - inStart) * MAX_TRACK_FRACTION;
+  const capped = Math.min(requested, songCeiling, pairCeiling);
+  if (capped < MIN_USEFUL_SECONDS) return handoff();
+  const reason: MixReason = capped >= requested - 0.05 ? 'as-requested' : songCeiling <= pairCeiling ? 'kept-for-song' : 'shortened-for-pair';
+  const handsOver = style === 'bass-swap' || style === 'filter';
+  const earliest = finish - capped;
+
+  if (outGrid) {
+    const beat = 60 / outGrid.bpm;
+    const rate = lockable ? ratio : 1;
+    // The incoming song starts at its first sound; its first beat then has to land on a beat of the
+    // outgoing song. `pickup` is the stretch of it heard before that beat.
+    let pickup = 0;
+    if (inGrid) {
+      const inBeat = 60 / inGrid.bpm;
+      const firstBeat = inGrid.beatAt + Math.ceil((inStart - inGrid.beatAt) / inBeat - 1e-9) * inBeat;
+      pickup = (firstBeat - inStart) / rate;
+    }
+    const onBeat = outGrid.beatAt + Math.ceil((earliest + pickup - outGrid.beatAt) / beat - 1e-9) * beat;
+    let beats = Math.floor((finish - onBeat) / beat + 1e-9);
+    if (beats >= 8) beats -= beats % 4;
+    if (beats >= MIN_BLEND_BEATS) {
+      const seconds = pickup + beats * beat;
+      const fit: BeatFit = lockable ? 'locked' : 'entry';
+      let swapBeat = Math.max(1, Math.round(beats * (fit === 'locked' ? SWAP_FRACTION_LOCKED : SWAP_FRACTION_FREE)));
+      if (beats >= 8) swapBeat = Math.max(4, Math.round(swapBeat / 4) * 4);
+      swapBeat = Math.min(swapBeat, beats - 1);
+      const swapSeconds = clamp(beat, 0.2, 0.6);
+      return {
+        ...base,
+        seconds,
+        startAt: onBeat - pickup,
+        endAt: onBeat - pickup + seconds,
+        inStart,
+        bars: beats % 4 === 0 ? beats / 4 : 0,
+        rate,
+        swapAt: handsOver ? pickup + swapBeat * beat - swapSeconds / 2 : null,
+        swapSeconds: handsOver ? swapSeconds : 0,
+        beat: fit,
+        reason,
+        description: describe(label, seconds, reason, 0, tempo, { beat: fit, bpm: outGrid.bpm }),
+      };
+    }
+  }
+  const swapSeconds = Math.min(0.4, capped / 4);
+  return {
+    ...base,
+    seconds: capped,
+    startAt: earliest,
+    endAt: finish,
+    inStart,
+    bars: 0,
+    rate: 1,
+    swapAt: handsOver ? capped * SWAP_FRACTION_FREE - swapSeconds / 2 : null,
+    swapSeconds: handsOver ? swapSeconds : 0,
+    beat: 'none',
+    reason,
+    description: describe(label, capped, reason, 0, tempo, { beat: 'none', bpm: 0 }),
   };
 }
 

@@ -1,23 +1,21 @@
-import { MIN_USEFUL_SECONDS, mixPlan } from './crossfade';
+import { clampSlider, requestedSeconds } from './crossfade';
 import type { AudioBus, DeckId } from './audio-bus';
 
 export interface MixCandidate { key: string; preview?: string | null }
+const what = (url: string): 'full song' | 'preview' =>
+  url.startsWith('/local-audio') || url.startsWith('blob:') ? 'full song' : 'preview';
 
-/** MIXER-003: cancellable lookahead and overlap. The two elements live for the player's lifetime.
- * BPM metadata is NOT a measured beat grid. These transitions do not claim beat/phrase alignment.
- * The outgoing song remains the current song until it ends; promotion keeps the incoming playhead.
- */
-/** What a deck source is, for the status line: a downloaded full song at the app origin, or a 30-second preview. */
-const what = (url: string): 'full song' | 'preview' => (url.startsWith('/local-audio') ? 'full song' : 'preview');
+/** FULL-COMPLETION-001: only a short entrance AFTER the preceding source finished. */
+export const entranceSeconds = (slider: number, duration: number): number =>
+  Math.min(2, requestedSeconds(clampSlider(slider)), Number.isFinite(duration) && duration > 0 ? duration * 0.1 : 2);
 
+/** A preloaded second deck, silent until active.ended; cues or old settings cannot shorten a song. */
 export class PreviewMixer {
   active: DeckId = 'a';
   private generation = 0;
   private candidate: MixCandidate | null = null;
   private ready = false;
   private pending = false;
-  private running = false;
-  private failed = false;
 
   constructor(
     private readonly decks: Record<DeckId, HTMLAudioElement>,
@@ -25,99 +23,69 @@ export class PreviewMixer {
     private readonly resolve: (url: string) => Promise<string>,
     private readonly status: (text: string) => void,
   ) {}
-
   get other(): DeckId { return this.active === 'a' ? 'b' : 'a'; }
-  get overlapping(): boolean { return this.running; }
+  get overlapping(): boolean { return false; }
 
-  cancel(): void {
+  private clear(restore: boolean): void {
     this.generation += 1;
-    this.pending = this.running = this.ready = this.failed = false;
+    const wasPending = this.pending;
+    this.pending = this.ready = false;
     this.candidate = null;
     const spare = this.decks[this.other];
-    spare.pause();
-    spare.removeAttribute('src');
-    spare.load();
-    this.bus()?.cut(this.active);
+    spare.pause(); spare.removeAttribute('src'); spare.load();
+    // Preloading the following song must not erase the current song's entrance automation.
+    if (restore || wasPending) this.bus()?.cut(this.active);
   }
+  cancel(): void { this.clear(true); }
+  /** Seeking current playback is not a reason to throw away a correctly preloaded next source. */
+  seeked(): void { if (this.pending) this.cancel(); else this.bus()?.cut(this.active); }
 
   async prepare(next: MixCandidate | null): Promise<void> {
     if (next?.key === this.candidate?.key && next?.preview === this.candidate?.preview) return;
-    this.cancel();
-    if (!next?.preview) { this.status('Nothing to blend into; normal handoff.'); return; }
+    this.clear(false);
+    if (!next?.preview) { this.status('No next song queued.'); return; }
     this.candidate = next;
-    const generation = this.generation;
-    const incoming = this.decks[this.other];
-    this.status(`Preparing the next ${what(next.preview)}…`);
+    const generation = this.generation, incoming = this.decks[this.other];
+    this.status('Preparing the next song…');
     try {
       const url = await this.resolve(next.preview);
       if (generation !== this.generation) return;
-      incoming.src = url;
-      incoming.playbackRate = 1;
-      incoming.preservesPitch = true;
-      incoming.load();
-      this.ready = true;
-      this.status(`Ready to blend the next ${what(next.preview)}.`);
+      incoming.src = url; incoming.playbackRate = 1; incoming.preservesPitch = true;
+      incoming.load(); this.ready = true;
+      this.status(`Ready for the next ${what(url)} — after 100% of this song.`);
     } catch {
-      if (generation !== this.generation) return;
-      this.failed = true;
-      this.status(`Next ${what(next.preview)} unavailable; normal handoff.`);
+      if (generation === this.generation) this.status('Next song unavailable; current song continues.');
     }
   }
 
-  /** @param minPlayed Share of the outgoing song that must play first (the Settings slider, 0.5..1). */
-  async tick(slider: number, minPlayed?: number): Promise<void> {
-    if (!slider || this.pending || this.running || this.failed || !this.ready) return;
-    const outgoing = this.decks[this.active], incoming = this.decks[this.other];
+  /** Playhead ticks deliberately cannot start another song, regardless of saved play-through. */
+  async tick(_slider: number, _savedPlayThrough?: number): Promise<void> {}
+
+  /** Natural end only; metadata promotion follows a successfully started source, never preloading. */
+  async handoff(slider: number): Promise<{ key: string; deck: DeckId } | null> {
+    const outgoing = this.decks[this.active], target = this.other, incoming = this.decks[target];
     const bus = this.bus();
-    if (!bus || outgoing.paused || outgoing.seeking || incoming.readyState < 3) return;
-    const plan = mixPlan(slider, outgoing.duration, incoming.duration, { minPlayedFraction: minPlayed });
-    if (!plan.seconds || outgoing.currentTime < plan.startAt || outgoing.ended) return;
-    const generation = this.generation;
-    const target = this.other;
+    if (!clampSlider(slider) || !bus || !outgoing.ended || outgoing.seeking || this.pending ||
+        !this.ready || !this.candidate || incoming.readyState < 3 || incoming.error) return null;
+    const candidate = this.candidate, generation = this.generation;
     this.pending = true;
-    // The spare must be inaudible before play() — never start at full volume then fade it down.
-    bus.cut(this.active);
-    incoming.currentTime = 0;
+    bus.cut(this.active); // incoming must be silent before play, never dipped afterward
+    incoming.currentTime = 0; incoming.playbackRate = 1; incoming.preservesPitch = true;
     try {
       await incoming.play();
-      if (generation !== this.generation) {
-        // cancel() already paused this element. Do not pause it again: a later generation may
-        // have reused it for a new song while this old play promise was settling.
-        return;
-      }
-      const remaining = Math.min(plan.seconds, outgoing.duration - outgoing.currentTime);
-      if (outgoing.paused || outgoing.ended || remaining < MIN_USEFUL_SECONDS) {
-        incoming.pause(); this.failed = true; return;
-      }
-      bus.transitionTo(target, remaining, plan.style);
-      this.running = true;
-      this.status(`${plan.label} · ${remaining.toFixed(1)}s ${plan.style.replace('-', ' ')} · ${what(this.candidate?.preview ?? '') === 'full song' ? 'full songs' : 'previews'}`);
+      if (generation !== this.generation) return null; // cancel already stopped the obsolete deck
+      if (incoming.paused || incoming.ended || incoming.error) { incoming.pause(); return null; }
+      const seconds = entranceSeconds(slider, incoming.duration);
+      if (seconds > 0) bus.transitionTo(target, seconds, 'blend'); else bus.cut(target);
+      outgoing.pause(); this.active = target; this.generation += 1;
+      this.candidate = null; this.ready = false;
+      this.status(seconds > 0 ? `Full song completed · ${seconds.toFixed(1)}s entrance · ${what(incoming.currentSrc || incoming.src)}` : 'Full song completed · clean handoff.');
+      return { key: candidate.key, deck: target };
     } catch {
-      if (generation === this.generation) {
-        incoming.pause(); this.failed = true;
-        bus.cut(this.active);
-        this.status(`Next ${what(this.candidate?.preview ?? '')} could not start; normal handoff.`);
-      }
-    } finally {
-      if (generation === this.generation) this.pending = false;
-    }
-  }
-
-  /** Called once when the outgoing song ends; never restarts the already-playing incoming song. */
-  finish(): { key: string; deck: DeckId } | null {
-    const incoming = this.decks[this.other];
-    if (!this.running || !this.candidate || incoming.paused || incoming.ended || incoming.readyState < 3) {
-      this.cancel();
+      if (generation === this.generation) { incoming.pause(); bus.cut(this.active); this.status('Next song could not start.'); }
       return null;
+    } finally {
+      if (generation === this.generation || this.active === target) this.pending = false;
     }
-    const result = { key: this.candidate.key, deck: this.other };
-    this.decks[this.active].pause();
-    this.active = this.other;
-    this.generation += 1;
-    this.candidate = null;
-    this.ready = this.pending = this.running = this.failed = false;
-    this.bus()?.cut(this.active);
-    this.status('Blend complete.');
-    return result;
   }
 }

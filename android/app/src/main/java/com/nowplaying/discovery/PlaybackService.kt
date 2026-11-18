@@ -55,6 +55,20 @@ class PlaybackService : MediaLibraryService() {
   /** CAR-SEARCH-TYPES-001: Identify records on its own thread; never on the session's. */
   private val listenExec = java.util.concurrent.Executors.newSingleThreadExecutor()
   private val mainHandler by lazy { android.os.Handler(mainLooper) }
+  private val catalogStart = CatalogStartGate()
+  private val startCatalog = Runnable {
+    if (catalogStart.runQueued()) {
+      // Preferences and saved-library parsing can touch disk; neither belongs in onCreate.
+      CarFeedback.init(this)
+      EngineHub.init(this)
+      MediaHub.restoreLibrary()
+      EngineHub.attachPlayer(player)
+      // WEBVIEW-WARM-001: the WebView itself waits until its provider has loaded off the main thread.
+      WebViewWarmup.whenReady(startCatalogWeb)
+    }
+  }
+  /** WebView construction and loadUrl stay on the main thread. A destroyed service has no catalogue left to start. */
+  private val startCatalogWeb = Runnable { catalog?.start() }
   /** The Identify run in progress or just finished, so the car asking twice does not listen twice. */
   private var identifyRun: Triple<Long, Int, ListenableFuture<List<MediaItem>>>? = null
   /** The host may ask for an old prefix's result after a newer query has arrived. */
@@ -63,18 +77,12 @@ class PlaybackService : MediaLibraryService() {
 
   override fun onCreate() {
     super.onCreate()
-    CarFeedback.init(this)
     // DL-COLD-READY-001: a car session may be the only thing running; unpack yt-dlp now, in the background.
     Downloads.warmUp(this)
-    // NATIVE-COLD-STATE-001: the saved sound before the player exists, the saved library for the car's
-    // browse tree before any page has pushed one. Restoring never plays.
-    EngineHub.init(this)
-    MediaHub.restoreLibrary()
     // Playlist rows carry their list in the media id; the player resolves them as the browse tree does.
     // Debug builds can record what they play (TapOutput); release builds always get the plain track.
     val output = TapOutput.wrap(this, BuildConfig.DEBUG, TrackOutput())
     player = EnginePlayer(this, mainLooper, lookup = { id -> scopedSong(id) ?: MediaHub.findSong(id) }, output = output)
-    EngineHub.attachPlayer(player)
     MediaHub.addListener(libraryListener)
     val open = PendingIntent.getActivity(
       this,
@@ -89,8 +97,10 @@ class PlaybackService : MediaLibraryService() {
     player.addListener(carButtonListener)
     RadioCatalog.addListener(radioListener)
     RadioCatalog.load(this).addListener({ mainHandler.post { refreshCarButtons() } }, MoreExecutors.directExecutor())
-    // CAR-CATALOG-SERVICE-001: the car's catalogue searches no longer need the phone page.
-    catalog = CatalogEngine(this).also { it.start() }
+    // CAR-CATALOG-SERVICE-001: register the command sink before returning, but make no WebView here.
+    // MediaHub holds requests until catalogReady even if the car asks before the posted start runs.
+    catalog = CatalogEngine(this).also { it.prepare() }
+    if (catalogStart.schedule()) mainHandler.post(startCatalog)
   }
 
   private var catalog: CatalogEngine? = null
@@ -109,6 +119,9 @@ class PlaybackService : MediaLibraryService() {
   }
 
   override fun onDestroy() {
+    catalogStart.destroy()
+    mainHandler.removeCallbacks(startCatalog)
+    WebViewWarmup.cancel(startCatalogWeb)
     RadioCatalog.removeListener(radioListener)
     MediaHub.removeListener(libraryListener)
     player.removeListener(carButtonListener)
@@ -175,9 +188,11 @@ class PlaybackService : MediaLibraryService() {
 
   private fun radioFolder(id: String): MediaItem? = when (id) {
     RadioCatalog.ROOT -> folderItem(id, "Radio", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "World radio and favourite stations")
+    RadioCatalog.ALL -> folderItem(id, "All stations", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Browse stations by initial: A–Z and #")
     RadioCatalog.FAVOURITES -> folderItem(id, "Favourite stations", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Shared with your phone")
     RadioCatalog.SEARCH -> folderItem(id, "Search stations", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Tap the search button, or say radio KEXP")
-    else -> if (id.matches(Regex("radio/az/[0-9]{1,7}"))) folderItem(id, "Stations A–Z", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "World stations in alphabetical order") else null
+    else -> if (id.matches(Regex("radio/letter/[A-Z0-9#]/[0-9]{1,7}"))) folderItem(id, id.split('/')[2].let { if (it == "#") "Numbers 0–9" else it }, MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Stations beginning with this initial")
+    else if (id.matches(Regex("radio/az/[0-9]{1,7}"))) folderItem(id, "Stations A–Z", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "World stations in alphabetical order") else null
   }
 
   private fun radioResults(words: String): ListenableFuture<List<MediaItem>> = Futures.catching(
@@ -188,7 +203,18 @@ class PlaybackService : MediaLibraryService() {
   )
 
   private fun radioChildren(id: String): ListenableFuture<List<MediaItem>> = when {
-    id == RadioCatalog.ROOT -> Futures.immediateFuture(listOfNotNull(radioFolder(RadioCatalog.FAVOURITES), radioFolder(RadioCatalog.AZ), radioFolder(RadioCatalog.SEARCH)))
+    id == RadioCatalog.ROOT -> Futures.immediateFuture(listOfNotNull(radioFolder(RadioCatalog.FAVOURITES), radioFolder(RadioCatalog.ALL), radioFolder(RadioCatalog.SEARCH)))
+    id == RadioCatalog.ALL -> Futures.immediateFuture(listOfNotNull(radioFolder(RadioCatalog.AZ)) + RadioCatalog.LETTERS.mapNotNull { radioFolder("radio/letter/$it/0") })
+    id == "radio/letter/#/0" -> Futures.immediateFuture(RadioCatalog.NUMBERS.mapNotNull { radioFolder("radio/letter/$it/0") })
+    id.startsWith("radio/letter/") -> {
+      val parts = id.split('/'); val letter = parts.getOrNull(2).orEmpty(); val offset = parts.getOrNull(3)?.toIntOrNull()
+      if (offset == null || offset !in 0..1_000_000 || letter !in RadioCatalog.LETTERS + RadioCatalog.NUMBERS) Futures.immediateFailedFuture(IllegalArgumentException("Invalid station initial or page"))
+      else Futures.transform(RadioCatalog.letterStations(this, letter, offset), { found ->
+        val stations = found?.stations.orEmpty().map(RadioCatalog::item)
+        stations + if (found?.nextOffset != null) listOf(folderItem("radio/letter/$letter/${found.nextOffset}", "More $letter stations", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED))
+          else if (stations.isEmpty()) listOf(note("No stations with this initial", "Choose another initial or search")) else emptyList()
+      }, MoreExecutors.directExecutor())
+    }
     id == RadioCatalog.FAVOURITES -> Futures.transform(RadioCatalog.favouriteItems(this), { it.orEmpty().ifEmpty {
       listOf(note("No favourite stations yet", "Star a playing station here or on your phone"))
     } }, MoreExecutors.directExecutor())
@@ -207,9 +233,15 @@ class PlaybackService : MediaLibraryService() {
     }
   }
 
-  private fun radioWords(query: String): String? = CarSearch.radioQuery(query) ?: query.trim().take(100).takeIf {
-    it.isNotBlank() && android.os.SystemClock.elapsedRealtime() < radioSearchUntil && CarSearch.parse(query).first == CarSearchType.ALL
+  private fun radioWords(query: String): String? {
+    val now = android.os.SystemClock.elapsedRealtime(); val picked = CarSearch.picked(now)
+    return CarSearch.radioQuery(query, picked) ?: query.trim().take(100).takeIf {
+      it.isNotBlank() && now < radioSearchUntil && CarSearch.parse(query).first == CarSearchType.ALL
+    }
   }
+  private fun explicitRadio(query: String) = CarSearch.explicitRadioQuery(query) != null || android.os.SystemClock.elapsedRealtime() < radioSearchUntil
+  private fun optionalStations(words: String): ListenableFuture<List<RadioCatalog.Station>> = Futures.catching(
+    RadioCatalog.stations(this, words), Exception::class.java, { emptyList() }, MoreExecutors.directExecutor())
 
   // ------------------------------------------------------------------ CAR-SEARCH-TYPES-001
 
@@ -282,7 +314,15 @@ class PlaybackService : MediaLibraryService() {
    * tiles of a leading seven-tile row and no song beneath it (DHU 2026-11-15), so results must lead.
    */
   private fun searchItems(query: String): ListenableFuture<List<MediaItem>> {
-    radioWords(query)?.let { return radioResults(it) }
+    radioWords(query)?.let { words ->
+      if (explicitRadio(query)) return radioResults(words)
+      return Futures.transformAsync(optionalStations(words), { rows ->
+        if (rows.isNullOrEmpty()) musicSearchItems(query) else Futures.immediateFuture(rows.map(RadioCatalog::item))
+      }, MoreExecutors.directExecutor())
+    }
+    return musicSearchItems(query)
+  }
+  private fun musicSearchItems(query: String): ListenableFuture<List<MediaItem>> {
     val (type, words) = CarSearch.parse(query, CarSearch.picked(android.os.SystemClock.elapsedRealtime()))
     if (type == CarSearchType.IDENTIFY) return identifyItems()
     if (words.isBlank()) return Futures.immediateFuture(emptyList())
@@ -630,22 +670,28 @@ class PlaybackService : MediaLibraryService() {
       return MediaHub.catalogListAround(id)?.let { (songs, i) -> ItemsAt(songs.map { songItem(it) }.toMutableList(), i) }
     }
 
+    private fun resolveMusicQuery(item: MediaItem, query: String): ListenableFuture<MediaItem> {
+      val album = asksForAlbum(item.requestMetadata.extras)
+      return Futures.transform(MediaHub.searchCatalog(query, album = album), { hits ->
+        MediaHub.albumToPlay(query, album)?.let { id ->
+          (scopedSong(id) ?: MediaHub.findSong(id))?.let { return@transform songItem(it, id) }
+        }
+        val song = hits?.firstOrNull { it.ready } ?: hits?.firstOrNull() ?: throw IllegalArgumentException("No songs found")
+        songItem(song)
+      }, MoreExecutors.directExecutor())
+    }
     private fun resolveAsync(item: MediaItem): ListenableFuture<MediaItem> {
       val query = item.requestMetadata.searchQuery
       if (!query.isNullOrBlank()) {
-        radioWords(query)?.let { words -> return Futures.transform(RadioCatalog.stations(this@PlaybackService, words), { rows ->
-          RadioCatalog.item(rows?.firstOrNull() ?: throw IllegalArgumentException("No stations found"))
-        }, MoreExecutors.directExecutor()) }
-        val album = asksForAlbum(item.requestMetadata.extras)
-        return Futures.transform(MediaHub.searchCatalog(query, album = album), { hits ->
-          // ALBUM-CAR-001: "play the album …", or words naming an album, play that album from its start.
-          MediaHub.albumToPlay(query, album)?.let { id ->
-            (scopedSong(id) ?: MediaHub.findSong(id))?.let { return@transform songItem(it, id) }
-          }
-          val song = hits?.firstOrNull { it.ready } ?: hits?.firstOrNull()
-            ?: throw IllegalArgumentException("No songs found")
-          songItem(song)
-        }, MoreExecutors.directExecutor())
+        if (!asksForAlbum(item.requestMetadata.extras)) radioWords(query)?.let { words ->
+          if (explicitRadio(query)) return Futures.transform(RadioCatalog.stations(this@PlaybackService, words), { rows ->
+            RadioCatalog.item(rows?.firstOrNull() ?: throw IllegalArgumentException("No stations found"))
+          }, MoreExecutors.directExecutor())
+          return Futures.transformAsync(optionalStations(words), { rows ->
+            if (rows.isNullOrEmpty()) resolveMusicQuery(item, query) else Futures.immediateFuture(RadioCatalog.item(rows.first()))
+          }, MoreExecutors.directExecutor())
+        }
+        return resolveMusicQuery(item, query)
       }
       RadioCatalog.stationId(item.mediaId)?.let { id -> return Futures.transform(RadioCatalog.async {
         RadioCatalog.resolve(this@PlaybackService, id) ?: throw IllegalArgumentException("Unknown station")

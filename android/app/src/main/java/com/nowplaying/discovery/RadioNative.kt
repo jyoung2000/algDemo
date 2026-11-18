@@ -103,7 +103,10 @@ object RadioNative {
     YoutubeDL.getInstance().init(ctx.applicationContext)
     FFmpeg.getInstance().init(ctx.applicationContext)
     val data = cmd.optJSONObject("station") ?: JSONObject().put("id", cmd.optString("stationId")).put("name", cmd.optString("name")).put("url", cmd.optString("url")).put("country", "").put("region", "").put("language", "").put("tags", org.json.JSONArray())
-    val s = Session(UUID.randomUUID().toString(), cmd.optString("stationId"), RadioRing(), data); session = s
+    // A force-stopped process cannot close its session ring. Purge only our orphan session files.
+    ctx.cacheDir.listFiles()?.filter { it.name.matches(Regex("radio-[0-9a-f-]{36}\\.pcm")) }?.forEach { it.delete() }
+    val id = UUID.randomUUID().toString()
+    val s = Session(id, cmd.optString("stationId"), RadioRing(48000 * 600, File(ctx.cacheDir, "radio-$id.pcm")), data); session = s
     val pb = ProcessBuilder(File(ctx.applicationInfo.nativeLibraryDir, "libffmpeg.so").path, "-hide_banner", "-loglevel", "error", "-protocol_whitelist", "pipe", "-i", "pipe:0", "-vn", "-ac", "2", "-ar", "48000", "-f", "s16le", "pipe:1")
     // Measured 2026-11-16: ffmpeg's own libraries pull in librubberband, which needs libc++_shared
     // from the Python package youtubedl-android unpacks beside it. Without that directory the
@@ -140,10 +143,20 @@ object RadioNative {
     require(!cmd.has("id") || cmd.optString("id") == s.id) { "Radio session has ended" }
     when (cmd.optString("op")) {
       "nowplaying" -> { EngineHub.fromPage(JSONObject().put("op", "radio-meta").put("id", s.id).put("title", cmd.optString("title")).put("artist", cmd.optString("artist")).put("artwork", cmd.optString("artwork")).toString()) }
+      "export" -> {
+        val from = cmd.optDouble("from", Double.NaN); val to = cmd.optDouble("to", Double.NaN)
+        require(from.isFinite() && to.isFinite()) { "Invalid recording range" }
+        val temp = File.createTempFile("radio-export-", ".wav", ctx.cacheDir)
+        return try {
+          val seconds = temp.outputStream().use { s.ring.writeWav(it, (from * 48000).toLong(), (to * 48000).toLong()) }
+          Downloads.saveRadioRecording(ctx, temp, cmd.optString("title", "Live radio"))
+            .put("seconds", seconds).put("partial", true)
+        } finally { temp.delete() }
+      }
       "pause" -> { s.paused = cmd.optBoolean("paused"); EngineHub.fromPage("{\"op\":\"${if (s.paused) "pause" else "play"}\"}") }
       // RADIO-SHUFFLE-001: set the station-shuffle flag; the state object below reports it.
       "shuffle" -> { shuffle = cmd.optBoolean("on"); EngineHub.fromPage(JSONObject().put("op", "radio-shuffle").put("id", s.id).toString()) }
-      "rewind" -> EngineHub.fromPage(JSONObject().put("op", "seek").put("positionMs", ((s.ring.positionFrames / 48.0) - cmd.optDouble("seconds", 15.0).coerceIn(0.0, 300.0) * 1000).coerceAtLeast(0.0)).toString())
+      "rewind" -> EngineHub.fromPage(JSONObject().put("op", "seek").put("positionMs", ((s.ring.positionFrames / 48.0) - cmd.optDouble("seconds", 15.0).coerceIn(0.0, 600.0) * 1000).coerceAtLeast(0.0)).toString())
       "sample" -> { val b = s.ring.sample(); return JSONObject().put("pcm", Base64.encodeToString(b, Base64.NO_WRAP)).put("sampleRate", 16000).put("seconds", b.size / 32000.0) }
     }
     return snapshot(s)

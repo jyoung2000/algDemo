@@ -103,11 +103,11 @@ describe('Audio settings — MIXER-001 and EQ-001', () => {
   it('defaults safely without writing on mount, then reflects saved settings', () => {
     const onSettings = vi.fn();
     const { rerender } = render(panel(null, onSettings));
-    expect([slider('Blend length').min, slider('Blend length').max, slider('Blend length').step, slider('Blend length').value]).toEqual(['0', '100', '1', '0']);
+    expect([slider('Transition length').min, slider('Transition length').max, slider('Transition length').step, slider('Transition length').value]).toEqual(['0', '100', '1', '0']);
     expect(checkbox('Equalizer on').checked).toBe(false);
     expect(checkbox('Safety limiter').checked).toBe(true);
     rerender(panel({ ...saved, mix: 67, eq: { ...EQ_DEFAULTS, on: true, preampDb: -3 } }, onSettings));
-    expect(slider('Blend length').value).toBe('67');
+    expect(slider('Transition length').value).toBe('67');
     expect(slider('Preamp').value).toBe('-3');
     expect(checkbox('Equalizer on').checked).toBe(true);
     expect(onSettings).not.toHaveBeenCalled();
@@ -116,7 +116,7 @@ describe('Audio settings — MIXER-001 and EQ-001', () => {
   it.each([1, 24, 25, 26, 49, 50, 51, 74, 75, 76, 99, 100, 0])('saves granular mix %i immediately and only patches mix', (mix) => {
     const onSettings = vi.fn();
     render(panel({ ...saved, mix: mix === 0 ? 37 : 0 }, onSettings));
-    fireEvent.change(slider('Blend length'), { target: { value: String(mix) } });
+    fireEvent.change(slider('Transition length'), { target: { value: String(mix) } });
     expect(onSettings).toHaveBeenCalledExactlyOnceWith({ mix });
   });
 
@@ -124,25 +124,23 @@ describe('Audio settings — MIXER-001 and EQ-001', () => {
     render(panel({ ...saved, mix: 100 }));
     const section = screen.getByRole('region', { name: 'Crossfader' });
     // Blend length, and (MIXER-PLAY-THROUGH-002) how much of a song plays before it starts.
-    expect(within(section).getAllByRole('slider').map((s) => s.getAttribute('aria-label') ?? s.id.split('-').pop())).toEqual(['mix', 'pt']);
+    expect(within(section).getAllByRole('slider').map((s) => s.getAttribute('aria-label') ?? s.id.split('-').pop())).toEqual(['mix']);
     for (const label of MIX_LABELS) expect(within(section).getByText(label, { exact: true })).toBeTruthy();
-    expect(slider('Blend length').getAttribute('aria-valuetext')).toBe('100 — Long & Creative');
-    const ids = slider('Blend length').getAttribute('aria-describedby')!.split(' ');
+    expect(slider('Transition length').getAttribute('aria-valuetext')).toBe('100 — Long & Creative');
+    const ids = slider('Transition length').getAttribute('aria-describedby')!.split(' ');
     const readout = document.getElementById(ids[0]!)!;
     expect(readout.tagName).toBe('OUTPUT');
-    expect(readout.getAttribute('for')).toBe(slider('Blend length').id);
+    expect(readout.getAttribute('for')).toBe(slider('Transition length').id);
     const text = section.textContent!;
     // The owner's rule: the full song always plays. The mixer never trades it for a preview; it
     // reaches full songs by downloading them (LOCAL-AUDIO-001) and says so.
     expect(text).not.toMatch(/selects 30-second previews/);
     expect(text).toMatch(/full song/i);
-    expect(text).toMatch(/download/i);
-    // MIXER-PLAY-THROUGH-001: the panel tells the listener the blend is a tail, never a cut.
-    expect(text).toMatch(/95%/); // the default, named in the help
-    expect(text).toMatch(/bass handoff/);
-    expect(text).toMatch(/filter/);
-    expect(text).toMatch(/without reliable beat grids/i);
-    expect(text).toMatch(/not beatmatching/i);
+    expect(text).toMatch(/100%/);
+    expect(text).toMatch(/before the next starts/);
+    expect(text).toMatch(/fade-in/);
+    expect(text).toMatch(/master volume/);
+    expect(text).not.toMatch(/95%|bass handoff|beatmatching/);
   });
 
   it('uses all ten engine bands and all engine presets', () => {
@@ -184,25 +182,15 @@ describe('Audio settings — MIXER-001 and EQ-001', () => {
     expect(bank.closest('.eqr')?.querySelector('.eqr__scale')?.textContent).toMatch(/\+12.*0.*[−-]12/s);
   });
 
-  it('offers a "Play before blending" slider, 95% by default, saved as play_through (MIXER-PLAY-THROUGH-002)', () => {
+  it('locks transitions to 100% even when saved settings asked for an early overlap', () => {
     const onSettings = vi.fn();
-    render(panel({ ...saved, mix: 100 }, onSettings));
-    const s = slider('Play before blending');
-    expect(s.min).toBe('50');
-    expect(s.max).toBe('100');
-    expect(s.value).toBe('95');
-    expect(s.getAttribute('aria-valuetext')).toBe('95% of each song');
-    const ids = s.getAttribute('aria-describedby')!.split(' ');
-    expect(document.getElementById(ids[0]!)!.tagName).toBe('OUTPUT');
-    const help = ids.map((i) => document.getElementById(i)?.textContent ?? '').join(' ');
-    expect(help).toMatch(/before the next one/i);
-    expect(help).toMatch(/100%/);
-    fireEvent.change(s, { target: { value: '80' } });
-    expect(onSettings).toHaveBeenCalledWith({ play_through: 80 });
-    cleanup();
-    render(panel({ ...saved, play_through: 70 }, vi.fn()));
-    expect(slider('Play before blending').value).toBe('70');
-    expect(slider('Play before blending').getAttribute('aria-valuetext')).toBe('70% of each song');
+    const {rerender} = render(panel({...saved,mix:100,play_through:70},onSettings));
+    expect(screen.queryByRole('slider',{name:'Play before blending'})).toBeNull();
+    expect(screen.getByText('100% — full song')).toBeTruthy();
+    expect(screen.getByText(/Always plays 100%/)).toBeTruthy();
+    rerender(panel({...saved,play_through:95},onSettings));
+    expect(screen.getByText('100% — full song')).toBeTruthy();
+    expect(onSettings).not.toHaveBeenCalled();
   });
 
   it('explains mandatory local full-song playback and never offers an iframe fallback switch', () => {
@@ -258,7 +246,7 @@ describe('Audio settings — MIXER-001 and EQ-001', () => {
   it('normalizes corrupt stored values without overwriting storage on mount', () => {
     const onSettings = vi.fn();
     render(panel({ ...saved, mix: 999, eq: { ...EQ_DEFAULTS, gains: [99], preampDb: -99 } }, onSettings));
-    expect(slider('Blend length').value).toBe('100');
+    expect(slider('Transition length').value).toBe('100');
     expect(slider('32 Hz').value).toBe('12');
     expect(slider('64 Hz').value).toBe('0');
     expect(slider('Preamp').value).toBe('-12');

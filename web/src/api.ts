@@ -438,6 +438,8 @@ export interface Settings {
   play_through?: number;
   /** The improved (v2) ranking engine; false falls back to the original scorer. */
   rank_v2?: boolean;
+  /** Bounded maths expression for discovery scores. Null restores the built-in algorithm. */
+  ranking_formula?: string | null;
 }
 
 export interface CapabilityState {

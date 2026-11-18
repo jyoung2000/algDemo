@@ -4,6 +4,8 @@
  * the budgets, weights and engine tuning are the values the engine uses.
  */
 
+import { TASTE_WEIGHT } from './taste';
+
 export const MB = 1_000_000;
 export const GB = 1_000_000_000;
 
@@ -42,7 +44,16 @@ export interface TierShares {
 }
 
 export interface EngineConfig {
+  /** Safe arithmetic override of the final discovery score; absent keeps exact built-in ranking. */
+  rankingFormula?: string | null;
   weights: Weights;
+  /**
+   * Weight of the feedback factor in the evidence coverage (the "seed fit" line). Absent means
+   * `weights.feedback`, which is also the feedback weight in the affinity mean. ALGO-MANAGER-001.
+   */
+  seedFeedbackWeight?: number;
+  /** Share of listening taste blended into the affinity (v1); v2 scales its evidence-aware share by tasteWeight / TASTE_WEIGHT. */
+  tasteWeight: number;
   tiers: TierShares;
   bestSeedShare: number;
   coverageFloor: number;
@@ -64,8 +75,22 @@ export const DEFAULT_WEIGHTS: Weights = {
   audio: 0.35, genre: 0.15, artist: 0.15, provider: 0.1, feedback: 0.1, tempo: 0.05, freshness: 0.05, novelty: 0.05,
 };
 
+/**
+ * What the Familiar–Adventurous slider does to a weight: [multiplier at Familiar, multiplier at Adventurous], 1 in
+ * the middle. The scorer and the formula notes both read these, so the notes cannot drift from the scoring.
+ */
+export const MODE_MULTIPLIERS: Partial<Record<Factor, readonly [number, number]>> = {
+  audio: [1.3, 1.0],
+  artist: [1.3, 0.7],
+  provider: [1.2, 1.0],
+  novelty: [0.3, 2.5],
+};
+/** “Prefer new releases” multiplies the freshness weight by this. */
+export const FRESH_WEIGHT_MULTIPLIER = 5.0;
+
 export const DEFAULT_ENGINE: EngineConfig = {
   weights: DEFAULT_WEIGHTS,
+  tasteWeight: TASTE_WEIGHT,
   tiers: { strong: 0.4, related: 0.3, emerging: 0.2, experimental: 0.1 },
   // Multi-seed blend: best single-seed affinity vs the emphasis-weighted mean over seeds.
   bestSeedShare: 0.7,

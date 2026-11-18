@@ -653,3 +653,103 @@ describe('otherDeck', () => {
     expect(otherDeck('b')).toBe('a');
   });
 });
+
+/** DJ-XFADE-001: with a shape, the low end changes hands at a chosen moment instead of gradually. */
+describe('a bass swap placed on the beat', () => {
+  const setup = () => {
+    const { ctx } = makeCtx();
+    const bus = createAudioBus(ctx);
+    const a = bus.attach(el(), 'a')!;
+    const b = bus.attach(el(), 'b')!;
+    return { bus, a, b };
+  };
+  const log = (param: AudioParam) => (param as unknown as Param).log;
+  // ctx.currentTime is 10 in the double. Blend of 8 s; swap from 13.75 to 14.25 (centre on 14).
+  const shape = { swapAt: 3.75, swapSeconds: 0.5 };
+
+  it('keeps the outgoing low end whole until the swap, then gives it up over the swap', () => {
+    const { bus, a } = setup();
+    bus.transitionTo('b', 8, 'bass-swap', shape);
+    const out = log(a.bass.gain);
+    const start = out.find((e) => e.kind === 'set' && e.at === 13.75)!;
+    expect(start.value).toBe(0);
+    const ramp = out.find((e) => e.kind === 'linear')!;
+    expect(ramp.value).toBe(BASS_DUCK_DB);
+    expect(ramp.at).toBeCloseTo(14.25, 9);
+    // Nothing moves the outgoing lows before the swap: no ramp ends earlier than it.
+    expect(out.filter((e) => e.kind === 'linear' && e.at < 13.75)).toHaveLength(0);
+  });
+
+  it('holds the incoming low end down until the swap, then hands it over in the same window', () => {
+    const { bus, b } = setup();
+    bus.transitionTo('b', 8, 'bass-swap', shape);
+    const inc = log(b.bass.gain);
+    const duck = inc.find((e) => e.kind === 'linear')!;
+    expect(duck.value).toBe(BASS_DUCK_DB);
+    expect(duck.at).toBeLessThan(10.05);
+    const held = inc.find((e) => e.kind === 'set' && e.at === 13.75)!;
+    expect(held.value).toBe(BASS_DUCK_DB);
+    const up = inc.filter((e) => e.kind === 'linear').at(-1)!;
+    expect(up.value).toBe(0);
+    expect(up.at).toBeCloseTo(14.25, 9);
+  });
+
+  it('still crossfades the two songs with the equal-power curve over the whole blend', () => {
+    const { bus, a, b } = setup();
+    expect(bus.transitionTo('b', 8, 'bass-swap', shape)).toBe('b');
+    const up = (b.gain.gain as unknown as Param).lastCurve()!;
+    const down = (a.gain.gain as unknown as Param).lastCurve()!;
+    expect(up.seconds).toBeCloseTo(8, 9);
+    expect(up.values!.at(-1)).toBeCloseTo(1, 6);
+    expect(down.values!.at(-1)).toBeCloseTo(0, 6);
+  });
+
+  it('a filter transition thins the outgoing song only after it has given up the lows', () => {
+    const { bus, a, b } = setup();
+    bus.transitionTo('b', 8, 'filter', shape);
+    const sweep = log(a.sweep.frequency);
+    const from = sweep.find((e) => e.kind === 'set' && e.at === 14.25)!;
+    expect(from.value).toBe(SWEEP_PARKED_HZ);
+    const to = sweep.find((e) => e.kind === 'exp')!;
+    expect(to.value).toBe(SWEEP_TOP_HZ);
+    expect(to.at).toBeCloseTo(18, 9);
+    expect(log(b.sweep.frequency)).toHaveLength(0);
+  });
+
+  it('a bass swap with a shape still does not sweep, and a blend ignores the shape', () => {
+    const one = setup();
+    one.bus.transitionTo('b', 8, 'bass-swap', shape);
+    expect(log(one.a.sweep.frequency)).toHaveLength(0);
+    const two = setup();
+    two.bus.transitionTo('b', 8, 'blend', shape);
+    expect(log(two.b.bass.gain)).toHaveLength(0);
+    expect(log(two.a.bass.gain)).toHaveLength(0);
+  });
+
+  it('keeps a swap inside the blend however it was asked for', () => {
+    const { bus, a } = setup();
+    bus.transitionTo('b', 2, 'bass-swap', { swapAt: 30, swapSeconds: 9 });
+    const ramp = log(a.bass.gain).find((e) => e.kind === 'linear')!;
+    expect(ramp.at).toBeLessThanOrEqual(12 + 1e-9);
+    const begin = log(a.bass.gain).find((e) => e.kind === 'set' && e.at > 10)!;
+    expect(begin.at).toBeGreaterThan(10);
+  });
+
+  it('without a usable shape the handoff is the gradual one it always was', () => {
+    const plain = setup();
+    plain.bus.transitionTo('b', 8, 'bass-swap');
+    const broken = setup();
+    broken.bus.transitionTo('b', 8, 'bass-swap', { swapAt: Number.NaN, swapSeconds: 0.5 });
+    expect(log(broken.b.bass.gain)).toEqual(log(plain.b.bass.gain));
+    expect(log(broken.a.bass.gain)).toEqual(log(plain.a.bass.gain));
+  });
+
+  it('cancelling before the swap leaves both songs with their lows intact', () => {
+    const { bus, a, b } = setup();
+    bus.transitionTo('b', 8, 'bass-swap', shape);
+    bus.cut('a');
+    expect((a.bass.gain as unknown as Param).resting()).toBe(0);
+    expect((b.bass.gain as unknown as Param).resting()).toBe(0);
+    expect(bus.live()).toBe('a');
+  });
+});

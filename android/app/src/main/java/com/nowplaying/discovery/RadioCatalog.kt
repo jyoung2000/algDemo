@@ -26,6 +26,12 @@ object RadioCatalog {
   const val ROOT = "radio"
   const val FAVOURITES = "radio/favourites"
   const val AZ = "radio/az/0"
+  const val ALL = "radio/all"
+  val LETTERS = ('A'..'Z').map { it.toString() } + "#"
+  val NUMBERS = (0..9).map { it.toString() }
+  fun initial(name: String): String = RadioNames.initial(name)
+
+  data class StationPage(val stations: List<Station>, val nextOffset: Int?)
   const val SEARCH = "radio/search"
   const val STATION_PREFIX = "radio/station/"
   const val PAGE_SIZE = 100
@@ -40,6 +46,8 @@ object RadioCatalog {
   private val deadlines = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "AirwaveRadioDeadline").apply { isDaemon = true } }
   private val listeners = CopyOnWriteArraySet<() -> Unit>()
   private val directory by lazy { RadioDirectory { RadioNative.fetchText(it) } }
+  private val aliasIndex = linkedMapOf<String, Station>()
+  private var namedMatches: List<Station> = emptyList()
   private val known = LinkedHashMap<String, Station>()
   private val contexts = LinkedHashMap<String, List<Station>>()
   @Volatile private var selected: List<Station> = emptyList()
@@ -126,9 +134,22 @@ object RadioCatalog {
   /** Remember the phone or car list without changing a currently tuned station's skip context. */
   @Synchronized fun rememberStations(rows: JSONArray) {
     val list = rows(rows, MAX_FAVOURITES)
-    for (station in list) { known[station.id] = station; contexts[station.id] = list }
+    for (station in list) {
+      known[station.id] = station; contexts[station.id] = list
+      val alias = RadioNames.parts(station.name)
+      namedMatches = namedMatches.map { if (it.id == station.id) station else it }
+      aliasIndex.remove(station.id)
+      if (alias?.call != null && alias.frequency != null) aliasIndex[station.id] = station
+    }
+    while (aliasIndex.size > 128) aliasIndex.remove(aliasIndex.keys.first())
     while (known.size > 2000) known.remove(known.keys.first())
     while (contexts.size > 2000) contexts.remove(contexts.keys.first())
+  }
+  @Synchronized internal fun cachedAliases(initial: String = "", query: String = ""): List<Station> =
+    (namedMatches + aliasIndex.values.toList().asReversed()).distinctBy { it.id }
+      .filter { RadioNames.matchesInitial(it.name, initial) && RadioNames.matchesQuery(it.name, query) }.take(12)
+  @Synchronized private fun rememberNamedQuery(query: String, stations: List<Station>) {
+    if (RadioNames.parts(query)?.call != null && stations.isNotEmpty()) namedMatches = stations.take(12)
   }
   @Synchronized fun selectContext(stationId: String) {
     if (retainContext.get() == true) return
@@ -183,13 +204,25 @@ object RadioCatalog {
         .setIsBrowsable(false).setIsPlayable(true).setMediaType(MediaMetadata.MEDIA_TYPE_RADIO_STATION).build()).build()
   }
 
+  @Synchronized private fun remembered(): List<Station> = known.values.toList()
   fun stations(ctx: Context, query: String = "", offset: Int = 0): ListenableFuture<List<Station>> = async {
     favourites(ctx, null)
-    val favourites = sorted(favouriteRows.filter { query.isNotBlank() && it.name.contains(query, true) })
-    val found = try { directory.stations(query, offset) } catch (e: Exception) { if (favourites.isEmpty()) throw e else emptyList() }
-    rememberStations(JSONArray((favourites + found).distinctBy { it.id }.map { it.json() }))
-    // Favourites lead search results, but never disrupt the world's A-Z pagination.
-    if (query.isBlank()) found else sorted(favouriteRows.filter { it.name.contains(query, true) }) + found.filterNot { s -> favouriteRows.any { it.id == s.id } }
+    val favourites = sorted(favouriteRows.filter { query.isNotBlank() && RadioNames.matchesQuery(it.name, query) })
+    val remembered = sorted(remembered().filter { query.isNotBlank() && RadioNames.matchesQuery(it.name, query) && favouriteRows.none { f -> f.id == it.id } })
+    val found = try { directory.stations(query, offset) } catch (e: Exception) { if (favourites.isEmpty() && remembered.isEmpty()) throw e else emptyList() }
+    rememberNamedQuery(query, found)
+    // Reuse real learned call-sign/frequency aliases across broad numeric searches.
+    val fresh = found.associateBy { it.id }
+    val result = if (query.isBlank()) found else (favourites + cachedAliases(query = query) + found + remembered).map { fresh[it.id] ?: it }.distinctBy { it.id }
+    rememberStations(JSONArray(result.map { it.json() }))
+    result
+  }
+  fun letterStations(ctx: Context, letter: String, offset: Int): ListenableFuture<StationPage> = async {
+    val page = directory.letterPage(letter, offset)
+    val fresh = page.stations.associateBy { it.id }
+    val result = if (offset == 0) StationPage((cachedAliases(initial = letter) + page.stations).map { fresh[it.id] ?: it }.distinctBy { it.id }, page.nextOffset) else page
+    rememberStations(JSONArray(result.stations.map { it.json() }))
+    result
   }
   fun favouriteItems(ctx: Context): ListenableFuture<List<MediaItem>> = async {
     val rows = rows(favourites(ctx, null), MAX_FAVOURITES)
@@ -239,8 +272,8 @@ internal class RadioFavouritesStore(private val read: () -> String, private val 
 /** Bounded server-side A-Z pages; no eager crawl or directory work on the service thread. */
 internal class RadioDirectory(private val fetch: (String) -> String) {
   private val mirrors = listOf("https://de1.api.radio-browser.info", "https://nl1.api.radio-browser.info", "https://at1.api.radio-browser.info")
-  private val cache = LinkedHashMap<String, Pair<Long, List<RadioCatalog.Station>>>()
-  @Synchronized private fun read(path: String): List<RadioCatalog.Station> {
+  private val cache = LinkedHashMap<String, Pair<Long, JSONArray>>()
+  @Synchronized private fun readRaw(path: String): JSONArray {
     cache[path]?.takeIf { System.nanoTime() - it.first < TimeUnit.MINUTES.toNanos(5) }?.let { return it.second }
     var last: Exception? = null
     val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(18)
@@ -249,7 +282,7 @@ internal class RadioDirectory(private val fetch: (String) -> String) {
       try {
         val text = fetch(mirror + path)
         require(text.length <= 2_000_000) { "Directory answer too large" }
-        val rows = RadioCatalog.sorted(RadioCatalog.rows(JSONArray(text)))
+        val rows = JSONArray(text)
         cache[path] = System.nanoTime() to rows
         while (cache.size > 48) cache.remove(cache.keys.first())
         return rows
@@ -257,10 +290,32 @@ internal class RadioDirectory(private val fetch: (String) -> String) {
     }
     throw IllegalStateException("Station directory is unavailable; try Favourite stations or retry", last)
   }
+  private fun read(path: String): List<RadioCatalog.Station> = RadioCatalog.sorted(RadioCatalog.rows(readRaw(path)))
+  fun letterPage(letter: String, offset: Int): RadioCatalog.StationPage {
+    require(letter in RadioCatalog.LETTERS + RadioCatalog.NUMBERS && offset in 0..1_000_000) { "Invalid station initial or page" }
+    val out = mutableListOf<RadioCatalog.Station>(); val seen = mutableSetOf<String>(); var cursor = offset
+    repeat(2) {
+      val q = if (letter == "#") "" else "&name=$letter"
+      val raw = readRaw("/json/stations/search?hidebroken=true&order=name&reverse=false&limit=120&offset=$cursor$q")
+      val size = minOf(raw.length(), 120)
+      for (index in 0 until size) {
+        val station = raw.optJSONObject(index)?.let(RadioCatalog::normalize) ?: continue
+        if (!RadioNames.matchesInitial(station.name, letter) || !seen.add(station.id)) continue
+        out += station
+        if (out.size == 100) return RadioCatalog.StationPage(RadioCatalog.sorted(out), if (index + 1 < size || size == 120) cursor + index + 1 else null)
+      }
+      cursor += size
+      if (size < 120) return RadioCatalog.StationPage(RadioCatalog.sorted(out), null)
+    }
+    return RadioCatalog.StationPage(RadioCatalog.sorted(out), cursor.takeIf { it <= 1_000_000 })
+  }
   fun stations(query: String, offset: Int): List<RadioCatalog.Station> {
     require(offset in 0..1_000_000 && query.length <= 100) { "Invalid station search" }
-    return read("/json/stations/search?hidebroken=true&order=name&reverse=false&limit=100&offset=$offset" +
-      if (query.isBlank()) "" else "&name=" + URLEncoder.encode(query.trim(), "UTF-8"))
+    val alias = RadioNames.parts(query)
+    val ordering = "order=name&reverse=false"
+    val found = read("/json/stations/search?hidebroken=true&$ordering&limit=100&offset=$offset" +
+      if (query.isBlank()) "" else "&name=" + URLEncoder.encode(RadioNames.source(query), "UTF-8"))
+    return if (alias == null) found else found.filter { RadioNames.matchesQuery(it.name, query) }
   }
   fun byId(id: String): RadioCatalog.Station? = read("/json/stations/byuuid/" + URLEncoder.encode(id, "UTF-8")).firstOrNull { it.id == id }
 }

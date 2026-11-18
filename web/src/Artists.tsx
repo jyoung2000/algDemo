@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import './artist-spacing.css';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { SourceMark } from './SourceMark';
 import { RefreshGlyph } from './icons';
@@ -8,11 +9,13 @@ import { AlbumShelf } from './AlbumShelf';
 import { ListSaveButton } from './ListSaveButton';
 import { TrackList } from './Search';
 import { TypeFilter, toggleType } from './TypeFilter';
+import { Develop, Skeleton, SkeletonList } from './Skeleton';
 import type { ResultType } from './result-types';
 import { PROVIDER_LABEL, classNames } from './util';
 import { songKey } from './engine/song-key';
 import { cleanAlbumTitle } from './engine/album-key';
 import { fold } from './engine/identity';
+import './artist-section.css';
 
 /** RESULT-TYPES-001: the icon menu near the top of the discography. */
 const PAGE_TYPES: readonly ResultType[] = ['singles', 'albums', 'features', 'songs'];
@@ -339,19 +342,30 @@ export function ArtistView({ target, onBack, onPreview, onPlayAll, onOpenAlbum, 
 
   return (
     <section className="card album artist" aria-labelledby="artist-h" aria-busy={st.state === 'loading' || refreshing}>
-      <div className="album__bar">
+      <div className="album__bar artist__bar">
         <button ref={back} className="push album__back" type="button" onClick={onBack} aria-label="Back">
           <Glyph name="chevron-left" size={14} /> Back
         </button>
-        {st.state === 'ready' && <button className="push" type="button" disabled={refreshing} onClick={() => { void refresh(st.artist); }} title="Ask every artist source again, including features">
-          <RefreshGlyph /> {refreshing ? 'Refreshing…' : 'Refresh artist'}
+        {st.state === 'ready' && <button className="iconbtn artist__refresh" type="button" disabled={refreshing} aria-label="Refresh artist" aria-busy={refreshing} onClick={() => { void refresh(st.artist); }} title={refreshing ? 'Refreshing artist sources…' : 'Refresh artist sources and features'}>
+          <RefreshGlyph />
         </button>}
       </div>
       {refreshNote && <p className="state" role="status">{refreshNote}</p>}
       {st.state === 'loading' && (
-        <p className="state" role="status">
-          <span className="sdot sdot--busy" aria-hidden="true" /> Opening the artist…
-        </p>
+        /* SKELETON-001: the page's own shape while it loads — the 112px portrait with the name
+           lines beside it, then song rows — with one status label for screen readers. */
+        <div role="status" aria-label="Opening the artist…">
+          <span className="vh">Opening the artist…</span>
+          <div className="skel-row" aria-hidden="true">
+            <Skeleton kind="art" w={112} h={112} />
+            <span className="skel-row__text">
+              <Skeleton kind="line" w={56} h={10} />
+              <Skeleton kind="line" w="44%" h={20} />
+              <Skeleton kind="line" w="30%" />
+            </span>
+          </div>
+          <SkeletonList rows={5} label="Loading songs…" />
+        </div>
       )}
       {st.state === 'failed' && (
         <p className="state state--bad" role="alert">
@@ -379,7 +393,6 @@ export function ArtistView({ target, onBack, onPreview, onPlayAll, onOpenAlbum, 
           if (added.length) full = [...own, ...added];
         }
         const none = alsoChecked(a.sources);
-        const shown = all ? full : full.slice(0, SONGS_FOLDED);
         // ARTIST-FEATURES-001: the page's own features, then the ones the deferred search confirmed.
         const feats: Track[] = [];
         const featKeys = new Set<string>();
@@ -388,6 +401,8 @@ export function ArtistView({ target, onBack, onPreview, onPlayAll, onOpenAlbum, 
           featKeys.add(t.key);
           feats.push(t);
         }
+        full = full.filter(t => !featKeys.has(t.key));
+        const shown = all ? full : full.slice(0, SONGS_FOLDED);
         const featsWaiting = more.state === 'loading';
         const featsShort = (every.state === 'ready' && !every.featuresComplete) || more.state === 'failed' || (more.state === 'ready' && !more.complete);
         // FEATURES-ALL-002: with Features the chosen type the page IS the feature list, so all of it shows.
@@ -403,7 +418,8 @@ export function ArtistView({ target, onBack, onPreview, onPlayAll, onOpenAlbum, 
           feats.length ? `${feats.length} ${feats.length === 1 ? 'feature' : 'features'}` : null,
         ].filter((x): x is string => Boolean(x));
         return (
-          <>
+          /* SKELETON-001: the loaded page develops into focus where the skeleton stood. */
+          <Develop>
             {a.local && (
               // ARTIST-FALLBACK-001: say plainly why the page is thin, and show what this app holds by
               // the name, instead of a dead end. ARTIST-SOURCES-001: "has no page" is said only of
@@ -463,8 +479,10 @@ export function ArtistView({ target, onBack, onPreview, onPlayAll, onOpenAlbum, 
               </div>
             </div>
             <div className="album__actions">
-              <button className="push push--default" type="button" disabled={!full.length} onClick={() => (onPlayAll ? onPlayAll(full) : onPreview(full[0]!, full))}>
-                <Glyph name="play" size={14} /> Play songs
+              <button className="push push--default artist__play" type="button" disabled={!full.length}
+                aria-label={`Play songs by ${a.name}`} title={`Play songs by ${a.name}`}
+                onClick={() => (onPlayAll ? onPlayAll(full) : onPreview(full[0]!, full))}>
+                <Glyph name="play" size={16} />
               </button>
               {/* LIST-SAVE-FOLDER-001: every song, downloaded into a folder named after the artist. */}
               {every.state === 'ready' && <ListSaveButton tracks={full} kind="list" name={a.name} label={`every song by ${a.name}`} />}
@@ -477,7 +495,17 @@ export function ArtistView({ target, onBack, onPreview, onPlayAll, onOpenAlbum, 
             />
             {showing('songs') && (
               <>
-                <h3 className="albums__h">{all && every.state === 'ready' ? 'All songs' : 'Most played'}</h3>
+                <div className="artist__songs-heading">
+                  <h3 id="artist-songs-heading" className="albums__h">{all && every.state === 'ready' ? 'All songs' : 'Most played'}</h3>
+                  {/* ARTIST-TOP-PLAY-001: play this section as a list, not the hidden full catalogue. */}
+                  <button className="btn artist__section-play" type="button" disabled={!shown.length}
+                    aria-label={`Play ${all && every.state === 'ready' ? 'all' : 'most played'} songs by ${a.name}`}
+                    aria-describedby="artist-songs-heading"
+                    title={`Play ${all && every.state === 'ready' ? 'all' : 'most played'} songs by ${a.name}`}
+                    onClick={() => (onPlayAll ? onPlayAll(shown) : onPreview(shown[0]!, shown))}>
+                    <Glyph name="play" size={14} />
+                  </button>
+                </div>
                 {full.length ? (
                   <TrackList tracks={shown} {...listProps} label={`Songs by ${a.name}`} />
                 ) : (
@@ -514,7 +542,7 @@ export function ArtistView({ target, onBack, onPreview, onPlayAll, onOpenAlbum, 
                 <h3 className="albums__h">Features{feats.length > 0 ? ` (${feats.length})` : ''}</h3>
                 {feats.length > 0 && (
                   <>
-                    <p className="artist__hint">Songs by other artists that {a.name} is on, most played first.</p>
+                    <p className="artist__hint">Guest appearances confirmed by Deezer contributor credits or linked YouTube Music artist credits. We follow available search pages; catalogue omissions or unavailable sources can still leave gaps.</p>
                     <TrackList tracks={featsShown} {...listProps} label={`Songs featuring ${a.name}`} />
                   </>
                 )}
@@ -544,7 +572,7 @@ export function ArtistView({ target, onBack, onPreview, onPlayAll, onOpenAlbum, 
                 <Glyph name="info" size={14} /> {a.name} has nothing of that kind here. Tap the highlighted icon again to show everything.
               </p>
             )}
-          </>
+          </Develop>
         );
       })()}
     </section>

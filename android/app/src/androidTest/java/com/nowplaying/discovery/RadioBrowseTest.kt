@@ -96,7 +96,15 @@ class RadioBrowseTest {
       val tabs = await { browser.getChildren(root.mediaId, 0, 10, null) }.value!!
       assertEquals(listOf("songs", "playlists", "radio", "search"), tabs.map { it.mediaId })
       val children = await { browser.getChildren("radio", 0, 10, null) }.value!!
-      assertEquals(listOf("radio/favourites", "radio/az/0", "radio/search"), children.map { it.mediaId })
+      assertEquals(listOf("radio/favourites", "radio/all", "radio/search"), children.map { it.mediaId })
+      assertEquals("All stations", children[1].mediaMetadata.title.toString())
+      val letters = await { browser.getChildren("radio/all", 0, 40, null) }.value!!
+      assertEquals(28, letters.size); assertTrue(letters.any { it.mediaId == "radio/letter/A/0" }); assertTrue(letters.any { it.mediaId == "radio/letter/Z/0" }); assertTrue(letters.any { it.mediaId == "radio/letter/#/0" })
+      assertEquals("A", await { browser.getItem("radio/letter/A/0") }.value!!.mediaMetadata.title.toString())
+      val digits = await { browser.getChildren("radio/letter/#/0", 0, 20, null) }.value!!
+      assertEquals((0..9).map { "radio/letter/$it/0" }, digits.map { it.mediaId })
+      assertEquals("1", await { browser.getItem("radio/letter/1/0") }.value!!.mediaMetadata.title.toString())
+      assertNotEquals(0, await { browser.getChildren("radio/letter/AA/0", 0, 10, null) }.resultCode)
       val favourites = await { browser.getChildren("radio/favourites", 0, 10, null) }.value!!
       val id = favourites.single().mediaId
       assertEquals("radio/station/radio-test-kexp", id)

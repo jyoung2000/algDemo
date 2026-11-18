@@ -10,7 +10,7 @@ import { AFFINITY_FACTORS, DEFAULT_ENGINE, FACTORS, FEEDBACK_WEIGHTS, type Engin
 import { buildFeedback, buildFeedback2, modeWeights, normaliseSettings, tierShares, type FeedbackEvent } from './engine';
 import { albumKeyOf } from './album-key';
 import type { Dict } from './shape';
-import { TASTE_EVENT_WEIGHTS, TASTE_HALF_LIFE_DAYS, TASTE_WEIGHT, buildTaste, type TasteRow } from './taste';
+import { TASTE_EVENT_WEIGHTS, TASTE_HALF_LIFE_DAYS, buildTaste, type TasteRow } from './taste';
 
 export interface ProfileEventRow {
   event_id: string;
@@ -97,7 +97,7 @@ export function buildProfile(inp: ProfileInput): Dict {
   const eff = modeWeights(cfg.weights, es.adventurous, es.fresh);
   const effTotal = FACTORS.reduce((s, k) => s + eff[k], 0) || 1;
   const weights: { factor: string; base: number; effective: number; share: number }[] = FACTORS.map((k) => ({ factor: k, base: r3(cfg.weights[k]), effective: r3(eff[k]), share: r3(eff[k] / effTotal) }));
-  weights.push({ factor: 'taste', base: TASTE_WEIGHT, effective: taste.events ? TASTE_WEIGHT : 0, share: taste.events ? TASTE_WEIGHT : 0 });
+  weights.push({ factor: 'taste', base: cfg.tasteWeight, effective: taste.events ? cfg.tasteWeight : 0, share: taste.events ? cfg.tasteWeight : 0 });
   const shares = tierShares(es.adventurous, cfg);
 
   // ---- the last run -----------------------------------------------------------------------
@@ -174,11 +174,11 @@ export function buildProfile(inp: ProfileInput): Dict {
     affinity: {
       // affinity = mean of the best seed's factors (weighted), blended with the others by bestSeedShare
       best_seed_share: cfg.bestSeedShare,
-      factors: AFFINITY_FACTORS.map((k) => ({ factor: k, weight: r3(eff[k]) })),
+      factors: AFFINITY_FACTORS.map((k) => ({ factor: k, weight: r3(k === 'feedback' ? (cfg.seedFeedbackWeight ?? eff.feedback) : eff[k]) })),
       // global factors (feedback, freshness, novelty) join the same weighted mean when they have evidence
       global: ['feedback', 'freshness', 'novelty'].map((k) => ({ factor: k, weight: r3(eff[k as keyof typeof eff]) })),
     },
-    taste: { weight: TASTE_WEIGHT, half_life_days: TASTE_HALF_LIFE_DAYS, event_weights: TASTE_EVENT_WEIGHTS },
+    taste: { weight: cfg.tasteWeight, half_life_days: TASTE_HALF_LIFE_DAYS, event_weights: TASTE_EVENT_WEIGHTS },
     coverage: {
       // final = affinity * (floor + (1 - floor) * coverage); coverage = share of affinity weight with evidence
       floor: cfg.coverageFloor,

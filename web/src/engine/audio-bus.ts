@@ -59,6 +59,12 @@ export const SWEEP_TOP_HZ = 900;
 /** Where the highpass rests when no sweep is running — below hearing, so it is a no-op. */
 export const SWEEP_PARKED_HZ = 20;
 
+/** When the low end changes hands inside a transition, in seconds from its start. */
+export interface TransitionShape {
+  swapAt: number;
+  swapSeconds: number;
+}
+
 export interface Deck {
   readonly id: DeckId;
   readonly element: HTMLMediaElement;
@@ -88,8 +94,11 @@ export interface AudioBus {
   /**
    * Run a styled transition to `deck`: the equal-power fade plus whatever the style adds (a bass
    * handoff, a filter sweep). Returns the deck now becoming live.
+   *
+   * With a `shape` (DJ-XFADE-001) the low end changes hands at a chosen moment, quickly, the way a
+   * DJ swaps the bass on a beat; without one the lows cross gradually over the first half.
    */
-  transitionTo(deck: DeckId, seconds: number, style: TransitionStyle): DeckId;
+  transitionTo(deck: DeckId, seconds: number, style: TransitionStyle, shape?: TransitionShape | null): DeckId;
   /**
    * Put a deck at full level and the other at silence, with only a click-avoiding ramp. Doubles as
    * the cancel for a transition in flight: `cut(live())` stops the fade and keeps the live deck,
@@ -201,6 +210,19 @@ function rampParam(param: AudioParam, value: number, at: number, end: number, ex
 function chainParam(param: AudioParam, from: number, value: number, start: number, end: number): void {
   param.linearRampToValueAtTime(value, end);
   automation.set(param, { start, seconds: Math.max(0, end - start), values: [from, value] });
+}
+
+/**
+ * Hold what is there until `start`, then ramp to `value` by `end`: a move planned for later in the
+ * transition (the bass swap on its beat). An interruption before `start` reads the held value.
+ */
+function laterRamp(param: AudioParam, value: number, at: number, start: number, end: number, exponential = false): void {
+  const from = hold(param, at);
+  const exp = exponential && from > 0 && value > 0;
+  param.setValueAtTime(from, start);
+  if (exp) param.exponentialRampToValueAtTime(value, end);
+  else param.linearRampToValueAtTime(value, end);
+  automation.set(param, { start, seconds: Math.max(0, end - start), values: [from, value], exponential: exp });
 }
 
 function rampCurve(param: AudioParam, to: number, start: number, seconds: number): void {
@@ -346,7 +368,7 @@ export function createAudioBus(ctx: BusContext, initialEq: EqConfig = EQ_DEFAULT
       liveDeck = target;
       return liveDeck;
     },
-    transitionTo(target, seconds, style) {
+    transitionTo(target, seconds, style, shape) {
       if (disposed || target === liveDeck || !decks.has(target)) return liveDeck;
       const from = decks.get(liveDeck);
       const to = decks.get(target);
@@ -363,6 +385,28 @@ export function createAudioBus(ctx: BusContext, initialEq: EqConfig = EQ_DEFAULT
       if (to) restFilters(to, at);
       if (to) rampCurve(to.gain.gain, 1, at, span);
       if (from) rampCurve(from.gain.gain, 0, at, span);
+
+      const shaped = shape && Number.isFinite(shape.swapAt) && Number.isFinite(shape.swapSeconds) && (style === 'bass-swap' || style === 'filter');
+      if (shaped) {
+        // One bassline at a time: the incoming song arrives with its lows held down, and at the
+        // swap the two trade over about a beat. Before it the outgoing low end is whole; after it
+        // the incoming one is.
+        const swapSeconds = Math.max(CUT_SECONDS, Math.min(shape.swapSeconds, span - CUT_SECONDS));
+        const swapStart = at + Math.max(CUT_SECONDS, Math.min(shape.swapAt, span - swapSeconds));
+        const swapEnd = swapStart + swapSeconds;
+        if (to) {
+          rampParam(to.bass.gain, BASS_DUCK_DB, at, at + CUT_SECONDS);
+          to.bass.gain.setValueAtTime(BASS_DUCK_DB, swapStart);
+          chainParam(to.bass.gain, BASS_DUCK_DB, 0, swapStart, swapEnd);
+        }
+        if (from) {
+          laterRamp(from.bass.gain, BASS_DUCK_DB, at, swapStart, swapEnd);
+          // Having given up the lows, the outgoing song thins out from the bottom as it leaves.
+          if (style === 'filter' && at + span - swapEnd > CUT_SECONDS) laterRamp(from.sweep.frequency, SWEEP_TOP_HZ, at, swapEnd, at + span, true);
+        }
+        liveDeck = target;
+        return liveDeck;
+      }
 
       if (style === 'bass-swap' || style === 'filter') {
         // The incoming track arrives with its lows held down and takes them at the halfway point,

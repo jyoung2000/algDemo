@@ -7,26 +7,41 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.max
 import kotlin.math.min
 
-/** The part of crossfade.ts `mixPlan` the engine acts on. */
-data class BlendPlan(val seconds: Double, val startAt: Double, val style: TransitionStyle)
+/**
+ * The part of crossfade.ts `mixPlan` the engine acts on. The fields after [style] are only set by a
+ * plan made from measured cues (DJ-XFADE-001): where the blend is complete, where the incoming song
+ * starts from, its tempo for the blend, and when the low end changes hands.
+ */
+data class BlendPlan(
+  val seconds: Double,
+  val startAt: Double,
+  val style: TransitionStyle,
+  val endAt: Double = Double.NaN,
+  val inStart: Double = 0.0,
+  val rate: Double = 1.0,
+  val swapAt: Double? = null,
+  val swapSeconds: Double = 0.0,
+  val beat: BeatFit = BeatFit.NONE,
+)
 
 /** crossfade.ts `mixPlan(slider, outSeconds, inSeconds, { minPlayedFraction })`, called without tempos as the app does. */
 fun interface BlendPlanner {
   fun plan(slider: Int, outSeconds: Double, inSeconds: Double, minPlayedFraction: Double): BlendPlan
 }
 
+/** crossfade.ts `mixPlan` with the outgoing song's measured cues, and the incoming song's when known. */
+fun interface CuePlanner {
+  fun plan(slider: Int, outSeconds: Double, inSeconds: Double, minPlayedFraction: Double, outCues: TrackCues, inCues: TrackCues?): BlendPlan
+}
+
 /**
  * The service-owned playback engine: two decks into the parity-tested [MixBus], one [AudioOutput].
  *
- * Behaviour is ported from the app so the phone, the lock screen and the car hear the same thing:
- * - blend scheduling from web/src/engine/preview-mixer.ts `PreviewMixer` (`prepare`, `tick`, `cancel`,
- *   `finish`): the next song waits silent on the spare deck; once the outgoing song's position reaches
- *   the plan's `startAt` (MIXER-PLAY-THROUGH-001/-002: 95% by default) the spare is made inaudible,
- *   started from 0, and `transitionTo(spare, remaining, style)` runs; when the outgoing song ends the
- *   spare is promoted WITHOUT restarting it.
- * - end-of-song handling from web/src/Player.tsx `onEnded`: repeat-one replays the song and cancels
- *   any blend (a repeated song is not a next song); otherwise a blend is promoted, or the controller
- *   is told the song ended so it can load the next one.
+ * Automatic handoffs have a hard decoder-end gate: settings, container durations, cue tails and
+ * legacy planners can never start or promote the spare while the current source still has PCM.
+ * The original plays unattenuated through its last frame. Only then does the next source start at
+ * frame zero, at its own tempo, with a slider-controlled fade-in. Promotion preserves that ramp.
+ * Repeat-one restarts the original instead; explicit loads/seeks remain listener-controlled.
  *
  * Threading: every public method only enqueues a command. Commands run on the engine thread between
  * quanta, so [MixBus] (not thread-safe, like an AudioContext's graph) is only ever touched by one
@@ -38,6 +53,7 @@ class AudioEngine(
   private val planner: BlendPlanner,
   private val listener: Listener = object : Listener {},
   initialEq: EqConfig = EqConfig.DEFAULTS,
+  private val cuePlanner: CuePlanner? = null,
 ) : AutoCloseable {
   /**
    * How much of a song was actually heard: frames rendered from it while audible (a seek does not
@@ -49,12 +65,14 @@ class AudioEngine(
   interface Listener {
     /** The active song reached its end and nothing was blended in: the controller decides what's next. */
     fun onEnded(key: String, heard: Heard) {}
-    /** A blend completed: [key] (already playing for the length of the blend) is now the current song. */
+    /** Decoder-end handoff: [key] is now current, starting at frame zero with its fade intact. */
     fun onAdvanced(key: String, outgoing: Heard) {}
     /** Repeat-one restarted [key]. */
     fun onRepeated(key: String, heard: Heard) {}
     /** A blend into [key] started, [seconds] long. */
     fun onBlendStarted(key: String, seconds: Double, style: TransitionStyle) {}
+    /** How that blend sits on the beat (DJ-XFADE-001); only blends planned from measured cues say. */
+    fun onBlendPlanned(key: String, plan: BlendPlan) {}
     fun onError(key: String, error: Throwable) {}
   }
 
@@ -70,7 +88,12 @@ class AudioEngine(
 
   private class Deck(val id: String) {
     var key: String? = null
+    /** What is read. A [StretchSource] around [given] once a blend has asked for a tempo. */
     var source: PcmSource? = null
+    /** The source as the controller handed it over, for telling a re-offer from a new song. */
+    var given: PcmSource? = null
+    /** Where the spare was last cued to, so it is seeked once and not on every quantum. */
+    var cuedAt = -1L
     /** Frames of [source] rendered while it was audible, for [Heard]. */
     var heard = 0L
     val left = FloatArray(QUANTUM)
@@ -78,7 +101,7 @@ class AudioEngine(
     val planar = arrayOf(left, right)
   }
 
-  private enum class NextState { NONE, READY, RUNNING, FAILED }
+  private enum class NextState { NONE, READY }
 
   val bus = MixBus(initialEq = initialEq)
   private val decks = mapOf("a" to Deck("a"), "b" to Deck("b"))
@@ -86,10 +109,15 @@ class AudioEngine(
   private val other: String get() = if (active == "a") "b" else "a"
   private var playing = false
   private var mix = 0
-  private var playThrough = 95
   private var repeatOne = false
   private var next = NextState.NONE
   private var endedReported: String? = null
+  /** Output time until the promoted current song finishes fading in. */
+  private var fadeUntil = 0.0
+  /** Measured cues by song key: the few songs around the playhead. */
+  private val cues = object : LinkedHashMap<String, TrackCues>() {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, TrackCues>?) = size > 8
+  }
 
   private val commands = ConcurrentLinkedQueue<() -> Unit>()
   private val lock = Object()
@@ -115,9 +143,10 @@ class AudioEngine(
   fun load(key: String, source: PcmSource, startFrame: Long = 0, play: Boolean = true) = post {
     cancelBlend()
     val deck = decks.getValue(active)
-    deck.source?.takeIf { it !== source }?.close()
+    if (deck.given !== source) deck.source?.close()
     deck.key = key
     deck.source = source
+    deck.given = source
     deck.heard = 0
     source.seekTo(startFrame)
     endedReported = null
@@ -133,11 +162,13 @@ class AudioEngine(
    */
   fun setNext(key: String?, source: PcmSource?) = post {
     val spare = decks.getValue(other)
-    if (key != null && key == spare.key && source === spare.source) return@post
-    cancelBlend()
+    if (key != null && key == spare.key && source === spare.given) return@post
+    cancelBlend(resetGain = false)
     if (key == null || source == null) return@post
     spare.key = key
     spare.source = source
+    spare.given = source
+    spare.cuedAt = -1
     spare.heard = 0
     next = NextState.READY
   }
@@ -147,26 +178,33 @@ class AudioEngine(
 
   /**
    * Jump within the current song. A blend in progress is abandoned (the listener chose a place), but
-   * the song lined up next stays lined up and blends in when this one next reaches its play-through
-   * point — preview-mixer.ts keeps its candidate across a seek too. Dropping it here was why a song
+   * the song lined up next stays lined up and starts only when this source actually ends — preview-mixer.ts keeps its candidate across a seek too. Dropping it here was why a song
    * seeked with the progress bar never blended (the player does not offer the same song twice).
    */
   fun seekTo(frame: Long) = post {
     val src = decks.getValue(active).source ?: return@post
-    // RUNNING: the blend restarts from the spare's start at the next play-through point (tick seeks
-    // it to 0). FAILED (too little song was left): a seek can leave room for it again.
-    if (next != NextState.NONE && decks.getValue(other).source != null) next = NextState.READY
+    // Seeking is explicit; keep the prepared song, but end any current fade-in.
+    fadeUntil = 0.0
     bus.cut(active)
     src.seekTo(frame)
     endedReported = null
     output.flush()
   }
 
+  /**
+   * Store analysis for compatibility. Cues never shorten the live source or skip an incoming intro.
+   */
+  fun setCues(key: String, measured: TrackCues?) = post { if (measured == null) cues.remove(key) else cues[key] = measured }
+
   fun setEq(config: EqConfig) = post { bus.setEq(config) }
   /** The mixer slider, 0 (off) .. 100. Turning it off cancels a blend, as Player.tsx does. */
-  fun setMix(slider: Int) = post { mix = slider.coerceIn(0, 100); if (mix == 0) cancelBlend() }
-  /** "Play before blending", percent (MIXER-PLAY-THROUGH-002), 50..100. */
-  fun setPlayThrough(percent: Int) = post { playThrough = percent.coerceIn(50, 100) }
+  fun setMix(slider: Int) = post {
+    mix = slider.coerceIn(0, 100)
+    if (mix == 0) { fadeUntil = 0.0; bus.cut(active) }
+  }
+  /** Legacy persisted percentages are accepted for compatibility, never used to shorten a song. */
+  @Suppress("UNUSED_PARAMETER")
+  fun setPlayThrough(percent: Int) = Unit
   fun setRepeatOne(on: Boolean) = post { repeatOne = on; if (on) cancelBlend() }
   fun setVolume(v: Double) = post { bus.setMasterGain(v) }
 
@@ -242,19 +280,18 @@ class AudioEngine(
   }
 
   private fun renderQuantum(offset: Int) {
-    tick()
     val live = decks.getValue(active)
     val spare = decks.getValue(other)
     val liveRead = fill(live)
     live.heard += liveRead
-    if (next == NextState.RUNNING) spare.heard += fill(spare) else silence(spare)
+    silence(spare) // HARD INVARIANT: a prepared source is never read alongside the live source.
     // MixBus.process reads its inputs AND writes its output at the same offset, and the deck buffers
     // are one quantum long, so render at 0 into a quantum-sized scratch and place it in the chunk.
     bus.process(decks.getValue("a").planar, decks.getValue("b").planar, quantumOut, 0)
     System.arraycopy(quantumOut[0], 0, out[0], offset, QUANTUM)
     System.arraycopy(quantumOut[1], 0, out[1], offset, QUANTUM)
     val src = live.source
-    if (src != null && src.ended && liveRead < QUANTUM) onLiveEnded(live)
+    if (src != null && src.error == null && src.ended) onLiveEnded(live)
     src?.error?.let { e -> live.key?.let { k -> listener.onError(k, e) }; playing = false; output.pause() }
   }
 
@@ -274,33 +311,24 @@ class AudioEngine(
     deck.right.fill(0f)
   }
 
-  /** preview-mixer.ts `tick`: start the blend once the outgoing song has played its share. */
-  private fun tick() {
-    if (mix <= 0 || next != NextState.READY || repeatOne) return
-    val live = decks.getValue(active).source ?: return
-    val incoming = decks.getValue(other).source ?: return
-    if (live.ended || !live.ready || !incoming.ready || incoming.error != null) return
-    val outSeconds = seconds(live.durationFrames)
-    val inSeconds = seconds(incoming.durationFrames)
-    val plan = planner.plan(mix, outSeconds, inSeconds, playThrough / 100.0)
-    val at = live.positionFrames / RATE
-    if (plan.seconds <= 0 || at < plan.startAt) return
-    // The spare must be inaudible before it starts — never start at full volume then fade it down.
-    bus.cut(active)
-    incoming.seekTo(0)
-    val remaining = min(plan.seconds, outSeconds - at)
-    if (remaining < MIN_USEFUL_SECONDS) {
-      next = NextState.FAILED
-      return
-    }
-    bus.transitionTo(other, remaining, plan.style)
-    next = NextState.RUNNING
-    decks.getValue(other).key?.let { listener.onBlendStarted(it, remaining, plan.style) }
+  /** preview-mixer.ts `finish`: the incoming song keeps its playhead; the old deck is emptied. */
+  private fun promote(live: Deck, spare: Deck) {
+    val outgoing = heardOf(live)
+    live.source?.close()
+    live.source = null
+    live.given = null
+    live.key = null
+    active = spare.id
+    next = NextState.NONE
+    // transitionTo already made this deck live. Cutting here would destroy its fade-in.
+    endedReported = null
+    spare.key?.let { listener.onAdvanced(it, outgoing) }
   }
 
   /** Player.tsx `onEnded` + preview-mixer.ts `finish`. */
   private fun onLiveEnded(live: Deck) {
     val key = live.key ?: return
+    if (live.source?.ended != true) return
     if (repeatOne) {
       cancelBlend()
       val heard = heardOf(live)
@@ -311,17 +339,24 @@ class AudioEngine(
     }
     val spare = decks.getValue(other)
     val incoming = spare.source
-    if (next == NextState.RUNNING && incoming != null && !incoming.ended && incoming.error == null) {
-      // Promote: the incoming song keeps its playhead; the old deck is emptied.
-      val outgoing = heardOf(live)
-      live.source?.close()
-      live.source = null
-      live.key = null
-      active = spare.id
-      next = NextState.NONE
-      bus.cut(active)
-      endedReported = null
-      spare.key?.let { listener.onAdvanced(it, outgoing) }
+    // HARD INVARIANT: do not trust a planner, cues, play-through setting or container duration.
+    // Only a decoder-confirmed end after rendering the original's final PCM permits a handoff.
+    if (next == NextState.READY && incoming != null && incoming.ready && !incoming.ended && incoming.error == null) {
+      incoming.seekTo(0)
+      // Reuse only the slider's requested duration, never the historical overlap scheduling math.
+      // Keep short incoming songs audible at full level for most of their own duration.
+      val length = seconds(incoming.durationFrames)
+      val requested = Crossfade.requestedSeconds(mix.toDouble())
+      val span = min(2.0, min(requested, if (length.isFinite()) length * 0.1 else 2.0))
+      if (span > 0) {
+        bus.transitionTo(spare.id, span, TransitionStyle.BLEND)
+        fadeUntil = bus.currentTime + span
+        spare.key?.let { listener.onBlendStarted(it, span, TransitionStyle.BLEND) }
+      } else {
+        bus.cut(spare.id)
+        fadeUntil = 0.0
+      }
+      promote(live, spare)
       return
     }
     if (endedReported == key) return
@@ -335,15 +370,17 @@ class AudioEngine(
   private fun heardOf(deck: Deck) = Heard(deck.key ?: "", deck.heard, deck.source?.durationFrames ?: PcmSource.UNKNOWN)
 
   /** preview-mixer.ts `cancel`: forget the spare and put all the level back on the live deck. */
-  private fun cancelBlend() {
+  private fun cancelBlend(resetGain: Boolean = true) {
     val spare = decks.getValue(other)
     if (next != NextState.NONE || spare.source != null) {
       spare.source?.close()
       spare.source = null
+      spare.given = null
       spare.key = null
     }
+    spare.cuedAt = -1
     next = NextState.NONE
-    bus.cut(active)
+    if (resetGain) { fadeUntil = 0.0; bus.cut(active) }
   }
 
   private fun publish() {
@@ -356,7 +393,7 @@ class AudioEngine(
       buffering = playing && src != null && !src.ready && !src.ended,
       positionFrames = max(0L, (src?.positionFrames ?: 0L) - pending),
       durationFrames = src?.durationFrames ?: PcmSource.UNKNOWN,
-      blendingInto = if (next == NextState.RUNNING) decks.getValue(other).key else null,
+      blendingInto = if (bus.currentTime < fadeUntil) live.key else null,
     )
   }
 
@@ -369,5 +406,11 @@ class AudioEngine(
     const val RATE = 48000.0
     /** crossfade.ts MIN_USEFUL_SECONDS. */
     const val MIN_USEFUL_SECONDS = 0.25
+    /** A start this late or later is made up for; less is inside one render quantum. */
+    const val LATE_SECONDS = 0.005
+    /** The most that is skipped to make up a late start: beyond a second the blend is not worth chasing. */
+    const val MAX_SKIP_FRAMES = 48000L
+    /** preview-mixer.ts settle: 0.004 of tempo every 250 ms, taken in quantum-sized steps. */
+    const val SETTLE_PER_QUANTUM = 0.004 * (QUANTUM / RATE) / 0.25
   }
 }

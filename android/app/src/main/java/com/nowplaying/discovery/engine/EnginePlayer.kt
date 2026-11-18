@@ -60,6 +60,10 @@ class EnginePlayer(
   private val context: Context,
   looper: Looper,
   planner: BlendPlanner = CrossfadePlanner,
+  /** DJ-XFADE-001: plans a blend from what was measured of the two songs. */
+  cuePlanner: CuePlanner? = CrossfadeCuePlanner,
+  /** Measures a downloaded song's cues; runs off the main thread. Null in tests without real files. */
+  private val measure: ((Uri) -> TrackCues?)? = { uri -> CueReader.read(context, uri) },
   private val resolve: (MediaHub.Song) -> Uri? = { song -> song.source?.let { Downloads.localFile(context, it)?.first } },
   private val lookup: (String) -> MediaHub.Song? = { id -> MediaHub.findSong(id) },
   output: AudioOutput = TrackOutput(),
@@ -154,8 +158,38 @@ class EnginePlayer(
     override fun onBlendStarted(key: String, seconds: Double, style: TransitionStyle) {
       Log.i(TAG, "blend into $key, ${"%.1f".format(seconds)} s ${style.id}" + if (TapOutput.frames > 0) " tapFrame=${TapOutput.frames}" else "")
     }
+    override fun onBlendPlanned(key: String, plan: BlendPlan) {
+      Log.i(TAG, "blend plan ${plan.beat.id} rate=${"%.4f".format(plan.rate)} from=${"%.2f".format(plan.startAt)} to=${"%.2f".format(plan.endAt)} in=${"%.2f".format(plan.inStart)} swap=${plan.swapAt?.let { "%.2f".format(it) } ?: "-"}")
+    }
     override fun onError(key: String, error: Throwable) { main.post { songFailed(key, error) } }
-  }, initialEq).also { it.start() }
+  }, initialEq, cuePlanner).also { it.start() }
+
+  /** Reads cues one song at a time, apart from [opener] so measuring never delays opening a file. */
+  private val analyst = Executors.newSingleThreadExecutor { r -> Thread(r, "AirwaveCues").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
+  /** Songs whose cues are measured or being measured, newest last. */
+  private val measured = LinkedHashSet<String>()
+
+  /**
+   * DJ-XFADE-001: measure [song]'s audio once, in the background, and give the result to the engine
+   * so its blends sit on the music. Only files on the phone are read; a stream is never fetched twice.
+   */
+  private fun measureCues(song: MediaHub.Song) {
+    val reader = measure ?: return
+    if (mix <= 0 || !measured.add(song.id)) return
+    while (measured.size > 8) measured.remove(measured.first())
+    analyst.execute {
+      val t0 = SystemClock.elapsedRealtime()
+      val cues = runCatching { resolve(song)?.let(reader) }.getOrNull()
+      if (cues == null) {
+        main.post { measured.remove(song.id) }
+        return@execute
+      }
+      Log.i(TAG, "cues ${song.id.take(40)} end=${"%.2f".format(cues.end)}/${"%.2f".format(cues.duration)} level-to=${"%.2f".format(cues.fullEnd)} start=${"%.2f".format(cues.start)}" +
+        " head=${cues.head?.let { "${"%.1f".format(it.bpm)}@${"%.1f".format(it.confidence)}" } ?: "-"} tail=${cues.tail?.let { "${"%.1f".format(it.bpm)}@${"%.1f".format(it.confidence)}" } ?: "-"}" +
+        " in ${SystemClock.elapsedRealtime() - t0} ms")
+      engine.setCues(song.id, cues)
+    }
+  }
 
   /* -------------------------------------------------------------- settings (from the page) */
 
@@ -511,6 +545,7 @@ class EnginePlayer(
     engine.close()
     opener.shutdownNow()
     streamer.shutdownNow()
+    analyst.shutdownNow()
     return Futures.immediateVoidFuture()
   }
 
@@ -670,10 +705,10 @@ class EnginePlayer(
     return queue.peekAfterEnd()?.let { queue.items[it].song }?.takeIf { it.id != now }
   }
 
-  /** With the mixer on, open the next song on the spare deck so the blend can start on time. */
+  /** Prepare silently even with mixing off; only decoder-end promotion changes the main song. */
   private fun prepareNext() {
     if (radioLive) return
-    val next = if (mix > 0) upcoming() else null
+    val next = upcoming()
     if (next == null || loadedKey == null) {
       if (preparedNextKey != null) engine.setNext(null, null)
       preparedNextKey = null
@@ -688,6 +723,9 @@ class EnginePlayer(
         if (gen != loadGeneration || preparedNextKey != next.id) { source?.close(); return@post }
         if (source == null) { preparedNextKey = null; return@post }
         engine.setNext(next.id, source)
+        // Both songs of the coming blend are measured now, minutes before it is needed.
+        measureCues(next)
+        queue.current?.song?.takeIf { it.id == loadedKey && streamingKey != it.id }?.let(::measureCues)
       }
     }
   }
@@ -715,8 +753,13 @@ class EnginePlayer(
   }
 
   private fun blendPromoted(key: String, outgoing: AudioEngine.Heard) {
-    // The engine already plays [key] from where the blend left it: move the queue, do not reload.
-    if (!queue.select(key)) lookup(key)?.let { queue.set(queue.items + Entry(it), queue.items.size) }
+    // The engine has ended the old source and begun this one; never reload or restart its fade.
+    if (queue.current?.song?.id != outgoing.key) return
+    val promoted = cue?.takeIf { it.id == key } ?: lookup(key)
+    if (!queue.select(key)) promoted?.let { queue.set(queue.items + Entry(it), queue.items.size) }
+    if (queue.current?.song?.id != key) return
+    streamingKey = null
+    waitingFor = null
     loadedKey = key
     preparedNextKey = null
     cue = null

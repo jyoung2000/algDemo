@@ -1,0 +1,28 @@
+/* SETTINGS-UI-001 (owner 2026-11-17: "ensure the settings menu has uniform ui and ux for buttons").
+   Every text button in Settings is the app's push pill at ONE size: 36px tall (44px touch target on
+   coarse pointers), 13px label, 16px side padding, icon and label centred with a 6px gap. Primary
+   actions stay push--default (blue); everything else is the white pill. Rows of buttons wrap with
+   an even 8px gap so no two buttons ever touch. */
+.settings .push,
+.settings .push--big {
+  min-height: 36px;
+  height: auto;
+  padding: 0 16px;
+  font-size: 13px;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+@media (pointer: coarse) {
+  .settings .push,
+  .settings .push--big { min-height: 44px; }
+}
+.settings :is(.ranking-formula__actions, .dl__form, .dlset__actions, .audio-settings__actions) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}

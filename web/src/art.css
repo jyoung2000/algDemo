@@ -1,0 +1,13 @@
+/* ART-SIZE-001: the no-artwork placeholder takes its size from --art-size (set by <Art>), so any
+   context rule that sizes .art (the player's 64px cover, a row's 44px) applies to it too. The note
+   glyph scales with the box instead of keeping the pixel size it was drawn at. */
+.art--none {
+  width: var(--art-size, 48px);
+  height: var(--art-size, 48px);
+  flex: none;
+  overflow: hidden;
+}
+.art--none > svg {
+  width: 42%;
+  height: 42%;
+}

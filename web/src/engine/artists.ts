@@ -26,6 +26,14 @@ import type { Store } from './store';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = Record<string, any>;
+
+/** ARTIST-ARTICLE-001: a name folded with its English article set aside ("The X", "X, The" -> "x"). */
+export function sansArticle(name: string): string {
+  const f = fold(String(name ?? '').replace(/^\s*(.+?)\s*,\s*the\s*$/i, '$1'));
+  const bare = f.replace(/^the\s+/, '');
+  return bare || f;
+}
+
 export interface Ctx {
   meter?: Meter;
   token?: CancelToken;
@@ -80,7 +88,7 @@ interface ArtistCarry {
 }
 /** FEATURES-FLOW-001: how long past its time a step waits for work that is just about done. */
 const STEP_SLACK_MS = 100;
-const YT_QUIET_PAGES = 3;
+// No quiet-page shortcut: later pages can still contain credited guest appearances.
 const YT_PAGE_GAP_MS = 400;
 
 /**
@@ -232,6 +240,7 @@ interface FeatureState {
   ytDone: boolean;
   ytFound: Track[];
   ytSeen: Set<string>;
+  ytTokens: Set<string>;
   ytComplete: boolean;
   had: Set<string>;
   shown: Set<string>;
@@ -571,10 +580,11 @@ export class Artists {
      * listen to, so of the exact matches the most followed opens; without fan counts the first
      * stands, and a name that merely resembles it is still never borrowed.
      */
-    const exact = (list: ArtistSummary[], who: string) => {
-      const hits = list.filter((a) => fold(a.name) === fold(who));
-      return hits.reduce<ArtistSummary | null>((best, a) => (best && (best.fans ?? -1) >= (a.fans ?? -1) ? best : a), null);
-    };
+    const most = (hits: ArtistSummary[]) => hits.reduce<ArtistSummary | null>((best, a) => (best && (best.fans ?? -1) >= (a.fans ?? -1) ? best : a), null);
+    // ARTIST-ARTICLE-001: Deezer files "The Jackson 5" as "Jackson 5". An exact name still wins; only
+    // when none matches may a leading "The" (or a trailing ", The") be set aside on both sides.
+    const exact = (list: ArtistSummary[], who: string) =>
+      most(list.filter((a) => fold(a.name) === fold(who))) ?? most(list.filter((a) => sansArticle(a.name) === sansArticle(who)));
     const lookDz = async (who: string) => {
         try {
           const aid = dzId ?? (who ? exact(await this.searchDz(who, c), who)?.id.slice(3) ?? null : null);
@@ -820,7 +830,7 @@ export class Artists {
    */
   featureLook(view: FeatureView, c: Ctx = {}): { step: (c: Ctx, ms: number) => Promise<FeatureAnswer> } {
     const store = artistCache(this.store, c);
-    const key = `artistfeats3:${view.id}`;
+    const key = `artistfeats4:${view.id}`;
     const hit = store?.cacheGet(key)?.value as { features: Track[]; complete: boolean } | undefined;
     if (hit) return { step: async () => ({ features: hit.features, complete: hit.complete, more: false }) };
     const st = this.featureState(view, c);
@@ -852,13 +862,13 @@ export class Artists {
     const uc = view.name && this.yt ? /\/channel\/(UC[A-Za-z0-9_-]{22})(?![A-Za-z0-9_-])/.exec(view.links?.ytmusic ?? '')?.[1] ?? /^yt:(UC[A-Za-z0-9_-]{22})$/.exec(view.id)?.[1] ?? null : null;
     const shown = [...view.songs, ...(view.features ?? [])];
     const known = new Set<string>();
-    for (const t of shown) {
+    for (const t of view.features ?? []) {
       if (t.provider === 'deezer' && t['platform_id']) known.add(String(t['platform_id']));
     }
     // FEATURES-FLOW-001: what earlier looks learnt about each candidate. Who is on a song does not
     // change, so one that was read is not read again: a look again, or a look a step at a time that
     // was left half way, picks up where the last one stopped.
-    const verdictKey = dzId ? `artistfeatverdict1:${dzId}` : null;
+    const verdictKey = dzId ? `artistfeatverdict2:${dzId}` : null;
     const kept = (verdictKey ? artistCache(this.store, c)?.cacheGet(verdictKey)?.value : undefined) as { no?: string[]; yes?: Record<string, Track> } | undefined;
     return {
       dzId, uc, name: view.name, known, verdictKey,
@@ -867,7 +877,7 @@ export class Artists {
       // A service the page opened without (slow, or not reached) was not asked for features either:
       // the list says it is incomplete, so it is not kept and "Look again" is offered.
       ids: new Set(), accepted: 0, queue: [], searching: null, searchDone: !dzId, dzFound: new Map(), dzComplete: view.sources?.['deezer']?.state !== 'failed',
-      ytQueries: uc ? ytFeatureSearches(view.name) : [], yq: 0, ytToken: null, yp: 0, quiet: 0, ytDone: !uc, ytFound: [], ytSeen: new Set(), ytComplete: view.sources?.['ytmusic']?.state !== 'failed',
+      ytQueries: uc ? ytFeatureSearches(view.name) : [], yq: 0, ytToken: null, yp: 0, quiet: 0, ytDone: !uc, ytFound: [], ytSeen: new Set(), ytTokens: new Set(), ytComplete: view.sources?.['ytmusic']?.state !== 'failed',
       // A Deezer row is dropped only when it is one the page already lists as a feature; a YouTube
       // Music row also when the page has the song at all, or Deezer has it under the same title and lead.
       had: new Set((view.features ?? []).map((t) => t.key)), shown: new Set(shown.map((t) => t.key)),
@@ -1015,7 +1025,10 @@ export class Artists {
         continue;
       }
       // Confirmed by Deezer's id for this artist, never by the name: a namesake is someone else.
-      const on = ((full['contributors'] as Json[] | undefined) ?? []).some((x) => String(x['id']) === st.dzId);
+      const contributors = full['contributors'];
+      // A partial response is unknown, not a cached negative verdict lasting a month.
+      if (!Array.isArray(contributors) || contributors.length === 0 || !full['artist']?.['id']) { st.dzComplete = false; continue; }
+      const on = String(full['artist']['id']) !== st.dzId && (contributors as Json[]).some((x) => String(x['id']) === st.dzId);
       if (on) {
         const t = this.dz.toTrack(full);
         st.dzFound.set(cand.order, t);
@@ -1038,6 +1051,7 @@ export class Artists {
       st.ytToken = null;
       st.yp = 0;
       st.quiet = 0;
+      st.ytTokens.clear();
       if (st.yq >= st.ytQueries.length) st.ytDone = true;
     };
     for (let did = false; !st.ytDone && (!did || Date.now() < st.until); did = true) {
@@ -1063,9 +1077,9 @@ export class Artists {
       }
       st.quiet = on ? 0 : st.quiet + 1;
       st.ytToken = page.next;
-      if (!st.ytToken || st.quiet >= YT_QUIET_PAGES) advance();
-      else if (st.yp + 1 >= YT_FEATURE_PAGES) { st.ytComplete = false; advance(); }
-      else st.yp += 1;
+      if (!st.ytToken) advance();
+      else if (st.ytTokens.has(st.ytToken) || st.yp + 1 >= YT_FEATURE_PAGES) { st.ytComplete = false; advance(); }
+      else { st.ytTokens.add(st.ytToken); st.yp += 1; }
       // About a page a second. Measured 2026-11-16: read as fast as they come, some forty pages an
       // artist, YouTube Music started holding requests and refusing them, and the artist pages
       // opened next then had to do without it. Nothing is waiting on this list.

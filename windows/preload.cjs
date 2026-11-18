@@ -26,4 +26,10 @@ contextBridge.exposeInMainWorld('AirwaveNative', {
   warmStream: (url) => {
     if (typeof url === 'string' && url.length <= 2048) ipcRenderer.send('aw:warm', url);
   },
+  // FOLDER-IMPORT-001: the user's own music folders, imported as saved playlists (Windows only).
+  folders: (id, json) => {
+    const n = Number(id);
+    if (!Number.isInteger(n) || typeof json !== 'string') return;
+    ipcRenderer.invoke('aw:folders', json).then((out) => reply('__awFolders', n, out));
+  },
 });

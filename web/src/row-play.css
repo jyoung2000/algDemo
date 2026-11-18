@@ -1,0 +1,14 @@
+/* ROW-PLAY-001 (owner 2026-11-17): songs that are ready to play (full file on this device, local songs
+   included) have a light blue filled Play button on every list. READY-PLAY-001's pale tint (#e6effb)
+   was too faint to notice. The triangle stays the accent blue so it reads on the light fill. */
+.iconbtn.playbtn[data-ready='true'] {
+  background: #bcd8ff;
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px #8fbcf5;
+}
+@media (hover: hover) {
+  .iconbtn.playbtn[data-ready='true']:hover:not([disabled]) {
+    background: #a9cdfd;
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+}

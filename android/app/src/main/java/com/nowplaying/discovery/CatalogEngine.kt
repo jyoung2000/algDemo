@@ -30,7 +30,8 @@ import java.util.concurrent.Executors
  * reaches the network only through the shared guarded [NativeHttp]. Its replies carry search and
  * Identify answers only ([MediaHub.applyCatalog]); playback stays with the native engine.
  *
- * Owned by [PlaybackService]: created in its onCreate, destroyed in its onDestroy, main thread only.
+ * Owned by [PlaybackService]: registered in its onCreate, started after onCreate returns, destroyed
+ * in its onDestroy, main thread only.
  *
  * SERVICE-API-001: when it holds the original database ([EngineOwner]) this page is the ONE engine:
  * the UI page's requests ([ServiceApi]) are answered here, its queue cache acquires and downloads the
@@ -67,6 +68,9 @@ class CatalogEngine(private val context: Context) {
     if (v != null) main.post { if (web === v) v.evaluateJavascript("window.__awMediaCmd && window.__awMediaCmd(${JSONObject.quote(cmd.toString())})", null) }
   }
 
+  /** Register before the deferred start so a car request in that gap waits for catalogReady. */
+  fun prepare() { if (!stopped) MediaHub.setCatalogSink(sink) }
+
   @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
   fun start() {
     if (stopped || web != null) return
@@ -101,7 +105,13 @@ class CatalogEngine(private val context: Context) {
 
       override fun onRenderProcessGone(v: WebView, detail: RenderProcessGoneDetail): Boolean {
         Log.w(TAG, "renderer gone (crash=${detail.didCrash()})")
-        if (web === v) { teardown(); if (!stopped && restarts++ < 3) main.postDelayed({ start() }, 2000) }
+        if (web === v) {
+          teardown()
+          if (!stopped && restarts++ < 3) {
+            prepare() // Hold new car commands while the renderer restarts.
+            main.postDelayed({ start() }, 2000)
+          }
+        }
         return true
       }
     }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { CardCacheContext } from './card-cache-context';
 import { Radio } from './Radio';
 import { RadioPlayer } from './RadioPlayer';
 import { radioSession } from './engine/radio-client';
@@ -8,7 +9,7 @@ import { api, type PlaylistMix, newEventId, type FeedbackKind, type JobStatus, t
 import { Art } from './Art';
 import { Player, type ListenTelemetry, type Playing } from './Player';
 import { Results, rowId, type FeedbackFlags } from './Results';
-import { DownloadsView, useDownloads } from './Downloads';
+import { useDownloads } from './Downloads';
 import { Search } from './Search';
 import { AlbumView, albumTargetKey, type AlbumTarget } from './Albums';
 import { ArtistView, artistTargetKey, type ArtistTarget } from './Artists';
@@ -25,7 +26,7 @@ import { savedTracks, playbackRows, preparationTracks, contextRows, addTargetOf,
 import { decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pickCarContext, pushMediaLibrary, pushMediaState, pushMediaTracks, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { engineAvailable, engineSend, listenFromEvent, markEngineEvent, subscribeEngineState } from './engine/native-engine';
 import { SettingsView } from './Settings';
-import { setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
+import { markSavedSettingsApplied, setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
 import { PLAY_THROUGH_DEFAULT } from './engine/crossfade';
 import { dl, downloadsAvailable } from './engine/downloads';
 import { readResume } from './engine/resume';
@@ -33,7 +34,7 @@ import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, canP
 import { queueAudio } from './engine/queue-audio';
 import { CarCatalog } from './engine/car-catalog';
 
-type Tab = 'discover' | 'radio' | 'saved' | 'profile' | 'downloads' | 'settings';
+type Tab = 'discover' | 'radio' | 'saved' | 'profile' | 'settings';
 
 /** One slider from Familiar to Adventurous, in steps of 0.01. Its label reads the position in words. */
 function adventureLabel(a: number): string {
@@ -242,6 +243,7 @@ export function App() {
     setMixSlider(settings.mix ?? 0);
     setLocalMix(settings.local_mix ?? true);
     setPlayThrough(settings.play_through ?? PLAY_THROUGH_DEFAULT);
+    markSavedSettingsApplied(); // EQ-RESTORE-001: from here the engine may be told this page's sound settings
   }, [settings?.eq, settings?.mix, settings?.local_mix, settings?.play_through]);
 
   // ---------------------------------------------------------------- recommendations
@@ -427,6 +429,11 @@ export function App() {
     if (t.provider === 'radio' && t.radio_station) { tune(t.radio_station); return; }
     if (radioSession.get().station) { void radioSession.stop().then(() => previewTrack(t)); return; }
     startTokenRef.current++; setPlaying({ track: t, playback: playbackOfTrack(t) });
+  };
+  /** A radio song or artist name was clicked: leave the live stream and play the real catalogue song. */
+  const playFromRadio = (t: Track) => {
+    const go = () => playFromSearch(t, [t]);
+    if (radioSession.get().station) { void radioSession.stop().then(go); } else { go(); }
   };
   /** SEARCH-QUEUE-001: a song played from a search list, with that list as what the skip buttons walk. */
   const playFromSearch = (t: Track, list: Track[]) => {
@@ -951,7 +958,6 @@ export function App() {
               ['radio', 'Radio', 'note'],
               ['saved', 'Saved', 'heart'],
               ['profile', 'Profile', 'eq'],
-              ...(dls.on ? ([['downloads', 'Downloads', 'download']] as const) : []),
               ['settings', 'Settings', 'gear'],
             ] as const
           ).map(([id, label, g]) => (
@@ -959,7 +965,8 @@ export function App() {
               <button className={classNames('side__item', tab === id && 'is-on')} type="button" aria-label={label} aria-current={tab === id ? 'page' : undefined} onClick={() => { setPages([]); setTab(id); }}>
                 <Glyph name={g} size={15} />
                 <span>{label}</span>
-                {id === 'downloads' && dls.activeCount > 0 && <span className="count">{dls.activeCount}</span>}
+                {/* DOWNLOADS-IN-SETTINGS-001: the download list lives in Settings now; its running count shows here. */}
+                {id === 'settings' && dls.activeCount > 0 && <span className="count">{dls.activeCount}</span>}
               </button>
             </li>
           ))}
@@ -970,6 +977,7 @@ export function App() {
       </nav>
 
       <main id="main" className="main">
+        <CardCacheContext.Provider value={cardCache}>
         {offline && (
           <p className="banner banner--bad" role="alert">
             <Glyph name="offline" size={14} /> The Airwave service is not answering on this computer. Start it with <code>pnpm discovery</code> and reload.
@@ -1286,7 +1294,7 @@ export function App() {
           </div>
         )}
 
-        {tab === 'radio' && <div className="tabpane" hidden={albumOpen}><Radio onTune={tune} /></div>}
+        {tab === 'radio' && <div className="tabpane" hidden={albumOpen}><Radio onTune={tune} onOpenArtist={openArtist} onPlaySong={playFromRadio} /></div>}
 
         {tab === 'saved' && (
           <div className="tabpane" hidden={albumOpen}>
@@ -1311,14 +1319,14 @@ export function App() {
 
         {tab === 'profile' && <div className="tabpane" hidden={albumOpen}><ProfileView /></div>}
 
-        {tab === 'downloads' && <div className="tabpane" hidden={albumOpen}><DownloadsView d={dls} /></div>}
-
         {tab === 'settings' && (
           <div className="tabpane" hidden={albumOpen}>
           <SettingsView
             settings={settings}
             sources={Object.fromEntries(srcEntries)}
+            downloads={dls}
             onSettings={patchSettings}
+            onFormulaSaved={setSettings}
             onResetTaste={() =>
               api.resetTaste().then(
                 () => {
@@ -1355,12 +1363,13 @@ export function App() {
           />
           </div>
         )}
+        </CardCacheContext.Provider>
       </main>
 
       <aside className="rail" aria-label="Player">
         {!radioStation && <QueuePreparation tracks={cacheTracks} parallel={settings?.dl_parallel ?? 0}
           preload={{ target: settings?.preload_target ?? 'all', count: settings?.preload_count ?? 20 }} />}
-        {radioStation ? <RadioPlayer docked={docked} onOpenArtist={openArtist} /> : <Player
+        {radioStation ? <RadioPlayer docked={docked} onOpenArtist={openArtist} onPlaySong={playFromRadio} onDownloadSong={dls.on ? dls.downloadTrack : undefined} /> : <Player
           onOpenArtist={openArtist}
           playing={playing}
           upNext={upNext}
@@ -1381,7 +1390,8 @@ export function App() {
               await learnFeedback(playing.track, kind);
             },
             onDownload: async () => (playing ? dls.downloadTrack(playing.track) : false),
-            onDownloads: () => setTab('downloads'),
+            // DOWNLOADS-IN-SETTINGS-001: the download list lives in the Settings Downloads section.
+            onDownloads: () => setTab('settings'),
           }}
           onShuffle={toggleShuffle}
           onRepeat={cycleRepeat}

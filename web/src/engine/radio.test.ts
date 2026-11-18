@@ -56,3 +56,61 @@ describe('station shuffle picks (RADIO-UI-005)', () => {
     expect(pickShuffleIndex(0, -1, Math.random)).toBe(-1);
   });
 });
+
+describe('station alphabet and directory cursors (RADIO-ALPHA-001)', () => {
+  it('groups English initials case/diacritic-insensitively and puts digits and other scripts under #', async () => {
+    const { stationInitial } = await import('./radio');
+    expect(stationInitial('  kexp')).toBe('K'); expect(stationInitial('Énergie')).toBe('E');
+    expect(stationInitial('107.5 WGCI')).toBe('W'); expect(stationInitial('日本ラジオ')).toBe('#');
+  });
+  it('queries the directory for a letter and advances through raw nonmatching rows, not just the displayed first page', async () => {
+    const calls: URL[] = [];
+    const d = new RadioDirectory(async url => { const u = new URL(url); calls.push(u); const off = Number(u.searchParams.get('offset')); return JSON.stringify(off === 0 ? Array.from({length:120},(_,i)=>({...raw,stationuuid:`other-${i}`,name:`Radio k ${i}`})) : [{...raw,stationuuid:'k1',name:'KEXP'}]); });
+    const page = await d.page({ letter:'K', country:'US', tag:'jazz' });
+    expect(page.stations.map(s=>s.name)).toEqual(['KEXP']); expect(page.nextOffset).toBeNull();
+    expect(calls.map(u=>u.searchParams.get('offset'))).toEqual(['0','120']);
+    expect(calls[0]!.searchParams.get('name')).toBe('K'); expect(calls[0]!.searchParams.get('countrycode')).toBe('US');
+  });
+  it('does not lose matching records when a raw batch contains more than one visible page', async () => {
+    const rows = Array.from({length:60},(_,i)=>({...raw,stationuuid:`k${i}`,name:`K ${i}`}));
+    const d = new RadioDirectory(async url => JSON.stringify(rows.slice(Number(new URL(url).searchParams.get('offset')))));
+    const one=await d.page({letter:'K'}), two=await d.page({letter:'K',offset:one.nextOffset!});
+    expect(one.stations).toHaveLength(24); expect(two.stations).toHaveLength(24);
+    expect(one.nextOffset).toBe(24); expect(two.nextOffset).toBe(48);
+    expect(new Set([...one.stations,...two.stations].map(s=>s.id)).size).toBe(48);
+  });
+  it('keeps a raw cursor after a bounded empty scan, rather than falsely claiming there are no letter matches anywhere', async () => {
+    let calls=0;const d=new RadioDirectory(async()=>{calls++;return JSON.stringify(Array.from({length:120},(_,i)=>({...raw,stationuuid:`n${i}`,name:'Radio K'})))});
+    const page=await d.page({letter:'K'});expect(page.stations).toEqual([]);expect(page.nextOffset).toBe(240);expect(calls).toBe(2);
+  });
+});
+
+describe('call-sign and frequency aliases (RADIO-ALPHA-002)', () => {
+  it('keeps learned call-sign/frequency aliases reachable across index modes without leaking country filters', async () => {
+    const d=new RadioDirectory(async url=>JSON.stringify(new URL(url).searchParams.get('name')==='WGCI' ? [{...raw,stationuuid:'real-wgci',name:'107.5 WGCI',countrycode:'US'}] : Array.from({length:120},(_,i)=>({...raw,stationuuid:`n${i}`,name:`Radio 1 ${i}`,countrycode:'CA'}))));
+    await d.page({query:'WGCI'});
+    expect((await d.page({letter:'1'})).stations.some(s=>s.id==='real-wgci')).toBe(true);
+    expect((await d.page({letter:'1',country:'CA'})).stations.some(s=>s.id==='real-wgci')).toBe(false);
+  });
+
+  it('uses the call sign for letters but allows all numeric frequency prefixes in either display order', async () => {
+    const { stationMatchesInitial, stationMatchesQuery } = await import('./radio');
+    for (const name of ['107.5 WGCI', 'WGCI 107.5', '107.5 FM - WGCI', 'WGCI-FM 107,5']) {
+      expect(stationMatchesInitial(name,'W')).toBe(true); expect(stationMatchesInitial(name,'1')).toBe(true);
+      expect(stationMatchesQuery(name,'wgci')).toBe(true); expect(stationMatchesQuery(name,'107')).toBe(true);
+      expect(stationMatchesQuery(name,'WGCI 107.5')).toBe(true); expect(stationMatchesQuery(name,'W G C I')).toBe(true);
+      expect(stationMatchesInitial(name,'2')).toBe(false); expect(stationMatchesQuery(name,'106.5')).toBe(false);
+    }
+    expect(stationMatchesInitial('KEXP 90.3 (MP3 128kbps)','1')).toBe(false);
+    expect(stationMatchesInitial('KEXP 90.3 (MP3 128kbps)','9')).toBe(true);
+    expect(stationMatchesInitial('Énergie 98,9','E')).toBe(true);
+  });
+  it('searches by a call sign or number without hardcoding a station, preserving the other filters', async () => {
+    const seen:URL[]=[];const d=new RadioDirectory(async url=>{seen.push(new URL(url));return JSON.stringify([{...raw,name:'107.5 WGCI'},{...raw,stationuuid:'other',name:'Radio 9107'}])});
+    expect((await d.page({letter:'W',query:'wgci',country:'US',tag:'hip hop'})).stations.map(s=>s.name)).toEqual(['107.5 WGCI']);
+    expect((await d.page({letter:'1',query:'107'})).stations.map(s=>s.name)).toEqual(['107.5 WGCI']);
+    expect((await d.page({query:'107.5 WGCI'})).stations.map(s=>s.name)).toEqual(['107.5 WGCI']);
+    expect(seen.at(-1)!.searchParams.get('name')).toBe('WGCI');
+    expect(seen[0]!.searchParams.get('countrycode')).toBe('US');expect(seen[0]!.searchParams.get('tag')).toBe('hip hop');
+  });
+});

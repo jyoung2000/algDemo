@@ -108,7 +108,53 @@ describe('v2 coverage (defect 5)', () => {
     expect(v2.coverage).toBeGreaterThan(v1.coverage);
     // with a seed vector present, audio counts as missing evidence again (same denominator as v1)
     const withVec = ctxOf({ ...base, vectors: new Map([[s.key, Float64Array.from([1, 0])]]) });
-    expect(E.scoreAll([c], withVec)[0]!.coverage).toBeCloseTo(v1.coverage, 10);
+    const w = DEFAULT_ENGINE.weights, half = w.genre * DEFAULT_ENGINE.genreProviderOverlap;
+    // genre (counted half beside service evidence) + artist + services, out of everything but that half (COVERAGE-FULL-001)
+    expect(E.scoreAll([c], withVec)[0]!.coverage).toBeCloseTo((w.genre - half + w.artist + w.provider) / (w.audio + w.genre - half + w.artist + w.provider + w.feedback + w.tempo), 10);
+    expect(E.scoreAll([c], withVec)[0]!.coverage).toBeLessThan(v2.coverage);
+  });
+
+  // COVERAGE-FULL-001 (formula audit 2026-11-18, found independently by both reviewers): genre counts half when the
+  // services also relate the song, but the half that was taken away still sat in "everything that could be known".
+  // A song with every kind of evidence therefore read as 92% covered and lost 4% of its score for nothing.
+  const full = (overlap: number, over: Partial<E.Track> = {}, v2 = true) => {
+    const s = track('seed|song', { tags: [tag('rock')], bpm: 120 });
+    const c = track('x|hit', { tags: [tag('rock')], bpm: 121, provenance: [{ seed: s.key, relation: 'related_song', rank: 0, source: 'ytmusic-related' }], ...over });
+    const vectors = new Map([[s.key, Float64Array.from([1, 0])], [c.key, Float64Array.from([1, 0])]]);
+    const feedback = E.buildFeedback2([ev('complete', c.key)], NOW_TS);
+    return E.scoreOne(c, ctxOf({ seeds: [s], vectors, relatedArtists: new Map([[s.key, new Set<string>(['x'])]]), feedback, rankV2: v2, cfg: { ...DEFAULT_ENGINE, genreProviderOverlap: overlap } }));
+  };
+  it('a song with every kind of evidence is fully covered, however much genre is discounted (COVERAGE-FULL-001)', () => {
+    for (const overlap of [0, 0.5, 1]) {
+      const sc = full(overlap);
+      for (const k of ['audio', 'genre', 'artist', 'provider', 'tempo', 'feedback']) expect(sc.factors[k], `${k} at overlap ${overlap}`).not.toBeNull();
+      expect(sc.coverage, `overlap ${overlap}`).toBeCloseTo(1, 12);
+    }
+  });
+  it('taking one kind of evidence away still lowers coverage, and the original scorer is untouched (COVERAGE-FULL-001)', () => {
+    expect(full(0.5, { bpm: null }).coverage).toBeLessThan(1);
+    expect(full(0.5, { tags: [] }).coverage).toBeLessThan(full(0.5, { bpm: null }).coverage); // genre weighs more than tempo
+    const w = DEFAULT_ENGINE.weights, all = w.audio + w.genre + w.artist + w.provider + w.feedback + w.tempo;
+    expect(full(0.5, {}, false).coverage).toBeCloseTo((all - w.genre * 0.5) / all, 12); // v1 parity path keeps 0.9167
+  });
+});
+
+// NOVELTY-UNKNOWN-001 (formula audit 2026-11-18): a song with no artist named was scored as a brand-new artist
+// (novelty 1) and filed under new-artist picks. Nobody knows whose it is; that is unknown, not new.
+describe('v2 novelty', () => {
+  const seedsOf = () => [track('seed|song', { tags: [tag('rock')] })];
+  it('a song with no artist named has no novelty score, and is not filed as a new artist', () => {
+    const nameless = track('|untitled', { artists: [], tags: [tag('rock')] });
+    const sc = E.scoreAll([nameless, track('new|one', { tags: [tag('rock')] })], ctxOf({ seeds: seedsOf() }));
+    const by = Object.fromEntries(sc.map((s) => [s.track.key, s]));
+    expect(by['|untitled']!.factors.novelty).toBeNull();
+    expect('novelty' in by['|untitled']!.weightsUsed).toBe(false);
+    expect(by['|untitled']!.tier).not.toBe('emerging');
+    expect(by['new|one']!.factors.novelty).toBe(1); // a named artist outside the starting songs is still new
+  });
+  it('the original scorer keeps its answer', () => {
+    const nameless = track('|untitled', { artists: [], tags: [tag('rock')] });
+    expect(E.scoreOne(nameless, ctxOf({ seeds: seedsOf(), rankV2: false })).factors.novelty).toBe(1);
   });
 });
 

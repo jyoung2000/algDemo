@@ -285,6 +285,40 @@ describe('opening an artist (ARTIST-PAGE-001)', () => {
   });
 });
 
+describe('a leading "The" does not hide an artist (ARTIST-ARTICLE-001)', () => {
+  // Owner report 2026-11-17: "The Jackson 5" opened a page saying neither Deezer nor YouTube Music
+  // has one. Measured: Deezer's artist search answers "Jackson 5" (1,622,220 fans), "The Jackson
+  // 5ive", "The Jacksons", "The Jackson Five"... and song credits say "The Jackson 5". Exact
+  // folding rejected all of them. An exact name still wins; only without one may the article go.
+  const j5 = { id: 75332, type: 'artist', name: 'Jackson 5', nb_fan: 1622220, picture_big: null, link: 'https://www.deezer.com/artist/75332' };
+  const ive = { id: 7012135, type: 'artist', name: 'The Jackson 5ive', nb_fan: 5306, picture_big: null, link: 'https://www.deezer.com/artist/7012135' };
+  const jacksons = { id: 980, type: 'artist', name: 'The Jacksons', nb_fan: 907383, picture_big: null, link: 'https://www.deezer.com/artist/980' };
+  const song = { id: 1, title: 'ABC', duration: 180, artist: { id: 75332, name: 'Jackson 5' }, album: { id: 5, title: 'ABC' }, contributors: [{ id: 75332, name: 'Jackson 5' }] };
+  const routes = {
+    'api.deezer.com/search/artist': { data: [j5, ive, jacksons] },
+    'api.deezer.com/artist/75332/top': { data: [song] },
+    'api.deezer.com/artist/75332/albums': { data: [] },
+    'api.deezer.com/artist/75332': j5,
+  };
+  it('opens "Jackson 5" for "The Jackson 5", not a lookalike', async () => {
+    const { artists } = world(routes);
+    const v = await artists.open({ name: 'The Jackson 5' });
+    expect(v.links.deezer).toContain('75332');
+    expect(v.songs.map((t) => t.title)).toEqual(['ABC']);
+  });
+  it('also reads "Jackson 5, The" as the same name', async () => {
+    const { artists } = world(routes);
+    const v = await artists.open({ name: 'Jackson 5, The' });
+    expect(v.links.deezer).toContain('75332');
+  });
+  it('still prefers an exact name over an article-only match', async () => {
+    const exactThe = { ...j5, id: 4242, name: 'The Jackson 5', nb_fan: 10, link: 'https://www.deezer.com/artist/4242' };
+    const { artists } = world({ ...routes, 'api.deezer.com/search/artist': { data: [j5, exactThe] }, 'api.deezer.com/artist/4242/top': { data: [] }, 'api.deezer.com/artist/4242/albums': { data: [] }, 'api.deezer.com/artist/4242': exactThe });
+    const v = await artists.open({ name: 'The Jackson 5' });
+    expect(v.links.deezer).toContain('4242');
+  });
+});
+
 describe('which of several same-named artists a name opens (ARTIST-NAME-PICK-001)', () => {
   // Deezer answers its own order, which can put a 42-fan namesake above the artist the words mean;
   // opening that one shows a near-empty page: a song or two, and no features to partition.
@@ -610,6 +644,30 @@ describe('every feature Deezer can be asked for (FEATURES-ALL-001)', () => {
   const TITLED = 'api.deezer.com/search/track?q=track%3A%22Ken%20Carson%22';
   const PLAIN = 'api.deezer.com/search/track?q=Ken%20Carson';
 
+  it('rechecks displayed songs against official track contributor IDs rather than skipping them', async () => {
+    const w = world({ ...FULL, [PLAIN]: { data: [g(9781)] }, 'api.deezer.com/track/9781': g(9781) });
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    const displayed = new Deezer({} as Http).toTrack(g(9781));
+    const found = await w.artists.everyFeature({ ...a, songs: [...a.songs, displayed] });
+    expect(found.features.some(t => t.platform_id === '9781')).toBe(true);
+  });
+
+  it('does not cache missing contributor data as proof the artist is absent', async () => {
+    const kept = mapStore(); const partial = { ...g(9782), contributors: undefined };
+    const w = world({ ...FULL, [PLAIN]: { data: [g(9782)] }, 'api.deezer.com/track/9782': partial }, kept.store);
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    expect((await w.artists.everyFeature(a)).complete).toBe(false);
+    const w2 = world({ ...FULL, [PLAIN]: { data: [g(9782)] }, 'api.deezer.com/track/9782': g(9782) }, kept.store);
+    expect((await w2.artists.everyFeature(a)).features.some(t => t.platform_id === '9782')).toBe(true);
+  });
+
+  it('rejects a misleading search lead when the official track identifies the target as lead artist', async () => {
+    const full = { ...g(9783), artist: KC };
+    const w = world({ ...FULL, [PLAIN]: { data: [g(9783)] }, 'api.deezer.com/track/9783': full });
+    const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
+    expect((await w.artists.everyFeature(a)).features.some(t => t.platform_id === '9783')).toBe(false);
+  });
+
   it('asks three ways, because the name search alone leaves features out', async () => {
     // Measured on Deezer for one artist: the name search confirmed 54 features, and asking for
     // "feat <name>" and for the name in a song's title confirmed 35 more.
@@ -772,14 +830,13 @@ describe('features from YouTube Music too, every page (FEATURES-ALL-002)', () =>
     expect(found.features.map((t) => [t.title, t.provider])).toEqual([['Both Have It (feat. Ken Carson)', 'deezer'], ['YouTube only', 'ytmusic']]);
   });
 
-  it('stops once the artist is no longer on the pages, instead of reading a search to its last page', async () => {
+  it('follows all continuation pages even after a quiet run so later official credits are not lost', async () => {
     const quiet = Array.from({ length: 12 }, (_, i) => [stranger(i)]);
-    const w = ytWorld({ 'Ken Carson': [[guest('gst00000001', 'Early guest')], ...quiet], 'feat Ken Carson': [[]] });
+    const w = ytWorld({ 'Ken Carson': [[guest('gst00000001', 'Early guest')], ...quiet, [guest('gst00000002', 'Late credited guest')]], 'feat Ken Carson': [[]] });
     const a = await w.artists.open({ id: 'dz:2568121', name: 'Ken Carson' });
     const found = await w.artists.everyFeature(a);
-    expect(found.features.filter((t) => t.provider === 'ytmusic').map((t) => t.title)).toEqual(['Early guest']);
-    // Three pages in a row without the artist end the search; that is its end, not a failure.
-    expect(w.asked.filter((x) => x.startsWith('Ken Carson#'))).toHaveLength(4);
+    expect(found.features.filter((t) => t.provider === 'ytmusic').map((t) => t.title)).toEqual(['Early guest', 'Late credited guest']);
+    expect(w.asked.filter((x) => x.startsWith('Ken Carson#'))).toHaveLength(14);
     expect(found.complete).toBe(true);
   });
 

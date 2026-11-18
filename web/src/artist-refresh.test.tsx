@@ -39,8 +39,22 @@ async function open() {
   await act(async () => root!.render(<ArtistView target={{ id: 'dz:1', name: 'Artist' }} onBack={() => {}} onPreview={() => {}} onOpenAlbum={() => {}} onOpenArtist={() => {}} seedKeys={new Set()} onAdd={() => {}} />));
   await flush();
 }
-const refreshButton = () => [...host.querySelectorAll('button')].find((b) => /Refresh artist|Refreshing/.test(b.textContent ?? ''));
+const refreshButton = () => host.querySelector<HTMLButtonElement>('[aria-label="Refresh artist"]') ?? undefined;
 const titles = () => [...host.querySelectorAll('.track__title')].map((x) => x.textContent?.trim());
+
+it('moves a song with a newly verified guest credit into Features without showing it twice', async () => {
+  const shared = song('Newly credited guest');
+  view.songs.push(shared); view.features!.push(shared);
+  try { await open(); expect(titles().filter(t => t === 'Newly credited guest')).toHaveLength(1); }
+  finally { view.songs.pop(); view.features!.pop(); }
+});
+
+it('uses a separated icon-only refresh action, with an accessible name', async () => {
+  await open();
+  const button = refreshButton()!; expect(button).toBeDefined();
+  expect(button.textContent).toBe(''); expect(button.querySelector('svg')).not.toBeNull();
+  expect(button.classList.contains('artist__refresh')).toBe(true);
+});
 
 it('refreshes all four requests with one fresh token, keeps results and pages features to the end', async () => {
   await open();
@@ -140,8 +154,8 @@ it('bypasses cached artist pages and name searches once per refresh identity, th
 
 it('bypasses completed feature caches and old contributor verdicts and restarts every search page', async () => {
   const { store, m } = cache(); const w = engine(store);
-  m.set('artistfeats3:dz:1', { features: [song('Cached feature')], complete: true });
-  m.set('artistfeatverdict1:1', { no: ['9'], yes: {} });
+  m.set('artistfeats4:dz:1', { features: [song('Cached feature')], complete: true });
+  m.set('artistfeatverdict2:1', { no: ['9'], yes: {} });
   let candidateReads = 0; let searches = 0;
   vi.spyOn(w.http, 'getJson').mockImplementation(async (url) => {
     const u = new URL(url);

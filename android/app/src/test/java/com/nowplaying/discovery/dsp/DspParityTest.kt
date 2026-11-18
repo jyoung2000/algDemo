@@ -105,7 +105,11 @@ class DspParityTest {
     val args = action["args"] as List<Any?>
     when (val op = action["op"] as String) {
       "setEq" -> bus.setEq(eqConfig(args[0] as Map<String, Any?>))
-      "transitionTo" -> bus.transitionTo(args[0] as String, args[1] as Double, TransitionStyle.of(args[2] as String))
+      "transitionTo" -> {
+        @Suppress("UNCHECKED_CAST")
+        val shape = (args.getOrNull(3) as Map<String, Any?>?)?.let { TransitionShape(it["swapAt"] as Double, it["swapSeconds"] as Double) }
+        bus.transitionTo(args[0] as String, args[1] as Double, TransitionStyle.of(args[2] as String), shape)
+      }
       "crossfadeTo" -> bus.crossfadeTo(args[0] as String, args[1] as Double)
       "cut" -> bus.cut(args[0] as String)
       "setMasterGain" -> bus.setMasterGain(args[0] as Double)

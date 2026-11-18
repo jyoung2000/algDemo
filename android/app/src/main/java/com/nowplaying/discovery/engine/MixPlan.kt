@@ -3,6 +3,7 @@ package com.nowplaying.discovery.engine
 import com.nowplaying.discovery.dsp.TransitionStyle
 import java.math.BigDecimal
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -70,7 +71,24 @@ data class MixInputs(
   val minPlayedFraction: Double? = null,
   val outBpm: Double? = null,
   val inBpm: Double? = null,
+  /** Where the outgoing song's music really ends and where its beats fall (DJ-XFADE-001). */
+  val outCues: TrackCues? = null,
+  /** The same for the incoming song. Used only together with [outCues]. */
+  val inCues: TrackCues? = null,
+  /** The largest tempo change this player can make without changing pitch. Default MAX_TEMPO_NUDGE. */
+  val maxNudge: Double? = null,
 )
+
+/** crossfade.ts `BeatFit`: how the blend sits on the beat. */
+enum class BeatFit(val id: String) {
+  LOCKED("locked"),
+  ENTRY("entry"),
+  NONE("none");
+
+  companion object {
+    fun of(id: String): BeatFit = entries.firstOrNull { it.id == id } ?: throw IllegalArgumentException("unknown beat fit $id")
+  }
+}
 
 /** crossfade.ts `MixPlan`: the blend for one pair of songs. */
 data class MixPlan(
@@ -91,6 +109,15 @@ data class MixPlan(
   val style: TransitionStyle,
   /** One read-only line for the UI, e.g. "Smooth • about 9 seconds". */
   val description: String,
+  /** Where in the outgoing track the blend is complete and the incoming song takes over. */
+  val endAt: Double,
+  /** Where the incoming song is started from: its first sound, not the start of its file. */
+  val inStart: Double = 0.0,
+  /** Seconds into the blend at which the low end changes hands, or null for the plain automation. */
+  val swapAt: Double? = null,
+  /** How long that handoff takes. */
+  val swapSeconds: Double = 0.0,
+  val beat: BeatFit = BeatFit.NONE,
 )
 
 object Crossfade {
@@ -252,8 +279,9 @@ object Crossfade {
     fun known(n: Double) = n.isFinite() && n > 0
     val style = transitionStyle(s)
     val tempo = tempoRelation(inputs.outBpm, inputs.inBpm)
+    val fileEnd = if (known(outSeconds)) outSeconds else 0.0
     fun flat(seconds: Double, startAt: Double, reason: MixReason, description: String, style: TransitionStyle = transitionStyle(s)) =
-      MixPlan(seconds, startAt, label, requested, reason, 0.0, tempo, 1.0, style, description)
+      MixPlan(seconds, startAt, label, requested, reason, 0.0, tempo, 1.0, style, description, endAt = fileEnd)
 
     if (s <= 0) {
       return flat(0.0, if (known(outSeconds)) outSeconds else 0.0, MixReason.OFF, describe(label, 0.0, MixReason.OFF), TransitionStyle.CUT)
@@ -261,6 +289,7 @@ object Crossfade {
     if (!known(outSeconds) || !known(inSeconds)) {
       return flat(0.0, if (known(outSeconds)) outSeconds else 0.0, MixReason.TOO_SHORT_TO_BLEND, describe(label, 0.0, MixReason.TOO_SHORT_TO_BLEND))
     }
+    if (inputs.outCues != null) return cuedPlan(s, outSeconds, inSeconds, inputs, inputs.outCues)
 
     val songCeiling = outSeconds * (1 - playedFraction(inputs.minPlayedFraction))
     val pairCeiling = inSeconds * MAX_TRACK_FRACTION
@@ -286,10 +315,133 @@ object Crossfade {
       rate = tempoNudge(inputs.outBpm, inputs.inBpm),
       style = style,
       description = describe(label, seconds, reason, quantised.bars, tempo),
+      endAt = fileEnd,
     )
   }
 
-  private fun describe(label: MixLabel, seconds: Double, reason: MixReason, bars: Double = 0.0, tempo: TempoRelation = TempoRelation.UNKNOWN): String {
+  /** After the song leaves its own level, the blend may run this much longer to cover the ring-out. */
+  const val TAIL_GRACE_SECONDS = 1.0
+  /** A song already fading when the blend may begin still gets this long, so the entry is not a jump. */
+  const val FAST_BLEND_SECONDS = 2.0
+  /** A beat-placed blend needs at least this many beats; fewer is a plain fade. */
+  const val MIN_BLEND_BEATS = 2.0
+  /** Where the low end changes hands: halfway when the songs are in step, a third in when they are not. */
+  const val SWAP_FRACTION_LOCKED = 0.5
+  const val SWAP_FRACTION_FREE = 1.0 / 3
+
+  /** `out / in` folded by octaves into [sqrt(1/2), sqrt(2)), so half and double time compare as equal. */
+  fun foldedRatio(outBpm: Double, inBpm: Double): Double {
+    var ratio = outBpm / inBpm
+    if (!ratio.isFinite() || ratio <= 0) return Double.NaN
+    val root2 = Math.sqrt(2.0)
+    val rootHalf = Math.sqrt(0.5)
+    while (ratio >= root2) ratio /= 2
+    while (ratio < rootHalf) ratio *= 2
+    return ratio
+  }
+
+  /**
+   * DJ-XFADE-001: the blend for a pair whose outgoing song has been measured (crossfade.ts
+   * `cuedPlan`). Nothing of the next song is heard over the outgoing one before its play-through
+   * share has played; the blend ends on the music, starts on a beat, and trades the low end once.
+   */
+  private fun cuedPlan(s: Double, outSeconds: Double, inSeconds: Double, inputs: MixInputs, out: TrackCues): MixPlan {
+    val label = mixLabel(s)
+    val requested = requestedSeconds(s)
+    val style = transitionStyle(s)
+    val inCues = inputs.inCues
+    val floor = outSeconds * playedFraction(inputs.minPlayedFraction)
+    val end = clamp(if (out.end.isFinite()) out.end else outSeconds, 0.0, outSeconds)
+    val fullEnd = clamp(if (out.fullEnd.isFinite()) out.fullEnd else end, 0.0, end)
+    val inStart = if (inCues != null && inCues.start.isFinite()) clamp(inCues.start, 0.0, max(0.0, inSeconds - MIN_USEFUL_SECONDS)) else 0.0
+    val outGrid = if (Cues.gridUsable(out.tail)) out.tail else null
+    val inGrid = if (outGrid != null && Cues.gridUsable(inCues?.head)) inCues!!.head else null
+    val ratio = if (outGrid != null && inGrid != null) foldedRatio(outGrid.bpm, inGrid.bpm) else Double.NaN
+    val maxNudge = if (inputs.maxNudge != null && inputs.maxNudge.isFinite()) clamp(inputs.maxNudge, 0.0, MAX_TEMPO_NUDGE) else MAX_TEMPO_NUDGE
+    val lockable = ratio.isFinite() && abs(ratio - 1) <= maxNudge
+    val tempo = when {
+      outGrid == null || inGrid == null -> TempoRelation.UNKNOWN
+      !lockable -> TempoRelation.UNRELATED
+      abs(outGrid.bpm / inGrid.bpm - 1) <= maxNudge -> TempoRelation.SAME
+      else -> TempoRelation.HALF_OR_DOUBLE
+    }
+    fun handoff() = MixPlan(0.0, end, label, requested, MixReason.TOO_SHORT_TO_BLEND, 0.0, tempo, 1.0, style,
+      describe(label, 0.0, MixReason.TOO_SHORT_TO_BLEND), endAt = end, inStart = inStart)
+
+    val window = end - floor
+    if (window < MIN_USEFUL_SECONDS) return handoff()
+    val finish = clamp(fullEnd + TAIL_GRACE_SECONDS, floor + min(FAST_BLEND_SECONDS, window), end)
+    val songCeiling = finish - floor
+    val pairCeiling = (inSeconds - inStart) * MAX_TRACK_FRACTION
+    val capped = min(requested, min(songCeiling, pairCeiling))
+    if (capped < MIN_USEFUL_SECONDS) return handoff()
+    val reason = when {
+      capped >= requested - 0.05 -> MixReason.AS_REQUESTED
+      songCeiling <= pairCeiling -> MixReason.KEPT_FOR_SONG
+      else -> MixReason.SHORTENED_FOR_PAIR
+    }
+    val handsOver = style == TransitionStyle.BASS_SWAP || style == TransitionStyle.FILTER
+    val earliest = finish - capped
+
+    if (outGrid != null) {
+      val beat = 60 / outGrid.bpm
+      val rate = if (lockable) ratio else 1.0
+      var pickup = 0.0
+      if (inGrid != null) {
+        val inBeat = 60 / inGrid.bpm
+        val firstBeat = inGrid.beatAt + ceil((inStart - inGrid.beatAt) / inBeat - 1e-9) * inBeat
+        pickup = (firstBeat - inStart) / rate
+      }
+      val onBeat = outGrid.beatAt + ceil((earliest + pickup - outGrid.beatAt) / beat - 1e-9) * beat
+      var beats = floor((finish - onBeat) / beat + 1e-9)
+      if (beats >= 8) beats -= beats % 4
+      if (beats >= MIN_BLEND_BEATS) {
+        val seconds = pickup + beats * beat
+        val fit = if (lockable) BeatFit.LOCKED else BeatFit.ENTRY
+        var swapBeat = max(1.0, jsRound(beats * (if (fit == BeatFit.LOCKED) SWAP_FRACTION_LOCKED else SWAP_FRACTION_FREE)))
+        if (beats >= 8) swapBeat = max(4.0, jsRound(swapBeat / 4) * 4)
+        swapBeat = min(swapBeat, beats - 1)
+        val swapSeconds = clamp(beat, 0.2, 0.6)
+        return MixPlan(
+          seconds = seconds,
+          startAt = onBeat - pickup,
+          label = label,
+          requested = requested,
+          reason = reason,
+          bars = if (beats % 4 == 0.0) beats / 4 else 0.0,
+          tempo = tempo,
+          rate = rate,
+          style = style,
+          description = describe(label, seconds, reason, 0.0, tempo, fit, outGrid.bpm),
+          endAt = onBeat - pickup + seconds,
+          inStart = inStart,
+          swapAt = if (handsOver) pickup + swapBeat * beat - swapSeconds / 2 else null,
+          swapSeconds = if (handsOver) swapSeconds else 0.0,
+          beat = fit,
+        )
+      }
+    }
+    val swapSeconds = min(0.4, capped / 4)
+    return MixPlan(
+      seconds = capped,
+      startAt = earliest,
+      label = label,
+      requested = requested,
+      reason = reason,
+      bars = 0.0,
+      tempo = tempo,
+      rate = 1.0,
+      style = style,
+      description = describe(label, capped, reason, 0.0, tempo, BeatFit.NONE, 0.0),
+      endAt = finish,
+      inStart = inStart,
+      swapAt = if (handsOver) capped * SWAP_FRACTION_FREE - swapSeconds / 2 else null,
+      swapSeconds = if (handsOver) swapSeconds else 0.0,
+      beat = BeatFit.NONE,
+    )
+  }
+
+  private fun describe(label: MixLabel, seconds: Double, reason: MixReason, bars: Double = 0.0, tempo: TempoRelation = TempoRelation.UNKNOWN, fit: BeatFit? = null, fitBpm: Double = 0.0): String {
     if (reason == MixReason.OFF) return "Off • songs play one after another"
     if (reason == MixReason.TOO_SHORT_TO_BLEND) return "${label.text} • too short to blend, clean handoff"
     val about = if (seconds >= 10) jsString(jsRound(seconds)) else jsString(round1(seconds))
@@ -297,6 +449,14 @@ object Crossfade {
       MixReason.KEPT_FOR_SONG -> ", kept so the song plays through"
       MixReason.SHORTENED_FOR_PAIR -> ", shortened for this pair"
       else -> ""
+    }
+    if (fit != null) {
+      val how = when (fit) {
+        BeatFit.LOCKED -> ", beat-matched at ${jsString(jsRound(fitBpm))} BPM"
+        BeatFit.ENTRY -> ", in on the beat"
+        BeatFit.NONE -> ""
+      }
+      return "${label.text} • about $about seconds$tail$how"
     }
     val beat = when {
       bars > 0 -> ", ${jsString(bars)} ${if (bars == 1.0) "bar" else "bars"} on the beat"
@@ -342,4 +502,10 @@ object Crossfade {
 val CrossfadePlanner = BlendPlanner { slider, outSeconds, inSeconds, minPlayedFraction ->
   val p = Crossfade.mixPlan(slider.toDouble(), outSeconds, inSeconds, MixInputs(minPlayedFraction = minPlayedFraction))
   BlendPlan(p.seconds, p.startAt, p.style)
+}
+
+/** The same planner given what was measured of the songs (DJ-XFADE-001), as PreviewMixer calls it. */
+val CrossfadeCuePlanner = CuePlanner { slider, outSeconds, inSeconds, minPlayedFraction, outCues, inCues ->
+  val p = Crossfade.mixPlan(slider.toDouble(), outSeconds, inSeconds, MixInputs(minPlayedFraction = minPlayedFraction, outCues = outCues, inCues = inCues))
+  BlendPlan(p.seconds, p.startAt, p.style, p.endAt, p.inStart, p.rate, p.swapAt, p.swapSeconds, p.beat)
 }

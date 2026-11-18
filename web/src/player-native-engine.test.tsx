@@ -9,7 +9,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, createElement } from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { Player, type Playing } from './Player';
-import { resetEngineForTests as resetAudio, setLocalMix, setMixSlider } from './audio-engine';
+import { markSavedSettingsApplied, resetEngineForTests as resetAudio, setEqConfig, setLocalMix, setMixSlider } from './audio-engine';
 import { resetEngineForTests as resetNative } from './engine/native-engine';
 import type * as DownloadsModule from './engine/downloads';
 
@@ -90,6 +90,7 @@ beforeEach(() => {
   resetNative();
   setMixSlider(0);
   setLocalMix(true);
+  markSavedSettingsApplied(); // as App does once the saved settings have loaded
   for (const f of Object.values(props)) if (typeof f === 'function') (f as ReturnType<typeof vi.fn>).mockClear?.();
 });
 afterEach(() => {
@@ -113,6 +114,24 @@ it('hands the engine the exact local file and never plays the song in the page a
   // The sound settings go to the engine too.
   expect(ops('settings').some((c) => 'eq' in c && 'mix' in c && 'playThrough' in c)).toBe(true);
   expect(ops('settings').some((c) => 'volume' in c)).toBe(true);
+});
+
+// EQ-RESTORE-001: seen on a real phone. The service restores the listener's saved EQ, then the page opened and sent its
+// blank defaults (eq off) two seconds before its own settings had loaded, switching the EQ off under music already playing.
+it('does not send blank sound settings to the engine before the saved settings have loaded (EQ-RESTORE-001)', async () => {
+  resetAudio(); // the app has just opened: nothing loaded yet
+  readyUrls.set('one', SRC_ONE);
+  held.add(SRC_ONE);
+  render(createElement(Player, { ...props, playing: song('one') }));
+  await settle();
+  expect(ops('settings').filter((c) => 'eq' in c)).toEqual([]);
+  // The saved settings arrive: the engine now hears the listener's own EQ, never a default one.
+  const boosted = { on: true, presetId: 'bass-booster', gains: [7, 5.5, 4, 2, 0, 0, 0, 0, 0, 0], preampDb: 0, limiter: true, toneHz: null, toneDb: 6 };
+  await act(async () => { setEqConfig(boosted); setMixSlider(0); markSavedSettingsApplied(); });
+  const eqs = ops('settings').filter((c) => 'eq' in c);
+  expect(eqs.length).toBeGreaterThan(0);
+  for (const c of eqs) expect((c['eq'] as { on: boolean }).on, 'a default EQ reached the engine').toBe(true);
+  expect(eqs.some((c) => 'mix' in c && 'playThrough' in c)).toBe(true);
 });
 
 it('mirrors the engine: progress, play/pause, and the controls act on the engine', async () => {

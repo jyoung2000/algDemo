@@ -273,3 +273,23 @@ it('looks up the full song even when the day\'s discovery allowance is used up',
   expect(r.status).toBe(200);
   expect(r.body).toMatchObject({ id: null, source: 'none' }); // no match in this empty answer, but it was asked, not refused
 });
+
+// FOLDER-IMPORT-PLAY-001 (live Windows trace 2026-11-17): the import registered
+// `fullsong:<title>|<artist>|null`, but the saved list keeps the track without a duration, so the
+// player asked for `...|undefined`, missed, searched online and cached "none" — the imported song
+// showed "No downloadable full recording". An imported file is its own full song: answer from the
+// track itself, before any cache or network.
+it('resolves an imported local song to its own file without searching, whatever its duration field', async () => {
+  const store = await Store.open(new MemoryBackend());
+  const asked: string[] = [];
+  const api = new LocalApi({ store, encoder: null, spotifySearch: () => async () => [], port: {
+    request: async (req: { url: string }) => { asked.push(req.url); return { status: 200, headers: {}, body: new TextEncoder().encode('{}') }; },
+  } });
+  const url = 'imported:C:\\Music\\My Mix\\Artist - Song.opus';
+  for (const extra of [{}, { duration: null }, { duration: 200 }]) {
+    const track = { key: 'artist|song|', provider: 'imported', platform_id: 'C:\\Music\\My Mix\\Artist - Song.opus', title: 'Song', artists: ['Artist'], url, ...extra };
+    const r = await api.handle('POST', '/api/full-song', { track });
+    expect(r.body).toMatchObject({ url, source: 'imported' });
+  }
+  expect(asked).toEqual([]);
+});

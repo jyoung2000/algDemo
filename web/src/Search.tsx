@@ -1,4 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { CardCacheContext } from './card-cache-context';
+import { RowPlayButton, playOnDoubleClick } from './RowPlay';
+import './search-clean.css';
+import { SwipeLi } from './useSwipeRemove';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { SourceMark } from './SourceMark';
 import { RefreshGlyph } from './icons';
@@ -13,6 +17,7 @@ import { warmer } from './engine/warm-shell';
 import { namesAlbum } from './engine/album-key';
 import { PROVIDER_LABEL, classNames, fmtDuration, fmtRelease, looksLikeUrl } from './util';
 import { TypeFilter, toggleType } from './TypeFilter';
+import { Develop, SkeletonList } from './Skeleton';
 import { releaseMatches, songMatches, isAlbumTrack, isByArtist, isFeatureTrack, isSingleRelease, isSingleTrack, namesArtistIn, type ResultType } from './result-types';
 
 /** RESULT-TYPES-001: the icon menu above search results. */
@@ -598,19 +603,19 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
           }}
         />
       </form>
-      <p id="q-hint" className="search__hint">
+      {/* SEARCH-CLEAN-001: the owner asked for these labels to go; screen readers still hear them (aria-describedby). */}
+      <p id="q-hint" className="search__hint sr">
         Type a title, an artist, a line you remember from the lyrics, or paste a music link. Results update as you type.
       </p>
-      <p id="q-privacy" className="search__hint">
+      <p id="q-privacy" className="search__hint sr">
         Audio is fingerprinted on your device; only fingerprints go to Shazam, and lyric words go to Genius.
       </p>
 
       <div className={classNames(refreshing && 'is-refreshing')} aria-live="polite" aria-busy={view.kind === 'loading' || refreshing || busyAudio}>
         {view.kind === 'loading' && (
-          <p className="state">
-            <span className="sdot sdot--busy" aria-hidden="true" />
-            {view.what === 'link' ? 'Reading the link…' : 'Searching…'}
-          </p>
+          /* SKELETON-001: placeholder rows shaped like the result rows (artwork, two text lines,
+             an action pill), so the list develops in place instead of jumping in after a spinner. */
+          <SkeletonList rows={5} label={view.what === 'link' ? 'Reading the link…' : 'Searching…'} pill />
         )}
         {view.kind === 'audio' && (
           <div className="listen" ref={panel}>
@@ -696,10 +701,15 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
           </div>
         )}
         {view.kind === 'results' && (
-          <ResultsView view={view} types={types} onToggleType={(t) => setTypes((s) => toggleType(s, t))} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} onRefresh={() => void run(view.query, false, true)} refreshing={refreshing} onOpenSettings={onOpenSettings} onOpenAlbumId={onOpenAlbumTarget ? (a) => onOpenAlbumTarget({ id: a.id }) : undefined} />
+          /* SKELETON-001: fresh results develop into focus where the skeleton stood; a new query re-runs it. */
+          <Develop key={`results:${view.query}`}>
+            <ResultsView view={view} types={types} onToggleType={(t) => setTypes((s) => toggleType(s, t))} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} onRefresh={() => void run(view.query, false, true)} refreshing={refreshing} onOpenSettings={onOpenSettings} onOpenAlbumId={onOpenAlbumTarget ? (a) => onOpenAlbumTarget({ id: a.id }) : undefined} />
+          </Develop>
         )}
         {view.kind === 'identified' && (
-          <IdentifiedView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} />
+          <Develop key={`identified:${view.query}`}>
+            <IdentifiedView view={view} seedKeys={seedKeys} onAdd={onAdd} onPreview={onPreview} onDownload={onDownload} {...likeProps} />
+          </Develop>
         )}
       </div>
     </section>
@@ -1114,6 +1124,8 @@ export function TrackList({
   playingKey?: string | null | undefined;
   label: string;
 }) {
+  // ROW-PLAY-001: which songs are ready to play, from the app's download cache.
+  const cacheOf = useContext(CardCacheContext);
   // Controlled by Search when it is in charge; the row's own state only when it stands alone.
   const [ownSaving, setOwnSaving] = useState<string | null>(null);
   const saving = onSaving ? (savingProp ?? null) : ownSaving;
@@ -1178,13 +1190,15 @@ export function TrackList({
         const added = seedKeys.has(t.key);
         const meta = numbered ? '' : fmtRelease(t.release);
         return (
-          <li
+          <SwipeLi
             key={`${t.provider}:${t.platform_id}`}
+            onSwipeLeft={onLists ? () => setSaving(t.key) : undefined}
             className={classNames('track', added && 'is-added', numbered && 'track--numbered', t.key === playingKey && 'is-playing')}
             aria-current={t.key === playingKey ? 'true' : undefined}
-            ref={(el) => watchRow(el, t)}
+            ref={(el: HTMLLIElement | null) => watchRow(el, t)}
             onPointerEnter={() => warmer().warm(t)}
             onFocus={() => warmer().warm(t)}
+            onDoubleClick={playOnDoubleClick(() => onPreview(t, tracks))}
           >
             {numbered && <span className="track__num" aria-hidden="true">{i + 1}</span>}
             <Art src={t.artwork} size={44} />
@@ -1215,9 +1229,7 @@ export function TrackList({
                 knows how to look a song up, and how to download it when no player here can play it;
                 the row's job is to ask.
               */}
-              <button className="iconbtn" type="button" onClick={() => onPreview(t, tracks)} aria-label={`Play ${t.title}`} title="Play">
-                <Glyph name="play" size={14} />
-              </button>
+              <RowPlayButton track={t} cache={cacheOf?.(t.key)} onPlay={() => onPreview(t, tracks)} />
               {onDownload && (
                 <button className="iconbtn" type="button" onClick={() => onDownload(t)} aria-label={`Download ${t.title}`} title="Download">
                   <Glyph name="download" size={14} />
@@ -1268,7 +1280,7 @@ export function TrackList({
                 <SaveMenu songKey={t.key} title={t.title} lists={lists ?? []} onLists={onLists} onClose={() => setSaving(null)} />
               </div>
             )}
-          </li>
+          </SwipeLi>
         );
       })}
     </ul>

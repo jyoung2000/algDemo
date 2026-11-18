@@ -41,6 +41,7 @@ describe('READY-PLAY-001: readiness subtly tints the Play button',()=>{
   });
   it('defines a ready-only accent background and icon colour without resizing buttons',()=>{
     const css=readFileSync(`${process.cwd()}/src/styles.css`,'utf8');
-    expect(css).toMatch(/\.rec__actions \.iconbtn\.playbtn\[data-ready='true'\]\s*\{[^}]*background:\s*var\(--accent-soft\);[^}]*color:\s*var\(--accent\);/);
+    // ROW-PLAY-001 (owner 2026-11-17): "a light blue filled play button" replaces the faint accent-soft tint.
+    expect(css).toMatch(/\.rec__actions \.iconbtn\.playbtn\[data-ready='true'\]\s*\{[^}]*background:\s*#bcd8ff;[^}]*color:\s*var\(--accent\);/);
   });
 });

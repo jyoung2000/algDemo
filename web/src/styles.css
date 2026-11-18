@@ -3575,6 +3575,34 @@ html {
     align-items: center;
     row-gap: 2px;
   }
+  /* DOCK-CENTRE-001: the five transport buttons used to share one flex row with volume and
+     song actions, so their centre moved whenever those controls changed width or vanished.
+     Keep transport centred under the full progress bar; utilities occupy their own short row. */
+  .np--docked .np__controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-rows: minmax(44px, auto) 44px;
+    column-gap: 0;
+    row-gap: 0;
+    width: 100%;
+  }
+  .np--docked .np__controls .transport {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: center;
+  }
+  .np--docked .np__controls .vol {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: start;
+  }
+  .np--docked .np__controls .np__track-actions {
+    /* Span the row, not the narrow right 1fr track. At 320px three actions are wider than that
+       track and otherwise painted outside the viewport even though the page had no scroll bar. */
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: end;
+  }
 }
 
 /* ------------------------------------------------------------------ desktop: the player is a bar fixed to the bottom
@@ -3653,9 +3681,10 @@ html {
 /* READY-PLAY-001: a quiet blue tint means a full local file is ready, not merely resolvable.
    The existing check and accessible readiness text remain; colour is an additional cue. */
 .rec__actions .iconbtn.playbtn[data-ready='true'] {
-  background: var(--accent-soft);
+  /* ROW-PLAY-001: the same light blue fill as every other list (row-play.css); the old #e6effb was too faint. */
+  background: #bcd8ff;
   color: var(--accent);
-  box-shadow: inset 0 0 0 1px #b8cff0;
+  box-shadow: inset 0 0 0 1px #8fbcf5;
 }
 .rec__dl[data-dl='failed'] .rec__dl-rail,
 .rec__dl[data-dl='blocked'] .rec__dl-rail { width: 100%; background: var(--danger); opacity: 0.5; clip-path: none; }
@@ -4062,3 +4091,64 @@ html {
 @media (pointer: coarse) {
   .typefilter__btn { width: 44px; height: 40px; }
 }
+
+/* ARTIST-REFRESH-002: trailing icon separated from Back, with the common 44px target. */
+.artist__bar { display:flex; align-items:center; justify-content:space-between; gap:24px; }
+.artist__refresh { margin-left:auto; flex:0 0 44px; width:44px; height:44px; display:grid; place-items:center; }
+.artist__refresh[aria-busy=true] svg { animation:radio-refresh-spin .85s linear infinite; }
+@media (prefers-reduced-motion:reduce) { .artist__refresh[aria-busy=true] svg { animation:none; } }
+
+/* ARTIST-PLAY-ICON-001: the artist page play controls are icon-only round targets; the verb lives
+   in the accessible name. A 44px circle keeps the touch target the HIG minimum. */
+.artist__play,
+.artist__section-play {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ============================================================================
+   Radio-specific additions (Radio.tsx) — appended; see RADIO-TOP-001 / RADIO-SKEL-001.
+   ============================================================================ */
+/* RADIO-TOP-001: while station rows stream in, the browser must never adopt the footer as a
+   scroll anchor and throw the page to the bottom; the directory always reads from the top. */
+.radio-page { overflow-anchor: none; }
+/* RADIO-SKEL-001: each newly arrived station row develops in (Skeleton.tsx <Develop>). The
+   animation wrapper takes over the li's two-column grid so the row layout is unchanged. */
+ul.radio-stations > li.radio-station { display: block; }
+ul.radio-stations > li.radio-station > .skel-develop { display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: start; gap: 16px; }
+@media (max-width: 760px) {
+  ul.radio-stations > li.radio-station > .skel-develop { grid-template-columns: 40px minmax(0, 1fr); gap: 12px; }
+}
+/* RADIO-UI-011: the station's play button sits on one row with the location and the now-playing
+   line, vertically centred on them. The button keeps its 44px target and never shrinks; the text
+   column takes the rest and may shrink to nothing, so a long title is cut with an ellipsis rather
+   than pushing the button off the row (checked at 320, 390, 768 and 1440px wide). */
+.radio-station__body > .radio-station__playrow { display: flex; align-items: center; gap: 12px; min-width: 0; margin: 6px 0 2px; }
+.radio-station__playrow > .radio-station__play { flex: 0 0 44px; width: 44px; min-width: 44px; height: 44px; min-height: 44px; margin: 0; }
+.radio-station__playrow > .radio-station__info { flex: 1 1 auto; min-width: 0; }
+.radio-station__info > .radio-location { margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.radio-station__info > .radio-now { min-width: 0; overflow-wrap: normal; }
+/* The 4px padding gives the artist and song links' focus ring room inside the clipped box. */
+.radio-now > .radio-now__text { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-block: 4px; margin-block: -4px; }
+.radio-now__text > .radio-now__link { overflow-wrap: normal; }
+/* RADIO-UI-012: the owner asked for the station's tags and name on the play button's row too. The
+   row is [play][info], and the info column holds four single lines: the name (with its star), the
+   location, the now-playing line and the tags, all centred on the 44px button. Every line keeps to
+   one line and ends in an ellipsis, so a long name, title or tag never wraps, overflows or pushes the
+   button off the row, and a row keeps its height while its song changes (no jump on a live update).
+   The (at most three) tag bubbles sit 6px apart so they never touch, and may each shrink to an
+   ellipsis; they stay on one line (no wrap) so the row keeps its height. */
+.radio-station__info > h2 { display: flex; align-items: center; gap: 4px; min-width: 0; margin: 0; overflow-wrap: normal; }
+.radio-station__info > h2 > .radio-station__name { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-block: 2px; margin-block: -2px; }
+/* The star keeps its 44px target; negative margins stop it making the name line 44px tall. */
+.radio-station__info > h2 > .radio-station__star { flex: 0 0 auto; margin-block: -12px; }
+.radio-station__info > .radio-now { flex-direction: row; align-items: baseline; gap: 6px; }
+.radio-station__info > .radio-station__tags { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-width: 0; margin-top: 4px; overflow: hidden; }
+.radio-station__tags > .genre { display: inline-block; flex: 0 1 auto; min-width: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.radio-station__tags > .genre::before { display: inline-block; vertical-align: -1px; margin-right: 5px; }
+.radio-station__body > .radio-station__details { margin-top: 2px; }

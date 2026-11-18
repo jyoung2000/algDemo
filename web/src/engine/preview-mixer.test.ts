@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PreviewMixer } from './preview-mixer';
+import { PreviewMixer, entranceSeconds } from './preview-mixer';
 import type { AudioBus } from './audio-bus';
 
 function setup() {
@@ -20,85 +20,82 @@ function setup() {
 }
 const next = { key: 'b', preview: 'b.wav' };
 
-describe('preview crossfader lifecycle', () => {
-  it('preloads the next song without starting it, then overlaps at the planned point', async () => {
-    const { m, a, b, bus } = setup();
-    await m.prepare(next);
-    expect(b.src).toBe('b.wav'); expect(b.play).not.toHaveBeenCalled();
-    a.currentTime = 28; await m.tick(100);
-    expect(b.play).not.toHaveBeenCalled();
-    a.currentTime = 28.6; await m.tick(100);
-    expect(b.play).toHaveBeenCalledTimes(1);
-    expect(bus.transitionTo).toHaveBeenCalledWith('b', expect.closeTo(1.4, 5), 'filter'); // the 5% tail of a 30s deck
-    expect(a.paused).toBe(false); expect(b.paused).toBe(false);
+describe('post-completion transition lifecycle', () => {
+  it('preloads quietly and identifies the resolved full song rather than its catalogue locator', async () => {
+    const {m,a,b,resolve,status}=setup();resolve.mockResolvedValueOnce('blob:full-song');
+    await m.prepare({key:'b',preview:'/api/preview/deezer/1'});
+    expect(b.src).toBe('blob:full-song');expect(b.play).not.toHaveBeenCalled();expect(a.paused).toBe(false);
+    expect(status).toHaveBeenLastCalledWith('Ready for the next full song — after 100% of this song.');
   });
-  it('starts the blend where the play-through setting says, not at a fixed 95% (MIXER-PLAY-THROUGH-002)', async () => {
-    const { m, a, b, bus } = setup(); await m.prepare(next);
-    a.currentTime = 23; await m.tick(100, 0.8); // 80% of 30 s = 24 s: not yet
-    expect(b.play).not.toHaveBeenCalled();
-    a.currentTime = 24.1; await m.tick(100, 0.8);
-    expect(b.play).toHaveBeenCalledTimes(1);
-    expect(bus.transitionTo).toHaveBeenCalledWith('b', expect.closeTo(5.9, 5), 'filter');
-  });
-
-  it('does nothing at Off, during repeat/pause/seek, or with an unready next song', async () => {
-    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 29;
-    await m.tick(0); a.paused = true; await m.tick(100);
-    a.paused = false; a.seeking = true; await m.tick(100);
-    a.seeking = false; b.readyState = 1; await m.tick(100);
-    expect(bus.transitionTo).not.toHaveBeenCalled();
-  });
-  it('promotes exactly the preloaded song without restarting it', async () => {
-    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 28.6; await m.tick(100);
-    b.currentTime = 12;
-    expect(m.finish()).toEqual({ key: 'b', deck: 'b' });
-    expect(m.active).toBe('b'); expect(a.paused).toBe(true);
-    expect(b.currentTime).toBe(12); expect(b.play).toHaveBeenCalledTimes(1);
-    expect(bus.cut).toHaveBeenLastCalledWith('b');
-    expect(m.finish()).toBeNull();
-  });
-  it('works A→B→A, not just for the first pair', async () => {
-    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 28.6; await m.tick(100); m.finish();
-    await m.prepare({ key: 'c', preview: 'c.wav' });
-    expect(a.src).toBe('c.wav'); b.currentTime = 28.6; await m.tick(100);
-    expect(bus.transitionTo).toHaveBeenLastCalledWith('a', expect.closeTo(1.4, 5), 'filter');
-    expect(m.finish()).toEqual({ key: 'c', deck: 'a' });
-  });
-  it('ignores a late URL from an obsolete queue item', async () => {
-    const { m, b, resolve } = setup(); let finish!: (s: string) => void;
-    resolve.mockImplementationOnce(() => new Promise(r => { finish = r; }));
-    const old = m.prepare(next);
-    await m.prepare({ key: 'c', preview: 'c.wav' }); finish('obsolete.wav'); await old;
+  it('ignores stale URL resolution and cannot replace a newer candidate', async()=>{
+    const {m,b,resolve}=setup();let complete!:(v:string)=>void;
+    resolve.mockImplementationOnce(()=>new Promise(r=>{complete=r}));
+    const old=m.prepare(next);await m.prepare({key:'c',preview:'c.wav'});complete('obsolete.wav');await old;
     expect(b.src).toBe('c.wav');
   });
-  it('cancels safely while play() is pending; a late success cannot fade the new song', async () => {
-    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 28.6;
-    let finish!: () => void; b.play.mockImplementationOnce(() => new Promise(r => { finish = r; }));
-    const pending = m.tick(100); m.cancel(); finish(); await pending;
-    expect(bus.transitionTo).not.toHaveBeenCalled(); expect(b.paused).toBe(true);
+  it('cancels an in-flight play without advancing, and a late success cannot fade the new track',async()=>{
+    const {m,a,b,bus}=setup();await m.prepare(next);a.ended=true;
+    let complete!:()=>void;b.play.mockImplementationOnce(()=>new Promise(r=>{complete=r}));
+    const handoff=m.handoff(80);m.cancel();complete();expect(await handoff).toBeNull();
+    expect(m.active).toBe('a');expect(bus.transitionTo).not.toHaveBeenCalled();expect(b.paused).toBe(true);
   });
-  it('cancels an overlap on seek/skip/Off and restores only the current track', async () => {
-    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 28.6; await m.tick(100);
-    m.cancel(); expect(b.paused).toBe(true); expect(bus.cut).toHaveBeenLastCalledWith('a');
-    expect(m.finish()).toBeNull();
+  it('leaves primary untouched when incoming playback rejects',async()=>{
+    const {m,a,b,bus,status}=setup();await m.prepare(next);a.ended=true;b.play.mockRejectedValueOnce(new Error('blocked'));
+    expect(await m.handoff(100)).toBeNull();expect(m.active).toBe('a');expect(bus.transitionTo).not.toHaveBeenCalled();
+    expect(status).toHaveBeenLastCalledWith('Next song could not start.');
   });
-  it('never advances early when the incoming play promise rejects', async () => {
-    const { m, a, b, bus, status } = setup(); await m.prepare(next); a.currentTime = 28.6;
-    b.play.mockRejectedValueOnce(new Error('not allowed')); await m.tick(100); await m.tick(100);
-    expect(bus.transitionTo).not.toHaveBeenCalled(); expect(m.finish()).toBeNull();
-    expect(a.paused).toBe(false); expect(status).toHaveBeenLastCalledWith(expect.stringContaining('could not start'));
+  it('works A→B→A without replaying either ending or skipping either entrance',async()=>{
+    const {m,a,b}=setup();await m.prepare(next);a.ended=true;await m.handoff(60);
+    await m.prepare({key:'c',preview:'c.wav'});a.ended=false;b.ended=true;
+    expect(await m.handoff(60)).toEqual({key:'c',deck:'a'});expect(m.active).toBe('a');expect(a.currentTime).toBe(0);
+    expect(a.play).toHaveBeenCalledTimes(1);expect(b.play).toHaveBeenCalledTimes(1);
   });
-  it('does not promote a stalled or failed incoming deck', async () => {
-    const { m, a, b } = setup(); await m.prepare(next); a.currentTime = 28.6; await m.tick(100);
-    b.paused = true; expect(m.finish()).toBeNull(); expect(m.active).toBe('a');
+  it('does not change master volume or pitch; fade length is capped for a full song entrance',()=>{
+    expect(entranceSeconds(0,180)).toBe(0);expect(entranceSeconds(100,180)).toBe(2);
+    expect(entranceSeconds(100,1)).toBe(0.1);expect(entranceSeconds(100,NaN)).toBe(2);
   });
-  it('uses actual remaining time after a slow play promise, not a fade past EOF', async () => {
-    const { m, a, b, bus } = setup(); await m.prepare(next); a.currentTime = 28.6;
-    b.play.mockImplementationOnce(async () => { a.currentTime = 25; b.paused = false; });
-    await m.tick(100); expect(bus.transitionTo).toHaveBeenCalledWith('b', expect.closeTo(1.5, 5), 'filter'); // the plan's 1.5s, not the 5s now left
+  it('refuses Off, failed preparation and stale cancelled candidates',async()=>{
+    const {m,a,b,resolve}=setup();a.ended=true;await m.prepare(next);
+    expect(await m.handoff(0)).toBeNull();m.cancel();expect(await m.handoff(100)).toBeNull();
+    resolve.mockRejectedValueOnce(new Error('missing'));await m.prepare(next);expect(await m.handoff(100)).toBeNull();
+    expect(b.play).not.toHaveBeenCalled();
   });
-  it('does not re-fetch a stable lookahead on a volume render', async () => {
-    const { m, resolve } = setup(); await m.prepare(next); await m.prepare({ ...next });
-    expect(resolve).toHaveBeenCalledTimes(1);
+});
+
+describe('FULL-COMPLETION-001 hard end-of-source rule', () => {
+  it('retains the prepared next source when seeking the current song',async()=>{
+    const {m,a,b}=setup();await m.prepare(next);m.seeked();
+    expect(b.src).toBe('b.wav');a.ended=true;expect(await m.handoff(100)).toEqual({key:'b',deck:'b'});
+  });
+
+  it('ignores old 95% settings and even the reported duration until the source actually ended', async () => {
+    const { m, a, b, bus } = setup(); await m.prepare(next);
+    for (const at of [28.6, 29.999, 30, 35]) {
+      a.currentTime = at; await m.tick(100, 0.5);
+      expect(b.play).not.toHaveBeenCalled();
+      expect(bus.transitionTo).not.toHaveBeenCalled();
+      expect(m.active).toBe('a');
+    }
+  });
+  it('starts the next at zero only after ended, fades it in and promotes it immediately', async () => {
+    const { m, a, b, bus } = setup(); await m.prepare(next);
+    a.ended = true; a.paused = true; a.currentTime = 30;
+    const result = await m.handoff(80);
+    expect(result).toEqual({key: 'b', deck: 'b'});
+    expect(b.currentTime).toBe(0); expect(b.playbackRate).toBe(1);
+    expect(b.play).toHaveBeenCalledTimes(1);
+    expect(bus.transitionTo).toHaveBeenCalledWith('b', expect.any(Number), 'blend');
+    expect(bus.transitionTo.mock.calls[0]![1]).toBeGreaterThan(0);
+    expect(m.active).toBe('b');
+    expect(await m.handoff(80)).toBeNull();
+    // Preloading the following song must not cancel the fade-in now underway.
+    bus.cut.mockClear(); await m.prepare({key:'c',preview:'c.wav'});
+    expect(bus.cut).not.toHaveBeenCalled();
+  });
+  it('cannot hand over before ended even if a caller asks, or when the spare is unready', async () => {
+    const { m, a, b } = setup(); await m.prepare(next);
+    a.currentTime=30; expect(await m.handoff(100)).toBeNull();
+    a.ended=true;b.readyState=1;expect(await m.handoff(100)).toBeNull();
+    expect(b.play).not.toHaveBeenCalled();
   });
 });

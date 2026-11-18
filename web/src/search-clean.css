@@ -1,0 +1,10 @@
+/* SEARCH-CLEAN-001 (owner 2026-11-17): "on search results add spacing between artist listing, also
+   remove the labels below then slightly enlarge and center the icons". The two hint lines under the
+   field are screen-reader only now (Search.tsx); the field's icons and the result-type icons grow a
+   little and sit centred; each artist listing is its own card, so they get a gap instead of touching. */
+.find__glyph { width: 21px; height: 21px; }
+.search__clear svg { width: 16px; height: 16px; }
+.search .typefilter { justify-content: center; }
+.search .typefilter__btn { min-width: 42px; min-height: 38px; display: inline-grid; place-items: center; }
+.search .typefilter__btn > svg { width: 21px; height: 21px; }
+.artists + .artists { margin-top: 8px; }

@@ -66,6 +66,8 @@ class AudioEngineTest {
     override fun onAdvanced(key: String, outgoing: AudioEngine.Heard) { log += "advanced:$key"; heard += outgoing; onAdvance() }
     override fun onRepeated(key: String, heard: AudioEngine.Heard) { log += "repeated:$key"; this.heard += heard }
     override fun onBlendStarted(key: String, seconds: Double, style: TransitionStyle) { log += "blend:$key:${style.id}"; blendSeconds = seconds }
+    var planned: BlendPlan? = null
+    override fun onBlendPlanned(key: String, plan: BlendPlan) { planned = plan }
   }
 
   /** Stand-in for mixPlan: blend the last 5% of the outgoing song, at most 1 s, starting at the play-through point. */
@@ -98,6 +100,24 @@ class AudioEngineTest {
     return 2 * sqrt(re * re + im * im) / max(1, b - a)
   }
 
+  @Test fun legacyPlayThroughAndEarlyCuePlanCannotStartTheNextSongBeforeDecoderEnd() {
+    val plan = BlendPlan(1.0, 1.0, TransitionStyle.BLEND, endAt = 2.0, inStart = 0.5, rate = 0.96, beat = BeatFit.LOCKED)
+    val (eng, ev, out) = cued(plan)
+    val a = Tone(440.0, 10.0); val b = Tone(660.0, 10.0)
+    eng.setMix(50)
+    eng.setPlayThrough(50)
+    eng.load("a", a)
+    eng.setNext("b", b)
+    eng.setCues("a", TrackCues(10.0, 0.0, 2.0, 1.0, null, null))
+    eng.renderQuanta(quantaFor(9.9))
+    assertEquals("the actual source remains primary", "a", eng.snapshot.key)
+    assertTrue("no pre-end transition: ${ev.log}", ev.log.isEmpty())
+    assertEquals("no incoming frames skipped or read", 0L, b.positionFrames)
+    assertTrue("no cue seek before completion", b.seeks.isEmpty())
+    assertTrue("original tail stays at full level", toneLevel(out, 440.0, 9.0, 9.8) > 0.25)
+    assertTrue("no incoming audio over original", toneLevel(out, 660.0, 9.0, 9.8) < 0.01)
+  }
+
   @Test fun aSongPlaysToTheEndAndTheControllerIsToldOnce() {
     val (eng, ev, out) = engine()
     eng.load("one", Tone(440.0, 2.0))
@@ -111,36 +131,6 @@ class AudioEngineTest {
     assertTrue("audible", rms(out, 0.5, 1.5) > 0.1)
   }
 
-  @Test fun withTheMixerOnTheNextSongBlendsInAtThePlayThroughPointAndIsNotRestarted() {
-    val (eng, ev, out) = engine()
-    val a = Tone(440.0, 10.0); val b = Tone(660.0, 10.0)
-    var bAtPromotion = -1L
-    ev.onAdvance = { bAtPromotion = b.positionFrames }
-    eng.setMix(50)
-    eng.load("a", a)
-    eng.setNext("b", b)
-    eng.renderQuanta(quantaFor(9.4))
-    assertTrue("no blend before 95%: ${ev.log}", ev.log.isEmpty())
-    assertEquals("b waits untouched", 0L, b.positionFrames)
-    eng.renderQuanta(quantaFor(0.2))
-    assertEquals(listOf("blend:b:blend"), ev.log)
-    assertEquals(0.5, ev.blendSeconds, 0.01)
-    eng.renderQuanta(quantaFor(0.5))
-    assertEquals(listOf("blend:b:blend", "advanced:b"), ev.log)
-    assertEquals("all of a was heard, blend included", listOf(AudioEngine.Heard("a", 480000, 480000)), ev.heard)
-    assertEquals("b", eng.snapshot.key)
-    assertTrue("still playing after the handoff", eng.snapshot.playing)
-    // Promotion kept b's playhead, it did not seek b back to zero a second time. At the handoff b has
-    // played exactly the blend: a ends at 10.0 s, the blend began at 9.5 s.
-    assertEquals(listOf(0L), b.seeks)
-    assertTrue("b is ~0.5 s in at promotion: $bAtPromotion", abs(bAtPromotion - 24000) <= 128)
-    assertTrue("a was released", a.closed)
-    // What was heard: a alone before, b alone after.
-    assertTrue(toneLevel(out, 440.0, 8.0, 9.0) > 0.25 && toneLevel(out, 660.0, 8.0, 9.0) < 0.01)
-    eng.renderQuanta(quantaFor(1.0))
-    assertTrue(toneLevel(out, 660.0, 10.2, 10.9) > 0.25 && toneLevel(out, 440.0, 10.2, 10.9) < 0.01)
-  }
-
   @Test fun repeatOneReplaysTheSongAndNeverBlends() {
     val (eng, ev, _) = engine()
     val a = Tone(440.0, 2.0)
@@ -152,59 +142,6 @@ class AudioEngineTest {
     assertEquals(listOf("repeated:a"), ev.log)
     assertTrue(eng.snapshot.playing)
     assertTrue("restarted near the top: ${a.positionFrames}", a.positionFrames < 48000 * 0.2)
-  }
-
-  @Test fun withTheMixerOffSongsHandOverCleanly() {
-    val (eng, ev, _) = engine()
-    eng.load("a", Tone(440.0, 2.0))
-    eng.setNext("b", Tone(660.0, 2.0))
-    eng.renderQuanta(quantaFor(2.5))
-    assertEquals(listOf("ended:a"), ev.log)
-  }
-
-  @Test fun seekingDuringABlendAbandonsItButTheNextSongStillFollows() {
-    val (eng, ev, out) = engine()
-    val b = Tone(660.0, 10.0)
-    eng.setMix(50)
-    eng.load("a", Tone(440.0, 10.0))
-    eng.setNext("b", b)
-    eng.renderQuanta(quantaFor(9.7))
-    assertEquals(listOf("blend:b:blend"), ev.log)
-    eng.seekTo(48000L * 2)
-    eng.renderQuanta(1)
-    assertFalse("the next song stays lined up", b.closed)
-    assertEquals(null, eng.snapshot.blendingInto)
-    assertTrue("output flushed for the seek", out.flushes >= 2)
-    assertEquals(2.0, eng.snapshot.positionFrames / 48000.0, 0.01)
-    // Only a is heard again after the seek…
-    val at = out.left.size / 48000.0
-    eng.renderQuanta(quantaFor(1.0))
-    assertTrue(toneLevel(out, 440.0, at + 0.2, at + 0.9) > 0.25 && toneLevel(out, 660.0, at + 0.2, at + 0.9) < 0.01)
-    // …and when a reaches the play-through point again, b blends in once more, from its start.
-    eng.renderQuanta(quantaFor(7.0))
-    assertEquals(listOf("blend:b:blend", "blend:b:blend", "advanced:b"), ev.log)
-    assertEquals("b restarted from 0 for the second blend", listOf(0L, 0L), b.seeks)
-  }
-
-  /** The app's progress bar: a seek before the blend must not lose the song lined up next. */
-  @Test fun aSeekBeforeTheBlendKeepsTheNextSongAndItStillBlends() {
-    val (eng, ev, out) = engine()
-    val b = Tone(660.0, 10.0)
-    eng.setMix(50)
-    eng.load("a", Tone(440.0, 10.0))
-    eng.setNext("b", b)
-    eng.renderQuanta(quantaFor(1.0))
-    eng.seekTo(48000L * 8)
-    eng.renderQuanta(quantaFor(1.4))
-    assertTrue("no blend before 95%: ${ev.log}", ev.log.isEmpty())
-    eng.renderQuanta(quantaFor(0.2))
-    assertEquals(listOf("blend:b:blend"), ev.log)
-    eng.renderQuanta(quantaFor(0.6))
-    assertEquals(listOf("blend:b:blend", "advanced:b"), ev.log)
-    assertFalse("b was played, not dropped", b.closed)
-    val end = out.left.size / 48000.0
-    eng.renderQuanta(quantaFor(0.8))
-    assertTrue("b plays on after a", toneLevel(out, 660.0, end + 0.1, end + 0.7) > 0.25)
   }
 
   @Test fun pausedRendersNothing() {
@@ -227,5 +164,186 @@ class AudioEngineTest {
     val h = ev.heard.single()
     assertEquals("heard = 1 s before the seek + the last 1 s, not 4 s", 2.0 * 48000, h.heardFrames.toDouble(), 2.0 * 128)
     assertEquals(4L * 48000, h.durationFrames)
+  }
+
+  /** A stand-in for the cue planner: whatever plan the test wants, for a song whose cues are known. */
+  private fun cued(plan: BlendPlan, events: Events = Events(), out: Capture = Capture()): Triple<AudioEngine, Events, Capture> {
+    val cuePlanner = CuePlanner { slider, _, _, _, _, _ -> if (slider <= 0) BlendPlan(0.0, Double.POSITIVE_INFINITY, TransitionStyle.CUT) else plan }
+    return Triple(AudioEngine(out, planner, events, cuePlanner = cuePlanner), events, out)
+  }
+  private val anyCues = TrackCues(10.0, 0.0, 10.0, 10.0, null, null)
+
+  @Test fun handoffHappensOnlyAfterTheLastOriginalFrameAndIncomingStartsAtZero() {
+    val (eng, ev, out) = engine()
+    val a = Tone(440.0, 1.0); val b = Tone(660.0, 8.0)
+    var atPromotion = -1L
+    ev.onAdvance = { atPromotion = b.positionFrames }
+    eng.setMix(50); eng.load("a", a); eng.setNext("b", b)
+    eng.renderQuanta(374)
+    assertTrue(ev.log.isEmpty()); assertEquals("a", eng.snapshot.key)
+    assertEquals(0L, b.positionFrames)
+    eng.renderQuanta(1)
+    assertEquals(listOf("blend:b:blend", "advanced:b"), ev.log)
+    assertEquals(48000, out.left.size)
+    assertEquals(0L, atPromotion)
+    assertEquals(listOf(0L), b.seeks)
+    assertEquals(listOf(AudioEngine.Heard("a", 48000, 48000)), ev.heard)
+    assertTrue(a.closed); assertEquals("b", eng.snapshot.key)
+    eng.renderQuanta(100)
+    assertEquals("promotion never restarts the new source", listOf(0L), b.seeks)
+    assertEquals(12800L, b.positionFrames)
+  }
+
+  @Test fun originalTailIsUnattenuatedAndPostEndRampSurvivesPreparingAnotherSong() {
+    val (eng, ev, out) = engine()
+    eng.setVolume(0.7); eng.setMix(50)
+    eng.load("a", Tone(440.0, 1.0)); eng.setNext("b", Tone(660.0, 20.0))
+    eng.renderQuanta(375)
+    assertEquals(2.0, ev.blendSeconds, 0.0)
+    assertTrue(toneLevel(out, 440.0, 0.7, 0.99) > 0.19)
+    assertTrue(toneLevel(out, 660.0, 0.7, 0.99) < 0.01)
+    eng.setNext("c", Tone(880.0, 8.0))
+    eng.renderQuanta(quantaFor(2.5))
+    val early = toneLevel(out, 660.0, 1.02, 1.10)
+    val late = toneLevel(out, 660.0, 3.1, 3.4)
+    assertTrue("not cut to full level on promotion/preparation: $early vs $late", early < late / 4)
+    assertTrue("ramp reaches full level: $late", late > 0.19)
+    assertEquals("slider never changes master volume", 0.7, eng.bus.masterGain().toDouble(), 0.0001)
+    assertEquals("c is only prepared, not primary", "b", eng.snapshot.key)
+  }
+
+  private fun assertDurationCannotTriggerHandoff(reported: Long) {
+    val (eng, ev, out) = engine()
+    val real = Tone(440.0, 2.0)
+    val misleading = object : PcmSource by real { override val durationFrames = reported }
+    val b = Tone(660.0, 8.0)
+    eng.setMix(100); eng.setPlayThrough(50)
+    eng.load("a", misleading); eng.setNext("b", b)
+    eng.renderQuanta(quantaFor(1.9))
+    assertEquals("a", eng.snapshot.key); assertTrue(ev.log.isEmpty())
+    assertEquals(0L, b.positionFrames)
+    assertTrue(toneLevel(out, 440.0, 1.2, 1.8) > 0.25)
+    eng.renderQuanta(quantaFor(0.2))
+    assertEquals("b", eng.snapshot.key)
+    assertEquals(96000L, ev.heard.single().heardFrames)
+  }
+
+  @Test fun unknownDurationWaitsForActualDecoderEnd() = assertDurationCannotTriggerHandoff(PcmSource.UNKNOWN)
+  @Test fun shortenedContainerDurationDoesNotCutOriginalPcm() = assertDurationCannotTriggerHandoff(24000)
+  @Test fun overlongContainerDurationDoesNotDelayActualCompletion() = assertDurationCannotTriggerHandoff(480000)
+
+  @Test fun partialFinalQuantumIsRenderedBeforeIncomingIsRead() {
+    val (eng, ev, out) = engine()
+    val a = Tone(440.0, 1.001); val b = Tone(660.0, 8.0)
+    eng.setMix(20); eng.load("a", a); eng.setNext("b", b)
+    eng.renderQuanta(376)
+    assertEquals(a.durationFrames, ev.heard.single().heardFrames)
+    assertEquals(0L, b.positionFrames)
+    assertTrue(out.left.size >= a.durationFrames)
+    eng.renderQuanta(1); assertEquals(128L, b.positionFrames)
+  }
+
+  @Test fun temporaryUnderrunIsNotCompletionEvenPastReportedDuration() {
+    val (eng, ev, _) = engine()
+    var allow = false
+    val real = Tone(440.0, 2.0)
+    val source = object : PcmSource by real {
+      override val durationFrames = 1L
+      override fun read(dst: Array<FloatArray>, offset: Int, frames: Int) = if (allow) real.read(dst, offset, frames) else 0
+    }
+    val b = Tone(660.0, 8.0)
+    eng.setMix(50); eng.load("a", source); eng.setNext("b", b)
+    eng.renderQuanta(20)
+    assertTrue(ev.log.isEmpty()); assertEquals(0L, b.positionFrames)
+    allow = true
+    eng.renderQuanta(quantaFor(2.1)); assertEquals("b", eng.snapshot.key)
+  }
+
+  @Test fun mixerOffStillPromotesPreparedNextButNeverSchedulesFade() {
+    val (eng, ev, _) = engine()
+    eng.load("a", Tone(440.0, 1.0)); eng.setNext("b", Tone(660.0, 8.0))
+    eng.renderQuanta(375)
+    assertEquals(listOf("advanced:b"), ev.log)
+    assertEquals("b", eng.snapshot.key)
+    assertEquals(null, eng.snapshot.blendingInto)
+  }
+
+  @Test fun turningMixerOffKeepsPreparedNextForEndOnlyHandoff() {
+    val (eng, ev, _) = engine()
+    val b = Tone(660.0, 8.0)
+    eng.setMix(50); eng.load("a", Tone(440.0, 1.0)); eng.setNext("b", b)
+    eng.renderQuanta(200); eng.setMix(0); eng.renderQuanta(175)
+    assertEquals(listOf("advanced:b"), ev.log); assertFalse(b.closed)
+  }
+
+  @Test fun seekKeepsPreparedNextButNeverUsesAnEarlyCueBoundary() {
+    val (eng, ev, _) = cued(BlendPlan(1.0, 3.0, TransitionStyle.BLEND, endAt = 4.0, inStart = 0.5))
+    val b = Tone(660.0, 8.0)
+    eng.setMix(50); eng.load("a", Tone(440.0, 10.0)); eng.setNext("b", b); eng.setCues("a", anyCues)
+    eng.renderQuanta(quantaFor(5.0)); eng.seekTo(2 * 48000); eng.renderQuanta(quantaFor(7.9))
+    assertTrue(ev.log.isEmpty()); assertEquals("a", eng.snapshot.key); assertEquals(0L, b.positionFrames)
+    eng.renderQuanta(quantaFor(0.2))
+    assertEquals(listOf("blend:b:blend", "advanced:b"), ev.log); assertEquals(listOf(0L), b.seeks)
+  }
+
+  @Test fun legacyTempoAndIntroCuesCannotSkipOrRetimeTheIncomingSource() {
+    val plan = BlendPlan(1.0, 0.0, TransitionStyle.BASS_SWAP, endAt = 0.5, inStart = 0.75, rate = 0.94, beat = BeatFit.LOCKED)
+    val (eng, _, _) = cued(plan)
+    val b = Tone(660.0, 8.0)
+    eng.setMix(60); eng.load("a", Tone(440.0, 1.0)); eng.setNext("b", b); eng.setCues("a", anyCues)
+    eng.renderQuanta(375); eng.renderQuanta(100)
+    assertEquals(listOf(0L), b.seeks); assertEquals(12800L, b.positionFrames)
+  }
+
+  @Test fun sliderControlsPostEndFadeDurationOnly() {
+    fun span(slider: Int): Double {
+      val (eng, ev, _) = engine()
+      eng.setMix(slider); eng.load("a", Tone(440.0, 1.0)); eng.setNext("b", Tone(660.0, 120.0))
+      eng.renderQuanta(375)
+      assertEquals(48000L, ev.heard.single().heardFrames)
+      return ev.blendSeconds.also { eng.close() }
+    }
+    assertTrue(span(1) < span(25)); assertEquals(2.0, span(50), 0.0)
+  }
+
+  @Test fun shortIncomingSongLimitsFadeToTenPercentAndUnknownDurationUsesTwoSeconds() {
+    for ((reported, expected) in listOf(192000L to 0.4, PcmSource.UNKNOWN to 2.0)) {
+      val (eng, ev, _) = engine()
+      val tone = Tone(660.0, 8.0)
+      val b = object : PcmSource by tone { override val durationFrames = reported }
+      eng.setMix(100); eng.load("a", Tone(440.0, 1.0)); eng.setNext("b", b)
+      eng.renderQuanta(375)
+      assertEquals(expected, ev.blendSeconds, 0.000001)
+      assertEquals(0L, b.positionFrames)
+      eng.close()
+    }
+  }
+
+  @Test fun incomingDecoderErrorCannotInterruptOrShortenTheOriginal() {
+    val (eng, ev, _) = engine()
+    val tone = Tone(660.0, 8.0)
+    val broken = object : PcmSource by tone { override val error = IllegalStateException("bad incoming decoder") }
+    eng.setMix(100); eng.load("a", Tone(440.0, 1.0)); eng.setNext("b", broken)
+    eng.renderQuanta(374)
+    assertTrue(ev.log.isEmpty()); assertEquals("a", eng.snapshot.key)
+    eng.renderQuanta(1)
+    assertEquals(listOf("ended:a"), ev.log); assertEquals(0L, tone.positionFrames)
+    assertEquals(48000L, ev.heard.single().heardFrames)
+  }
+
+  @Test fun explicitManualLoadMayReplaceTheOriginalBeforeEnd() {
+    val (eng, ev, _) = engine()
+    eng.load("a", Tone(440.0, 10.0)); eng.renderQuanta(100)
+    eng.load("b", Tone(660.0, 8.0)); eng.renderQuanta(1)
+    assertEquals("b", eng.snapshot.key); assertTrue(ev.log.isEmpty())
+  }
+
+  @Test fun unavailableNextReportsEndWithoutReadingIt() {
+    val (eng, ev, _) = engine()
+    val b = Tone(660.0, 8.0)
+    val waiting = object : PcmSource by b { override val ready = false }
+    eng.setMix(50); eng.load("a", Tone(440.0, 1.0)); eng.setNext("b", waiting)
+    eng.renderQuanta(375)
+    assertEquals(listOf("ended:a"), ev.log); assertEquals(0L, b.positionFrames)
   }
 }

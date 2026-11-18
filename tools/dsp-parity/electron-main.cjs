@@ -32,6 +32,8 @@ async function run() {
 
   const meta = await win.webContents.executeJavaScript('({ sampleRate: DspParity.SAMPLE_RATE, channels: DspParity.CHANNELS, quantum: DspParity.QUANTUM, scenarios: DspParity.scenarios() })');
   const webEngineCommit = execFileSync('git', ['-C', repo, 'log', '-1', '--format=%H', '--', 'web/src/engine'], { encoding: 'utf8' }).trim();
+  // The fixtures come from the working tree, so say when it is ahead of that commit.
+  const webEngineUncommitted = execFileSync('git', ['-C', repo, 'status', '--porcelain', '--', 'web/src/engine'], { encoding: 'utf8' }).trim() !== '';
 
   const stableAfter = Number(process.env.DSP_PARITY_STABLE_AFTER || 150);
   const summation = [];
@@ -51,6 +53,7 @@ async function run() {
       chrome: process.versions.chrome,
       createdAt: new Date().toISOString(),
       webEngineCommit,
+      webEngineUncommitted,
       // Chromium sums a node's inputs in pointer-hash order, so the same graph renders to a few
       // float-rounding variants; each fixture is the smallest-sha256 variant (see README.md).
       summationOrder: { rule: 'smallest-sha256-of-all-variants', stableAfter, scenarios: summation },

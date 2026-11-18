@@ -1,4 +1,5 @@
-import { createElement, useRef, type CSSProperties, type LiHTMLAttributes, type MouseEvent, type PointerEvent } from 'react';
+import './swipe.css';
+import { createElement, useRef, type CSSProperties, type LiHTMLAttributes, type MouseEvent, type PointerEvent, type Ref } from 'react';
 
 /** How far a row must travel before letting go removes it. */
 export const SWIPE_MIN_PX = 80;
@@ -16,7 +17,7 @@ const OUT_MS = 180;
  * slides out past the threshold and snaps back otherwise. A click that ends a swipe is swallowed,
  * so a swipe never also plays the song or presses a button under the finger.
  */
-export function useSwipeRemove(onRemove: () => void) {
+export function useSwipeRemove(onRemove?: (() => void) | undefined, onSwipeLeft?: (() => void) | undefined) {
   const g = useRef<{ id: number; x: number; y: number; dx: number; axis: 'x' | 'y' | null; el: HTMLElement } | null>(null);
   const swallowClick = useRef(false);
 
@@ -30,21 +31,33 @@ export function useSwipeRemove(onRemove: () => void) {
     const s = g.current;
     if (!s || s.id !== e.pointerId) return;
     g.current = null;
+    // SWIPE-FAST-001: a fast flick sends few moves, so judge it where the finger lifted, not at the last
+    // move; a flick whose axis was never settled by a move is settled by the lift.
+    if (!cancelled && Number.isFinite(e.clientX)) {
+      const dx = e.clientX - s.x;
+      const dy = (Number.isFinite(e.clientY) ? e.clientY : s.y) - s.y;
+      if (!s.axis && Math.max(Math.abs(dx), Math.abs(dy)) >= SLOP_PX) s.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      if (s.axis === 'x') s.dx = dx;
+    }
     if (s.axis !== 'x') return;
     swallowClick.current = true;
     window.setTimeout(() => { swallowClick.current = false; }, 400);
     const width = s.el.offsetWidth || 0;
     const threshold = Math.max(SWIPE_MIN_PX, width * SWIPE_FRACTION);
-    if (!cancelled && Math.abs(s.dx) >= threshold) {
-      paint(s.el, Math.sign(s.dx) * Math.max(width, 320), true);
+    s.el.removeAttribute('data-swipe-dir');
+    const far = !cancelled && Math.abs(s.dx) >= threshold;
+    // SWIPE-DIR-001: right removes (slides out); left saves to a list (snaps back, menu opens).
+    if (far && s.dx > 0 && onRemove) {
+      paint(s.el, Math.max(width, 320), true);
       window.setTimeout(() => { paint(s.el, 0, false); onRemove(); }, OUT_MS);
     } else {
       paint(s.el, 0, true);
+      if (far && s.dx < 0 && onSwipeLeft) onSwipeLeft();
     }
   };
 
   return {
-    'data-swipe': 'remove',
+    'data-swipe': onRemove ? 'remove' : 'save',
     style: { touchAction: 'pan-y' } as CSSProperties,
     onPointerDown: (e: PointerEvent<HTMLElement>) => {
       if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return;
@@ -63,6 +76,7 @@ export function useSwipeRemove(onRemove: () => void) {
         try { s.el.setPointerCapture?.(e.pointerId); } catch { /* the pointer already left */ }
       }
       s.dx = dx;
+      s.el.setAttribute('data-swipe-dir', dx < 0 ? 'save' : 'remove');
       paint(s.el, dx, false);
     },
     onPointerUp: (e: PointerEvent<HTMLElement>) => end(e, false),
@@ -77,7 +91,8 @@ export function useSwipeRemove(onRemove: () => void) {
 }
 
 /** A list row a touch swipe removes (SWIPE-REMOVE-001). Takes every ordinary <li> prop. */
-export function SwipeLi({ onRemove, style, children, ...li }: LiHTMLAttributes<HTMLLIElement> & { onRemove: () => void }) {
-  const swipe = useSwipeRemove(onRemove);
-  return createElement('li', { ...li, ...swipe, style: { ...style, ...swipe.style } }, children);
+export function SwipeLi({ onRemove, onSwipeLeft, style, children, ref, ...li }: LiHTMLAttributes<HTMLLIElement> & { onRemove?: (() => void) | undefined; onSwipeLeft?: (() => void) | undefined; ref?: Ref<HTMLLIElement> }) {
+  const swipe = useSwipeRemove(onRemove, onSwipeLeft);
+  // React 19 passes ref as a prop to function components; hand it to the real <li>.
+  return createElement('li', { ...li, ...swipe, ref, style: { ...style, ...swipe.style } }, children);
 }

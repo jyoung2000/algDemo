@@ -1,5 +1,5 @@
 'use strict';
-// RADIO-001. Public broadcasts only. Network and decoder stay out of the renderer. Five minutes
+// RADIO-001. Public broadcasts only. Network and decoder stay out of the renderer. Ten minutes
 // of 48 kHz stereo PCM are retained, including while paused; nothing is saved to the music library.
 const http = require('node:http');
 const https = require('node:https');
@@ -9,7 +9,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
-const RATE = 48000, FRAME = 4, KEEP = 300;
+const RATE = 48000, FRAME = 4, KEEP = 600;
 function publicAddress(ip) {
   if (net.isIP(ip) !== 4) return false; // use public IPv4; no mapped/ambiguous IPv6 routes
   const p = ip.split('.').map(Number);
@@ -42,6 +42,17 @@ class PcmRing {
   }
   take(n) { this.at = Math.max(this.start, this.at); n = Math.min(n, this.end - this.at); const b = this.slice(this.at, n); this.at += n; this.heard += n; return b; }
   slice(at, n) { at = Math.max(this.start, Math.min(this.end, at)); n = Math.min(n, this.end - at); const b = Buffer.alloc(n * FRAME), tail = at % this.cap, first = Math.min(n, this.cap - tail); this.bytes.copy(b, 0, tail * FRAME, (tail + first) * FRAME); if (first < n) this.bytes.copy(b, first * FRAME, 0, (n - first) * FRAME); return b; }
+  // A recording is always described as an excerpt, never a complete programme.
+  wav(from, to) {
+    if (!Number.isFinite(from) || !Number.isFinite(to)) throw Error('Invalid recording range');
+    const at = Math.max(this.start, Math.floor(from * RATE)), end = Math.min(this.end, Math.floor(to * RATE));
+    if (end <= at) throw Error('No retained audio for this item yet');
+    const pcm = this.slice(at, end - at), h = Buffer.alloc(44);
+    h.write('RIFF', 0); h.writeUInt32LE(pcm.length + 36, 4); h.write('WAVEfmt ', 8); h.writeUInt32LE(16, 16);
+    h.writeUInt16LE(1, 20); h.writeUInt16LE(2, 22); h.writeUInt32LE(RATE, 24); h.writeUInt32LE(RATE * FRAME, 28);
+    h.writeUInt16LE(FRAME, 32); h.writeUInt16LE(16, 34); h.write('data', 36); h.writeUInt32LE(pcm.length, 40);
+    return Buffer.concat([h, pcm]);
+  }
   rewind(seconds) { this.at = Math.max(this.start, this.at - Math.floor(Math.max(0, Math.min(KEEP, seconds)) * RATE)); }
 }
 function titleFromIcy(text) { return /StreamTitle='([\s\S]*?)';/i.exec(text)?.[1]?.replace(/\u0000/g, '').trim() || null; }
@@ -58,7 +69,7 @@ async function probe(url) {
     r.on('end', () => done({ title: null, checkedAt: Date.now(), state: 'unavailable', detail: 'Metadata stream ended' }));
   });
 }
-function createRadio({ toolsDir }) {
+function createRadio({ toolsDir, saveRecording }) {
   let session = null; const meta = new Map(), pending = new Map();
   let favourites = []; try { if (arguments[0].favouritesPath) favourites = JSON.parse(fs.readFileSync(arguments[0].favouritesPath, 'utf8')); } catch {}
   const favouritesPath = arguments[0].favouritesPath;
@@ -107,6 +118,13 @@ function createRadio({ toolsDir }) {
       return snapshot(s);
     }
     const s = session; if (!s || cmd.id && cmd.id !== s.id) throw Error('Radio session has ended');
+    if (op === 'export') {
+      if (!saveRecording) throw Error('Radio recording destination is unavailable');
+      const from = Math.max(s.ring.start / RATE, Number(cmd.from)), to = Math.min(s.ring.end / RATE, Number(cmd.to));
+      const wave = s.ring.wav(from, to);
+      const saved = await saveRecording(wave, String(cmd.title || 'Live radio'));
+      return { ...saved, seconds: (wave.length - 44) / (RATE * FRAME), partial: true };
+    }
     if (op === 'pause') s.paused = Boolean(cmd.paused);
     // RADIO-UI-005: shuffle is session state the page and any remote controller agree on.
     if (op === 'shuffle') s.shuffle = Boolean(cmd.on);

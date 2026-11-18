@@ -115,8 +115,46 @@ it('plays the whole list from its first song', async () => {
   const play = vi.fn();
   await draw(page({ onPreview: play }));
   await flush();
-  await act(async () => byText('Play songs')!.click());
+  await act(async () => button('Play songs by Ken Carson')!.click());
   expect(play).toHaveBeenCalledWith(every[0], every);
+});
+
+it('plays Most played as its own playlist, not the hidden full catalogue (ARTIST-TOP-PLAY-001)', async () => {
+  artistCall.mockResolvedValue({ artist: view }); songsCall.mockResolvedValue({ songs: every, opened: 4, failed: 0 });
+  const playAll = vi.fn(); const preview = vi.fn();
+  await draw(page({ onPlayAll: playAll, onPreview: preview })); await flush();
+  const play = button('Play most played songs by Ken Carson');
+  expect(play).not.toBeNull();
+  expect(play!.querySelector('svg')).not.toBeNull();
+  await act(async () => play!.click());
+  expect(playAll).toHaveBeenCalledExactlyOnceWith(every.slice(0, SONGS_FOLDED));
+  expect(playAll.mock.calls[0]![0].map((t: Track) => t.title)).toEqual(titles('Songs by Ken Carson'));
+  expect(preview).not.toHaveBeenCalled();
+  expect(playAll.mock.calls[0]![0].some((t: Track) => t.key === 'x1')).toBe(false);
+});
+
+it('passes the section playlist to the ordinary full-song path when no list-start callback is supplied', async () => {
+  artistCall.mockResolvedValue({ artist: view }); songsCall.mockResolvedValue({ songs: every, opened: 4, failed: 0 });
+  const preview = vi.fn(); await draw(page({ onPreview: preview })); await flush();
+  const play = button('Play most played songs by Ken Carson'); expect(play).not.toBeNull();
+  await act(async () => play!.click());
+  expect(preview).toHaveBeenCalledExactlyOnceWith(every[0], every.slice(0, SONGS_FOLDED));
+});
+
+it('plays all displayed songs from the expanded section without changing the artist-wide play action', async () => {
+  artistCall.mockResolvedValue({ artist: view }); songsCall.mockResolvedValue({ songs: every, opened: 4, failed: 0 });
+  const playAll = vi.fn(); await draw(page({ onPlayAll: playAll })); await flush();
+  await act(async () => byText('Show all 16 songs')!.click());
+  const play = button('Play all songs by Ken Carson'); expect(play).not.toBeNull();
+  await act(async () => play!.click()); expect(playAll).toHaveBeenLastCalledWith(every);
+  await act(async () => button('Play songs by Ken Carson')!.click()); expect(playAll).toHaveBeenLastCalledWith(every);
+});
+
+it('disables section playback with no songs', async () => {
+  artistCall.mockResolvedValue({ artist: { ...view, songs: [], features: [] } }); songsCall.mockResolvedValue({ songs: [], opened: 0, failed: 0 });
+  const playAll = vi.fn(); await draw(page({ onPlayAll: playAll })); await flush();
+  const play = button('Play most played songs by Ken Carson'); expect(play).not.toBeNull(); expect(play!.disabled).toBe(true);
+  await act(async () => play!.click()); expect(playAll).not.toHaveBeenCalled();
 });
 
 it('lists albums and EPs apart from singles, and each opens as an album page', async () => {

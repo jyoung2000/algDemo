@@ -154,7 +154,7 @@ describe('the player carries like, dislike and download for the song playing', (
   it('cannot fire twice at once and says so when a request fails', () => {
     expect(actions).toMatch(/if \(pending\.current\) return;/);
     expect(actions).toContain('Could not save. Try again.');
-    expect(actions).toContain('Download failed. Open Downloads to retry.');
+    expect(actions).toContain('Download failed. Open Settings → Downloads to retry.');
   });
 
   it('turns into a way to see the file once the download is running or done', () => {

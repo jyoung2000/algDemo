@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import './local-music.css';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { api, type Track } from './api';
 import { DL_FORMATS, dl, downloadsAvailable, matchTarget, targetFor, urlAllowedFor, type DlFormat, type DlHealth, type DlJob, type DlTool } from './engine/downloads';
@@ -122,7 +123,7 @@ export function useDownloads(flash: (m: string) => void) {
           const target = m.id ? matchTarget(m.id) : null;
           if (!target) throw new Error(`No confident YouTube Music match for “${song.title}”, so nothing was downloaded.`);
           const r2 = await dl.start(target.url, target.tool, format, label === url ? song.title : label);
-          flash(`Downloading “${r2.job.label || label}”. Follow it in Downloads.`);
+          flash(`Downloading \u201c${r2.job.label || label}\u201d. Follow it under Settings \u2192 Downloads.`);
           poll();
           return r2.job;
         }
@@ -158,7 +159,7 @@ export function useDownloads(flash: (m: string) => void) {
           }
         }
         const r = await dl.start(url, tool, format, label);
-        flash(`Downloading “${r.job.label || label}”. Follow it in Downloads.`);
+        flash(`Downloading \u201c${r.job.label || label}\u201d. Follow it under Settings \u2192 Downloads.`);
         poll();
         return r.job;
       } catch (e) {
@@ -220,8 +221,6 @@ const STAGE: Record<string, string> = { queued: 'Waiting', fetching: 'Downloadin
 export function DownloadsView({ d }: { d: Downloads }) {
   const [health, setHealth] = useState<DlHealth | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [link, setLink] = useState('');
-  const [tool, setTool] = useState<DlTool>('yt-dlp');
 
   useEffect(() => {
     if (!d.on) return;
@@ -231,66 +230,38 @@ export function DownloadsView({ d }: { d: Downloads }) {
   if (!d.on) {
     return (
       <section className="card" aria-labelledby="dl-h">
-        <h2 id="dl-h">Downloads</h2>
+        <h2 id="dl-h">Local music</h2>
         <p className="empty">Downloads work in the Windows and Android apps. This page is running in a browser.</p>
       </section>
     );
   }
 
-  const linkOk = link.trim() !== '' && urlAllowedFor(tool, link.trim());
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!linkOk) return;
-    void d.start(tool, link.trim(), link.trim()).then((job) => job && setLink(''));
-  };
-
   return (
     <section className="card" aria-labelledby="dl-h">
-      <h2 id="dl-h">Downloads</h2>
-      <p className="note">
-        yt-dlp fetches from YouTube, YouTube Music and SoundCloud; spotDL fetches a Spotify track by finding it on YouTube Music. Only download what you have the right to keep.
-      </p>
-
-      <form className="dl__form" onSubmit={submit}>
-        <label className="dl__lbl">
-          Tool
-          <select className="field" value={tool} onChange={(e) => setTool(e.target.value as DlTool)}>
-            <option value="yt-dlp">yt-dlp (YouTube, SoundCloud)</option>
-            <option value="spotdl">spotDL (Spotify track link)</option>
-          </select>
-        </label>
-        <label className="dl__lbl">
-          Format
-          <select className="field" value={d.format} onChange={(e) => d.setFormat(e.target.value as DlFormat)} aria-describedby="dl-format-note">
-            {DL_FORMATS.filter((f) => !(tool === 'spotdl' && f === 'original')).map((f) => (
-              <option key={f} value={f}>
-                {FORMAT_LABEL[f]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="dl__lbl dl__lbl--grow">
-          Link
-          <input className="field" type="url" inputMode="url" placeholder={tool === 'spotdl' ? 'https://open.spotify.com/track/…' : 'https://www.youtube.com/watch?v=…'} value={link} onChange={(e) => setLink(e.target.value)} aria-invalid={link.trim() !== '' && !linkOk} />
-        </label>
-        <button className="push push--default push--big" type="submit" disabled={!linkOk}>
-          Download
-        </button>
-      </form>
-      <p className="dl__note" id="dl-format-note">{FORMAT_NOTE[d.format]}</p>
-      {link.trim() !== '' && !linkOk && <p className="state state--bad">{tool === 'spotdl' ? 'spotDL needs a Spotify track link (open.spotify.com/track/…).' : 'yt-dlp needs a YouTube, YouTube Music or SoundCloud link.'}</p>}
+      <h2 id="dl-h">Local music</h2>
 
       {err && <p className="state state--bad">{err}</p>}
-      {health && (
+      {health && health.tools.some((x) => !x.present) && (
         <ul className="dl__tools" aria-label="Tools">
-          {health.tools.map((t) => (
+          {/* Only a missing tool is worth a line; working versions were noise (DL-SIMPLE-001). */}
+          {health.tools.filter((t) => !t.present).map((t) => (
             <li key={t.id} className={classNames('dl__tool', !t.present && 'is-bad')}>
               <strong>{t.id}</strong> {t.present ? (t.version && /^\d/.test(t.version) ? `v${t.version}` : (t.version ?? 'ready')) : 'unavailable'}
               {t.detail && <span className="dl__why"> {t.detail}</span>}
             </li>
           ))}
-          <li className="dl__tool">Saved to {health.saves_to} <button className="push" type="button" onClick={() => void dl.chooseFolder().then((r) => setHealth({ ...health, saves_to: r.saves_to })).catch((e: Error) => setErr(e.message))}>Change folder</button></li>
         </ul>
+      )}
+      {health && (
+        // LOCAL-MUSIC-001 (owner 2026-11-17: "make the saved to local music folder bigger and labeled").
+        <div className="localfolder">
+          <span className="localfolder__label" id="localfolder-label">Local music folder</span>
+          <span className="localfolder__hint">Downloaded songs and downloaded playlists are saved here.</span>
+          <div className="localfolder__row">
+            <output className="localfolder__path" aria-labelledby="localfolder-label" title={health.saves_to}>{health.saves_to}</output>
+            <button className="push" type="button" onClick={() => void dl.chooseFolder().then((r) => setHealth({ ...health, saves_to: r.saves_to })).catch((e: Error) => setErr(e.message))}>Change folder</button>
+          </div>
+        </div>
       )}
 
       {d.jobs.length === 0 ? (

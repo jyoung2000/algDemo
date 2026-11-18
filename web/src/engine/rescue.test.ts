@@ -71,7 +71,11 @@ describe('the search list never hides Play (NP-ALWAYS-001)', () => {
     // The owner's BATMAN row had Download and Like and no Play, because the row judged the song
     // playable by its preview and provider instead of letting the player try.
     expect(search).not.toMatch(/t\.preview \|\| t\.provider === 'ytmusic'/);
-    expect(search).toMatch(/aria-label=\{`Play \$\{t\.title\}`\}/);
+    // ROW-PLAY-001: every row's Play is the shared RowPlayButton now, rendered unconditionally.
+    expect(search).toMatch(/<RowPlayButton track=\{t\}/);
+    expect(search).not.toMatch(/\{\w+ && <RowPlayButton track=\{t\}/);
+    const button = readFileSync(new URL('../RowPlay.tsx', import.meta.url), 'utf8');
+    expect(button).toMatch(/aria-label=\{`Play \$\{track\.title\}`\}/);
   });
 });
 

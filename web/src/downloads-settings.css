@@ -1,0 +1,41 @@
+/* FOLDER-IMPORT-001: the Settings "Local music folders" card. Layout only — colors, buttons and
+   notes come from the app's shared styles, so this file never restates them. */
+.dlf__actions {
+  margin: 10px 0;
+}
+.dlf__list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.dlf__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid rgb(0 0 0 / 8%);
+}
+.dlf__row:first-child {
+  border-top: 0;
+}
+.dlf__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.dlf__name {
+  font-weight: 600;
+}
+.dlf__path {
+  font-size: 12px;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dlf__warn {
+  font-size: 12px;
+  color: #a33;
+}

@@ -3,6 +3,7 @@ import { Glyph, type GlyphName } from '@now-playing/aqua-ui/icons';
 import { SourceMark } from './SourceMark';
 import type { ArtistTarget, Characteristics, FeedbackKind, PlaylistSummary, RecItem, Track } from './api';
 import type { CacheState, CardCache } from './engine/queue-controls';
+import { RowPlayButton, playOnDoubleClick } from './RowPlay';
 import { Art } from './Art';
 import { matchRecordings } from './engine/identity';
 import { SaveMenu } from './SaveMenu';
@@ -108,7 +109,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         // GENRE-ALL-001: the engine sends a starting song's genres worked out; an older answer has only its tags.
         const seedBubbles = genreBubbles(s.characteristics ?? ({ genres: (s.tags ?? []).map((g) => g.label || g.name) } as Characteristics));
         return (
-          <SwipeLi key={`seed:${s.key}`} onRemove={() => onRemoveSeed(s.key)} className={classNames('rec', 'rec--seed', strong && 'is-strong', playingKey === s.key && 'is-playing')}>
+          <SwipeLi key={`seed:${s.key}`} onRemove={() => onRemoveSeed(s.key)} onSwipeLeft={onLists ? () => setSaving(s.key) : undefined} className={classNames('rec', 'rec--seed', strong && 'is-strong', playingKey === s.key && 'is-playing')} onDoubleClick={seedPlayable ? playOnDoubleClick(() => onPlayTrack(s)) : undefined}>
             <span className="rec__rank" aria-hidden="true">
               {playingKey === s.key ? <Glyph name="speaker" size={12} /> : <Glyph name="star" size={12} />}
             </span>
@@ -146,9 +147,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
             <span className="rec__dur" />
             <div className="rec__actions">
               {seedPlayable && (
-                <button className="iconbtn playbtn" data-ready={seedReady || undefined} type="button" onClick={() => onPlayTrack(s)} aria-label={`Play ${s.title}`} title={seedReady ? 'Play — ready locally' : 'Play'}>
-                  <Glyph name="play" size={14} />
-                </button>
+                <RowPlayButton track={s} cache={seedReady ? ({ state: 'ready' } as CardCache) : null} onPlay={() => onPlayTrack(s)} />
               )}
               <button
                 className={classNames('iconbtn', strong && 'is-on')}
@@ -169,6 +168,11 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                 <Glyph name="close" size={14} />
               </button>
             </div>
+            {saving === s.key && onLists && (
+              <div className="rec__savemenu">
+                <SaveMenu songKey={s.key} title={s.title} lists={lists ?? []} onLists={onLists} onClose={() => setSaving(null)} />
+              </div>
+            )}
           </SwipeLi>
         );
       })}
@@ -195,12 +199,14 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
           <SwipeLi
             key={t.key}
             onRemove={removeRow}
+            onSwipeLeft={onLists ? () => setSaving(t.key) : undefined}
             id={rowId(t.key)}
             className={classNames('rec', focusKey === t.key && 'is-focus', playingKey === t.key && 'is-playing', f.dislike && 'is-disliked')}
             data-dl={cache?.state}
             style={cache ? ({ '--dl': `${cache.progress}%` } as CSSProperties) : undefined}
             tabIndex={focusKey === t.key || (focusKey == null && i === 0) ? 0 : -1}
             aria-current={playingKey === t.key ? 'true' : undefined}
+            onDoubleClick={playable ? playOnDoubleClick(() => onPlay(it)) : undefined}
             onFocus={(e) => {
               if (e.target === e.currentTarget) onFocus(t.key);
             }}
@@ -302,9 +308,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                 </>
               )}
               {playable && (
-                <button className="iconbtn playbtn" data-ready={cache?.state === 'ready' || undefined} type="button" onClick={() => onPlay(it)} aria-label={`Play ${t.title}`} title={cache?.state === 'ready' ? 'Play — ready locally' : 'Play'}>
-                  <Glyph name="play" size={14} />
-                </button>
+                <RowPlayButton track={t} cache={cache} onPlay={() => onPlay(it)} />
               )}
               <button
                 className={classNames('iconbtn', f.like && 'is-on')}

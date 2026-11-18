@@ -9,6 +9,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { request } = require('./bridge.cjs');
 const { createDownloads } = require('./downloads.cjs');
+const { createFolderImport } = require('./folder-import.cjs');
 const { createStreams } = require('./streams.cjs');
 const { createHls } = require('./hls.cjs');
 
@@ -38,8 +39,17 @@ if (!app.requestSingleInstanceLock()) app.quit();
 let win = null;
 
 const TOOLS = app.isPackaged ? path.join(process.resourcesPath, 'tools') : path.join(__dirname, '..', '.data', 'tools');
-const radio = require('./radio.cjs').createRadio({ toolsDir: TOOLS, favouritesPath: path.join(app.commandLine.getSwitchValue('user-data-dir') || app.getPath('userData'), 'radio-stations.json') });
+const radio = require('./radio.cjs').createRadio({ toolsDir: TOOLS, favouritesPath: path.join(app.commandLine.getSwitchValue('user-data-dir') || app.getPath('userData'), 'radio-stations.json'),
+  saveRecording: (wave, title) => {
+    const dir = dl().health().saves_to;
+    fs.mkdirSync(dir, { recursive: true });
+    const name = `${title.replace(/[\x00-\x1f<>:"/\\|?*]/g, '_').replace(/[. ]+$/g, '').slice(0, 110) || 'Live radio'} - recording excerpt - ${Date.now()}.wav`;
+    const file = path.join(dir, name); fs.writeFileSync(file, wave, { flag: 'wx' });
+    return { saved_to: dir, file, bytes: wave.length };
+  } });
 const MUSIC_CHOICE = path.join(app.getPath('userData'), 'music-folder.json');
+// FOLDER-IMPORT-001: which of the user's own music folders were imported, kept across restarts.
+const folderImport = createFolderImport({ indexPath: path.join(app.getPath('userData'), 'imported-folders.json') });
 function savedMusicFolder() {
   try {
     const folder = JSON.parse(fs.readFileSync(MUSIC_CHOICE, 'utf8')).folder;
@@ -82,7 +92,40 @@ ipcMain.handle('aw:http', (event, json) => {
 ipcMain.handle('aw:dl', async (event, json) => {
   if (!trusted(event)) return { error: 'Untrusted frame.' };
   try {
-    return await dl().handle(JSON.parse(json));
+    const req = JSON.parse(json);
+    // FOLDER-IMPORT-001: imported songs answer from their own folder; the downloader never sees them.
+    const imported = folderImport.dlAnswer(req);
+    if (imported) return imported;
+    return await dl().handle(folderImport.scrub(req));
+  } catch (e) {
+    return { error: e && e.message ? e.message : String(e) };
+  }
+});
+// FOLDER-IMPORT-001: pick folders to import, scan them for audio, and keep the imported list.
+ipcMain.handle('aw:folders', async (event, json) => {
+  if (!trusted(event)) return { error: 'Untrusted frame.' };
+  try {
+    const req = JSON.parse(json);
+    switch (req.op) {
+      case 'pick': {
+        const result = await dialog.showOpenDialog(win, { title: 'Choose music folders to import', properties: ['openDirectory', 'multiSelections'] });
+        return { folders: result.canceled ? [] : result.filePaths };
+      }
+      case 'import':
+        return folderImport.addFolder(String(req.folder || ''));
+      case 'rescan': {
+        // Re-read a folder already on the list (to re-register its songs); never adds a new one.
+        const known = folderImport.list().some((f) => f.folder === req.folder);
+        if (!known) throw new Error('That folder is not imported.');
+        return folderImport.addFolder(String(req.folder));
+      }
+      case 'list':
+        return { folders: folderImport.list() };
+      case 'remove':
+        return folderImport.removeFolder(String(req.folder || ''));
+      default:
+        throw new Error('Unknown request.');
+    }
   } catch (e) {
     return { error: e && e.message ? e.message : String(e) };
   }
@@ -151,7 +194,8 @@ function createWindow() {
 }
 
 async function serveLocalAudio(req, sourceUrl) {
-  const file = dl().localFile(sourceUrl);
+  // FOLDER-IMPORT-001: an imported song's own file serves exactly like a downloaded one.
+  const file = dl().localFile(sourceUrl) || folderImport.importedFile(sourceUrl);
   if (!file) return new Response('Not Found', { status: 404 });
   const size = fs.statSync(file).size;
   const type = AUDIO_MIME[path.extname(file).slice(1).toLowerCase()] || 'application/octet-stream';

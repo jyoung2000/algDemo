@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
+import './settings-buttons.css';
 import { SourceMark } from './SourceMark';
 import { RefreshGlyph } from './icons';
 import { api, type Health, type Settings as S, type Status } from './api';
 import { parseHistoryFile, type ImportSummary } from './engine/import';
 import { MicSettings } from './MicSettings';
 import { QueueDownloadSettings } from './QueueDownloadSettings';
+import { DownloadsSettings } from './DownloadsSettings';
+import type { Downloads } from './Downloads';
 import { AudioSettings } from './AudioSettings';
+import { RankingFormulaSettings } from './RankingFormulaSettings';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, classNames, fmtBytes } from './util';
 import './discovery-settings.css';
 
@@ -31,15 +35,18 @@ interface Props {
   onSettings: (patch: Partial<S>) => void;
   onReset: () => void;
   onResetTaste: () => void;
+  onFormulaSaved?: (next: S) => void;
   /**
    * SRC-WARN-001: per-source outcome of the last discovery run. It used to sit above the song list,
    * where a slow provider read as a problem with the music; it belongs with the runtime checks.
    */
   sources?: Record<string, { state?: string }>;
+  /** FOLDER-IMPORT-001: the app's one download list, so the Downloads section can host it here. */
+  downloads?: Downloads;
 }
 
 /** Settings and a discreet status panel. Every badge here comes from a runtime check, never a constant. */
-export function SettingsView({ settings, onSettings, onReset, onResetTaste, sources }: Props) {
+export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFormulaSaved, sources, downloads }: Props) {
   /**
    * The live keys are "provider:query" pairs, so a real run carries dozens of them. Group by the
    * provider, drop the query, and cap the list: the useful fact is WHICH provider went quiet, not
@@ -217,6 +224,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, sour
           </p>
         </section>
         <AudioSettings settings={settings} onSettings={onSettings} />
+        <RankingFormulaSettings settings={settings} onSaved={onFormulaSaved} />
         <div className="pref">
           <span className="k">Ranking engine</span>
           <label className="chk">
@@ -384,6 +392,9 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, sour
           )}
         </div>
       </section>
+
+      {/* FOLDER-IMPORT-001: the Downloads section — download queue plus local folder imports. */}
+      {downloads && <DownloadsSettings downloads={downloads} />}
 
       <section className="card" aria-labelledby="src-h">
         <div className="card__head">

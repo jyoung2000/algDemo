@@ -530,6 +530,13 @@ object Downloads {
   fun onLanded(listener: (String) -> Unit): () -> Unit { landedListeners.add(listener); return { landedListeners.remove(listener) } }
   private fun landed(url: String) = landedListeners.forEach { runCatching { it(url) } }
 
+  /** Radio excerpts share the owner-selected kept-music destination, never a renderer path. */
+  fun saveRadioRecording(context: Context, file: File, title: String): JSONObject {
+    val display = "${safeName(title).take(110)} - recording excerpt - ${System.currentTimeMillis()}.wav"
+    val (name, uri, where) = saveToMusic(context, file, display)
+    return JSONObject().put("file", uri?.toString() ?: name).put("saved_to", where).put("bytes", file.length())
+  }
+
   /** Copies into a chosen SAF tree, otherwise Music/Airwave Discovery. */
   private fun saveToMusic(context: Context, f: File, displayName: String = f.name): Triple<String, Uri?, String> {
     val name = safeName(displayName)

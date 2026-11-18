@@ -167,3 +167,12 @@ a.push {
     transition: none;
   }
 }
+
+/* PUSH-ICON-001 (owner 2026-11-17: "play as my queue button has a white play icon and is centered
+   with the text"): a glyph inside a push button takes the button's text colour (white on the blue
+   default), never the SVG default black, and sits centred on the label without shrinking. */
+.push > .aqua-icon {
+  fill: currentColor;
+  flex: none;
+  display: block;
+}

@@ -113,6 +113,9 @@ export function scenarios(): Scenario[] {
     scenario('xfade-bass-swap', 72064, BOTH, OFF, [{ frame: 12800, op: 'transitionTo', args: ['b', 0.8, 'bass-swap'] }]),
     scenario('xfade-filter', 72064, BOTH, OFF, [{ frame: 12800, op: 'transitionTo', args: ['b', 0.8, 'filter'] }]),
     scenario('xfade-cut', 72064, BOTH, OFF, [{ frame: 12800, op: 'transitionTo', args: ['b', 0.8, 'cut'] }]),
+    // DJ-XFADE-001: the low end changes hands at a chosen moment (0.3 s in, over 0.1 s).
+    scenario('xfade-shaped-bass-swap', 72064, BOTH, OFF, [{ frame: 12800, op: 'transitionTo', args: ['b', 0.8, 'bass-swap', { swapAt: 0.3, swapSeconds: 0.1 }] }]),
+    scenario('xfade-shaped-filter', 72064, BOTH, OFF, [{ frame: 12800, op: 'transitionTo', args: ['b', 0.8, 'filter', { swapAt: 0.3, swapSeconds: 0.1 }] }]),
     scenario('xfade-reversal', 72064, BOTH, OFF, [
       { frame: 12800, op: 'transitionTo', args: ['b', 1.0, 'filter'] },
       { frame: 32000, op: 'crossfadeTo', args: ['a', 0.5] },
