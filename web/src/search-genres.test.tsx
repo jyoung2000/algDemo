@@ -40,4 +40,32 @@ describe('search rows show genre bubbles (TAGS-ALWAYS-001)', () => {
     expect(tags(rows[0]!).join(' ')).toMatch(/Trap/);
     expect(tags(rows[1]!)).toEqual([]);
   });
+
+  it('keeps asking while the engine is still looking a song up, and fills the row when it lands', async () => {
+    vi.useFakeTimers();
+    try {
+      const trap = { family: 'Hip-hop', subgenre: 'Trap', families: [{ family: 'Hip-hop', subgenre: 'Trap', color: '#c4d872' }], color: '#c4d872', genres: ['trap'] };
+      let calls = 0;
+      // The engine answers "pending" for the first 6 asks (a slow lookup), then the genre.
+      genres.mockImplementation(async () => (++calls <= 6 ? { items: { a: null }, pending: ['a'] } : { items: { a: trap }, pending: [] }));
+      await act(async () => {
+        root.render(<TrackList tracks={[track('a', 'Yale')]} seedKeys={new Set<string>()} onAdd={() => {}} onPreview={() => {}} label="Results" />);
+      });
+      for (let i = 0; i < 12; i++) await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+      expect(calls).toBeGreaterThanOrEqual(7);
+      expect([...host.querySelectorAll('li .genre')].map((g) => g.textContent).join(' ')).toMatch(/Trap/);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('stops asking once the engine has nothing and is not looking the song up', async () => {
+    vi.useFakeTimers();
+    try {
+      genres.mockResolvedValue({ items: { b: null }, pending: [] });
+      await act(async () => {
+        root.render(<TrackList tracks={[track('b', 'Clutch')]} seedKeys={new Set<string>()} onAdd={() => {}} onPreview={() => {}} label="Results" />);
+      });
+      for (let i = 0; i < 6; i++) await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+      expect(genres).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
 });

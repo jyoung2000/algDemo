@@ -9,11 +9,15 @@ import { GenreBubbleView } from './Results';
  * from what the engine knows, with a few unknown songs looked up. An answer is kept for the session.
  */
 const known = new Map<string, Characteristics | null>();
-/** Rows answered "nothing known yet" are asked again (the engine looks up a few songs per request). */
+/**
+ * Rows the engine is still looking up (it says so in `pending`) are asked again until the answer
+ * lands; a row the engine has nothing for and is not looking up is settled at once.
+ */
 const tries = new Map<string, number>();
-const MAX_TRIES = 5;
-/** Waits before asking again: lookups run in the background on the engine and can take seconds. */
-const AGAIN_MS = [1500, 3000, 6000, 12000];
+const MAX_TRIES = 30;
+/** Waits before asking again: lookups run in the background on the engine and can take seconds each. */
+const AGAIN_MS = [1500, 3000, 6000];
+const AGAIN_LATER_MS = 10_000;
 const waiting = new Map<string, { track: Track; cbs: ((c: Characteristics | null) => void)[] }>();
 let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -21,17 +25,24 @@ function flush(): void {
   timer = null;
   const batch = [...waiting.values()].slice(0, 30);
   for (const b of batch) waiting.delete(b.track.key);
-  const done = (pick: (key: string) => Characteristics | null) => {
+  // `pending` null = the engine did not answer (asked again, as if pending).
+  const done = (pick: (key: string) => Characteristics | null, pending: Set<string> | null) => {
     for (const b of batch) {
-      const c = pick(b.track.key);
-      const n = (tries.get(b.track.key) ?? 0) + 1;
-      tries.set(b.track.key, n);
-      if (c || n >= MAX_TRIES) known.set(b.track.key, c);
+      const key = b.track.key;
+      const c = pick(key);
+      const n = (tries.get(key) ?? 0) + 1;
+      tries.set(key, n);
+      const lookingUp = pending ? pending.has(key) : true;
+      const again = !c && lookingUp && n < MAX_TRIES;
+      if (!again) known.set(key, c);
       for (const cb of b.cbs) cb(c);
-      if (!c && n < MAX_TRIES) setTimeout(() => ask(b.track, (v) => { for (const cb of b.cbs) cb(v); }), AGAIN_MS[n - 1] ?? 12000);
+      if (again) setTimeout(() => ask(b.track, (v) => { for (const cb of b.cbs) cb(v); }), AGAIN_MS[n - 1] ?? AGAIN_LATER_MS);
     }
   };
-  Promise.resolve().then(() => api.genres(batch.map((b) => b.track))).then((r) => done((k) => r.items?.[k] ?? null), () => done(() => null));
+  Promise.resolve().then(() => api.genres(batch.map((b) => b.track))).then(
+    (r) => done((k) => r.items?.[k] ?? null, new Set(r.pending ?? [])),
+    () => done(() => null, null),
+  );
   if (waiting.size) timer = setTimeout(flush, 60);
 }
 

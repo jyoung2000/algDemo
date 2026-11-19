@@ -2326,7 +2326,8 @@ export class LocalApi {
     // page asks again (a lookup can take seconds per song on a phone).
     const unknown = list.filter((t) => !statedTags(tagged(t)).length && !this.store.cacheGet(`genretry:${String(t['key'])}`)?.value);
     if (unknown.length) {
-      for (const t of unknown) this.genreQueue.set(String(t['key']), t);
+      // The queue takes its last entry first: put this list's first row last, so lookups go top down.
+      for (const t of [...unknown].reverse()) { const k = String(t['key']); this.genreQueue.delete(k); this.genreQueue.set(k, t); }
       this.kickGenreQueue();
     }
     const rows = list.map((t) => ({ track: tagged(t) }));

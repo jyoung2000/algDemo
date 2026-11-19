@@ -117,4 +117,15 @@ describe('saved songs carry their genres', () => {
     await handle('POST', '/api/genres', { tracks: [a] });
     expect(look).toHaveBeenCalledTimes(1);
   });
+
+  it('looks search results up from the top row down', async () => {
+    const { api, handle } = await setup();
+    const rows = ['r1', 'r2', 'r3'].map((id, i) => makeTrack({ provider: 'ytmusic', platformId: id, title: 'Song ' + i, artists: ['Artist ' + i], url: 'https://example.invalid/' + id, duration: 150 }));
+    const order: string[] = [];
+    vi.spyOn(api as never as { lookUpGenres: (t: { key: string }, m: unknown) => Promise<unknown> }, 'lookUpGenres')
+      .mockImplementation(async (t) => { order.push(t.key); return { tags: [], track: t }; });
+    await handle('POST', '/api/genres', { tracks: rows });
+    await api.genreQueueSettled();
+    expect(order).toEqual(rows.map((r) => r.key));
+  });
 });

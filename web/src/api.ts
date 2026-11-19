@@ -726,7 +726,7 @@ export const api = {
   previewUrl: (route: string) => call<{ url: string }>(route.replace('/api/preview/', '/api/preview-url/')),
   saved: () => call<{ items: SavedItem[] }>('/api/saved'),
   /** TAGS-ALWAYS-001: genres for songs outside the engine's lists (search results); null where nothing is known. */
-  genres: (tracks: Track[]) => call<{ items: Record<string, Characteristics | null> }>('/api/genres', { method: 'POST', body: json({ tracks }) }),
+  genres: (tracks: Track[]) => call<{ items: Record<string, Characteristics | null>; pending?: string[] }>('/api/genres', { method: 'POST', body: json({ tracks }) }),
   playlists: () => call<{ lists: PlaylistSummary[] }>('/api/playlists'),
   /** Every list edit goes through one call and answers with the lists as they now stand. */
   playlistEdit: (action: PlaylistAction, opts: { ids?: string[]; id?: string; name?: string; key?: string; tracks?: Track[]; album?: AlbumView } = {}) =>
