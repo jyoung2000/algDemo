@@ -407,6 +407,7 @@ export class LocalApi {
       if (m === 'POST' && path === '/api/full-song') return await this.fullSong(body ?? {});
       if (m === 'POST' && path === '/api/embed-local') return await this.embedLocal(body ?? {});
       if (m === 'GET' && path === '/api/saved') return ok(this.saved());
+      if (m === 'POST' && path === '/api/genres') return ok(await this.genresFor(((body ?? {})['tracks'] as Dict[] | undefined) ?? []));
       if (m === 'GET' && path === '/api/playlists') return ok(this.playlists());
       if (m === 'POST' && path === '/api/playlists') return await this.playlistAction(body ?? {});
       if (m === 'GET' && path === '/api/status') return ok(await this.status());
@@ -2305,6 +2306,62 @@ export class LocalApi {
     const fill = this.genreFiller(placed);
     if (placed.some((x) => this.savedWants(x['track'] as Dict))) this.kickSavedGenres();
     return { items: placed.map((x) => ({ ...x, characteristics: fill(x['track'] as Dict, characteristicsOf(x['track'] as Dict, null)) })) };
+  }
+
+  /**
+   * TAGS-ALWAYS-001 (owner, 2026-11-19: "all music should be tagged"): genres for songs shown outside the
+   * lists the engine keeps, such as search results. What is already known is used at once; up to ten songs
+   * nothing knows are looked up per request (each once a day, inside the allowance) and remembered like saved songs.
+   */
+  private async genresFor(tracks: Dict[]): Promise<Dict> {
+    const found = () => this.store.get<Record<string, Tag[]>>(SAVED_TAGS_KEY) ?? {};
+    const known = this.knownGenres();
+    const tagged = (t: Dict): Dict => {
+      if (statedTags(t).length) return this.withDate(t);
+      const own = found()[String(t['key'])] ?? known(t);
+      return this.withDate(own.length ? { ...t, tags: own } : t);
+    };
+    const list = tracks.filter((t) => t && typeof t === 'object' && t['key'] && t['kind'] !== 'radio-programme').slice(0, 30).map((t) => cleanTrack(t));
+    // Answer at once with what is known; songs nothing knows are looked up in the background and the
+    // page asks again (a lookup can take seconds per song on a phone).
+    const unknown = list.filter((t) => !statedTags(tagged(t)).length && !this.store.cacheGet(`genretry:${String(t['key'])}`)?.value);
+    if (unknown.length) {
+      for (const t of unknown) this.genreQueue.set(String(t['key']), t);
+      this.kickGenreQueue();
+    }
+    const rows = list.map((t) => ({ track: tagged(t) }));
+    const fill = this.genreFiller(rows, []);
+    const items: Record<string, Dict | null> = {};
+    for (const r of rows) items[String(r.track['key'])] = statedTags(r.track).length ? fill(r.track, characteristicsOf(r.track, null)) : null;
+    return { items, pending: unknown.map((t) => String(t['key'])) };
+  }
+
+  /** Songs from search results waiting for a genre lookup, newest request last (TAGS-ALWAYS-001). */
+  private genreQueue = new Map<string, Dict>();
+  private genreQueueRun: Promise<void> | null = null;
+  private kickGenreQueue(): void {
+    if (this.genreQueueRun) return;
+    this.genreQueueRun = (async () => {
+      for (let n = 0; n < 60 && this.genreQueue.size; n++) {
+        // The newest results first: they are the ones on screen.
+        const [key, t] = [...this.genreQueue.entries()].at(-1)!;
+        this.genreQueue.delete(key);
+        if (this.store.cacheGet(`genretry:${key}`)?.value) continue;
+        try {
+          const { tags } = await this.lookUpGenres(t, this.searchMeter());
+          if (tags.length) await this.store.put(SAVED_TAGS_KEY, { ...(this.store.get<Record<string, Tag[]>>(SAVED_TAGS_KEY) ?? {}), [key]: tags });
+          await this.store.cachePut(`genretry:${key}`, 'metadata', true, 24 * 3600);
+        } catch (e) {
+          if (e instanceof BudgetExceeded) { this.genreQueue.clear(); return; }
+          await this.store.cachePut(`genretry:${key}`, 'metadata', true, 6 * 3600);
+        }
+      }
+    })().catch(() => undefined).finally(() => { this.genreQueueRun = null; });
+  }
+
+  /** Resolves once no background genre lookup for search results is running (tests). */
+  async genreQueueSettled(): Promise<void> {
+    while (this.genreQueueRun) await this.genreQueueRun;
   }
 
   /** A saved or starting song with no stated genre, or a main genre and no subgenre, not looked up today. */

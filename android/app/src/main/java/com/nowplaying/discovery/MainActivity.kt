@@ -65,6 +65,22 @@ class MainActivity : Activity() {
   private var pendingFile: ValueCallback<Array<Uri>>? = null
   private var pendingFolderId: Int? = null
   @Volatile private var webAudioPlaying = false
+  /**
+   * ANDROID-BG-DOWNLOAD-001: the native player wants to play a song whose file is not on the phone
+   * yet. The page owns the download queue, so it must keep running while the activity is in the
+   * background (a song chosen from Android Auto search would otherwise buffer forever).
+   */
+  @Volatile private var engineWaiting = false
+  private fun pageNeeded() = webAudioPlaying || engineWaiting
+  private val engineWatch: (String) -> Unit = { json ->
+    val o = runCatching { JSONObject(json) }.getOrNull()
+    val waiting = o != null && o.optBoolean("playWhenReady") && o.optBoolean("waiting")
+    if (waiting != engineWaiting) {
+      engineWaiting = waiting
+      val v = web
+      if (v != null && activityPaused) { if (pageNeeded()) v.onResume() else v.onPause() }
+    }
+  }
   private var activityPaused = false
   private var notificationRequested = false
   private var mediaControllerFuture: ListenableFuture<MediaController>? = null
@@ -175,6 +191,7 @@ class MainActivity : Activity() {
   private fun startNativeSession() {
     MediaHub.setCommandSink(mediaCommandSink)
     EngineHub.attachPage(enginePage)
+    EngineHub.addObserver(engineWatch)
     val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
     val f = MediaController.Builder(this, token).buildAsync()
     mediaControllerFuture = f
@@ -389,7 +406,7 @@ class MainActivity : Activity() {
         if (playing) {
           maybeAskNotifications()
           if (activityPaused) view.onResume()
-        } else if (activityPaused) {
+        } else if (activityPaused && !engineWaiting) {
           view.onPause()
         }
       }
@@ -413,7 +430,7 @@ class MainActivity : Activity() {
         if (playing) {
           maybeAskNotifications()
           if (activityPaused) view.onResume()
-        } else if (activityPaused) {
+        } else if (activityPaused && !engineWaiting) {
           view.onPause()
         }
       }
@@ -531,7 +548,7 @@ class MainActivity : Activity() {
     activityPaused = true
     // CAR-CATALOG-SERVICE-001: a hidden page no longer answers car searches; the service engine does.
     MediaHub.setPageVisible(mediaCommandSink, false)
-    if (!webAudioPlaying) web?.onPause()
+    if (!pageNeeded()) web?.onPause()
     super.onPause()
   }
   override fun onResume() {
@@ -546,6 +563,7 @@ class MainActivity : Activity() {
     mainHandler.removeCallbacks(openAfterCreate)
     WebViewWarmup.cancel(openWeb)
     EngineHub.detachPage(enginePage)
+    EngineHub.removeObserver(engineWatch)
     MediaHub.clearCommandSink(mediaCommandSink)
     ServiceApi.releaseUi(web ?: this, apiReplies)
     mediaController?.release()

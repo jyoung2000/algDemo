@@ -12,6 +12,7 @@ import { SaveMenu } from './SaveMenu';
 import { SongStar, inPlaylist } from './SongStar';
 import { AlbumShelf } from './AlbumShelf';
 import { SongCredits } from './SongCredits';
+import { RowGenres } from './RowGenres';
 import { ArtistCard, namesArtist } from './ArtistLinks';
 import { warmer } from './engine/warm-shell';
 import { namesAlbum } from './engine/album-key';
@@ -332,6 +333,68 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
       setView({ kind: 'error', message: e instanceof ApiError ? e.message : 'The discovery server did not answer. Is it running?' });
     }
   };
+
+  /**
+   * SRC-AUTO-001 (owner, 2026-11-19: "ensure refreshing sources works and does it automatically if any
+   * sources go out"): a source that failed is asked again on its own, twice (after 4 s, then 12 s), and
+   * again when the device comes back online. Only the sources that went out are asked; what they bring
+   * joins the list already shown. A source out of today's allowance is not retried (it cannot help).
+   */
+  const autoTries = useRef(new Map<string, number>());
+  /** Bumped after each automatic try, so the next one is scheduled even when nothing on screen changed. */
+  const [autoRound, setAutoRound] = useState(0);
+  const retryFailed = async (query: string) => {
+    const now = view;
+    if (now.kind !== 'results' || now.query !== query) return;
+    const out = Object.entries(now.sources).filter(([, x]) => x.state === 'failed').map(([k]) => k);
+    if (!out.length) return;
+    const c = fresh();
+    setRefreshing(true);
+    try {
+      const r = await api.search(query, c.signal, out);
+      if (c.signal.aborted) return;
+      setView((v) => {
+        if (v.kind !== 'results' || v.query !== query) return v;
+        const have = new Set(v.tracks.map((t) => t.key));
+        const tracks = [...v.tracks, ...r.results.filter((t) => !have.has(t.key))];
+        const next: View = { ...v, tracks, sources: { ...v.sources, ...r.sources } };
+        cache.current.set(query.toLowerCase().replace(/\s+/g, ' '), { at: Date.now(), view: next });
+        return next;
+      });
+    } catch (e) {
+      if (c.signal.aborted || isAbort(e)) return;
+    } finally {
+      if (!c.signal.aborted) setRefreshing(false);
+      setAutoRound((n) => n + 1);
+    }
+  };
+  const failedKey = view.kind === 'results' ? `${view.query}|${Object.entries(view.sources).filter(([, x]) => x.state === 'failed').map(([k]) => k).sort().join(',')}` : '';
+  useEffect(() => {
+    if (view.kind !== 'results' || refreshing || !failedKey.split('|')[1]) return;
+    const query = view.query;
+    const n = autoTries.current.get(query) ?? 0;
+    if (n >= 2) return;
+    const id = window.setTimeout(() => {
+      autoTries.current.set(query, n + 1);
+      void retryFailed(query);
+    }, n === 0 ? 4000 : 12000);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [failedKey, refreshing, autoRound]);
+  useEffect(() => {
+    const back = () => {
+      if (kind.current !== 'results') return;
+      setView((v) => {
+        if (v.kind === 'results' && Object.values(v.sources).some((x) => x.state === 'failed')) {
+          autoTries.current.delete(v.query);
+          window.setTimeout(() => void retryFailed(v.query), 0);
+        }
+        return v;
+      });
+    };
+    window.addEventListener('online', back);
+    return () => window.removeEventListener('online', back);
+  });
 
   /**
    * VOICE-SEARCH-001. Owner: "a user should be able to search via song name or song lyric" with the
@@ -1212,6 +1275,8 @@ export function TrackList({
                 ))}
               </span>
               <SongCredits track={t} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} hideAlbum={numbered} />
+              {/* TAGS-ALWAYS-001: search rows show genres like every other song list. */}
+              <RowGenres track={t} />
               {meta && <span className="track__meta">{meta}</span>}
               {t.evidence && <EvidenceLine e={t.evidence} />}
               {t.warning && <span className="track__warn">{t.warning}</span>}

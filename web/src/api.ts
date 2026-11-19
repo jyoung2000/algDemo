@@ -650,8 +650,9 @@ export const api = {
    */
   carContext: (id: string) =>
     call<{ tracks: Track[]; ids: string[]; index: number }>('/_native/context', { method: 'POST', body: json({ id }) }),
-  search: (q: string, signal?: AbortSignal) =>
-    call<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}&sources=ytmusic,deezer,soundcloud,apple,spotify`, signal ? { signal } : {}),
+  /** SRC-AUTO-001: `sources` asks only those (the ones that went out); every source by default. */
+  search: (q: string, signal?: AbortSignal, sources: readonly string[] = ['ytmusic', 'deezer', 'soundcloud', 'apple', 'spotify']) =>
+    call<SearchResponse>(`/api/search?q=${encodeURIComponent(q)}&sources=${sources.join(',')}`, signal ? { signal } : {}),
   searchLyrics: (q: string, signal?: AbortSignal) => call<IdentifyResponse>(`/api/search/lyrics?q=${encodeURIComponent(q)}`, signal ? { signal } : {}),
   searchAlbums: (q: string, signal?: AbortSignal) => call<AlbumSearchResponse>(`/api/search/albums?q=${encodeURIComponent(q)}`, signal ? { signal } : {}),
   /** ARTIST-PAGE-001: artists named by a search; an artist's page; every song on their albums and singles. */
@@ -724,6 +725,8 @@ export const api = {
    */
   previewUrl: (route: string) => call<{ url: string }>(route.replace('/api/preview/', '/api/preview-url/')),
   saved: () => call<{ items: SavedItem[] }>('/api/saved'),
+  /** TAGS-ALWAYS-001: genres for songs outside the engine's lists (search results); null where nothing is known. */
+  genres: (tracks: Track[]) => call<{ items: Record<string, Characteristics | null> }>('/api/genres', { method: 'POST', body: json({ tracks }) }),
   playlists: () => call<{ lists: PlaylistSummary[] }>('/api/playlists'),
   /** Every list edit goes through one call and answers with the lists as they now stand. */
   playlistEdit: (action: PlaylistAction, opts: { ids?: string[]; id?: string; name?: string; key?: string; tracks?: Track[]; album?: AlbumView } = {}) =>

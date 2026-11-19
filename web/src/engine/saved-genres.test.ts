@@ -98,4 +98,23 @@ describe('saved songs carry their genres', () => {
     const c = (await handle('GET', '/api/saved')).body.items[0].characteristics;
     expect(JSON.stringify(c.fill)).toMatch(/2020s rap/i);
   });
+
+  it('gives search results genres: known ones at once, unknown ones looked up (POST /api/genres)', async () => {
+    const { api, handle } = await setup();
+    const a = makeTrack({ provider: 'ytmusic', platformId: 's1', title: 'Clutch', artists: ['SoFaygo'], url: 'https://example.invalid/s1', duration: 134 });
+    const b = { ...makeTrack({ provider: 'deezer', platformId: 's2', title: 'Yale', artists: ['Ken Carson'], url: 'https://example.invalid/s2', duration: 120 }),
+      tags: [{ name: 'hip-hop', label: 'Rap/Hip Hop', source: 'Deezer album genre', scope: 'album', confidence: 0.8, inferred: false }, { name: 'rage', label: 'rage', source: 'Deezer album genre', scope: 'album', confidence: 0.8, inferred: false }] };
+    const look = vi.spyOn(api as never as { lookUpGenres: (t: unknown, m: unknown) => Promise<unknown> }, 'lookUpGenres')
+      .mockResolvedValue({ tags: [{ name: 'hip-hop', label: 'Rap/Hip Hop' }, { name: 'trap', label: 'trap' }], track: a });
+    const first = (await handle('POST', '/api/genres', { tracks: [a, b] })).body;
+    expect(first.items[a.key]).toBeNull();
+    expect(first.pending).toEqual([a.key]);
+    await api.genreQueueSettled();
+    expect(look).toHaveBeenCalledTimes(1);
+    const items = (await handle('POST', '/api/genres', { tracks: [a, b] })).body.items;
+    expect(JSON.stringify(items[a.key])).toMatch(/Trap/i);
+    expect(JSON.stringify(items[b.key])).toMatch(/Rage/i);
+    await handle('POST', '/api/genres', { tracks: [a] });
+    expect(look).toHaveBeenCalledTimes(1);
+  });
 });

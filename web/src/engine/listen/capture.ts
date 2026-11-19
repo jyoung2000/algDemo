@@ -59,7 +59,8 @@ export async function samplesFromFile(file: Blob & { name?: string }, signal?: A
   try {
     bytes = await file.arrayBuffer();
   } catch {
-    throw new CaptureError('too_long');
+    // A big file can fail to load into memory; a small one that cannot be read is unreadable, not "too large".
+    throw new CaptureError(file.size > 50 * 1024 * 1024 ? 'too_long' : 'unreadable');
   }
   if (signal?.aborted) throw new CaptureError('cancelled');
   if (!looksLikeAudio(new Uint8Array(bytes, 0, Math.min(64, bytes.byteLength)))) throw new CaptureError('unsupported');
