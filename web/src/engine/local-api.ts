@@ -2333,8 +2333,14 @@ export class LocalApi {
     const rows = list.map((t) => ({ track: tagged(t) }));
     const fill = this.genreFiller(rows, []);
     const items: Record<string, Dict | null> = {};
-    for (const r of rows) items[String(r.track['key'])] = statedTags(r.track).length ? fill(r.track, characteristicsOf(r.track, null)) : null;
-    return { items, pending: unknown.map((t) => String(t['key'])) };
+    const pending = new Set(unknown.map((t) => String(t['key'])));
+    // A song still being looked up answers null (the page asks again); one no service knows is
+    // estimated from the artist's other rows, the era or the list (GENRE-ALL-001, drawn dashed).
+    for (const r of rows) {
+      const key = String(r.track['key']);
+      items[key] = pending.has(key) ? null : fill(r.track, characteristicsOf(r.track, null) ?? {});
+    }
+    return { items, pending: [...pending] };
   }
 
   /** Songs from search results waiting for a genre lookup, newest request last (TAGS-ALWAYS-001). */

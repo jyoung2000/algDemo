@@ -118,6 +118,22 @@ describe('saved songs carry their genres', () => {
     expect(look).toHaveBeenCalledTimes(1);
   });
 
+  it('estimates a search row no service has genres for from the same artist\'s tagged rows (GENRE-ALL-001)', async () => {
+    const { api, handle } = await setup();
+    const rap = [{ name: 'hip-hop', label: 'Rap/Hip Hop', source: 'Deezer album genre', scope: 'album', confidence: 0.8, inferred: false }];
+    const known = { ...makeTrack({ provider: 'deezer', platformId: 'd1', title: 'DENIAL IS A RIVER', artists: ['Doechii'], url: 'https://example.invalid/d1', duration: 160 }), tags: rap };
+    const bare = makeTrack({ provider: 'ytmusic', platformId: 'd2', title: 'Bills', artists: ['Doechii'], url: 'https://example.invalid/d2', duration: 150 });
+    vi.spyOn(api as never as { lookUpGenres: (t: unknown, m: unknown) => Promise<unknown> }, 'lookUpGenres').mockResolvedValue({ tags: [], track: bare });
+    await handle('POST', '/api/genres', { tracks: [known, bare] });
+    await api.genreQueueSettled();
+    const body = (await handle('POST', '/api/genres', { tracks: [known, bare] })).body;
+    expect(body.pending).toEqual([]);
+    const { genreBubbles } = await import('../util');
+    const bubbles = genreBubbles(body.items[bare.key]);
+    expect(bubbles.length).toBeGreaterThan(0);
+    expect(JSON.stringify(bubbles)).toMatch(/Rap|Hip/);
+  });
+
   it('looks search results up from the top row down', async () => {
     const { api, handle } = await setup();
     const rows = ['r1', 'r2', 'r3'].map((id, i) => makeTrack({ provider: 'ytmusic', platformId: id, title: 'Song ' + i, artists: ['Artist ' + i], url: 'https://example.invalid/' + id, duration: 150 }));
