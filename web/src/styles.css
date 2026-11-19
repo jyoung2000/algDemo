@@ -1,5 +1,5 @@
 /*
- * Airwave Discovery — the demo's layout on top of the Airwave window kit (airwave-window.css).
+ * jPlay — the demo's layout on top of the Airwave window kit (airwave-window.css).
  * The kit supplies the tokens, Aqua push buttons, fields, segmented control, wells, status dots and
  * focus rings. This file adds the music workspace: a pearl desk instead of the kit's grey desktop,
  * a sidebar, the seed shelf, the queue, and an iPod-like player with an LCD and a click-wheel.
@@ -73,6 +73,19 @@ body {
   .side__item {
     justify-content: center;
   }
+  .brandlogo__word {
+    display: none;
+  }
+  .brandlogo__mark {
+    display: block;
+  }
+}
+/* The Windows window keeps names at any width, so it keeps the wordmark too. */
+.is-desktop-shell .brandlogo__word {
+  display: block;
+}
+.is-desktop-shell .brandlogo__mark {
+  display: none;
 }
 
 /* ------------------------------------------------------------------ sidebar
@@ -97,20 +110,64 @@ body {
   gap: 9px;
   padding: 0;
 }
-.brand__mark {
-  width: 30px;
+/* JPLAY-BRAND-001 (owner, 2026-11-19): the jPlay logo from the owner's artwork. The wordmark (its "j" is
+   the note figure) where there is room, the figure alone where the side bar is icons only. The colour
+   layer is the logo's own shape (mask) blended as "color": the artwork's grey shading stays, the hue and
+   saturation are the listening mood's (--brand-tint, see brand-tint.ts). No tint = the artwork's grey. */
+.brandlogo {
+  display: inline-flex;
+  align-items: center;
   height: 30px;
-  border-radius: 9px;
-  display: grid;
-  place-items: center;
-  color: #fff;
-  background: linear-gradient(var(--aqua-top), var(--aqua-mid) 55%, var(--aqua-lower));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 1px 2px rgba(0, 0, 0, 0.25);
 }
-.brand__name {
-  font-weight: 700;
-  font-size: 16px;
-  letter-spacing: -0.01em;
+.brandlogo__mark,
+.brandlogo__word {
+  position: relative;
+  display: block;
+  height: 100%;
+  background: center / contain no-repeat;
+  isolation: isolate;
+}
+.brandlogo__mark {
+  display: none;
+  aspect-ratio: 782 / 938;
+  background-image: url('/brand/jplay-mark.png');
+}
+.brandlogo__word {
+  aspect-ratio: 1650 / 612;
+  background-image: url('/brand/jplay-wordmark.png');
+}
+.brandlogo__mark::after,
+.brandlogo__word::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-color: transparent;
+  mix-blend-mode: color;
+  transition: background-color 900ms ease;
+  -webkit-mask: center / contain no-repeat;
+  mask: center / contain no-repeat;
+}
+.brandlogo__mark::after {
+  -webkit-mask-image: url('/brand/jplay-mark.png');
+  mask-image: url('/brand/jplay-mark.png');
+}
+.brandlogo__word::after {
+  -webkit-mask-image: url('/brand/jplay-wordmark.png');
+  mask-image: url('/brand/jplay-wordmark.png');
+}
+.brandlogo.is-tinted .brandlogo__mark::after,
+.brandlogo.is-tinted .brandlogo__word::after {
+  background-color: var(--brand-tint);
+}
+@media (prefers-reduced-motion: reduce) {
+  .brandlogo__mark::after,
+  .brandlogo__word::after {
+    transition: none;
+  }
+}
+/* The phone's page head: only where the side bar is a bottom tab bar (see max-width: 899px). */
+.phonebrand {
+  display: none;
 }
 .side__nav {
   list-style: none;
@@ -759,7 +816,9 @@ a.push {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;
-  margin: 8px 2px 0;
+  /* SRC-GAP-001 (owner, 2026-11-19): room between the source line and the artist, album and song
+     lists below it, so they never sit on it. */
+  margin: 8px 2px 12px;
   color: var(--ink-3);
   font-size: 11px;
 }
@@ -774,7 +833,6 @@ a.push {
   flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
 }
 .srcline__items {
   display: flex;
@@ -924,6 +982,8 @@ a.push {
 }
 .vtag {
   display: inline-block;
+  /* VTAG-GAP-001: the title text and its tags have no space between them in the markup. */
+  margin-inline-start: 6px;
   padding: 0 6px;
   border-radius: 7px;
   font-size: 10px;
@@ -933,8 +993,8 @@ a.push {
   background: var(--pearl-2);
   border: 1px solid var(--hair);
   vertical-align: 1px;
-  /* a long version name ("Extended Club Remix 2024") stays inside a narrow row */
-  max-width: 100%;
+  /* a long version name ("Extended Club Remix 2024") stays inside a narrow row, margin included */
+  max-width: calc(100% - 6px);
   box-sizing: border-box;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2472,6 +2532,22 @@ html {
   }
   /* The brand and the count are not part of a tab bar on a phone. */
   .brand {
+    display: none;
+  }
+  /* JPLAY-BRAND-001: the logo heads the page instead, small, so the page loses little height. */
+  .phonebrand {
+    display: flex;
+    align-items: center;
+    height: 26px;
+    margin: 0 0 -6px 2px;
+  }
+  .phonebrand .brandlogo {
+    height: 24px;
+  }
+  .phonebrand .brandlogo__word {
+    display: block;
+  }
+  .phonebrand .brandlogo__mark {
     display: none;
   }
   .side__count {

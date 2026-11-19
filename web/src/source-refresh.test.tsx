@@ -126,6 +126,16 @@ it('draws the button as a full 44px target and dims the list on screen while it 
   expect(css).not.toMatch(/\.is-refreshing > \.tracks/);
 });
 
+it('leaves room under the source line before the artist, album and song lists (SRC-GAP-001)', () => {
+  const rule = /(?:^|\n)\.srcline \{([^}]*)\}/.exec(css)![1]!;
+  const margin = /margin: (\d+)px (\d+)px (\d+)px/.exec(rule);
+  expect(margin, 'one margin for both source lines').toBeTruthy();
+  expect(Number(margin![3])).toBeGreaterThanOrEqual(12);
+  // The refresh variant must not override the bottom gap with a smaller one.
+  const refresh = /(?:^|\n)\.srcline--refresh \{([^}]*)\}/.exec(css)![1]!;
+  expect(refresh).not.toMatch(/margin/);
+});
+
 /**
  * SRC-BUDGET-001. Owner: say the allowance was all used up. Sources refused because today's download
  * allowance is spent read as such, one line says why and how to change it, and the refresh is not

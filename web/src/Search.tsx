@@ -862,7 +862,7 @@ function ResultsView({
         <span className="srcline__item">
           <span className="sdot sdot--ok" aria-hidden="true" />
           Lyrics matched via Genius. {lyricTracks.length === 1 ? '1 match found.' : `${lyricTracks.length} matches found.`}
-          {lyr?.state === 'ok' && lyr.unplayable > 0 ? ` ${lyr.unplayable} more ${lyr.unplayable === 1 ? 'is' : 'are'} not on a service Airwave plays from.` : ''}
+          {lyr?.state === 'ok' && lyr.unplayable > 0 ? ` ${lyr.unplayable} more ${lyr.unplayable === 1 ? 'is' : 'are'} not on a service jPlay plays from.` : ''}
         </span>
       </p>
       <TrackList tracks={lyricTracks} {...common} label={`Songs with the words ${view.query}`} />
@@ -912,7 +912,7 @@ function ResultsView({
       {none && lyr?.state !== 'pending' && !(spent && !(lyr?.state === 'ok' && lyr.named > 0)) && (
         <p className="state">
           {lyr?.state === 'ok' && lyr.named > 0
-            ? `No songs found for “${view.query}”. Genius found songs with these words, but none is on a service Airwave plays from.`
+            ? `No songs found for “${view.query}”. Genius found songs with these words, but none is on a service jPlay plays from.`
             // SRC-WARN-001: which provider was quiet is reported in Settings, not here. The listener
             // still gets the actionable half - an incomplete run is worth retrying.
             : `No songs found for “${view.query}”.${Object.values(view.sources).some((x) => x.state !== 'ok') ? ' The search ran short; try again in a moment.' : ' Try the artist and title together, or a different line of the lyrics.'}`}
@@ -948,13 +948,13 @@ function IdentifiedView({
   const n = view.tracks.length;
   if (!n) {
     let text: string;
-    if (view.origin === 'audio' && view.heard) text = `Shazam heard “${view.heard.title}” by ${view.heard.artist}, but it is not on a service Airwave plays from. Try searching for it by title.`;
-    else if (view.named > 0) text = 'Genius found songs with these words, but none is on a service Airwave plays from. Try a different line.';
+    if (view.origin === 'audio' && view.heard) text = `Shazam heard “${view.heard.title}” by ${view.heard.artist}, but it is not on a service jPlay plays from. Try searching for it by title.`;
+    else if (view.named > 0) text = 'Genius found songs with these words, but none is on a service jPlay plays from. Try a different line.';
     else if (view.origin === 'lyrics') text = 'No lyric match found. Try a different line or fewer words.';
     else text = 'No match found in this clip. Try a clearer section with music playing, or search by title or lyrics.';
     return <p className="state">{text}</p>;
   }
-  const more = view.unplayable > 0 ? ` ${view.unplayable} more ${view.unplayable === 1 ? 'is' : 'are'} not on a service Airwave plays from.` : '';
+  const more = view.unplayable > 0 ? ` ${view.unplayable} more ${view.unplayable === 1 ? 'is' : 'are'} not on a service jPlay plays from.` : '';
   return (
     <>
       <p className="srcline">
@@ -1013,7 +1013,7 @@ function Help({ code, origin, detail, onRetry }: { code: HelpCode; origin: Origi
   }
   if (code === 'denied') {
     body = isAndroid()
-      ? 'Allow it in Android Settings → Apps → Airwave Discovery → Permissions → Microphone, then try again. You can also choose an audio file.'
+      ? 'Allow it in Android Settings → Apps → jPlay → Permissions → Microphone, then try again. You can also choose an audio file.'
       : 'Turn on “Microphone access” and “Let desktop apps access your microphone” in Windows Settings → Privacy & security → Microphone, then try again.';
   }
   return (

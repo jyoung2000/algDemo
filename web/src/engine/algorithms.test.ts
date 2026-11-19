@@ -57,7 +57,7 @@ const user = (over: Partial<Algorithm> = {}): Algorithm => ({ ...createFrom(BUIL
 
 describe('built-in algorithm parity', () => {
   it('is derived from DEFAULT_ENGINE and prints the owner formula exactly', () => {
-    expect(BUILT_IN_ALGORITHM).toMatchObject({ id: BUILT_IN_ID, name: 'Airwave default', builtIn: true, finalFormula: DEFAULT_RANKING_FORMULA });
+    expect(BUILT_IN_ALGORITHM).toMatchObject({ id: BUILT_IN_ID, name: 'jPlay default', builtIn: true, finalFormula: DEFAULT_RANKING_FORMULA });
     expect(BUILT_IN_ALGORITHM.params.seedWeights.audio).toBe(DEFAULT_ENGINE.weights.audio);
     expect(BUILT_IN_ALGORITHM.params.coverageFloor).toBe(DEFAULT_ENGINE.coverageFloor);
     expect(Object.isFrozen(BUILT_IN_ALGORITHM.params.seedWeights)).toBe(true);
@@ -157,7 +157,7 @@ describe('import and export', () => {
   it('rejects unknown, wrong-version, malformed and oversized input', () => {
     const ok = JSON.parse(serializeAlgorithm(user()));
     expect(() => parseAlgorithm('{nope')).toThrow('This is not valid JSON.');
-    expect(() => parseAlgorithm(JSON.stringify({ ...ok, format: 'other' }))).toThrow('This is not an Airwave algorithm file.');
+    expect(() => parseAlgorithm(JSON.stringify({ ...ok, format: 'other' }))).toThrow('This is not a jPlay algorithm file.');
     expect(() => parseAlgorithm(JSON.stringify({ ...ok, version: 2 }))).toThrow(/Unsupported algorithm file version 2/);
     expect(() => parseAlgorithm(JSON.stringify({ ...ok, extra: true }))).toThrow('The file has an unknown field “extra”.');
     expect(() => parseAlgorithm(JSON.stringify({ ...ok, algorithm: { ...ok.algorithm, builtIn: true } }))).toThrow('The algorithm has an unknown field “builtIn”.');

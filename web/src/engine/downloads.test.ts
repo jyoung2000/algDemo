@@ -11,7 +11,7 @@ describe('native playback state', () => {
     playbackActive(true, 'Local full song');
     expect(playbackState).toHaveBeenCalledWith('{"playing":true,"title":"Local full song"}');
     playbackActive(false);
-    expect(playbackState).toHaveBeenCalledWith('{"playing":false,"title":"Airwave Discovery"}');
+    expect(playbackState).toHaveBeenCalledWith('{"playing":false,"title":"jPlay"}');
   });
 
   it('sends playing state and title to the Android bridge, falling back to Windows', async () => {

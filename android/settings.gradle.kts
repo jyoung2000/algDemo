@@ -1,5 +1,5 @@
 /*
- * Airwave Discovery for Android — a separate build from ../../android (the player).
+ * jPlay for Android — a separate build from ../../android (the player).
  * It has no library dependencies: a WebView shell that opens the demo server.
  */
 pluginManagement {

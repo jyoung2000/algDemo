@@ -1,5 +1,5 @@
 'use strict';
-// Airwave Discovery for Windows: the same web app and engine as the Android APK, in an Electron window.
+// jPlay for Windows: the same web app and engine as the Android APK, in an Electron window.
 // No server, no Python, no uv. The page is served from the app's own files over an https origin (so
 // wasm, ES modules and YouTube's embed behave as in the APK); music-service requests go through the
 // guarded bridge in bridge.cjs; storage is IndexedDB in the app's profile.
@@ -10,6 +10,7 @@ const { pathToFileURL } = require('node:url');
 const { request } = require('./bridge.cjs');
 const { createDownloads } = require('./downloads.cjs');
 const { createFolderImport } = require('./folder-import.cjs');
+const brandFolders = require('./brand-folders.cjs');
 const { createStreams } = require('./streams.cjs');
 const { createHls } = require('./hls.cjs');
 
@@ -33,7 +34,11 @@ function fileFor(urlPath) {
   return full;
 }
 
-app.setName('Airwave Discovery');
+// JPLAY-BRAND-001/002: the app is jPlay, and so is its profile folder (library, settings, radio
+// favourites). An earlier version's folder is moved to the new name on first start; if it cannot be
+// moved it is used where it is, so an update keeps everything. A test profile (--user-data-dir) wins.
+app.setName('jPlay');
+if (!app.commandLine.hasSwitch('user-data-dir')) app.setPath('userData', brandFolders.moveProfile(app.getPath('appData')));
 if (!app.requestSingleInstanceLock()) app.quit();
 
 let win = null;
@@ -55,7 +60,15 @@ function savedMusicFolder() {
     const folder = JSON.parse(fs.readFileSync(MUSIC_CHOICE, 'utf8')).folder;
     if (typeof folder === 'string' && path.isAbsolute(folder) && fs.statSync(folder).isDirectory()) return folder;
   } catch { /* no chosen folder */ }
-  return path.join(app.getPath('music'), 'Airwave Discovery');
+  return musicHome();
+}
+// JPLAY-BRAND-002: Music\jPlay; an earlier version's music folder is moved there once (its songs stay known).
+let musicHomeDir = null;
+function musicHome() {
+  // A test profile (--user-data-dir) never moves the real folders: it uses whichever one exists.
+  const keep = app.commandLine.hasSwitch('user-data-dir') ? { rename: () => { throw new Error('test profile'); } } : undefined;
+  if (!musicHomeDir) musicHomeDir = brandFolders.moveMusic(app.getPath('music'), keep);
+  return musicHomeDir;
 }
 let downloads = null;
 // STREAM-DL-001: a chosen song plays from its source while its download runs.
@@ -68,7 +81,7 @@ const dl = () =>
     toolsDir: TOOLS,
     streams: true,
     saveDir: savedMusicFolder(),
-    libraryDir: path.join(app.getPath('music'), 'Airwave Discovery'),
+    libraryDir: musicHome(),
     cacheDir: path.join(app.getPath('userData'), 'queue-audio'),
     tempRoot: path.join(app.getPath('temp'), 'airwave-discovery-jobs'),
     chooseFolder: async (current) => {
@@ -167,8 +180,8 @@ function createWindow() {
     minWidth: 360,
     minHeight: 520,
     backgroundColor: '#f7f6f3',
-    title: 'Airwave Discovery',
-    icon: path.join(__dirname, '..', 'launcher', 'airwave-discovery.ico'),
+    title: 'jPlay',
+    icon: path.join(__dirname, '..', 'launcher', 'jplay.ico'),
     autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: false, backgroundThrottling: false },
   });

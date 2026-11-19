@@ -62,11 +62,11 @@ describe('Profile algorithm toolbar', () => {
     await renderProfile();
     const page = document.querySelector('.profile')!;
     expect(page.firstElementChild).toBe(manager());
-    expect(optionNames(profileSelect())).toEqual(['Airwave default (built-in)']);
+    expect(optionNames(profileSelect())).toEqual(['jPlay default (built-in)']);
     expect(profileSelect().value).toBe(BUILT_IN_ID);
     expect(within(manager()).queryAllByRole('spinbutton')).toHaveLength(0);
     expect(within(manager()).getByText(/built-in algorithm is read-only/)).toBeTruthy();
-    expect(within(manager()).getByLabelText('Formula of Airwave default').textContent).toBe(formulaLines(BUILT_IN_ALGORITHM).join('\n'));
+    expect(within(manager()).getByLabelText('Formula of jPlay default').textContent).toBe(formulaLines(BUILT_IN_ALGORITHM).join('\n'));
     // The existing Recommendation formula section reads the same algorithm.
     const formulaCard = screen.getByRole('region', { name: 'Recommendation formula' });
     await waitFor(() => expect(formulaCard.querySelector('pre.formula')!.textContent).toBe(formulaLines(BUILT_IN_ALGORITHM).join('\n')));
@@ -78,19 +78,19 @@ describe('Profile algorithm toolbar', () => {
     const notes = within(manager()).getByRole('list', { name: 'How the engine applies this formula' });
     expect(within(notes).getAllByRole('listitem').map((li) => li.textContent)).toEqual(formulaNotes(BUILT_IN_ALGORITHM));
     // The formula itself is still exactly the six lines.
-    expect(within(manager()).getByLabelText('Formula of Airwave default').textContent).toBe(formulaLines(BUILT_IN_ALGORITHM).join('\n'));
+    expect(within(manager()).getByLabelText('Formula of jPlay default').textContent).toBe(formulaLines(BUILT_IN_ALGORITHM).join('\n'));
   });
 
   it('Create copies the selected algorithm under an inline name, selects it and makes it editable', async () => {
     await renderProfile();
     fireEvent.click(within(manager()).getByRole('button', { name: 'Create' }));
     const name = screen.getByRole('textbox', { name: 'Name for the new algorithm' }) as HTMLInputElement;
-    expect(name.value).toBe('Airwave default copy');
+    expect(name.value).toBe('jPlay default copy');
     fireEvent.change(name, { target: { value: 'Late night' } });
     const create = screen.getByRole('button', { name: 'Create algorithm' });
     expect(create.className).toBe('push push--default');
     fireEvent.click(create);
-    await waitFor(() => expect(optionNames(profileSelect())).toEqual(['Airwave default (built-in)', 'Late night']));
+    await waitFor(() => expect(optionNames(profileSelect())).toEqual(['jPlay default (built-in)', 'Late night']));
     expect(profileSelect().selectedOptions[0]!.textContent).toBe('Late night');
     expect(stored().active_algorithm).toBe(stored().algorithms![0]!.id);
     expect(stored().algorithms![0]!.params).toEqual(BUILT_IN_ALGORITHM.params);
@@ -136,7 +136,7 @@ describe('Profile algorithm toolbar', () => {
     await waitFor(() => expect(stored().algorithms![0]).toMatchObject({ id: 'user-mine', params: BUILT_IN_ALGORITHM.params, finalFormula: BUILT_IN_ALGORITHM.finalFormula }));
     expect(stored().active_algorithm).toBe('user-mine');
     fireEvent.click(within(manager()).getByRole('button', { name: 'Reset' }));
-    fireEvent.click(within(screen.getByRole('group', { name: 'Reset options' })).getByRole('button', { name: 'Use Airwave default' }));
+    fireEvent.click(within(screen.getByRole('group', { name: 'Reset options' })).getByRole('button', { name: 'Use jPlay default' }));
     await waitFor(() => expect(stored().active_algorithm).toBe(BUILT_IN_ID));
     expect(profileSelect().value).toBe(BUILT_IN_ID);
     expect(stored().algorithms).toHaveLength(1);
@@ -150,7 +150,7 @@ describe('Profile algorithm toolbar', () => {
     const box = screen.getByRole('textbox', { name: 'Or paste algorithm JSON' });
     fireEvent.change(box, { target: { value: '{"format":"other"}' } });
     fireEvent.click(screen.getByRole('button', { name: 'Import algorithm' }));
-    expect(within(manager()).getByRole('alert').textContent).toBe('This is not an Airwave algorithm file.');
+    expect(within(manager()).getByRole('alert').textContent).toBe('This is not a jPlay algorithm file.');
     expect(stored().algorithms ?? []).toHaveLength(0);
     fireEvent.change(box, { target: { value: serializeAlgorithm(shared) } });
     fireEvent.click(screen.getByRole('button', { name: 'Import algorithm' }));
@@ -163,7 +163,7 @@ describe('Profile algorithm toolbar', () => {
     await act(async () => { fireEvent.change(screen.getByLabelText('Algorithm file (.json)'), { target: { files: [file] } }); });
     await waitFor(() => expect((screen.getByRole('textbox', { name: 'Or paste algorithm JSON' }) as HTMLTextAreaElement).value).toContain('Shared groove'));
     fireEvent.click(screen.getByRole('button', { name: 'Import algorithm' }));
-    await waitFor(() => expect(optionNames(profileSelect())).toEqual(['Airwave default (built-in)', 'Shared groove', 'Shared groove 2']));
+    await waitFor(() => expect(optionNames(profileSelect())).toEqual(['jPlay default (built-in)', 'Shared groove', 'Shared groove 2']));
     expect(profileSelect().selectedOptions[0]!.textContent).toBe('Shared groove 2');
   });
 

@@ -1,4 +1,4 @@
-# Standalone Airwave Discovery APK: plan
+# Standalone jPlay APK: plan
 
 ## Decisions
 - **Standalone.** The APK carries the UI, the discovery engine and the audio model. Nothing is installed

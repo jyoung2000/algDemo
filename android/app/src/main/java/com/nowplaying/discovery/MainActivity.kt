@@ -42,7 +42,7 @@ import java.net.URL
 import java.util.concurrent.Executors
 
 /**
- * Airwave Discovery on Android, standalone: the web app, the recommendation engine and the audio model all
+ * jPlay on Android, standalone: the web app, the recommendation engine and the audio model all
  * live inside the APK and run in this WebView. There is no server to install or connect to.
  *
  * Two things need the native side:
@@ -125,6 +125,7 @@ class MainActivity : Activity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    BrandFolders.moveOnce(this)
     root = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#f7f6f3")) }
     setContentView(root)
     edgeToEdge()
@@ -146,7 +147,7 @@ class MainActivity : Activity() {
   }
 
   /**
-   * VOICE-SEARCH-001: "Play <song> on Airwave Discovery" from Google Assistant (MEDIA_PLAY_FROM_SEARCH,
+   * VOICE-SEARCH-001: "Play <song> on jPlay" from Google Assistant (MEDIA_PLAY_FROM_SEARCH,
    * which Android Auto's voice actions also require the app to declare). The words go through the
    * session's own play-from-search path, the one Android Auto's voice requests take: the catalogue
    * search with titles and lyrics, then the best match plays. A request with no words resumes. It
@@ -398,7 +399,7 @@ class MainActivity : Activity() {
       if (json.length > 2048) return
       val state = runCatching { JSONObject(json) }.getOrNull() ?: return
       val playing = state.optBoolean("playing", false)
-      val title = state.optString("title", "Airwave Discovery").take(120)
+      val title = state.optString("title", "jPlay").take(120)
       MediaHub.setPlaying(playing, title)
       view.post {
         if (web !== view) return@post

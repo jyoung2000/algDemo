@@ -128,6 +128,8 @@ class PlaybackService : MediaLibraryService() {
 
   override fun onCreate() {
     super.onCreate()
+    // JPLAY-BRAND-002: a car may start the app with no activity; move earlier folders here too.
+    BrandFolders.moveOnce(this)
     // DL-COLD-READY-001: a car session may be the only thing running; unpack yt-dlp now, in the background.
     Downloads.warmUp(this)
     // Playlist rows carry their list in the media id; the player resolves them as the browse tree does.
@@ -567,7 +569,7 @@ class PlaybackService : MediaLibraryService() {
     val out = SettableFuture.create<List<MediaItem>>()
     identifyRun = Triple(now, CarIdentifyReuse.epoch, out)
     if (!MediaHub.canIdentify()) {
-      out.set(listOf(note("Open Airwave on your phone", "Then tap Identify again to name the music playing")))
+      out.set(listOf(note("Open jPlay on your phone", "Then tap Identify again to name the music playing")))
       return out
     }
     // The phone would only hear Airwave itself; pause it while listening and carry on after.
@@ -589,8 +591,8 @@ class PlaybackService : MediaLibraryService() {
             mainHandler.post { out.set(listOf(note("Couldn't identify the music", error.message?.take(120)))) }
           }
         }, MoreExecutors.directExecutor())
-        CarListener.Outcome.NoPermission -> out.set(listOf(note("Airwave can't use the microphone", "Allow microphone access for Airwave on your phone")))
-        CarListener.Outcome.Blocked -> out.set(listOf(note("Android kept the microphone off", "Open Airwave on your phone, then tap Identify again")))
+        CarListener.Outcome.NoPermission -> out.set(listOf(note("jPlay can't use the microphone", "Allow microphone access for jPlay on your phone")))
+        CarListener.Outcome.Blocked -> out.set(listOf(note("Android kept the microphone off", "Open jPlay on your phone, then tap Identify again")))
         CarListener.Outcome.Silent -> out.set(listOf(note("No music heard", "Turn the music up and tap Identify again")))
         is CarListener.Outcome.Failed -> out.set(listOf(note("Couldn't use the microphone", clip.why.take(120))))
       }
@@ -686,7 +688,7 @@ class PlaybackService : MediaLibraryService() {
         putInt(MediaConstants.EXTRAS_KEY_CONTENT_STYLE_BROWSABLE, MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_GRID_ITEM)
         putInt(MediaConstants.EXTRAS_KEY_CONTENT_STYLE_PLAYABLE, MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM)
       }
-      val root = folderItem(ROOT, "Airwave Discovery", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
+      val root = folderItem(ROOT, "jPlay", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
       return Futures.immediateFuture(
         LibraryResult.ofItem(root, LibraryParams.Builder().setExtras(extras).build()),
       )
@@ -772,7 +774,7 @@ class PlaybackService : MediaLibraryService() {
           val songId = Uri.decode(parentId.removePrefix(ADD_TO_PREFIX))
           if (MediaHub.findSong(songId) == null) return Futures.immediateFuture(LibraryResult.ofError(SessionError.ERROR_BAD_VALUE))
           MediaHub.savedLists().map { pickItem(it, songId) }
-            .ifEmpty { listOf(note("No playlists yet", "Make one in Airwave on your phone, then star again")) }
+            .ifEmpty { listOf(note("No playlists yet", "Make one in jPlay on your phone, then star again")) }
         }
         // ALBUM-CAR-001: an album a car search found, its songs in album order.
         parentId.startsWith(CAR_ALBUM_PREFIX) && !parentId.contains("/track/") ->
@@ -780,7 +782,7 @@ class PlaybackService : MediaLibraryService() {
         parentId.startsWith(PLAYLIST_PREFIX) -> {
           val listId = Uri.decode(parentId.removePrefix(PLAYLIST_PREFIX))
           MediaHub.playlist(listId)?.songs?.map { songItem(it, playlistTrackId(listId, it.id)) }
-            ?.ifEmpty { if (listId == MediaHub.PHONE_LIST) listOf(note("No songs on this phone yet", "Download songs in Airwave on your phone")) else emptyList() }
+            ?.ifEmpty { if (listId == MediaHub.PHONE_LIST) listOf(note("No songs on this phone yet", "Download songs in jPlay on your phone")) else emptyList() }
             ?: emptyList()
         }
         else -> emptyList()
@@ -801,7 +803,7 @@ class PlaybackService : MediaLibraryService() {
         }, MoreExecutors.directExecutor()), Exception::class.java, { LibraryResult.ofError(SessionError.ERROR_BAD_VALUE) }, MoreExecutors.directExecutor())
       }
       val item: MediaItem? = when {
-        mediaId == ROOT -> folderItem(ROOT, "Airwave Discovery", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
+        mediaId == ROOT -> folderItem(ROOT, "jPlay", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
         mediaId == FOLDER_SONGS -> folderItem(FOLDER_SONGS, "Now playing queue", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Your playback queue")
         mediaId == FOLDER_PLAYLISTS -> folderItem(FOLDER_PLAYLISTS, "Playlists", MediaMetadata.MEDIA_TYPE_FOLDER_PLAYLISTS, "Your saved playlists")
         mediaId == FOLDER_ALBUMS -> folderItem(FOLDER_ALBUMS, "Albums", MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS, "Your saved albums")

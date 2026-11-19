@@ -5,7 +5,7 @@ import {run} from './apk-list-layout-check.mjs';
 const serial=process.argv[2]??'emulator-5554';
 const adb=(...args)=>execFileSync('adb',['-s',serial,...args],{encoding:'utf8'}).trim();
 const pid=adb('shell','pidof','com.nowplaying.discovery');
-if(!pid)throw Error('Start Airwave Discovery on the selected device first.');
+if(!pid)throw Error('Start jPlay on the selected device first.');
 const port=adb('forward','tcp:0',`localabstract:webview_devtools_remote_${pid}`);
 let ws;
 try {

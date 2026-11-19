@@ -1,4 +1,4 @@
-# Airwave Discovery launcher (Windows). Starts the local server if it is not running, opens the app
+# jPlay launcher (Windows). Starts the local server if it is not running, opens the app
 # window, and stops the server it started once that window is closed (from the taskbar or the window's X).
 # Only the server this launcher started is stopped; a server started some other way is left alone.
 param([int]$Port = 8787, [switch]$NoOpen)
@@ -13,7 +13,7 @@ $log = Join-Path $data 'launcher.log'
 function Say($m) { Add-Content -Path $log -Value ("{0:s} {1}" -f (Get-Date), $m) }
 function Fail($m) {
   Say "FAIL $m"
-  (New-Object -ComObject WScript.Shell).Popup("$m`n`nDetails: $log", 0, 'Airwave Discovery', 16) | Out-Null
+  (New-Object -ComObject WScript.Shell).Popup("$m`n`nDetails: $log", 0, 'jPlay', 16) | Out-Null
   exit 1
 }
 function Test-Up {

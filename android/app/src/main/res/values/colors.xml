@@ -2,5 +2,7 @@
 <resources>
   <!-- The mid stop of the launcher icon's gradient (shared with the player app's icon). -->
   <color name="brand">#3b74c8</color>
+  <!-- JPLAY-BRAND-001: the jPlay icon tile is white, as the owner's icon. -->
+  <color name="launcher_background">#FFFFFF</color>
   <color name="window">#f7f6f3</color>
 </resources>

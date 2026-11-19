@@ -1,6 +1,6 @@
 # Native now-playing album label (0.18.1 / Android vc44)
 
-The native player's second line shows `artist · album` instead of `artist · Airwave Discovery`.
+The native player's second line shows `artist · album` instead of `artist · jPlay`.
 If the album is missing, only the artist is shown. Album title remains a separate Media3 metadata
 field for controllers that display it. Android's own app attribution is unchanged. Browse rows keep
 the plain artist. This supersedes NATIVE-BRAND-001 (NATIVE-ALBUM-001).

@@ -1,5 +1,5 @@
 /**
- * ALGO-MANAGER-001. Recommendation algorithms: one built-in, read-only "Airwave default" derived
+ * ALGO-MANAGER-001. Recommendation algorithms: one built-in, read-only "jPlay default" derived
  * from DEFAULT_ENGINE, plus the listener's own copies. This module is the single source of truth
  * for the parameters, the readable six-line formula, validation, import/export and the mapping onto
  * the engine's EngineConfig. Pure: no store, no network, no DOM.
@@ -40,7 +40,7 @@ export interface AlgorithmSettings {
 }
 
 export const BUILT_IN_ID = 'airwave-default';
-export const BUILT_IN_NAME = 'Airwave default';
+export const BUILT_IN_NAME = 'jPlay default';
 /** Id and name a legacy `weights` / `ranking_formula` setting migrates into (deterministic, so re-reading is idempotent). */
 export const MIGRATED_ID = 'my-formula';
 export const MIGRATED_NAME = 'My formula';
@@ -327,7 +327,7 @@ export function parseAlgorithm(text: unknown, id: string = newAlgorithmId()): Al
   if (text.length > MAX_IMPORT_CHARS) throw new Error(`This is too large to be an algorithm (${MAX_IMPORT_CHARS / 1024} KB maximum).`);
   let data: unknown;
   try { data = JSON.parse(text); } catch { throw new Error('This is not valid JSON.'); }
-  if (!isObj(data) || data['format'] !== EXPORT_FORMAT) throw new Error('This is not an Airwave algorithm file.');
+  if (!isObj(data) || data['format'] !== EXPORT_FORMAT) throw new Error('This is not a jPlay algorithm file.');
   if (data['version'] !== EXPORT_VERSION) throw new Error(`Unsupported algorithm file version ${JSON.stringify(data['version'])}; this app reads version ${EXPORT_VERSION}.`);
   const errors: string[] = [];
   strictKeys('The file', data, ['format', 'version', 'algorithm'], errors);

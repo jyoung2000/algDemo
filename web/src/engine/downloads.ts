@@ -114,7 +114,7 @@ const native = (): Native | undefined => (typeof window === 'undefined' ? undefi
 /** True inside the Windows and Android apps. A plain browser has no downloader to talk to. */
 export const downloadsAvailable = (): boolean => typeof native()?.downloads === 'function';
 /** Hints native shells to keep the playback process awake; this is not a native media player. */
-export const playbackActive = (playing: boolean, title = 'Airwave Discovery'): void => {
+export const playbackActive = (playing: boolean, title = 'jPlay'): void => {
   const n = native();
   if (n?.playbackState) n.playbackState(JSON.stringify({ playing, title }));
   else n?.playback?.(playing);

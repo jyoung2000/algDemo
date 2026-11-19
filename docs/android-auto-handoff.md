@@ -13,7 +13,7 @@ No production EQ, mixer, decoder, crossfade or audio-output implementation chang
 - Two attachment-order regressions failed before the fix (one item instead of three), then passed.
 - Populated clear/current-item removal failed before the removal handler, then passed.
 - Platform MediaBrowser/MediaController advertised Play/Pause and Previous/Next, not timed Rewind/Fast-forward. Progress-bar seek remains available.
-- The actual Google Android Auto Desktop Head Unit displayed Airwave Discovery in its launcher after reconnecting projection. Airwave opened to Now playing queue and Playlists, with the host Search affordance.
+- The actual Google Android Auto Desktop Head Unit displayed jPlay in its launcher after reconnecting projection. jPlay opened to Now playing queue and Playlists, with the host Search affordance.
 - On the projected debug build, generated, clearly labelled local PCM test recordings showed Previous Track, Play/Pause and Next Track, with no ±15-second controls. Tapping Next moved tone 1 to tone 2; Previous moved tone 2 to tone 1; Play advanced decoded playback position and Pause stopped it. These fixtures are not catalogue-song acquisition evidence.
 - Full Android instrumentation: 39 behavioral checks passed, 3 optional checks assumption-skipped, 0 failures. The three skips were two opt-in interactive inspection helpers and the real-catalogue PCM comparison requiring supplied songs. One interactive helper was separately exercised with the real DHU. The foreground ADB capture timed out after 420 seconds; completion was recovered from the SAME runner PID's logcat: `run finished: 42 tests, 0 failed, 0 ignored`, with the three assumptions counted separately.
 - Android JVM: 109 tests, zero failures/errors. Web: 1,529 passed, 7 skipped; TypeScript clean.
@@ -26,11 +26,11 @@ The output-recording DSP probe now runs at the actual output sample rate instead
 
 ## Missing launcher entry on a sideloaded phone
 
-Airwave already declares an exported media browsing service and the automotive media descriptor. This release does not pretend to programmatically toggle Android Auto's host settings. While parked:
+jPlay already declares an exported media browsing service and the automotive media descriptor. This release does not pretend to programmatically toggle Android Auto's host settings. While parked:
 
-1. Install the new APK and open Airwave on the phone once.
+1. Install the new APK and open jPlay on the phone once.
 2. In Android Auto settings, enable developer mode if needed, then enable **Unknown sources** in Android Auto's developer settings. This is different from the Android permission to install an APK.
-3. Under **Customize launcher**, check **Airwave Discovery**.
+3. Under **Customize launcher**, check **jPlay**.
 4. Disconnect and reconnect Android Auto after the install. A running head unit can retain its old app list.
 
 ## Evidence limits

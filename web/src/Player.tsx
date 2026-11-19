@@ -917,7 +917,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       {loading ? 'Loading the preview…' : badVideo ? '30-second preview from Deezer: YouTube won’t play the full song here.' : '30-second preview from Deezer: no full version was found.'}
     </p>
   ) : embed ? (
-    <p className="np__note vh">Playing in the {PROVIDER_LABEL[embed.provider]} player. Airwave can’t see its progress or volume, so it records nothing about this listen.</p>
+    <p className="np__note vh">Playing in the {PROVIDER_LABEL[embed.provider]} player. jPlay can’t see its progress or volume, so it records nothing about this listen.</p>
   ) : rescue === null && !canLocal ? (
     <p className="np__note vh">No player here for this song. Open it in its app.</p>
   ) : canLocal ? (

@@ -224,7 +224,7 @@ class CatalogEngine(private val context: Context) {
       val req = runCatching { JSONObject(json) }.getOrNull()
       val refused = when {
         req == null -> "Invalid download request."
-        req.optString("op") == "choose-folder" -> "Choose a folder in the Airwave app."
+        req.optString("op") == "choose-folder" -> "Choose a folder in the jPlay app."
         else -> null
       }
       if (refused != null) { replyDownload(id, JSONObject().put("error", refused)); return }

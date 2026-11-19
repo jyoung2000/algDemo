@@ -5,7 +5,7 @@ import { RadioPlayer } from './RadioPlayer';
 import { radioSession } from './engine/radio-client';
 import type { RadioStation } from './engine/radio';
 import { Glyph } from '@now-playing/aqua-ui/icons';
-import { api, type PlaylistMix, newEventId, type FeedbackKind, type JobStatus, type Playback, type PlaylistSummary, type RecItem, type RecResult, type SavedItem, type Settings, type TasteSummary, type Track } from './api';
+import { api, type Characteristics, type PlaylistMix, newEventId, type FeedbackKind, type JobStatus, type Playback, type PlaylistSummary, type RecItem, type RecResult, type SavedItem, type Settings, type TasteSummary, type Track } from './api';
 import { Art } from './Art';
 import { Player, type ListenTelemetry, type Playing } from './Player';
 import { Results, rowId, type FeedbackFlags } from './Results';
@@ -36,6 +36,8 @@ import { readResume } from './engine/resume';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, canPlayHere, classNames, describeTaste, dropExpired, expiredKeysOf, fmtBytes, LIST_LOOK_MS, keepFocus, historyBack, listStart, mergeRerank, nextRepeat, playbackOfTrack, readyFilter, settledWithin, similarSummary, stepQueue, type RepeatMode } from './util';
 import { queueAudio } from './engine/queue-audio';
 import { CarCatalog } from './engine/car-catalog';
+import { BrandLogo } from './BrandLogo';
+import { moodTint, type MoodLead } from './brand-tint';
 
 type Tab = 'discover' | 'radio' | 'saved' | 'profile' | 'settings';
 
@@ -171,6 +173,8 @@ export function App() {
   const [moodTrigger, setMoodTrigger] = useState(0);
   const [moodPulse, setMoodPulse] = useState<{ tick: number; leading: string[]; moved: string[]; at: number } | null>(null);
   const nudgeMood = () => setMoodTrigger((n) => n + 1);
+  // JPLAY-BRAND-001: the listening mood's leading genres, for the logo's colour.
+  const [moodLead, setMoodLead] = useState<MoodLead | null>(null);
   // One id per app session: groups this sitting's events for the session taste horizon.
   const sessionRef = useRef(`s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   const [taste, setTaste] = useState<TasteSummary | null>(null);
@@ -537,6 +541,30 @@ export function App() {
   }, [queueList, items, visibleSeeds]);
   // The rows the skip buttons walk: the queue, the saved list played from, or the search results.
   const activeItems = useMemo(() => contextRows(playingContext, { queueRows, search: searchList, saved, lists }), [queueRows, playingContext, searchList, saved, lists]);
+  // JPLAY-BRAND-001: the logo takes the listening mood's colour (else the song playing's).
+  const ownPlayingChars = activeItems.find((x) => x.track.key === playing?.track.key)?.characteristics ?? playing?.track.characteristics ?? null;
+  // A song played from search results carries no genres: ask the engine (as the rows' bubbles do).
+  const [askedChars, setAskedChars] = useState<{ key: string; c: Characteristics } | null>(null);
+  useEffect(() => {
+    const t = playing?.track;
+    if (!t || ownPlayingChars || askedChars?.key === t.key) return;
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let tries = 0;
+    const ask = () => {
+      api.genres([t]).then((r) => {
+        if (!live) return;
+        const c = r.items?.[t.key] ?? null;
+        if (c) setAskedChars({ key: t.key, c });
+        else if (r.pending?.includes(t.key) && ++tries < 6) timer = setTimeout(ask, 3000);
+      }, () => undefined);
+    };
+    ask();
+    return () => { live = false; if (timer) clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing?.track.key, Boolean(ownPlayingChars)]);
+  const playingChars = ownPlayingChars ?? (askedChars?.key === playing?.track.key ? askedChars?.c : null) ?? null;
+  const logoTint = moodTint(moodLead, playingChars);
   const playingKey = playing?.track.key ?? null;
   /**
    * MOOD-QUEUE-001 (owner, 2026-11-19): the now playing queue follows the listening mood. It never
@@ -564,6 +592,7 @@ export function App() {
       api.mood({ upcoming: movable.map((x) => ({ track: x.track, characteristics: x.characteristics ?? null })), shown: shownNow.length ? shownNow : keys, current: cur })
         .then((plan) => {
           if (seq !== moodSeq.current || plan.off) return;
+          setMoodLead({ leading: plan.leading ?? [], confidence: plan.confidence ?? 0 });
           moodPreferRef.current = new Map(plan.order.map((k, i) => [k, i] as const));
           if (!moodQueueScope) return;
           moodOrderRef.current = plan.order;
@@ -849,7 +878,7 @@ export function App() {
     pushMediaState({
       hasTrack: Boolean(playing),
       mediaId: playing?.track.key ?? null,
-      title: playing?.track.title ?? 'Airwave Discovery',
+      title: playing?.track.title ?? 'jPlay',
       artist: playing ? artistOf(playing.track) : '',
       album: playing?.track.album ?? null,
       artwork: playing?.track.artwork ?? null,
@@ -1114,12 +1143,9 @@ export function App() {
       <a className="skip" href="#main">
         Skip to content
       </a>
-      <nav className="side" aria-label="Airwave">
+      <nav className="side" aria-label="jPlay">
         <div className="brand">
-          <span className="brand__mark" aria-hidden="true">
-            <Glyph name="discover" size={18} />
-          </span>
-          <span className="brand__name">Airwave Discovery</span>
+          <BrandLogo tint={logoTint} />
         </div>
         <ul className="side__nav">
           {(
@@ -1147,10 +1173,14 @@ export function App() {
       </nav>
 
       <main id="main" className="main">
+        {/* JPLAY-BRAND-001: a phone has no side bar, so the logo heads the page. */}
+        <header className="phonebrand">
+          <BrandLogo tint={logoTint} />
+        </header>
         <CardCacheContext.Provider value={cardCache}>
         {offline && (
           <p className="banner banner--bad" role="alert">
-            <Glyph name="offline" size={14} /> The Airwave service is not answering on this computer. Start it with <code>pnpm discovery</code> and reload.
+            <Glyph name="offline" size={14} /> The jPlay service is not answering on this computer. Start it with <code>pnpm discovery</code> and reload.
           </p>
         )}
         {notice && (

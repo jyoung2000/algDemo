@@ -75,7 +75,7 @@ export function ListDownloadButton({ tracks, label }: { tracks: Track[]; label?:
 /**
  * LIST-FOLDER-001. Owner: "add a button where the user can open the local folder with the current song
  * list / queue". The shell puts the list's downloaded songs in one folder named after the list,
- * numbered in play order (Windows: Music\Airwave Discovery\Song lists; Android: an "Airwave
+ * numbered in play order (Windows: Music\jPlay\Song lists; Android: an "Airwave
  * Discovery" place in the Files app), and opens it. Songs not downloaded yet are left out, and the
  * tooltip says how many are in.
  */

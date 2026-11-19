@@ -12,7 +12,7 @@ import { App } from './App';
 import './button-contract.css';
 
 const container = document.getElementById('root');
-if (!container) throw new Error('Airwave Discovery needs a #root element');
+if (!container) throw new Error('jPlay needs a #root element');
 
 // The Windows window is a desktop window: its labels stay visible at any width, not only on phones.
 if (navigator.userAgent.includes('AirwaveDiscovery/')) document.documentElement.classList.add('is-desktop-shell');

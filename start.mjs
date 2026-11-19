@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Airwave Discovery — one launch command:  node discovery-demo/start.mjs
+// jPlay — one launch command:  node discovery-demo/start.mjs
 //
 // First-run diagnostics, then: build the web app if its sources are newer than web/dist,
 // and run the Python server on 127.0.0.1 (it serves the built app and the API on one port).
@@ -42,7 +42,7 @@ function portFree(p) {
   });
 }
 
-console.log('Airwave Discovery — checks');
+console.log('jPlay — checks');
 const major = Number(process.versions.node.split('.')[0]);
 if (major >= 22) ok(`Node ${process.versions.node}`);
 else (bad(`Node ${process.versions.node}: Node 22 or newer is needed`), (failed = true));

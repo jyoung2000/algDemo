@@ -13,9 +13,9 @@ import java.io.File
 /**
  * LIST-FOLDER-001 on Android. Owner: "add a button where the user can open the local folder with the
  * current song list / queue". The queue's songs live in the app's private cache, which no file manager
- * can see, and kept songs in Music/Airwave Discovery. So the app does not copy anything: it records the
+ * can see, and kept songs in Music/jPlay. So the app does not copy anything: it records the
  * list (names in play order, and where each song's file is) and [ListFolderProvider] shows it as an
- * "Airwave Discovery" place in the Files app, opened at once. Songs not downloaded yet are left out.
+ * "jPlay" place in the Files app, opened at once. Songs not downloaded yet are left out.
  */
 object ListFolder {
   const val AUTHORITY = "com.nowplaying.discovery.listfolder"
@@ -51,7 +51,7 @@ object ListFolder {
         .put("uri", uri.toString()).put("mime", type).put("size", size)
     }
     record(context, name, entries)
-    return JSONObject().put("ok", show(context)).put("held", entries.size).put("total", songs.length()).put("folder", "Files › Airwave Discovery › $name")
+    return JSONObject().put("ok", show(context)).put("held", entries.size).put("total", songs.length()).put("folder", "Files › jPlay › $name")
   }
 
   /**

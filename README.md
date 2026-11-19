@@ -1,7 +1,7 @@
-# Airwave Discovery (demo)
+# jPlay (demo)
 
 Search for songs, or paste a Spotify, SoundCloud, YouTube, YouTube Music or Deezer link. Pick as many
-starting songs as you like and press **Find my next favorite**. Airwave builds a queue of up to 30 songs from
+starting songs as you like and press **Find my next favorite**. jPlay builds a queue of up to 30 songs from
 live music sources and explains each pick. In the installed Windows and Android apps, added and
 discovered songs load as full local audio into a private, size-limited queue cache before playback.
 The player owns their progress, EQ and crossfader; it does not hand them to a YouTube or SoundCloud

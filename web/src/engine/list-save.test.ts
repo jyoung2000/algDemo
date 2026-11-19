@@ -20,7 +20,7 @@ function world() {
     readyUrl: (x) => ready.get(x.key) ?? null,
     snapshot: (xs) => ({ total: xs.length, ready: xs.filter((x) => ready.has(x.key)).length, failed: xs.filter((x) => failed.has(x.key)).length, active: xs.length - ready.size - failed.size, retrying: 0, blocked: false, queued: 0, parallel: 2, bulkActive: true }),
     subscribe: (fn) => { listener = fn; return () => { listener = null; }; },
-    save: vi.fn(async (_kind, _name, songs) => { for (const s of songs) held.add(s.url); return { held: held.size, total: 3, folder: 'Music \u203a Airwave Discovery \u203a Albums \u203a Ken Carson - A Great Chaos' }; }),
+    save: vi.fn(async (_kind, _name, songs) => { for (const s of songs) held.add(s.url); return { held: held.size, total: 3, folder: 'Music \u203a jPlay \u203a Albums \u203a Ken Carson - A Great Chaos' }; }),
     open: vi.fn(async () => ({ ok: true, folder: 'x' })),
     storage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => void store.set(k, v) },
   };

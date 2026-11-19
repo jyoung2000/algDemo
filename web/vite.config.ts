@@ -1,5 +1,5 @@
 /**
- * Airwave Discovery demo build.
+ * jPlay demo build.
  *
  * Same consumption pattern as the hub's admin GUI (docker-container/src/web): the Aqua window kit,
  * the Aqua art and the icon set come straight from packages/aqua-ui source. Everything is bundled;

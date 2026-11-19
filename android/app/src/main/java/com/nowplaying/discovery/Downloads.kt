@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * The page names a URL, a tool and a format; every flag is written here, `--ignore-config` first so a
  * config file can never add `--exec`. The URL goes last, after `--`, so it cannot be read as an option.
- * Manual downloads go to Music/Airwave Discovery; cache downloads stay in app-private storage.
+ * Manual downloads go to Music/jPlay (BrandFolders); cache downloads stay in app-private storage.
  *
  * spotDL is not run here: it is a Python app that depends on packages with no Android build
  * (rapidfuzz, pydantic-core, uvloop). The page does what spotDL does instead (Spotify track ->
@@ -242,6 +242,18 @@ object Downloads {
     JSONObject().put("ok", true).put("job", JSONObject.NULL).put("file", JSONObject().put("name", name).put("bytes", cached.length())).put("saved_to", where)
   }
 
+  /** CAR-DOWNLOAD-001: true when this link's song is already kept in the owner's Downloads folder. */
+  fun isKept(context: Context, url: String): Boolean = urlAllowed(url) && libraryGet(context, url) != null
+
+  /** CAR-DOWNLOAD-001: true when the complete recording of this link is in the private cache. */
+  fun isCached(context: Context, url: String): Boolean = urlAllowed(url) && cachedGet(context, url) != null
+
+  /**
+   * CAR-DOWNLOAD-001: the car's Download button. Keeps the song's held copy exactly as the phone's
+   * Download does (`keep`): already kept = nothing is downloaded again. Runs file work; call off main.
+   */
+  fun keepForCar(context: Context, url: String): JSONObject = keep(context, url)
+
   fun setFolder(context: Context, uri: Uri) {
     require(DocumentsContract.isTreeUri(uri)) { "Selected destination is not a folder." }
     if (!context.getSharedPreferences(DESTINATION, Context.MODE_PRIVATE).edit().putString(TREE, uri.toString()).commit()) {
@@ -253,7 +265,7 @@ object Downloads {
     .getString(TREE, null)?.let(Uri::parse)
 
   private fun destinationName(context: Context): String {
-    val tree = chosenFolder(context) ?: return "Music/Airwave Discovery"
+    val tree = chosenFolder(context) ?: return BrandFolders.MUSIC_PATH
     val label = runCatching { DocumentsContract.getTreeDocumentId(tree).substringAfterLast(':') }.getOrDefault("folder")
     return "Selected folder: ${safeName(label).take(80)}"
   }
@@ -278,6 +290,14 @@ object Downloads {
     val present = runCatching { context.contentResolver.openFileDescriptor(uri, "r")?.use { true } ?: false }.getOrDefault(false)
     if (!present) { prefs.edit().remove(url).apply(); return null }
     uri
+  }
+
+  /** JPLAY-BRAND-002: rewrites every stored location (after the Android 8-9 folder rename). */
+  fun rewriteStoredLocations(context: Context, fix: (String) -> String) = synchronized(libraryLock) {
+    val prefs = context.getSharedPreferences(LIBRARY, Context.MODE_PRIVATE)
+    val edit = prefs.edit()
+    for ((url, v) in prefs.all) if (v is String) fix(v).takeIf { it != v }?.let { edit.putString(url, it) }
+    edit.commit()
   }
 
   private fun librarySet(context: Context, url: String, uri: Uri) = synchronized(libraryLock) {
@@ -537,7 +557,7 @@ object Downloads {
     return JSONObject().put("file", uri?.toString() ?: name).put("saved_to", where).put("bytes", file.length())
   }
 
-  /** Copies into a chosen SAF tree, otherwise Music/Airwave Discovery. */
+  /** Copies into a chosen SAF tree, otherwise Music/jPlay. */
   private fun saveToMusic(context: Context, f: File, displayName: String = f.name): Triple<String, Uri?, String> {
     val name = safeName(displayName)
     val type = mime[f.extension.lowercase()] ?: "application/octet-stream"
@@ -560,7 +580,7 @@ object Downloads {
       val values = ContentValues().apply {
         put(MediaStore.Audio.Media.DISPLAY_NAME, name)
         put(MediaStore.Audio.Media.MIME_TYPE, type)
-        put(MediaStore.Audio.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/Airwave Discovery")
+        put(MediaStore.Audio.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/${BrandFolders.NAME}")
         put(MediaStore.Audio.Media.IS_PENDING, 1)
       }
       val resolver = context.contentResolver
@@ -572,9 +592,9 @@ object Downloads {
         resolver.delete(uri, null, null)
         throw e
       }
-      return Triple(name, uri, "Music/Airwave Discovery")
+      return Triple(name, uri, BrandFolders.MUSIC_PATH)
     }
-    val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MUSIC), "Airwave Discovery").also { it.mkdirs() }
+    val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MUSIC), BrandFolders.NAME).also { it.mkdirs() }
     val dest = File(dir, name)
     f.copyTo(dest, overwrite = false)
     return Triple(name, Uri.fromFile(dest), dir.absolutePath)

@@ -250,6 +250,6 @@ describe('car Find similar (CAR-SIMILAR-001)', () => {
     win().AirwaveNative = { media };
     cmd({ type: 'findSimilar', requestId: 's4', id: 'k1' });
     await vi.waitFor(() => expect(media).toHaveBeenCalled());
-    expect(JSON.parse(media.mock.calls[0]![0]).similar.error).toBe('Open Airwave on your phone to find similar songs.');
+    expect(JSON.parse(media.mock.calls[0]![0]).similar.error).toBe('Open jPlay on your phone to find similar songs.');
   });
 });

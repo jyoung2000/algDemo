@@ -1,4 +1,4 @@
-# Baseline audit — Airwave discovery engine (jyoung2000/algDemo)
+# Baseline audit — jPlay engine (jyoung2000/algDemo)
 
 Date: 2026-11-01 · Branch: `recsys-v2` (from `main` @ 22ffd3e) · Engine: `web/src/engine/` (TypeScript, deterministic; Python sidecar `server/airwave_discovery` is the dev server + golden-test oracle).
 

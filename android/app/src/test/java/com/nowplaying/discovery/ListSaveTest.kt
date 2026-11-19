@@ -10,9 +10,9 @@ import org.junit.Test
  */
 class ListSaveTest {
   @Test fun albumsAndListsGetTheirOwnFolderUnderMusic() {
-    assertEquals("Music/Airwave Discovery/Albums/Ken Carson - A Great Chaos", ListSave.relativePath("album", "Ken Carson - A Great Chaos"))
-    assertEquals("Music/Airwave Discovery/Lists/Late night", ListSave.relativePath("list", "Late night"))
-    assertEquals("Music › Airwave Discovery › Albums › Ken Carson - A Great Chaos", ListSave.label("album", "Ken Carson - A Great Chaos"))
+    assertEquals("Music/jPlay/Albums/Ken Carson - A Great Chaos", ListSave.relativePath("album", "Ken Carson - A Great Chaos"))
+    assertEquals("Music/jPlay/Lists/Late night", ListSave.relativePath("list", "Late night"))
+    assertEquals("Music › jPlay › Albums › Ken Carson - A Great Chaos", ListSave.label("album", "Ken Carson - A Great Chaos"))
     assertThrows(IllegalArgumentException::class.java) { ListSave.relativePath("other", "x") }
   }
 

@@ -67,9 +67,9 @@ it('counts while it runs, then says where the songs are and opens the folder', a
   expect(main().textContent).toContain('Downloading 1 of 3');
   expect(main().getAttribute('aria-busy')).toBe('true');
   expect(folder().disabled).toBe(false);
-  await set({ phase: 'done', held: 2, missing: 1, folder: 'Music \u203a Airwave Discovery \u203a Albums \u203a Ken Carson - A Great Chaos' });
+  await set({ phase: 'done', held: 2, missing: 1, folder: 'Music \u203a jPlay \u203a Albums \u203a Ken Carson - A Great Chaos' });
   const note = host.querySelector('[role="status"]')!.textContent!;
-  expect(note).toContain('2 of 3 songs are in Music \u203a Airwave Discovery \u203a Albums \u203a Ken Carson - A Great Chaos.');
+  expect(note).toContain('2 of 3 songs are in Music \u203a jPlay \u203a Albums \u203a Ken Carson - A Great Chaos.');
   expect(note).toContain('1 song had no full version to download.');
   // Not all in: another press tries for the rest.
   expect(main().disabled).toBe(false);

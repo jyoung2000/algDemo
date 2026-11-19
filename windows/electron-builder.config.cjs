@@ -1,5 +1,5 @@
 /**
- * Packaging for the Windows Airwave Discovery app. One portable exe (no install, nothing left behind)
+ * Packaging for the Windows jPlay app (appId unchanged so it updates earlier installs in place). One portable exe (no install, nothing left behind)
  * and an NSIS installer. The web app, the engine and the audio model are inside; the user needs no
  * Node, Python or uv. Signed when a codesign.properties (pfxFile, pfxPassword) exists in AIRWAVE_SIGNING_DIR or
  * ~/airwave-signing, kept outside the repo; unsigned otherwise. A self-signed certificate does not clear
@@ -25,10 +25,10 @@ const sign = signingProps();
 /** @type {import('electron-builder').Configuration} */
 module.exports = {
   appId: 'com.nowplaying.discovery',
-  productName: 'Airwave Discovery',
+  productName: 'jPlay',
   directories: { output: 'release', app: __dirname },
   electronVersion: '44.1.1',
-  files: ['main.cjs', 'preload.cjs', 'bridge.cjs', 'hosts.cjs', 'downloads.cjs', 'streams.cjs', 'hls.cjs', 'radio.cjs', 'folder-import.cjs', 'package.json', '../launcher/airwave-discovery.ico'],
+  files: ['main.cjs', 'preload.cjs', 'bridge.cjs', 'hosts.cjs', 'downloads.cjs', 'streams.cjs', 'hls.cjs', 'radio.cjs', 'folder-import.cjs', 'brand-folders.cjs', 'package.json', '../launcher/jplay.ico'],
   asar: true,
   extraResources: [
     { from: '../web/dist', to: 'web', filter: ['**/*'] },
@@ -42,12 +42,12 @@ module.exports = {
   npmRebuild: false,
   electronLanguages: ['en-US'],
   win: {
-    icon: '../launcher/airwave-discovery.ico',
+    icon: '../launcher/jplay.ico',
     ...(sign ? { signtoolOptions: { certificateFile: sign.pfxFile, certificatePassword: sign.pfxPassword, signingHashAlgorithms: ['sha256'] } } : {}),
     target: [{ target: 'portable', arch: ['x64'] }, { target: 'nsis', arch: ['x64'] }],
     // The portable exe and the installer must not share a file name: building both into one folder
     // made the installer overwrite the portable build, and the user downloaded whichever ran last.
-    artifactName: 'Airwave-Discovery-${version}-${arch}-portable.${ext}',
+    artifactName: 'jPlay-${version}-${arch}-portable.${ext}',
   },
-  nsis: { oneClick: true, perMachine: false, deleteAppDataOnUninstall: false, artifactName: 'Airwave-Discovery-${version}-${arch}-setup.${ext}' },
+  nsis: { oneClick: true, perMachine: false, deleteAppDataOnUninstall: false, artifactName: 'jPlay-${version}-${arch}-setup.${ext}' },
 };

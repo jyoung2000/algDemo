@@ -19,7 +19,7 @@ import java.io.IOException
 /**
  * LIST-SAVE-FOLDER-001 on Android. Owner: "add an option to quick download entire saved playlist / album
  * and download into seperated folder for just those tracks". Each held song of one saved list or album
- * is copied into a real folder of its own, Music/Airwave Discovery/Albums/<artist - album> or
+ * is copied into a real folder of its own, Music/jPlay/Albums/<artist - album> or
  * .../Lists/<list name> (inside the folder the owner chose, when one is chosen), numbered in the list's
  * order, so the Files app and other music apps see just those songs. The page calls this again as more
  * songs finish; a song already in the folder is never copied twice or removed. The folder copy becomes
@@ -46,10 +46,10 @@ object ListSave {
 
   /** Where the folder sits under the shared Music folder (MediaStore's RELATIVE_PATH). */
   fun relativePath(kind: String, name: String): String =
-    "Music/Airwave Discovery/${section(kind)}/${folderName(kind, name)}"
+    "${BrandFolders.MUSIC_PATH}/${section(kind)}/${folderName(kind, name)}"
 
   /** What the page shows the owner: the place they will find it in the Files app. */
-  fun label(kind: String, name: String): String = "Music › Airwave Discovery › ${section(kind)} › ${folderName(kind, name)}"
+  fun label(kind: String, name: String): String = "Music › ${BrandFolders.NAME} › ${section(kind)} › ${folderName(kind, name)}"
 
   /** MediaStore's audio table takes audio types only; a download of unknown type is named by its extension. */
   fun audioType(type: String, ext: String): String = when {
@@ -157,7 +157,7 @@ object ListSave {
       }
       return uri
     }
-    val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MUSIC), "Airwave Discovery/${section(kind)}/$name").also { it.mkdirs() }
+    val dir = File(context.getExternalFilesDir(Environment.DIRECTORY_MUSIC), "${BrandFolders.NAME}/${section(kind)}/$name").also { it.mkdirs() }
     val dest = File(dir, file)
     if (!dest.exists()) (resolver.openInputStream(src) ?: throw IOException("Song is gone.")).use { input -> dest.outputStream().use { input.copyTo(it) } }
     return Uri.fromFile(dest)

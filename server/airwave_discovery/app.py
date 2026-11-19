@@ -113,7 +113,7 @@ def st() -> State:
     return S
 
 
-app = FastAPI(title="Airwave Discovery (local demo)", docs_url="/api/docs", openapi_url="/api/openapi.json")
+app = FastAPI(title="jPlay (local demo)", docs_url="/api/docs", openapi_url="/api/openapi.json")
 
 
 @app.on_event("startup")

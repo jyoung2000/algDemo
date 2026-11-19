@@ -1,4 +1,4 @@
-"""Draws the Airwave Discovery icon (Aqua glass tile, white note, broadcast arcs) -> airwave-discovery.ico/.png.
+"""Draws the earlier (pre-jPlay) icon (Aqua glass tile, white note, broadcast arcs); jPlay uses jplay.ico -> airwave-discovery.ico/.png.
 Run: python launcher/make_icon.py   (needs Pillow)"""
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageChops

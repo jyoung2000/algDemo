@@ -6,7 +6,7 @@ file records what was read, what was taken, and what could not be.
 
 ## Licence boundary
 
-This matters more than the attribution. Airwave Discovery must not become copyleft by accident.
+This matters more than the attribution. jPlay must not become copyleft by accident.
 
 | Project | Licence | What was done |
 |---|---|---|

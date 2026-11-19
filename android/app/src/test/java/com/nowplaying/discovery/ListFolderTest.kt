@@ -3,7 +3,7 @@ package com.nowplaying.discovery
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** LIST-FOLDER-001: the names the songs carry in the Files app's "Airwave Discovery" folder. */
+/** LIST-FOLDER-001: the names the songs carry in the Files app's "jPlay" folder. */
 class ListFolderTest {
   @Test fun songsAreNumberedInPlayOrderWithTitleAndArtist() {
     assertEquals("01 Yale - Ken Carson.opus", ListFolder.entryName(1, "Yale", "Ken Carson", "opus"))

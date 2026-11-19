@@ -1,4 +1,4 @@
-// Drives the Airwave Discovery WebView over CDP (adb forward to webview_devtools_remote_*).
+// Drives the jPlay WebView over CDP (adb forward to webview_devtools_remote_*).
 const ws = new WebSocket(process.argv[2]);
 let id = 0; const pending = new Map();
 const send = (method, params = {}) => new Promise((res) => { const i = ++id; pending.set(i, res); ws.send(JSON.stringify({ id: i, method, params })); });

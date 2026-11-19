@@ -177,7 +177,7 @@ const DEFAULT_STATE: NativeState = {
   playing: false,
   hasTrack: false,
   mediaId: null,
-  title: 'Airwave Discovery',
+  title: 'jPlay',
   artist: '',
   album: null,
   artwork: null,
@@ -329,7 +329,7 @@ export function installMediaCommands(): void {
         if (!requestId || requestId.length > 100 || query.length > 200) break;
         void (async () => {
           try {
-            if (!handlers.catalogSearch) throw new Error('Open Airwave on your phone to search music.');
+            if (!handlers.catalogSearch) throw new Error('Open jPlay on your phone to search music.');
             const mode = typeof cmd.mode === 'string' && CAR_MODES.includes(cmd.mode) ? (cmd.mode as CarSearchMode) : 'all';
             const answer = await handlers.catalogSearch(query, { album: cmd.album === true, mode });
             const songs = (Array.isArray(answer) ? answer : answer.songs).slice(0, 25);
@@ -348,7 +348,7 @@ export function installMediaCommands(): void {
         const pcm = cmd.pcm;
         void (async () => {
           try {
-            if (!handlers.identifyAudio) throw new Error('Open Airwave on your phone to identify music.');
+            if (!handlers.identifyAudio) throw new Error('Open jPlay on your phone to identify music.');
             const songs = (await handlers.identifyAudio(samplesFromPcm16(pcm))).slice(0, 10);
             send({ state: lastState, identify: { requestId, songs } });
           } catch (e) {
@@ -363,7 +363,7 @@ export function installMediaCommands(): void {
         if (!requestId || requestId.length > 100 || !id || id.length > 500) break;
         void (async () => {
           try {
-            if (!handlers.findSimilar) throw new Error('Open Airwave on your phone to find similar songs.');
+            if (!handlers.findSimilar) throw new Error('Open jPlay on your phone to find similar songs.');
             const out = await handlers.findSimilar(id);
             send({ state: lastState, similar: { requestId, id, added: out.added, minimum: out.minimum, reason: out.reason, songs: out.songs.slice(0, 10) } });
           } catch (e) {

@@ -69,7 +69,7 @@ object MediaHub {
     val hasTrack: Boolean = false,
     val playing: Boolean = false,
     val mediaId: String? = null,
-    val title: String = "Airwave Discovery",
+    val title: String = "jPlay",
     val artist: String = "",
     val album: String? = null,
     val artwork: String? = null,
@@ -118,7 +118,7 @@ object MediaHub {
     if (sink !== s) return
     sink = null
     // CAR-CATALOG-SERVICE-001: only what the page held is lost with it; the service engine's searches carry on.
-    failPending("page", "Open Airwave on your phone to search the catalogue")
+    failPending("page", "Open jPlay on your phone to search the catalogue")
   }
   fun hasPage(): Boolean = sink != null
 
@@ -454,7 +454,7 @@ object MediaHub {
       p to target
     }
     try {
-      if (target == null) throw IllegalStateException("Open Airwave on your phone to search the catalogue")
+      if (target == null) throw IllegalStateException("Open jPlay on your phone to search the catalogue")
       android.util.Log.i("AirwaveCarSearch", "request $id sent via ${pending.via}: ${pending.query}")
       target(pending.command)
     } catch (e: Exception) {
@@ -481,7 +481,7 @@ object MediaHub {
       catalogFailures.entries.removeAll { now - it.value.at > 3000 }
       catalogFailures[key]?.let { return Futures.immediateFailedFuture(it.error) }
       pendingSearches.values.firstOrNull { it.key == key }?.let { return it.future }
-      if (sink == null && catalogSink == null) return Futures.immediateFailedFuture(IllegalStateException("Open Airwave on your phone to search the catalogue"))
+      if (sink == null && catalogSink == null) return Futures.immediateFailedFuture(IllegalStateException("Open jPlay on your phone to search the catalogue"))
       if (debounceMs > 0) {
         // Only an unsent prefix of this same mode is obsolete. Let its car callback finish;
         // do not spend four network requests on S, Sa, Sad, Sade.
@@ -537,7 +537,7 @@ object MediaHub {
   fun identify(pcm: ByteArray, timeoutMs: Long = 20000): ListenableFuture<List<Song>> {
     val page = sink?.takeIf { pageVisible && pageAnswering }
     val target = page ?: catalogSink?.takeIf { catalogReady } ?: sink
-      ?: return Futures.immediateFailedFuture(IllegalStateException("Open Airwave on your phone to identify music"))
+      ?: return Futures.immediateFailedFuture(IllegalStateException("Open jPlay on your phone to identify music"))
     val id = UUID.randomUUID().toString()
     val future = SettableFuture.create<List<Song>>()
     synchronized(catalogLock) { pendingIdentify[id] = future }
@@ -568,7 +568,7 @@ object MediaHub {
   fun findSimilar(id: String, timeoutMs: Long = 200000): ListenableFuture<SimilarAnswer> {
     val page = sink?.takeIf { pageVisible && pageAnswering }
     val target = page ?: catalogSink?.takeIf { catalogReady } ?: sink
-      ?: return Futures.immediateFailedFuture(IllegalStateException("Open Airwave on your phone to find similar songs"))
+      ?: return Futures.immediateFailedFuture(IllegalStateException("Open jPlay on your phone to find similar songs"))
     val requestId = UUID.randomUUID().toString()
     val future = SettableFuture.create<SimilarAnswer>()
     synchronized(catalogLock) { pendingSimilar[requestId] = future }
@@ -677,7 +677,7 @@ object MediaHub {
       hasTrack = o.optBoolean("hasTrack", o.has("mediaId")),
       playing = o.optBoolean("playing", false),
       mediaId = o.optStringOrNull("mediaId"),
-      title = o.optString("title", "Airwave Discovery").take(200),
+      title = o.optString("title", "jPlay").take(200),
       artist = o.optString("artist", "").take(200),
       album = o.optStringOrNull("album")?.take(200),
       artwork = o.optStringOrNull("artwork"),

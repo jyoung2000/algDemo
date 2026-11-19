@@ -12,7 +12,7 @@ import java.io.File
 import java.io.FileNotFoundException
 
 /**
- * LIST-FOLDER-001: the "Airwave Discovery" place in the Files app. It holds one folder, the song list
+ * LIST-FOLDER-001: the "jPlay" place in the Files app. It holds one folder, the song list
  * the owner last opened from the app, with its downloaded songs in play order. Read-only: the files
  * are the app's own downloads, served from where they already are.
  */
@@ -28,7 +28,7 @@ class ListFolderProvider : DocumentsProvider() {
     c.newRow()
       .add(Root.COLUMN_ROOT_ID, ListFolder.ROOT)
       .add(Root.COLUMN_DOCUMENT_ID, ListFolder.DIR)
-      .add(Root.COLUMN_TITLE, "Airwave Discovery")
+      .add(Root.COLUMN_TITLE, "jPlay")
       .add(Root.COLUMN_SUMMARY, listing?.name ?: "Open a song list from the app")
       .add(Root.COLUMN_FLAGS, Root.FLAG_LOCAL_ONLY)
       .add(Root.COLUMN_ICON, R.mipmap.ic_launcher)
@@ -39,7 +39,7 @@ class ListFolderProvider : DocumentsProvider() {
   override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor {
     val c = MatrixCursor(projection ?: docCols)
     val listing = ListFolder.read(context!!)
-    if (documentId == ListFolder.DIR) dirRow(c, listing?.name ?: "Airwave Discovery")
+    if (documentId == ListFolder.DIR) dirRow(c, listing?.name ?: "jPlay")
     else songRow(c, documentId, entry(documentId, listing))
     return c
   }

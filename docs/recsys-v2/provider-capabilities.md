@@ -1,4 +1,4 @@
-# Provider capabilities — Airwave Discovery recsys-v2
+# Provider capabilities — jPlay recsys-v2
 
 Checked 2026-11-01. This matrix separates the in-app TypeScript runtime (`web/src/engine`) from the optional Python development server (`server/airwave_discovery`). **Working** is only used where the Python `/api/health` live probe returned `working` at 2026-11-01T02:56:16Z (raw response: `D:/MusicRecommendationLab/work/health.json`), or where the live browser run produced a recommendation. Other entries are code-supported but **not live-tested here**. Network conditions can change. Search/catalog match, history import, audio analysis, and playback are distinct capabilities.
 

@@ -29,7 +29,7 @@ export const REASON_TEXT: Record<EngineReason, string> = {
   'not-started': 'Starts with the first song you play.',
   'no-web-audio': 'This browser cannot process audio.',
   'iframe-playback':
-    'This song plays in YouTube’s or SoundCloud’s own player, which Airwave cannot reach. Full songs played inside Airwave go through the equaliser and mixer.',
+    'This song plays in YouTube’s or SoundCloud’s own player, which jPlay cannot reach. Full songs played inside jPlay go through the equaliser and mixer.',
   'cross-origin-without-cors': 'This preview’s server did not allow processing, so it plays unprocessed.',
 };
 

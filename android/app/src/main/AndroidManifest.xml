@@ -29,7 +29,7 @@
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
-      <!-- VOICE-SEARCH-001: "Play <song> on Airwave Discovery" from Google Assistant; Android Auto's
+      <!-- VOICE-SEARCH-001: "Play <song> on jPlay" from Google Assistant; Android Auto's
            voice actions require it too. -->
       <intent-filter>
         <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
@@ -60,7 +60,7 @@
         <action android:name="android.intent.action.MEDIA_BUTTON" />
       </intent-filter>
     </receiver>
-    <!-- LIST-FOLDER-001: the "Airwave Discovery" place in the Files app, holding the song list the
+    <!-- LIST-FOLDER-001: the "jPlay" place in the Files app, holding the song list the
          owner opened from the app (read-only; only the system file manager may bind it). -->
     <provider
       android:name=".ListFolderProvider"

@@ -1,6 +1,6 @@
 # Music-aware DJ crossfade (DJ-XFADE-001)
 
-Airwave blends **full songs**, not catalogue preview clips, in the installed Windows and Android players. The crossfader sets the maximum overlap and transition style; “Play before blending” still defaults to 95%. It is not a master-volume control.
+jPlay blends **full songs**, not catalogue preview clips, in the installed Windows and Android players. The crossfader sets the maximum overlap and transition style; “Play before blending” still defaults to 95%. It is not a master-volume control.
 
 ## What changed
 
