@@ -13,8 +13,10 @@ import { radioSession } from './engine/radio-client';
 import { CarCatalog } from './engine/car-catalog';
 import { openIdbBackend } from './engine/idb';
 import { LocalApi } from './engine/local-api';
-import { pushSourceUpdates, setMediaHandlers } from './engine/media-native';
-import { defaultHttpPort } from './engine/native-http';
+import { runCarSimilar } from './engine/car-similar';
+import { runCarMood } from './engine/car-mood';
+import { pushSourceUpdates, setMediaHandlers, songFromTrack } from './engine/media-native';
+import { defaultHttpPort, phoneWait } from './engine/native-http';
 import { provideLocal, spotifySearchFor, startLocal } from './engine/runtime';
 import { CarSources, ChainedContexts, LibraryContexts, parseLibrary, ServiceActor, type LibrarySnapshot } from './engine/service-actor';
 import { Store } from './engine/store';
@@ -94,15 +96,39 @@ async function startService(n: FullBridge): Promise<void> {
     if (!queue) throw new Error('The service page must own the queue cache.');
     const catalog = catalogFor((t) => queue.isReady(t));
     // Car-found songs first, then the saved queue and playlists by their original Tracks.
-    const contexts = new ChainedContexts([catalog, new LibraryContexts(savedLibrary(n))]);
+    const library = savedLibrary(n);
+    const contexts = new ChainedContexts([catalog, new LibraryContexts(library)]);
     const cars = new CarSources({ contexts, queue, emit: pushSourceUpdates });
     const actor = new ServiceActor({ local, queue, cars, reply: (id, json) => n.apiReply(id, json) });
     const w = window as unknown as ServiceWindow;
     w.__awServiceApi = (json) => { void actor.onRequest(json); };
     w.__awServiceState = (json) => cars.onState(json);
+    let similarBusy = false;
+    const carTrackFor = async (key: string) => (await api.last().catch(() => null))?.items.find((it) => it.track.key === key)?.track
+      ?? catalog.find(key) ?? library.tracks.find((t) => t.key === key) ?? null;
     setMediaHandlers({
       catalogSearch: (query, opts) => catalog.searchAll(query, opts),
       identifyAudio: (samples) => catalog.identifyClip(samples),
+      // CAR-SIMILAR-001: with the phone closed, the car's Find similar runs here, on the same engine.
+      findSimilar: async (id) => {
+        if (similarBusy) throw new Error('Already looking for similar songs. Try again when that finishes.');
+        similarBusy = true;
+        try {
+          return await runCarSimilar(id, {
+            findTrack: carTrackFor,
+            similar: api.similar, job: api.job, wait: phoneWait,
+            song: (t) => { const ready = queue.isReady(t); return songFromTrack(t, ready, ready ? queue.readyUrl(t) : null); },
+          });
+        } finally { similarBusy = false; }
+      },
+      // CAR-MOOD-001: with the phone closed, the car's queue follows the listening mood from this engine.
+      // The queue's songs are looked up once per question (up to 500 of them), not one api.last() each.
+      moodOrder: async (req) => {
+        const last = await api.last().catch(() => null);
+        const known = new Map((last?.items ?? []).map((it) => [it.track.key, it.track] as const));
+        const findTrack = (key: string) => known.get(key) ?? catalog.find(key) ?? library.tracks.find((t) => t.key === key) ?? null;
+        return runCarMood(req, { findTrack, mood: api.mood });
+      },
     });
     n.apiReady();
     // RADIO-001: the service page remains alive with the phone closed, naming broadcasts and

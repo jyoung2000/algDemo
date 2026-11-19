@@ -219,18 +219,19 @@ describe('inline radio action icons (RADIO-UI-011)', () => {
     expect(player.querySelector('.radio-player__side')?.textContent).not.toContain('Volume');
   });
 
-  it('uses the music player speaker control: mute, unmute and restore the last chosen level', async () => {
+  it('uses the music player speaker control: a double tap mutes, unmutes and restores the last chosen level (VOLUME-POP-001)', async () => {
     await render();
     const speaker = host.querySelector<HTMLButtonElement>('.vol__btn')!;
     expect(speaker).not.toBeNull();
-    expect(host.querySelector<HTMLInputElement>('.vol__bar')?.getAttribute('aria-label')).toBe('Volume');
-    expect(speaker.getAttribute('aria-label')).toBe('Mute');
-    await act(async () => speaker.click());
+    expect(speaker.getAttribute('aria-label')).toMatch(/double tap to mute/);
+    await act(async () => { speaker.click(); speaker.click(); });
     expect(f.volume).toHaveBeenLastCalledWith(0);
-    expect(speaker.getAttribute('aria-label')).toBe('Unmute');
-    await act(async () => speaker.click());
+    expect(speaker.getAttribute('aria-label')).toMatch(/double tap to unmute/);
+    await act(async () => { speaker.click(); speaker.click(); });
     expect(f.volume).toHaveBeenLastCalledWith(1);
-    expect(speaker.getAttribute('aria-label')).toBe('Mute');
+    // A single tap opens the slider.
+    await act(async () => { speaker.click(); await new Promise((r) => setTimeout(r, 350)); });
+    expect(host.querySelector<HTMLInputElement>('.vol__bar')?.getAttribute('aria-label')).toBe('Volume');
   });
 
   it('adds a star to the playlist action and makes download icon-only without losing its accessible name', async () => {

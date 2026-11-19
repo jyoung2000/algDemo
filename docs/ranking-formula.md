@@ -65,3 +65,26 @@ Not in the six lines at all: the Familiar–Adventurous slider and "Prefer new r
 - *Put feedback into the seed-fit average, as the first line reads.* It would count the same feedback twice (it is already a global factor). The note says what happens instead.
 - *Shrink scores towards neutral by coverage instead of multiplying; scale the best-song share by how many starting songs have evidence; evidence-weighted provider corroboration; make the repeat penalty proportional.* Each changes the order of every queue. There is no listening data to show any of them is better, so they are recorded here as candidates rather than shipped as a guess.
 - The Python development sidecar still does not implement named algorithms or custom formulas.
+
+## Songs heard on the radio (RADIO-TASTE-001, 18 November 2026)
+
+A song heard on a radio station counts towards the listener's algorithm the same way a song played in the player does, with two conditions: the song has to be **identified**, and it has to have been **heard**.
+
+| What happened on the station | What is recorded | Weight next to a full listen in the player |
+| --- | --- | --- |
+| An identified song, 30 seconds or more of it heard | A part listen (`qualified`) | About a third |
+| An identified song, 70% or more of its own length heard | A full listen (`complete`), in place of the part listen | 70%, less when under 90% of the song was heard |
+| A programme, an advert, or a song nobody could identify | Nothing | 0 |
+| The station's own tags ("jazz", "talk") | Nothing | 0 |
+
+- **Identified** means an audio fingerprint named the recording, or the broadcaster named a song and the catalogue has that song by that artist. A title on its own is not enough.
+- **Heard** is counted from the audio that was actually played: pausing, buffering and rewinding over the same seconds add nothing, and it can never exceed the recording's length. A song of unknown length is never a full listen.
+- The 0.7 is the confidence of the event: an identification is not as sure as the listener choosing the song themselves.
+- One listen is one event. The full listen replaces the part listen; if more of the song is heard after that, the same event is updated when the song is left. Reporting twice (the phone page and the background service both follow a station on Android) changes nothing.
+- The event carries the song's own genres and tempo from the usual genre lookup. The note waits for that lookup, but never past the end of the listen.
+
+What it changes in the ranking: the song, its artist and its album gain feedback weight; its genres and tempo enter the taste (long and recent); and those genres are among the ones discovery asks the services about. Profile shows the count under "Heard on radio" and marks the rows "radio".
+
+### Found while doing this, not changed
+
+**The "this session" third of the taste currently has no listens in it.** The engine compares each listen's session name with a private name of its own that no listen carries, so the session horizon is empty and taste uses the long + recent horizons. The owner chose **stable rankings across app restarts** on 18 November 2026 rather than a true session layer that resets at launch. Leave the current ranking unchanged; do not claim the session horizon is active. A future rolling short-term horizon would need its own specification and tests.

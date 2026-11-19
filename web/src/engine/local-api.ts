@@ -5,6 +5,11 @@
  */
 import { applyAlgorithmPatch, engineFromSettings, settingsWithAlgorithms } from './algorithms';
 import * as A from './audio';
+import { isSimilarityPercent, selectSimilar, soundMatch, SIMILAR_DEFAULT, SIMILAR_FLOOR, SIMILAR_LIMIT, type SoundHit, type SoundTrack } from './similar-sound';
+import { MOOD, buildMood, moodOrder, moodTags, type MoodCandidate, type MoodKind, type MoodSignal } from './mood-queue';
+/** CAR-MOOD-001: the presses the car may send with a mood question. */
+const CAR_MOOD_KINDS = new Set(['like', 'dislike', 'similar', 'complete', 'skip']);
+import type { Track as NativeTrack } from './track';
 import { DEFAULT_ENGINE, TRANSFER, engineWithWeights } from './config';
 import { EQ_DEFAULTS, parseEq } from './eq';
 import { PLAY_THROUGH_DEFAULT, clampPlayThrough, clampSlider } from './crossfade';
@@ -49,7 +54,7 @@ import { seedWindow } from './seed-window';
 import type { Tag } from './genres';
 import { classify, classifyAll } from './classify';
 import { makeTag } from './genres';
-import { inferFromArtist, inferFromSeed, inferFromSound, needsSub, recordArtistGenres } from './infer';
+import { inferFromArtist, inferFromSeed, inferFromSound, needsSub, recordArtistGenres, withoutNamesake, currentTags } from './infer';
 import { fillGenres, mainGenre, stylesFor, subLabels } from './genre-fill';
 import { BlockedUrl, BudgetExceeded, Cancelled, FetchError, Http, type HttpPort, Meter } from './net';
 import { dl, downloadsAvailable } from './downloads';
@@ -91,7 +96,8 @@ export interface LocalResponse {
 
 /** What the listing shows about a song: its measured characteristics and how it fits the listening. */
 export function characteristicsOf(c: Dict, taste: TasteProfile | null): Dict {
-  let tags = (c['tags'] as Dict[] | undefined) ?? [];
+  // NAMESAKE-001: artist tags that belong to someone else with the same name are not this song's.
+  let tags = currentTags(((c['tags'] as Tag[] | undefined) ?? [])) as unknown as Dict[];
   // Apple Music names one genre per song (`primaryGenreName`) and sends no tag list: use it as the song's tag.
   const named = (c['extra'] as Dict | undefined)?.['genre'];
   if (!tags.length && typeof named === 'string' && named) {
@@ -133,7 +139,7 @@ export function characteristicsOf(c: Dict, taste: TasteProfile | null): Dict {
 // install that predates it — no migration needed.
 /** FEATURES-FLOW-001: how long one request works on a look for features before answering with what it has. */
 const FEATURE_SLICE_MS = 2500;
-const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, cache_gb: 1, dl_parallel: 0, preload_target: 'all' as 'all' | 'count', preload_count: 20, discover_while_listening: true, rank_v2: true, eq: EQ_DEFAULTS, mix: 0, local_mix: true, play_through: PLAY_THROUGH_DEFAULT };
+const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, similar_percent: SIMILAR_DEFAULT, cache_gb: 1, dl_parallel: 0, preload_target: 'all' as 'all' | 'count', preload_count: 20, discover_while_listening: true, mood_queue: true, rank_v2: true, eq: EQ_DEFAULTS, mix: 0, local_mix: true, play_through: PLAY_THROUGH_DEFAULT };
 /** How many songs one discovery run adds to the list: the user's choice in Settings. */
 export const QUEUE_SIZE_MIN = 5;
 export const QUEUE_SIZE_MAX = 60;
@@ -142,6 +148,10 @@ const FEEDBACK_KINDS = new Set(['qualified', 'like', 'dislike', 'hide', 'save', 
 const QUEUE_PLAYLIST_KEY = 'queue_playlist';
 /** Songs saved lists were made with (ALBUM-OPEN-001), by key, so a list made from an album shows every song. */
 const LIST_TRACKS_KEY = 'list_tracks';
+/** TAGS-ALWAYS-001: genres looked up for saved songs that had none, by song key. */
+const SAVED_TAGS_KEY = 'saved_tags';
+/** TAGS-ALWAYS-001: release dates looked up for saved songs that had none (key -> release or year hint). */
+const SAVED_DATES_KEY = 'saved_dates';
 /** What says which album a song is on; a copy that leaves these out keeps them from another copy. */
 const ALBUM_FIELDS = ['album', 'album_id', 'release'] as const;
 
@@ -386,6 +396,7 @@ export class LocalApi {
       if (path === '/api/seeds') return m === 'PUT' ? await this.putSeeds(body ?? {}) : ok(this.seedsView());
       if (path === '/api/settings') return m === 'PUT' ? await this.putSettings(body ?? {}) : ok(this.settings());
       if (m === 'POST' && path === '/api/recommend') return this.recommend(body ?? {});
+      if (m === 'POST' && path === '/api/similar') return this.similar(body ?? {});
       const job = /^\/api\/jobs\/([A-Za-z0-9]+)$/.exec(path);
       if (job) return m === 'DELETE' ? this.cancelJob(job[1]!) : this.jobStatus(job[1]!);
       if (m === 'POST' && path === '/api/feedback') return await this.feedback(body ?? {});
@@ -410,6 +421,7 @@ export class LocalApi {
       if (m === 'POST' && path === '/api/model/install') return ok({ installed: this.encoder !== null, downloaded: 0 });
       if (m === 'POST' && path === '/api/model/selftest') return await this.selftest();
       if (m === 'POST' && path === '/api/rerank') return await this.rerank(body ?? {});
+      if (m === 'POST' && path === '/api/mood') return this.mood(body ?? {});
       if (m === 'GET' && path === '/api/profile') return ok(this.profile());
       if (m === 'GET' && path === '/api/last') {
         const r = this.store.get<Dict>('last_result');
@@ -879,11 +891,16 @@ export class LocalApi {
     const pl = this.store.get<{ id: string; name: string }>(QUEUE_PLAYLIST_KEY);
     // GENRE-LOAD-001: a starting song with no tags of its own is shown with what is already known of it.
     const known = this.knownGenres();
+    // TAGS-ALWAYS-001: or with genres looked up for it in the background (a starting song nothing knew).
+    const found = this.store.get<Record<string, Tag[]>>(SAVED_TAGS_KEY) ?? {};
     const tagged = (this.store.seeds() as Dict[]).map((t) => {
       if (((t['tags'] as unknown[] | undefined) ?? []).length) return t;
       const tags = known(t);
-      return tags.length ? { ...t, tags } : t;
-    });
+      if (tags.length) return { ...t, tags };
+      const looked = found[String(t['key'])];
+      return looked?.length ? { ...t, tags: looked } : t;
+    }).map((t) => this.withDate(t));
+    if (tagged.some((t) => this.savedWants(t))) this.kickSavedGenres();
     // GENRE-ALL-001: and with a main genre and a subgenre, like every row of the queue.
     const fill = this.genreFiller(((this.store.get<Dict>('last_result')?.['items'] ?? []) as Dict[]), tagged);
     const seeds = tagged.map((t) => ({ ...t, characteristics: fill(t, characteristicsOf(t, null)) }));
@@ -896,11 +913,15 @@ export class LocalApi {
     // Songs a list was made with (an album saved as a list); any fresher copy below replaces them.
     const held = this.store.get<Record<string, Dict>>(LIST_TRACKS_KEY) ?? {};
     for (const [k, t] of Object.entries(held)) byKey.set(k, t);
-    // SAVED-GENRES-001: lend from the list's own (imported) copy too, not only the copy just replaced:
-    // a song held as a feedback row, a queue item and a starting song is replaced three times.
+    // SAVED-GENRES-001: carry an imported copy's confirmed facts through later catalogue copies.
+    // IMPORTED-LIST-SOURCE-001: a catalogue match must not replace the file the listener actually
+    // added to the list. The list's imported copy owns its source; other copies can lend album facts.
     const put = (k: string, t: Dict) => {
       const prev = byKey.get(k);
-      byKey.set(k, withImportFactsOf(withImportFactsOf(withAlbumOf(t, prev), prev), held[k]));
+      const file = held[k];
+      const source = file?.['provider'] === 'imported' && typeof file['url'] === 'string' && file['url'].startsWith('imported:')
+        ? withAlbumOf(file, t) : t;
+      byKey.set(k, withImportFactsOf(withImportFactsOf(withAlbumOf(source, prev), prev), file));
     };
     for (const r of this.store.feedback()) if (r.track) put(r.key, r.track as Dict);
     for (const it of (this.store.get<Dict>('last_result')?.['items'] ?? []) as { track: Dict }[]) {
@@ -1055,7 +1076,7 @@ export class LocalApi {
   private genreFiller(items: Dict[], seeds: Dict[] = this.store.seeds() as Dict[]): (track: Dict, chars: Dict) => Dict {
     const subs = this.store.get<ArtistSubsMap>(ARTIST_SUBS_KEY) ?? {};
     const artistGenres = this.store.get<Record<string, Record<string, number>>>('artist_genres') ?? {};
-    const tagsOf = (t: Dict): Tag[] => (t['tags'] as Tag[] | undefined) ?? [];
+    const tagsOf = (t: Dict): Tag[] => [...currentTags((t['tags'] as Tag[] | undefined) ?? [])];
     const stylesOf = (t: Dict): string[] => stylesFor(tagsOf(t), subs[fold(artistName(t))]?.styles);
     const list = [...seeds, ...items.map((x) => x['track'] as Dict)].filter(Boolean).map((t) => ({ tags: tagsOf(t), styles: stylesOf(t), year: LocalApi.yearOf(t) }));
     return (track, chars) => {
@@ -1075,8 +1096,20 @@ export class LocalApi {
   private completed(result: Dict): Dict {
     const items = (result['items'] ?? []) as Dict[];
     if (!items.length) return result;
-    const fill = this.genreFiller(items);
-    return { ...result, items: items.map((x) => (x['track'] ? { ...x, characteristics: fill(x['track'] as Dict, (x['characteristics'] as Dict | undefined) ?? {}) } : x)) };
+    // NAMESAKE-001: a row saved with a namesake's artist tags, or a subgenre the table has since
+    // corrected, is re-read with today's tags; its sound and fit measurements are kept.
+    const now = items.map((x) => {
+      const t = x['track'] as Dict | undefined;
+      const tags = (t?.['tags'] as Tag[] | undefined) ?? [];
+      const clean = currentTags(tags);
+      if (!t || clean === tags) return x;
+      const track = { ...t, tags: clean };
+      const fresh = characteristicsOf(track, null);
+      const old = (x['characteristics'] as Dict | undefined) ?? {};
+      return { ...x, track, characteristics: { ...old, family: fresh['family'], subgenre: fresh['subgenre'], families: fresh['families'], color: fresh['color'], genres: fresh['genres'] } };
+    });
+    const fill = this.genreFiller(now);
+    return { ...result, items: now.map((x) => (x['track'] ? { ...x, characteristics: fill(x['track'] as Dict, (x['characteristics'] as Dict | undefined) ?? {}) } : x)) };
   }
 
   /** Ask MusicBrainz what its listeners call an artist; a failure is not retried for a while, so the looking ends. */
@@ -1386,9 +1419,13 @@ export class LocalApi {
     catch (e) { return fail(400, (e as Error).message); }
     if ('fresh' in body) cur['fresh'] = Boolean(body['fresh']);
     if ('adventurous' in body) cur['adventurous'] = Math.min(1, Math.max(0, Number(body['adventurous'])));
-    for (const k of ['audio', 'sample_mode', 'rank_v2', 'discover_while_listening']) if (k in body) cur[k] = Boolean(body[k]);
+    for (const k of ['audio', 'sample_mode', 'rank_v2', 'discover_while_listening', 'mood_queue']) if (k in body) cur[k] = Boolean(body[k]);
     if ('daily_mb' in body) cur['daily_mb'] = Math.min(2000, Math.max(5, Number(body['daily_mb'])));
     if ('request_mb' in body) cur['request_mb'] = Math.min(200, Math.max(2, Number(body['request_mb'])));
+    if ('similar_percent' in body) {
+      if (!isSimilarityPercent(body['similar_percent'])) return fail(400, 'similar_percent must be a whole number between 40 and 95');
+      cur['similar_percent'] = body['similar_percent'];
+    }
     if ('queue_size' in body) {
       const n = Math.round(Number(body['queue_size']));
       if (!Number.isFinite(n) || n < QUEUE_SIZE_MIN || n > QUEUE_SIZE_MAX) return fail(400, `queue_size must be between ${QUEUE_SIZE_MIN} and ${QUEUE_SIZE_MAX}`);
@@ -1447,6 +1484,164 @@ export class LocalApi {
     for (const [k, j] of this.jobs) if (j.done && unixNow() - j.started > 900) this.jobs.delete(k);
     void this.runJob(job, seeds, settings, listening ? 'listening' : 'search');
     return ok({ job: job.id });
+  }
+
+  /** SIMILAR-SOUND-001: one song in a list, one calibrated audio threshold, every full-song source.
+   * Unlike a general recommendation, a metadata-only candidate can NEVER pass the match threshold.
+   * Only vetted providers supply tracks; their *own* full-song playback link is preserved.
+   */
+  private similar(body: Dict): LocalResponse {
+    const seed = body['track'] as Dict | undefined;
+    if (!seed || typeof seed['key'] !== 'string' || !seed['key'] || !seed['title'] || !(seed['artists'] as unknown[])?.length) return fail(400, 'Choose a song from a list first.');
+    const settings = this.settings();
+    if (!isSimilarityPercent(settings['similar_percent'])) return fail(400, 'Set a whole-number sound match from 40 to 95% in Settings.');
+    if (this.currentJob) this.jobs.get(this.currentJob)?.token.cancel('superseded by a newer request');
+    // MOOD-QUEUE-001: asking for songs that sound like this one is the strongest mood signal there is.
+    this.noteMood(seed, 'similar');
+    const job = new Job(newId());
+    this.jobs.set(job.id, job); this.currentJob = job.id;
+    void this.runSimilar(job, seed, settings);
+    return ok({ job: job.id });
+  }
+
+  /**
+   * Put the found songs at the end of the queue. SIMILAR-MIN-001 (owner, 2026-11-19): "find similar song
+   * should at bare minimum find 3 similar songs". Songs at the chosen sound match come first; when fewer
+   * than three reach it, the closest measured songs below it make up three, each saying its real
+   * percentage; when even that is short (no audio to compare), related songs from the same search fill
+   * in, each saying its sound was not compared. Nothing already in the list is repeated.
+   */
+  private async addSimilar(job: Job, sv: Dict, threshold: number, hits: SoundHit<SoundTrack>[], candidates: Dict[], lastAtStart: Dict | null | undefined, unmeasuredNote: string): Promise<void> {
+    const current = this.store.get<Dict>('last_result') ?? lastAtStart ?? { phase: 'final', items: [], count: 0, asked: 0, sources: {}, audio: {}, timings: {}, transfer: {} };
+    const previous = (current['items'] as Dict[] | undefined) ?? [];
+    const existing = previous.map((it) => it['track'] as SoundTrack);
+    const matches: (SoundHit<SoundTrack> & { unmeasured?: boolean })[] = selectSimilar(sv as SoundTrack, existing, hits, threshold);
+    if (matches.length < SIMILAR_FLOOR) {
+      const taken = [sv as SoundTrack, ...existing, ...matches.map((m) => m.track)];
+      for (const t of candidates as SoundTrack[]) {
+        if (matches.length >= SIMILAR_FLOOR) break;
+        if (taken.some((x) => x.key === t.key || matchRecordings(x, t).verdict === 'same')) continue;
+        matches.push({ track: t, match: NaN, unmeasured: true });
+        taken.push(t);
+      }
+    }
+    const seedTitle = String(sv['title']);
+    const freshItems = matches.map(({ track, match, below, unmeasured }, i) => ({
+      rank: previous.length + i + 1, track: cleanTrack(track as Dict), score: unmeasured ? 0 : match / 100, coverage: unmeasured ? 0 : 1,
+      tier: 'related', evidence: unmeasured ? 'weak' : below ? 'moderate' : 'strong', best_seed: { key: sv['key'], title: sv['title'], artist: (sv['artists'] as string[])[0] },
+      reasons: [{ factor: unmeasured ? 'related' : 'audio', weight: unmeasured ? 0 : match / 100, text: unmeasured
+        ? `Related to “${seedTitle}” by ${String(track['provider'])}; its sound could not be compared.`
+        : below ? `${match}% calibrated sound match to “${seedTitle}” (DCLAP audio vectors): one of the closest found, below your ${threshold}%.`
+        : `${match}% calibrated sound match to “${seedTitle}” (DCLAP audio vectors).` }],
+      uncertainty: [], new_release: false, factors: unmeasured ? {} : { audio: match / 100 }, weights: unmeasured ? {} : { audio: 1 },
+      sources: [String(track['provider'])], playback: playbackFor(track as Dict), characteristics: characteristicsOf(track as Dict, null),
+      added: true, sound_match: unmeasured ? null : match, ...(below ? { sound_below: true } : {}), ...(unmeasured ? { sound_unmeasured: true } : {}),
+    }));
+    const next = this.withKnownGenres({ ...current, phase: 'final', items: [...previous, ...freshItems], count: previous.length + freshItems.length, saved_at: unixNow() });
+    // A list replacement or cancellation in mid-search cannot be undone by this late completion.
+    job.token.check();
+    await this.store.put('last_result', next);
+    const reached = matches.filter((m) => !m.below && !m.unmeasured).length;
+    const below = matches.filter((m) => m.below).length;
+    const unmeasured = matches.filter((m) => m.unmeasured).length;
+    job.result = { added: freshItems.length, reached, below, unmeasured, minimum: threshold,
+      matches: freshItems.map((it) => ({ key: (it.track as Dict)['key'], match: it.sound_match, provider: (it.track as Dict)['provider'], ...(it.sound_below ? { below: true } : {}), ...(it.sound_unmeasured ? { unmeasured: true } : {}) })),
+      reason: freshItems.length ? (unmeasured ? unmeasuredNote : '') : 'Every song found is already in your list. The list is unchanged.',
+      queue: this.completed(next), sources: job.sources, audio: job.audio };
+  }
+
+  private async runSimilar(job: Job, seed: Dict, settings: Dict): Promise<void> {
+    const p = this.pipeline;
+    const start = performance.now();
+    const threshold = Number(settings['similar_percent']);
+    const lastAtStart = this.store.get<Dict>('last_result');
+    const meter = p.meter(settings); job.meter = meter;
+    const c: Ctx = { token: job.token, meter };
+    try {
+      if (settings['audio'] === false) {
+        job.result = { added: 0, minimum: threshold, matches: [], reason: 'Audio matching is off in Settings. Turn it on and try again.', sources: {}, audio: {} };
+        return;
+      }
+      job.phase = 'gathering'; job.progress = `Finding candidates from every service for “${seed['title']}”`;
+      const seedProf = await p.profileSeed(job, seed);
+      job.token.check();
+      const sv = p.seedView(seed, seedProf);
+      // The normal recommendation graph retrieves Deezer, YouTube Music and SoundCloud relatives.
+      // The other four full-song providers have search, not related-song APIs. Query every provider
+      // with the seed's real genre if known, else its artist. They only supply candidates: the audio
+      // vector still decides what passes, not the search term or the service's own "related" label.
+      const cfg = { ...engineFromSettings(settings), perSourceCap: 20, mergedCap: 180, queueSize: SIMILAR_LIMIT };
+      const { cands: related } = await p.gather(job, [sv], { [String(sv['key'])]: seedProf }, cfg, false);
+      job.token.check();
+      const tag = ((sv['tags'] as Tag[] | undefined) ?? []).find((t) => t && !t.inferred)?.name;
+      const query = String(tag ?? (sv['artists'] as string[])[0] ?? sv['artist'] ?? '').trim();
+      const src = [
+        ['deezer', this.dz], ['ytmusic', this.ytm], ['soundcloud', this.sc], ['bandcamp', this.bandcamp],
+        ['audius', this.audius], ['hearthis', this.hearthis], ['internet-archive', this.archive],
+      ] as const;
+      const searched = query ? await pmap(src, 3, async ([name, provider]) =>
+        p.call(job, `similar-${name}`, () => provider.search(query, 12, c), [] as NativeTrack[]),
+      ) : [];
+      job.token.check();
+      // Deduplicate BEFORE paying for vectors, but keep every platform represented by actual results.
+      // Round-robin is deliberate: sixty early Deezer results must not crowd Bandcamp, Audius,
+      // HearThis or Archive out of the bounded audio analysis. Every provider gets its first hits.
+      const bySource = [...searched, related];
+      const balanced: NativeTrack[] = [];
+      for (let i = 0; i < 12; i++) for (const group of bySource) if (group[i]) balanced.push(group[i] as NativeTrack);
+      const candidates = newDiscoveryTracks(
+        balanced.filter((t) => Boolean(t?.['key']) && t['kind'] !== 'video'),
+        [sv] as NativeTrack[],
+      ).slice(0, 120) as Dict[];
+      job.timings['candidates'] = candidates.length;
+      const getVector = async (t: Dict): Promise<Float64Array | null> => {
+        const own = this.store.vectorGet(songVectorKey(String(t['key'])), A.MODEL_ID, A.PREPROCESS_ID);
+        if (own) return Float64Array.from(own);
+        const did = String(t['dz_preview_id'] || t['dz_id'] || (t['provider'] === 'deezer' ? t['platform_id'] : '') || '');
+        const cached = did ? this.store.vectorGet(`deezer:${did}`, A.MODEL_ID, A.PREPROCESS_ID) : null;
+        if (cached) return Float64Array.from(cached);
+        if (did && settings['audio'] !== false && this.encoder) return p.vectorFor(job, did, String(t['preview'] || ''));
+        return null;
+      };
+      job.phase = 'listening'; job.progress = `Comparing real sound vectors at ${threshold}% or higher`;
+      let seedVec = await getVector(sv);
+      if (!seedVec && settings['audio'] !== false && this.encoder) {
+        const dz = seedProf['dz'] as Dict | null;
+        const did = String(sv['dz_preview_id'] || (sv['provider'] === 'deezer' ? sv['platform_id'] : '') || '');
+        if (did) seedVec = await p.vectorFor(job, did, String(sv['preview'] || dz?.['preview'] || ''));
+      }
+      if (!seedVec) {
+        // SIMILAR-MIN-001: no sound to compare with, but three related songs are still added, said as such.
+        const why = settings['audio'] === false ? 'Sound matching is off in Settings' : 'No analysed audio is available for this song';
+        await this.addSimilar(job, sv, threshold, [], candidates, lastAtStart, `${why}, so these are related songs whose sound was not compared.`);
+        return;
+      }
+      // Read an existing vector or a known Deezer match; resolve missing platform matches only for
+      // the bounded candidate pool. No guessed vector is ever used as a sound match.
+      const known = candidates.filter((t) =>
+        this.store.vectorGet(songVectorKey(String(t['key'])), A.MODEL_ID, A.PREPROCESS_ID) ||
+        this.store.vectorGet(`deezer:${String(t['dz_id'] || (t['provider'] === 'deezer' ? t['platform_id'] : '') || '')}`, A.MODEL_ID, A.PREPROCESS_ID),
+      );
+      const unknown = candidates.filter((t) => !known.includes(t)).slice(0, 60);
+      if (unknown.length) await p.enrich(job, unknown, unknown.length);
+      job.token.check();
+      let compared = 0;
+      const hits = await pmap([...known, ...unknown], 3, async (t, i) => {
+        job.token.check(); job.progress = `Comparing song ${i + 1} of ${known.length + unknown.length}`;
+        let v: Float64Array | null;
+        try { v = await getVector(t); }
+        catch (e) { if (!(e instanceof BudgetExceeded)) throw e; job.audio['stopped'] = 'Transfer allowance reached; compared only available sounds.'; v = null; }
+        const match = soundMatch(seedVec, v);
+        if (match === null) return null;
+        compared += 1;
+        return { track: t as SoundTrack, match };
+      });
+      job.token.check();
+      job.audio['compared'] = compared;
+      await this.addSimilar(job, sv, threshold, hits.filter((h): h is NonNullable<typeof h> => h !== null), candidates, lastAtStart, compared ? '' : 'No candidates had analysable audio, so these are related songs whose sound was not compared.');
+      job.timings['total_ms'] = Math.round(performance.now() - start);
+    } catch (e) { job.error = e instanceof Cancelled ? 'cancelled' : `${(e as Error).name}: ${(e as Error).message}`; }
+    finally { job.done = true; job.phase = job.error ? (job.error === 'cancelled' ? 'cancelled' : 'failed') : 'done'; }
   }
 
   /**
@@ -1807,6 +2002,94 @@ export class LocalApi {
     return ok(this.completed(out));
   }
 
+  // ---- listening mood (MOOD-QUEUE-001) -----------------------------------------------------
+  /** Signals that are not feedback rows ("Find similar sound"), newest last, at most a window's worth. */
+  private noteMood(track: Dict, kind: MoodKind): void {
+    const log = this.moodLog().filter((r) => unixNow() - Number(r['ts']) <= MOOD.maxAgeS);
+    log.push({ kind, ts: unixNow(), track: cleanTrack(track as never) });
+    // The write lands asynchronously; the answer to the same request must already count this press.
+    this.moodLogNow = log.slice(-MOOD.window);
+    void this.store.put('mood_log', this.moodLogNow);
+  }
+
+  private moodLogNow: Dict[] | null = null;
+  private moodLog(): Dict[] { return [...(this.moodLogNow ?? this.store.get<Dict[]>('mood_log') ?? [])]; }
+
+  /**
+   * Every listening signal of the last 90 minutes: saved judgements and plays, then the presses kept
+   * only for the mood (Find similar, and car presses made with the phone closed). A car press the page
+   * later saves as feedback is the same press: a logged one within ten minutes of a matching
+   * feedback row is not counted again.
+   */
+  private moodSignals(now: number, tagsOf: (t: Dict, c?: Dict | null) => ReturnType<typeof moodTags>): MoodSignal[] {
+    const signals: MoodSignal[] = [];
+    const kinds: Record<string, MoodKind> = { complete: 'complete', replay: 'replay', like: 'like', dislike: 'dislike', hide: 'dislike', skip: 'skip', save: 'like' };
+    const saved: { key: string; kind: MoodKind; ts: number }[] = [];
+    for (const r of this.store.feedback()) {
+      const kind = kinds[r.kind];
+      if (!kind || now - r.ts > MOOD.maxAgeS || String(r.origin ?? '').startsWith('import:') || !r.track) continue;
+      const t = r.track as Dict;
+      saved.push({ key: r.key, kind, ts: r.ts });
+      signals.push({ key: r.key, kind, ts: r.ts, tags: tagsOf(t), vector: this.moodVector(t), listened: r.listened, duration: r.duration ?? (typeof t['duration'] === 'number' ? (t['duration'] as number) : null) });
+    }
+    for (const r of this.moodLog()) {
+      const t = r['track'] as Dict | undefined;
+      const ts = Number(r['ts']);
+      if (!t?.['key'] || now - ts > MOOD.maxAgeS) continue;
+      const key = String(t['key']);
+      const kind = r['kind'] as MoodKind;
+      if (saved.some((s) => s.key === key && s.kind === kind && Math.abs(s.ts - ts) <= 600)) continue;
+      signals.push({ key, kind, ts, tags: tagsOf(t), vector: this.moodVector(t) });
+    }
+    return signals;
+  }
+
+  /** For tests: the signals the mood is built from right now. */
+  moodSignalsForTest(): { key: string; kind: string }[] {
+    return this.moodSignals(unixNow(), (t) => moodTags(characteristicsOf(t, null) as never)).map((s) => ({ key: s.key, kind: s.kind }));
+  }
+
+  /** The measured sound of a song, when the app has analysed it (full song first, then the preview). */
+  private moodVector(t: Dict): Float32Array | null {
+    const did = t['dz_preview_id'] || t['dz_id'] || (t['provider'] === 'deezer' ? t['platform_id'] : null);
+    return this.store.vectorGet(songVectorKey(String(t['key'] ?? '')), A.MODEL_ID, A.PREPROCESS_ID)
+      ?? (did ? this.store.vectorGet(`deezer:${did}`, A.MODEL_ID, A.PREPROCESS_ID) : null);
+  }
+
+  /**
+   * MOOD-QUEUE-001: the order the songs still to come should play in for the current listening mood.
+   * Body: `upcoming` (the movable songs, engine order: {track, characteristics?}), `shown` (their keys
+   * as on screen now), `current` (the song playing: {track, characteristics?}). The caller decides
+   * what may move (played, current and hand-added songs never do; albums and saved lists only with
+   * shuffle on). Off in Settings = the order given, unchanged.
+   */
+  private mood(body: Dict): LocalResponse {
+    const settings = this.settings();
+    const list = (Array.isArray(body['upcoming']) ? (body['upcoming'] as Dict[]) : []).slice(0, 500)
+      .filter((u) => u && typeof u === 'object' && typeof (u['track'] as Dict | undefined)?.['key'] === 'string');
+    const keys = list.map((u) => String((u['track'] as Dict)['key']));
+    if (settings['mood_queue'] === false) return ok({ order: keys, changed: false, moved: [], off: true, leading: [], confidence: 0 });
+    // CAR-MOOD-001: the car's press, sent with the question while the phone app is closed.
+    const sig = body['signal'] as Dict | undefined;
+    const sigTrack = sig?.['track'] as Dict | undefined;
+    if (sigTrack && typeof sigTrack['key'] === 'string' && CAR_MOOD_KINDS.has(String(sig!['kind']))) this.noteMood(sigTrack, String(sig!['kind']) as MoodKind);
+    const now = unixNow();
+    const tagsOf = (t: Dict, c?: Dict | null) => moodTags((c && (c['genres'] || c['family'] || c['families']) ? c : characteristicsOf(t, null)) as never);
+    const signals = this.moodSignals(now, tagsOf);
+    const cur = body['current'] as Dict | undefined;
+    const curTrack = cur?.['track'] as Dict | undefined;
+    if (curTrack?.['key']) signals.push({ key: String(curTrack['key']), kind: 'current', ts: now, tags: tagsOf(curTrack, cur?.['characteristics'] as Dict | undefined), vector: this.moodVector(curTrack) });
+    const mood = buildMood(signals, now);
+    const cands: MoodCandidate[] = list.map((u) => {
+      const t = u['track'] as Dict;
+      return { key: String(t['key']), tags: tagsOf(t, u['characteristics'] as Dict | undefined), vector: this.moodVector(t) };
+    });
+    const shown = Array.isArray(body['shown']) ? (body['shown'] as unknown[]).map(String).slice(0, 500) : undefined;
+    const adventurous = Number(settings['adventurous'] ?? 0.5);
+    const plan = moodOrder(cands, mood, Number.isFinite(adventurous) ? adventurous : 0.5, { shown });
+    return ok({ ...plan, leading: mood.leading, confidence: round(mood.confidence, 2) });
+  }
+
   /** Songs the catalogue gave no tempo for get the one measured from their preview, when there is one. */
   private fillMeasuredBpm(list: Dict[]): void {
     for (const sv of list) {
@@ -1868,6 +2151,12 @@ export class LocalApi {
     if (!eventId) return fail(400, 'event_id required (used to deduplicate)');
     const listened = body['listened'] ?? null;
     if (['complete', 'skip', 'replay'].includes(kind) && (listened === null || !(Number(listened) >= 0 && Number(listened) <= 3600))) return fail(400, 'playback events need the listened duration');
+    // RADIO-TASTE-001: a radio programme is not a song; whatever reports it, nothing is learned from it.
+    if (t['kind'] === 'radio-programme' && FEEDBACK_KINDS.has(kind)) return ok({ recorded: false, duplicate: false });
+    const onRadio = body['medium'] === 'radio';
+    // The phone page and the service page can both follow one station. Once the full listen is
+    // stored, a late thirty-second note for the same listen is the same listen, not a second one.
+    if (onRadio && kind === 'qualified' && this.store.hasFeedback(`${eventId}:full`.slice(0, 80))) return ok({ recorded: false, duplicate: true });
     if (kind === 'like') this.store.removeFeedback(key, ['dislike']);
     if (kind === 'dislike') this.store.removeFeedback(key, ['like']);
     const artist = (t['artists'] as string[] | undefined)?.[0]?.toLowerCase() ?? '';
@@ -1883,8 +2172,20 @@ export class LocalApi {
       confidence: num(body['confidence'], 0, 1),
     };
     const hasMeta = Object.values(meta).some((v) => v !== null);
+    // RADIO-TASTE-001: one radio listen is one event, kept at its fullest. Most of the song heard
+    // replaces the thirty-second note; a later report of the same full listen with more heard
+    // replaces the earlier one. The listen keeps the time it happened.
+    let heardAt: number | undefined;
+    if (onRadio && kind === 'complete') {
+      const same = { key: String(key), medium: 'radio' };
+      const replaces = typeof body['supersedes'] === 'string' ? body['supersedes'].slice(0, 80) : '';
+      const earlier = this.store.hasFeedback(eventId)
+        ? (meta.coverage !== null ? this.store.replaceFeedback(eventId, { ...same, kind: 'complete', coverageBelow: meta.coverage - 1 }) : null)
+        : (replaces ? this.store.replaceFeedback(replaces, { ...same, kind: 'qualified' }) : null);
+      heardAt = earlier?.ts;
+    }
     const stored = t['album'] ? cleanTrack(t) : cleanTrack(withAlbumOf(t, this.knownTracks().get(String(key))));
-    const added = await this.store.addFeedback(eventId, key, kind, artist, stored, listened === null ? null : Number(listened), undefined, hasMeta ? meta : undefined);
+    const added = await this.store.addFeedback(eventId, key, kind, artist, stored, listened === null ? null : Number(listened), heardAt, hasMeta ? meta : undefined);
     return ok({ recorded: added, duplicate: !added });
   }
 
@@ -1989,7 +2290,115 @@ export class LocalApi {
         items.push({ track: r.track, kind: r.kind, ts: r.ts });
       }
     }
-    return { items };
+    // TAGS-ALWAYS-001 (owner, 2026-11-19): every saved row shows its genres and subgenres, worked out as
+    // a Discover row's are: the song's own tags (or a fresher copy's, or ones looked up for it), then
+    // what genre-fill estimates for what it still lacks. Songs with no stated genre are looked up once.
+    const fresher = this.knownTracks();
+    const found = this.store.get<Record<string, Tag[]>>(SAVED_TAGS_KEY) ?? {};
+    const known = this.knownGenres();
+    const placed = items.map((x) => {
+      const t = x['track'] as Dict;
+      const key = String(t['key']);
+      const own = statedTags(t).length ? (t['tags'] as Tag[]) : statedTags(fresher.get(key) ?? {}).length ? (fresher.get(key)!['tags'] as Tag[]) : found[key]?.length ? found[key]! : known(t);
+      return { ...x, track: this.withDate(own.length ? { ...t, tags: own } : t) };
+    });
+    const fill = this.genreFiller(placed);
+    if (placed.some((x) => this.savedWants(x['track'] as Dict))) this.kickSavedGenres();
+    return { items: placed.map((x) => ({ ...x, characteristics: fill(x['track'] as Dict, characteristicsOf(x['track'] as Dict, null)) })) };
+  }
+
+  /** A saved or starting song with no stated genre, or a main genre and no subgenre, not looked up today. */
+  private savedWants(t: Dict): boolean {
+    const key = String(t['key'] ?? '');
+    if (!statedTags(t).length) return !this.store.cacheGet(`genretry:${key}`)?.value;
+    if (this.wantsArtist(t) && !this.store.cacheGet(`substry:${key}`)?.value) return true;
+    // Still nothing finer once the artist was asked: the year it came out names its era.
+    return this.wantsYear(this.withDate(t));
+  }
+
+  /** A saved song with the release date looked up for it, when it had none (TAGS-ALWAYS-001). */
+  private withDate(t: Dict): Dict {
+    if (LocalApi.yearOf(t) || typeof t['year_hint'] === 'number') return t;
+    const d = (this.store.get<Record<string, Dict>>(SAVED_DATES_KEY) ?? {})[String(t['key'] ?? '')];
+    return d ? { ...t, ...d } : t;
+  }
+
+  private savedGenresRun: Promise<void> | null = null;
+  private kickSavedGenres(): void {
+    if (this.savedGenresRun) return;
+    this.savedGenresRun = this.savedGenresLoop().catch(() => undefined).finally(() => { this.savedGenresRun = null; });
+  }
+
+  /** Resolves once no background lookup of saved songs' genres is running. */
+  async savedGenresSettled(): Promise<void> {
+    while (this.savedGenresRun) await this.savedGenresRun;
+  }
+
+  /** One saved song at a time; each answer is kept so the next read of Saved shows it. */
+  private async savedGenresLoop(): Promise<void> {
+    for (let n = 0; n < 200; n++) {
+      const items = (this.savedRaw());
+      const next = items.find((t) => this.savedWants(t));
+      if (!next) return;
+      const key = String(next['key']);
+      const unplaced = !statedTags(next).length;
+      const artistAsk = !unplaced && this.wantsArtist(next) && !this.store.cacheGet(`substry:${key}`)?.value;
+      const mark = unplaced ? `genretry:${key}` : artistAsk ? `substry:${key}` : `yeartry:${key}`;
+      try {
+        if (unplaced) {
+          const { tags } = await this.lookUpGenres(next, this.searchMeter());
+          if (tags.length) await this.store.put(SAVED_TAGS_KEY, { ...(this.store.get<Record<string, Tag[]>>(SAVED_TAGS_KEY) ?? {}), [key]: tags });
+        } else if (artistAsk) {
+          // A main genre and no subgenre: what MusicBrainz's listeners call the artist (GENRE-ALL-001).
+          await this.askArtist(next, this.searchMeter());
+        } else {
+          // Still nothing finer: the year the song came out (Deezer), so its era names the subgenre.
+          const dated = LocalApi.dated(next, await this.deezerFacts(next, { meter: this.searchMeter() }));
+          const date = dated['release'] ? { release: dated['release'] } : typeof dated['year_hint'] === 'number' ? { year_hint: dated['year_hint'] } : null;
+          if (date) await this.store.put(SAVED_DATES_KEY, { ...(this.store.get<Record<string, Dict>>(SAVED_DATES_KEY) ?? {}), [key]: date });
+        }
+        await this.store.cachePut(mark, 'metadata', true, mark.startsWith('yeartry') ? 30 * 24 * 3600 : 24 * 3600);
+      } catch (e) {
+        if (e instanceof BudgetExceeded) return;
+        await this.store.cachePut(mark, 'metadata', true, 6 * 3600);
+      }
+    }
+  }
+
+  /** The saved songs' tracks with whatever tags are already known for them (no lookups). */
+  private savedRaw(): Dict[] {
+    const found = this.store.get<Record<string, Tag[]>>(SAVED_TAGS_KEY) ?? {};
+    const fresher = this.knownTracks();
+    const out: Dict[] = [];
+    const seen = new Set<string>();
+    const rows = this.store.feedback();
+    const removed = new Set(rows.filter((r) => r.kind === 'dislike').map((r) => r.key));
+    for (const r of [...rows].reverse()) {
+      if ((r.kind !== 'like' && r.kind !== 'save') || !r.track || seen.has(r.key) || removed.has(r.key)) continue;
+      seen.add(r.key);
+      const t = r.track as Dict;
+      const tags = statedTags(t).length ? t['tags'] : statedTags(fresher.get(r.key) ?? {}).length ? fresher.get(r.key)!['tags'] : found[r.key] ?? [];
+      out.push(this.withDate({ ...t, tags }));
+    }
+    // TAGS-ALWAYS-001: starting songs nothing knows the genre of are looked up the same way.
+    const known = this.knownGenres();
+    for (const s of this.store.seeds() as Dict[]) {
+      const key = String(s['key'] ?? '');
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const tags = statedTags(s).length ? s['tags'] : known(s).length ? known(s) : found[key] ?? [];
+      out.push(this.withDate({ ...s, tags }));
+    }
+    // And the songs of saved lists and albums (imported files have their own lookup; programmes are not songs).
+    for (const l of this.storedPlaylists()) for (const e of l.entries) {
+      if (seen.has(e.key)) continue;
+      const t = fresher.get(e.key);
+      if (!t || t['kind'] === 'radio-programme' || t['provider'] === 'imported') continue;
+      seen.add(e.key);
+      const tags = statedTags(t).length ? t['tags'] : known(t).length ? known(t) : found[e.key] ?? [];
+      out.push(this.withDate({ ...t, tags }));
+    }
+    return out;
   }
 
   // ---- saved lists ---------------------------------------------------------------------
@@ -2015,10 +2424,22 @@ export class LocalApi {
     // opening the app (which reads the lists) starts it, so nothing waits for a song to be queued.
     const wanting = new Set(this.importedWanting().map((t) => String(t['key'])));
     if (wanting.size) this.kickImportedGenres();
+    // TAGS-ALWAYS-001 / RADIO-GENRES-001 (owner, 2026-11-19): a list's songs show genres like Saved's do:
+    // their own tags, a fresher copy's, ones looked up for them, or what is known of them already.
+    const found = this.store.get<Record<string, Tag[]>>(SAVED_TAGS_KEY) ?? {};
+    const known = this.knownGenres();
+    const withTags = (t: Dict | null): Dict | null => {
+      if (!t || t['kind'] === 'radio-programme' || (t['provider'] === 'imported' && !t['catalogue_match'])) return t;
+      if (statedTags(t).length) return this.withDate(t);
+      const key = String(t['key']);
+      const own = found[key]?.length ? found[key]! : known(t);
+      return this.withDate(own.length ? { ...t, tags: own } : t);
+    };
+    if (lists.some((l) => l.entries.some((e) => { const t = withTags(byKey.get(e.key) ?? null); return t && t['kind'] !== 'radio-programme' && t['provider'] !== 'imported' && this.savedWants(t); }))) this.kickSavedGenres();
     return {
       lists: lists.map((l) => {
         const pending = l.entries.filter((e) => wanting.has(e.key)).length;
-        const items = l.entries.map((e) => ({ key: e.key, added: e.added, track: byKey.get(e.key) ?? null, played: played.has(e.key) }));
+        const items = l.entries.map((e) => ({ key: e.key, added: e.added, track: withTags(byKey.get(e.key) ?? null), played: played.has(e.key) }));
         return {
           id: l.id,
           name: l.name,
@@ -2042,7 +2463,8 @@ export class LocalApi {
   private importedCharacteristics<T extends { track: Dict | null }>(items: T[]): T[] {
     // SAVED-GENRES-001: any saved song with stated tags is shown with its genres (GENRE-ALL-001); an
     // imported one only once a confident match confirmed who it is.
-    const placed = (t: Dict | null): t is Dict => Boolean(t && statedTags(t).length && (t['provider'] !== 'imported' || t['catalogue_match']));
+    // TAGS-ALWAYS-001: a list song with no stated genre is filled too (drawn as an estimate) once it is known who it is.
+    const placed = (t: Dict | null): t is Dict => Boolean(t && t['kind'] !== 'radio-programme' && (t['provider'] !== 'imported' || t['catalogue_match']));
     if (!items.some((x) => placed(x.track))) return items;
     const fill = this.genreFiller(items.filter((x) => x.track) as unknown as Dict[]);
     return items.map((x) => (placed(x.track) ? { ...x, characteristics: fill(x.track, characteristicsOf(x.track, null)) } : x));

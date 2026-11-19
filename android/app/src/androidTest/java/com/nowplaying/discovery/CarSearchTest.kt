@@ -13,6 +13,13 @@ import java.util.concurrent.ExecutionException
 class CarSearchTest {
   private fun seed() = MediaHub.apply(JSONObject("""{"state":{"queue":[]},"library":{"songs":[{"id":"q1","title":"Halo","artist":"Beyoncé","ready":true}],"playlists":[{"id":"p1","title":"Evening mix","songs":[{"id":"p1s1","title":"Teardrop","artist":"Massive Attack","ready":true}]}]}}"""))
 
+  private fun readyPage(sink: (JSONObject) -> Unit) {
+    // A registered page answers only after its first snapshot; otherwise a previously
+    // started service catalogue wins the request before this fixture sink sees it.
+    MediaHub.setCommandSink(sink)
+    MediaHub.apply(JSONObject())
+  }
+
   @Test fun searchIncludesPlaylistOnlyTracksAndNormalizesWordsAndAccents() {
     seed()
     assertEquals(listOf("q1"), MediaHub.search("beyonce halo").map { it.id })
@@ -30,7 +37,7 @@ class CarSearchTest {
         .put("requestId", cmd.getString("requestId")).put("query", cmd.getString("query"))
         .put("songs", org.json.JSONArray("""[{"id":"external1","title":"New catalogue recording","artist":"Artist","ready":false}]"""))))
     }
-    MediaHub.setCommandSink(sink)
+    readyPage(sink)
     try {
       val result = MediaHub.searchCatalog("New catalogue recording").get(2, TimeUnit.SECONDS)
       assertEquals("external1", result.single().id)
@@ -45,7 +52,7 @@ class CarSearchTest {
       MediaHub.apply(JSONObject().put("search", JSONObject().put("requestId", "wrong-id")
         .put("query", cmd.getString("query")).put("songs", org.json.JSONArray("""[{"id":"forged","title":"Wrong song"}]"""))))
     }
-    MediaHub.setCommandSink(sink)
+    readyPage(sink)
     try {
       val pending = MediaHub.searchCatalog("unanswered-query", 100)
       try { pending.get(2, TimeUnit.SECONDS); fail("search must time out truthfully") }
@@ -73,7 +80,7 @@ class CarSearchTest {
         "play":"calbum/dz%3A1/track/k1"
       }""")))
     }
-    MediaHub.setCommandSink(sink)
+    readyPage(sink)
     try {
       MediaHub.searchCatalog("ken carson chaos", album = true).get(2, TimeUnit.SECONDS)
       assertTrue("the album request is passed to the page", asked!!.getBoolean("album"))
@@ -93,7 +100,7 @@ class CarSearchTest {
         .put("requestId", cmd.getString("requestId")).put("query", cmd.getString("query"))
         .put("songs", org.json.JSONArray()).put("play", "playlist/p1/track/p1s1")))
     }
-    MediaHub.setCommandSink(sink)
+    readyPage(sink)
     try {
       MediaHub.searchCatalog("forged album play", album = true).get(2, TimeUnit.SECONDS)
       assertNull(MediaHub.albumToPlay("forged album play", true))
@@ -103,6 +110,14 @@ class CarSearchTest {
   @Test fun carQueryBeforePageSnapshotWaitsForTheReadyPageInsteadOfLosingTheRequest() {
     val asked = java.util.concurrent.atomic.AtomicReference<JSONObject>()
     val sink: (JSONObject) -> Unit = { asked.set(it) }
+    // Other classes may have started the service catalogue. Hold it never-ready so this
+    // exercises the page's first-snapshot handoff, not a pre-existing service engine.
+    val sinkField = MediaHub::class.java.getDeclaredField("catalogSink").apply { isAccessible = true }
+    val readyField = MediaHub::class.java.getDeclaredField("catalogReady").apply { isAccessible = true }
+    val realEngine = sinkField.get(null)
+    val realReady = readyField.getBoolean(null)
+    val heldEngine: (JSONObject) -> Unit = { }
+    MediaHub.setCatalogSink(heldEngine)
     MediaHub.setCommandSink(sink)
     try {
       val pending = MediaHub.searchCatalog("early-page-catalogue-unique", timeoutMs = 2000, debounceMs = 60)
@@ -115,14 +130,19 @@ class CarSearchTest {
       MediaHub.apply(JSONObject().put("search", JSONObject().put("requestId", cmd.getString("requestId"))
         .put("query", cmd.getString("query")).put("songs", org.json.JSONArray("""[{"id":"ready-page-result","title":"Ready page result"}]"""))))
       assertEquals("ready-page-result", pending.get(2, TimeUnit.SECONDS).single().id)
-    } finally { MediaHub.clearCommandSink(sink) }
+    } finally {
+      MediaHub.clearCommandSink(sink)
+      MediaHub.clearCatalogSink(heldEngine)
+      sinkField.set(null, realEngine)
+      readyField.setBoolean(null, realReady)
+    }
   }
 
   @Test fun newestTypedQueryIsNotStarvedByPendingPrefixes() {
     seed()
     var last: JSONObject? = null
     val sink: (JSONObject) -> Unit = { last = it }
-    MediaHub.setCommandSink(sink)
+    readyPage(sink)
     try {
       val queries = (0..8).map { MediaHub.searchCatalog("typed-prefix-test-$it") }
       val cmd = requireNotNull(last)

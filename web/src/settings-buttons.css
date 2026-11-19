@@ -20,7 +20,7 @@
   .settings .push,
   .settings .push--big { min-height: 44px; }
 }
-.settings :is(.ranking-formula__actions, .dl__form, .dlset__actions, .audio-settings__actions) {
+.settings :is(.dl__form, .dlset__actions, .audio-settings__actions) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;

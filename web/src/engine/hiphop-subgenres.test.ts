@@ -13,7 +13,7 @@ describe('hip-hop subgenre words', () => {
     ['g funk', 'west-coast'],
     ['crunk', 'southern'],
     ['boom bap', 'boom-bap'],
-    ['east coast hip hop', 'boom-bap'],
+    ['east coast hip hop', 'east-coast'],
     ['alternative hip hop', 'alt-hip-hop'],
     ['uk drill', 'uk-drill'],
     ['pluggnb', 'plugg'],

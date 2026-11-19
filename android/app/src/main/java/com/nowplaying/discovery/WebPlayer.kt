@@ -139,8 +139,7 @@ class WebPlayer(looper: Looper) : SimpleBasePlayer(looper) {
       ).put(
         "mode",
         when (repeatMode) {
-          Player.REPEAT_MODE_ONE -> 1
-          Player.REPEAT_MODE_ALL -> 2
+          Player.REPEAT_MODE_ONE, Player.REPEAT_MODE_ALL -> 1
           else -> 0
         },
       ),

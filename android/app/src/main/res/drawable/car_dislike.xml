@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DISLIKE-X-001 (owner, 2026-11-19): "make the dislike button an X instead of thumbs down". Dislike
+     also skips the song, as the phone's Dislike removes it from the queue; the same X as the app. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M6.5 6.5L17.5 17.5M17.5 6.5L6.5 17.5" android:strokeColor="#FFFFFFFF" android:strokeWidth="2.4" android:strokeLineCap="round" android:fillColor="#00000000"/>
+</vector>

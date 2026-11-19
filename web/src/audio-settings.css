@@ -134,6 +134,9 @@
   gap: 2px;
 }
 .eqr__band--preamp {
+  /* UI-POLISH-001: its own width only. Sharing the row's free space (flex 1 1 0, like the band group
+     beside it) made Pre half the row at 1164px: a wide empty gap, ten faders squeezed at the right. */
+  flex: 0 0 auto;
   margin-right: 8px;
   padding-right: 8px;
   border-right: 1px solid var(--hair);

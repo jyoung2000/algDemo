@@ -28,6 +28,7 @@ class CarTransportPolicyTest {
   private val instr get() = InstrumentationRegistry.getInstrumentation()
   private lateinit var player: EnginePlayer
   private var previousPlayer: EnginePlayer? = null
+  private var previousPage: EnginePlayer.Page? = null
   private val page = object : EnginePlayer.Page {
     override val live = true
     override fun command(cmd: JSONObject) {}
@@ -42,30 +43,36 @@ class CarTransportPolicyTest {
     // temporarily detach its player so it cannot consume this fixture's pending phone load.
     instr.runOnMainSync {
       val field = EngineHub::class.java.getDeclaredField("player").apply { isAccessible = true }
+      val pageField = EngineHub::class.java.getDeclaredField("page").apply { isAccessible = true }
       previousPlayer = field.get(EngineHub) as? EnginePlayer
+      previousPage = pageField.get(EngineHub) as? EnginePlayer.Page
+      previousPage?.let { EngineHub.detachPage(it) }
       previousPlayer?.let { EngineHub.detachPlayer(it) }
     }
-    instr.waitForIdleSync()
+    // EngineHub posts to the main handler. Drain those posts without waiting for a busy
+    // service/WebView to reach global idle (which may never happen during a full suite).
+    instr.runOnMainSync { }
     instr.runOnMainSync {
       player = EnginePlayer(ctx, Looper.getMainLooper(), resolve = { null }, stream = { null }, manageFocus = false)
       // The page's initial snapshot arrives before a player exists; do not rely on another push.
       val list = JSONArray(songs)
       MediaHub.apply(JSONObject().put("state", JSONObject().put("queue", list)).put("library", JSONObject().put("songs", list)))
     }
-    instr.waitForIdleSync()
+    instr.runOnMainSync { }
   }
   @After fun tearDown() {
     EngineHub.detachPage(page)
     EngineHub.detachPlayer(player)
-    instr.waitForIdleSync()
+    instr.runOnMainSync { }
     instr.runOnMainSync { player.release() }
+    previousPage?.let { EngineHub.attachPage(it) }
     previousPlayer?.let { EngineHub.attachPlayer(it) }
-    instr.waitForIdleSync()
+    instr.runOnMainSync { }
   }
   private fun loadMiddle() = EngineHub.fromPage(JSONObject().put("op", "load").put("song", songs[1])
     .put("play", false).put("rev", Int.MAX_VALUE).toString())
   private fun assertFullTimeline() {
-    instr.waitForIdleSync()
+    instr.runOnMainSync { }
     instr.runOnMainSync {
       assertEquals("the full phone queue survives initialization", 3, player.mediaItemCount)
       assertEquals("the phone's chosen song stays current", "handoff2", player.currentMediaItem?.mediaId)

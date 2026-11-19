@@ -73,7 +73,7 @@ export interface NativeState {
   canNext: boolean;
   canPrev: boolean;
   shuffle: boolean;
-  repeat: number; // 0 off, 1 one, 2 all
+  repeat: number; // REPEAT-COUNT-001: 0 off, 1 infinite, 3 one extra play, 4 two extra plays (2 was repeat-list, retired)
   queue: NativeSong[];
   queueIndex: number;
   /** CAR-ACTIONS-001: the song now playing is starred (liked) / disliked, for the car's buttons. */
@@ -105,7 +105,14 @@ export interface MediaHandlers {
   shuffle?: (on: boolean) => void;
   repeat?: (mode: number) => void;
   /** CAR-ACTIONS-001: Star or Dislike pressed in the car (or queued while the app was closed). */
-  feedback?: (id: string, kind: CarFeedbackKind) => void;
+  /** CAR-RADIO-CONTROLS-001: `track` is the radio song's own Track when the car starred a song on air. */
+  feedback?: (id: string, kind: CarFeedbackKind, track?: Track) => void;
+  /** CAR-CONTROLS-001: the car's playlist picker (after a row's star) chose playlist `list` for song `id`. */
+  playlistAdd?: (id: string, list: string, track?: Track) => void;
+  /** CAR-SIMILAR-001: the car's Find similar button: add songs that sound like song `id` to the list. */
+  findSimilar?: (id: string) => Promise<{ added: number; minimum: number; reason: string; songs: NativeSong[] }>;
+  /** CAR-MOOD-001: the mood order of the car's movable songs (media ids), with the phone app closed. */
+  moodOrder?: (req: { current: string | null; upcoming: string[]; signal: { id: string; kind: string } | null }) => Promise<{ order: string[]; moved: string[]; changed: boolean; leading: string[] }>;
 }
 
 type NativeMedia = { media?: (json: string) => void };
@@ -144,6 +151,9 @@ export function pickCarContext(ctx: unknown, id: string): { track: Track; tracks
   if (key === null || track.key !== key || c.ids[c.index] !== id) return null;
   return { track, tracks };
 }
+
+/** CAR-LOCAL-001: the car's "On this phone" list id (MediaHub.PHONE_LIST): songs held on the phone. */
+export const PHONE_LIST = 'airwave:on-this-phone';
 
 /** Playlist rows carry context in their Android Auto mediaId; a plain track key has none. */
 export function decodePlaylistMediaId(id: string): { listId: string; key: string } | null {
@@ -198,7 +208,9 @@ export function pushMediaLibrary(songs: NativeSong[], playlists: NativeFolder[])
   send({ state: lastState, library: lastLibrary });
 }
 
-function send(payload: { state: NativeState; library?: { songs: NativeSong[]; playlists: NativeFolder[] }; search?: { requestId: string; query: string; songs: NativeSong[]; albums?: NativeAlbum[]; play?: string; error?: string }; identify?: { requestId: string; songs: NativeSong[]; error?: string } }): void {
+function send(payload: { state: NativeState; library?: { songs: NativeSong[]; playlists: NativeFolder[] }; search?: { requestId: string; query: string; songs: NativeSong[]; albums?: NativeAlbum[]; play?: string; error?: string }; identify?: { requestId: string; songs: NativeSong[]; error?: string };
+  similar?: { requestId: string; id: string; added: number; minimum?: number; reason?: string; songs: NativeSong[]; error?: string };
+  mood?: { requestId: string; order: string[]; moved: string[]; changed: boolean; leading: string[]; error?: string } }): void {
   const n = nativeMedia();
   if (typeof n?.media !== 'function') return;
   try {
@@ -255,6 +267,13 @@ export function pushMediaTracks(tracks: readonly Track[]): void {
   }
 }
 
+/** CAR-RADIO-CONTROLS-001: a Track the native side carried with a car command, only if it is the song named. */
+function carTrack(raw: unknown, id: string): Track | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const t = raw as Track;
+  return typeof t.key === 'string' && t.key === id && typeof t.title === 'string' && t.title ? t : undefined;
+}
+
 /** For tests: forget what was sent. */
 export function resetRememberedTracksForTest(): void { rememberedTracks.clear(); }
 
@@ -289,7 +308,7 @@ export function samplesFromPcm16(b64: string): Float32Array {
 export function installMediaCommands(): void {
   if (typeof window === 'undefined') return;
   (window as unknown as { __awMediaCmd?: (json: string) => void }).__awMediaCmd = (json: string) => {
-    let cmd: { type?: string; requestId?: string; positionMs?: number; index?: number; id?: string; query?: string; on?: boolean; mode?: number | string; album?: boolean; kind?: string; pcm?: string };
+    let cmd: { type?: string; requestId?: string; positionMs?: number; index?: number; id?: string; query?: string; on?: boolean; mode?: number | string; album?: boolean; kind?: string; pcm?: string; list?: string; track?: unknown; current?: unknown; upcoming?: unknown; signal?: unknown };
     try {
       cmd = JSON.parse(json);
     } catch {
@@ -338,10 +357,52 @@ export function installMediaCommands(): void {
         })();
         break;
       }
+      case 'findSimilar': {
+        const requestId = String(cmd.requestId ?? '');
+        const id = typeof cmd.id === 'string' ? cmd.id : '';
+        if (!requestId || requestId.length > 100 || !id || id.length > 500) break;
+        void (async () => {
+          try {
+            if (!handlers.findSimilar) throw new Error('Open Airwave on your phone to find similar songs.');
+            const out = await handlers.findSimilar(id);
+            send({ state: lastState, similar: { requestId, id, added: out.added, minimum: out.minimum, reason: out.reason, songs: out.songs.slice(0, 10) } });
+          } catch (e) {
+            send({ state: lastState, similar: { requestId, id, added: 0, songs: [], error: String((e as Error)?.message ?? 'Could not find similar songs').slice(0, 200) } });
+          }
+        })();
+        break;
+      }
+      case 'moodOrder': {
+        const requestId = String(cmd.requestId ?? '');
+        const upcoming = Array.isArray(cmd.upcoming) ? (cmd.upcoming as unknown[]).filter((x): x is string => typeof x === 'string' && x.length > 0 && x.length <= 500).slice(0, 500) : [];
+        if (!requestId || requestId.length > 100) break;
+        const current = typeof cmd.current === 'string' && cmd.current.length <= 500 ? cmd.current : null;
+        const s = cmd.signal as { id?: unknown; kind?: unknown } | null | undefined;
+        const signal = s && typeof s.id === 'string' && typeof s.kind === 'string' && s.id.length <= 500 ? { id: s.id, kind: s.kind.slice(0, 20) } : null;
+        void (async () => {
+          try {
+            if (!handlers.moodOrder) throw new Error('The listening mood needs the app engine.');
+            const out = await handlers.moodOrder({ current, upcoming, signal });
+            send({ state: lastState, mood: { requestId, order: out.order.slice(0, 500), moved: out.moved.slice(0, 500), changed: out.changed, leading: out.leading.slice(0, 3) } });
+          } catch (e) {
+            send({ state: lastState, mood: { requestId, order: upcoming, moved: [], changed: false, leading: [], error: String((e as Error)?.message ?? 'Could not arrange the queue').slice(0, 200) } });
+          }
+        })();
+        break;
+      }
       case 'shuffle': handlers.shuffle?.(Boolean(cmd.on)); break;
       case 'repeat': handlers.repeat?.(Number(cmd.mode) || 0); break;
       case 'feedback':
-        if (cmd.id && typeof cmd.kind === 'string' && CAR_FEEDBACK.includes(cmd.kind)) handlers.feedback?.(String(cmd.id), cmd.kind as CarFeedbackKind);
+        if (cmd.id && typeof cmd.kind === 'string' && CAR_FEEDBACK.includes(cmd.kind)) {
+          const t = carTrack(cmd.track, String(cmd.id));
+          if (t) handlers.feedback?.(String(cmd.id), cmd.kind as CarFeedbackKind, t); else handlers.feedback?.(String(cmd.id), cmd.kind as CarFeedbackKind);
+        }
+        break;
+      case 'playlistAdd':
+        if (typeof cmd.id === 'string' && cmd.id && typeof cmd.list === 'string' && cmd.list && cmd.list.length <= 200) {
+          const t = carTrack(cmd.track, cmd.id);
+          if (t) handlers.playlistAdd?.(cmd.id, cmd.list, t); else handlers.playlistAdd?.(cmd.id, cmd.list);
+        }
         break;
       default: break;
     }

@@ -93,10 +93,18 @@ describe('SHUFFLE-ROUND-001: real App transitions keep the round', () => {
     click('Fixture Next'); expect(current()).toBe('c');
     click('Fixture Next'); expect(current()).toBe('d');
   });
-  it('plays each of four tracks once per round over four complete rounds', async () => {
+  // REPEAT-COUNT-001: the repeat button now counts extra plays of ONE song (off, 1, 2, infinity) and
+  // no longer offers "repeat the list". beforeEach saves the old `all` setting on purpose: an app
+  // updated from the older version must treat it as off, so a round still plays every song once and
+  // then ends instead of starting another. (stepQueue's own multi-round rule stays covered in
+  // util.test.ts, queue-readiness.test.ts and shuffle-commit.test.ts.)
+  it('plays each of four tracks exactly once, then the round is over', async () => {
     await savedStart(); const seen = [current()];
-    for (let i = 0; i < 15; i++) { click('Fixture Next'); seen.push(current()); }
-    for (let i = 0; i < seen.length; i += 4) expect(new Set(seen.slice(i, i + 4)).size).toBe(4);
+    const next = () => screen.getByRole('button', { name: 'Fixture Next' }) as HTMLButtonElement;
+    for (let i = 0; i < 3; i++) { expect(next().disabled).toBe(false); click('Fixture Next'); seen.push(current()); }
+    expect(new Set(seen).size).toBe(4);
     for (let i = 1; i < seen.length; i++) expect(seen[i]).not.toBe(seen[i - 1]);
+    expect(next().disabled, 'every song has played: there is no fifth').toBe(true);
+    click('Fixture Next'); expect(current()).toBe(seen[3]);
   });
 });

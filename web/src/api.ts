@@ -250,6 +250,17 @@ export interface TasteSummary {
   genres?: TasteGenre[];
 }
 
+/** MOOD-QUEUE-001: the engine's answer to /api/mood. */
+export interface MoodAnswer {
+  order: string[];
+  changed: boolean;
+  moved: string[];
+  gain?: number;
+  leading: string[];
+  confidence: number;
+  off?: boolean;
+}
+
 export interface RecItem {
   rank: number;
   track: Track;
@@ -316,6 +327,8 @@ export interface Profile {
     plays: number;
     listened_sec: number;
     songs_played: number;
+    /** Songs heard on a radio station that were identified and counted (RADIO-TASTE-001). */
+    radio_listens: number;
     artists: number;
     first: number | null;
     last: number | null;
@@ -362,7 +375,7 @@ export interface Profile {
     timings: Record<string, number>;
     transfer: Record<string, number>;
   } | null;
-  recent: { ts: number; kind: string; key: string; title: string; artist: string; listened: number | null }[];
+  recent: { ts: number; kind: string; key: string; title: string; artist: string; listened: number | null; radio?: boolean }[];
   /** The last songs played (complete, replay or skip), newest first, with the tempo and genres taste used. */
   played: {
     ts: number;
@@ -375,6 +388,8 @@ export interface Profile {
     genres: string[];
     genre_names: string[];
     listened: number | null;
+    /** Heard on a radio station. */
+    radio?: boolean;
   }[];
   /** The scoring formula, as the numbers the engine currently uses. */
   formula: {
@@ -413,6 +428,8 @@ export interface Settings {
   sample_mode: boolean;
   /** How many new songs one discovery run adds to the list. */
   queue_size?: number;
+  /** Minimum calibrated DCLAP sound match (percent) for Find similar, 40–95. */
+  similar_percent?: number;
   /** User-selected private audio queue cache capacity in GiB (0.25–20). Kept downloads are separate. */
   cache_gb?: number;
   /** 0 = let the shell pick its own safe default (a phone's ceiling is lower than a desktop's). */
@@ -421,6 +438,8 @@ export interface Settings {
   preload_count?: number;
   /** Replenish a nearly played-through list after a completed song. */
   discover_while_listening?: boolean;
+  /** MOOD-QUEUE-001: the now playing queue follows the listening mood (default on). */
+  mood_queue?: boolean;
   /**
    * The ten-band equaliser (EQ-001), stored as the engine's own config shape. Previews only: see
    * `engine/audio-bus.ts` for why iframe playback can never be filtered.
@@ -493,6 +512,8 @@ export interface SavedItem {
   track: Track;
   kind: 'like' | 'save';
   ts: number;
+  /** TAGS-ALWAYS-001: genres worked out as for a Discover row (absent from an older engine). */
+  characteristics?: Characteristics;
 }
 
 /** One song inside a saved list. `track` is null when the engine never recorded it. */
@@ -675,9 +696,10 @@ export const api = {
   putSettings: (patch: Partial<Settings>) => call<Settings>('/api/settings', { method: 'PUT', body: json(patch) }),
   recommend: (listening?: { event_id: string; exclude: string[]; list_id?: string }) =>
     call<{ job: string | null; reason?: string }>('/api/recommend', { method: 'POST', body: json(listening ? { trigger: 'listening', ...listening } : {}) }),
+  similar: (track: Track) => call<{ job: string }>('/api/similar', { method: 'POST', body: json({ track }) }),
   job: (id: string, signal?: AbortSignal) => call<JobStatus>(`/api/jobs/${id}`, signal ? { signal } : {}),
   cancelJob: (id: string) => call<{ ok: boolean }>(`/api/jobs/${id}`, { method: 'DELETE' }),
-  feedback: (kind: FeedbackKind, track: Track, extra: { event_id?: string; listened?: number; duration?: number; coverage?: number; medium?: string; session?: string; origin?: string; confidence?: number } = {}) =>
+  feedback: (kind: FeedbackKind, track: Track, extra: { event_id?: string; listened?: number; duration?: number; coverage?: number; medium?: string; session?: string; origin?: string; confidence?: number; /** RADIO-TASTE-001: the earlier, shorter report of this same radio listen. */ supersedes?: string } = {}) =>
     call<{ recorded?: boolean; duplicate?: boolean; removed?: number }>('/api/feedback', { method: 'POST', body: json({ kind, track, ...extra }) }),
   feedbackState: () => call<{ state: Record<string, Partial<Record<FeedbackKind, boolean>>>; events: number; taste?: TasteSummary | null }>('/api/feedback/state'),
   importHistory: (events: import('./engine/import').ImportedEvent[]) => call<{ recorded: number; duplicates: number; skipped: number }>('/api/import/history', { method: 'POST', body: json({ events }) }),
@@ -720,6 +742,9 @@ export const api = {
   /** GENRE-LOAD-001: look up the genres of a few of the queue's rows that have none; `left` says how many remain. */
   queueGenres: () => call<{ items: { key: string; tags: Track['tags']; characteristics: Characteristics }[]; left: number; spent?: boolean }>('/api/queue/genres', { method: 'POST', body: json({}) }),
   rerank: (exclude: string[]) => call<RerankResult>('/api/rerank', { method: 'POST', body: json({ exclude }) }),
+  /** MOOD-QUEUE-001: the order the movable songs still to come should play in for the listening mood. */
+  mood: (body: { upcoming: { track: Track; characteristics?: Characteristics | null }[]; shown?: string[]; current?: { track: Track; characteristics?: Characteristics | null }; signal?: { track: Track; kind: 'like' | 'dislike' | 'similar' | 'complete' | 'skip' } }) =>
+    call<MoodAnswer>('/api/mood', { method: 'POST', body: json(body) }),
   profile: () => call<Profile>('/api/profile'),
 };
 

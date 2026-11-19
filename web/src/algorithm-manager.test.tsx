@@ -29,19 +29,21 @@ import { LocalApi } from './engine/local-api';
 import { MemoryBackend, Store } from './engine/store';
 import type { HttpPort } from './engine/net';
 import { ProfileView } from './Profile';
+import { clearAlgorithmDrafts } from './useAlgorithmDraft';
 import { SettingsView } from './Settings';
 import type { Settings } from './api';
 
 const port = { request: async () => { throw new Error('UI tests must not contact providers'); } } as HttpPort;
 let store: Store;
 async function boot(settings?: Record<string, unknown>) {
+  clearAlgorithmDrafts();
   store = await Store.open(new MemoryBackend());
   if (settings) await store.put('settings', settings);
   h.local = new LocalApi({ store, port, encoder: null });
 }
 const stored = () => (store.get<Record<string, unknown>>('settings') ?? {}) as { algorithms?: Algorithm[]; active_algorithm?: string };
-const profileSelect = () => screen.getByRole('combobox', { name: 'Algorithm' }) as HTMLSelectElement;
-const settingsSelect = () => screen.getByRole('combobox', { name: 'Active algorithm' }) as HTMLSelectElement;
+const profileSelect = () => within(manager()).getByRole('combobox', { name: 'Algorithm' }) as HTMLSelectElement;
+const settingsSelect = () => within(screen.getByRole('region', { name: 'Discovery algorithm' })).getByRole('combobox', { name: 'Algorithm' }) as HTMLSelectElement;
 const manager = () => screen.getByRole('region', { name: 'Recommendation algorithm' });
 const optionNames = (s: HTMLSelectElement) => [...s.options].map((o) => o.textContent);
 const user = (name: string, id: string, over: Partial<Algorithm> = {}): Algorithm => ({ ...createFrom(BUILT_IN_ALGORITHM, name, id), ...over });
@@ -184,7 +186,7 @@ describe('Settings and Profile agree', () => {
   function Both({ settings }: { settings: Settings }) {
     return <><ProfileView /><SettingsView settings={settings} onSettings={vi.fn()} onReset={vi.fn()} onResetTaste={vi.fn()} /></>;
   }
-  const settingsPre = () => document.querySelector('.ranking-formula pre.formula')!;
+  const settingsPre = () => document.querySelector('[data-algorithm-form="settings"] pre.formula')!;
   const profilePre = () => manager().querySelector('pre.formula')!;
 
   it('migrates a legacy formula and shows the same active algorithm and formula in both places', async () => {
@@ -210,11 +212,11 @@ describe('Settings and Profile agree', () => {
     fireEvent.change(settingsSelect(), { target: { value: BUILT_IN_ID } });
     await waitFor(() => expect(profileSelect().value).toBe(BUILT_IN_ID));
     // Saving a final step while the built-in is active creates and activates "My formula", in both.
-    fireEvent.change(screen.getByRole('textbox', { name: 'Discovery ranking formula' }), { target: { value: 'affinity * 0.7' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save formula' }));
+    fireEvent.change(within(screen.getByRole('region', { name: 'Discovery algorithm' })).getByRole('textbox', { name: 'Discovery ranking formula' }), { target: { value: 'affinity * 0.7' } });
+    fireEvent.click(within(screen.getByRole('region', { name: 'Discovery algorithm' })).getByRole('button', { name: 'Save formula' }));
     await waitFor(() => expect(profileSelect().selectedOptions[0]!.textContent).toBe('My formula'));
     expect(settingsSelect().selectedOptions[0]!.textContent).toBe('My formula');
-    expect(screen.getByText(/saved as a new algorithm “My formula”/)).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'Discovery algorithm' })).getByText(/saved as a new algorithm “My formula”/)).toBeTruthy();
     expect(settingsPre().textContent).toBe(profilePre().textContent);
     expect(profilePre().textContent).toContain('final = affinity * 0.7');
     expect(stored().algorithms!.map((a) => a.name)).toEqual(['Mine', 'My formula']);

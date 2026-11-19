@@ -27,20 +27,20 @@ beforeEach(() => {
 describe('explicit dislike immediately teaches the current queue', () => {
   it('saves the judgement before reranking, then applies the new order without a discovery run', async () => {
     render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Dislike Unwanted song' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Dislike Unwanted song and remove it from the queue' }));
     await waitFor(() => expect(api.feedback).toHaveBeenCalledWith('dislike', expect.objectContaining({ key: 'bad' }), expect.objectContaining({ event_id: expect.any(String) })));
     await waitFor(() => expect(api.rerank).toHaveBeenCalled());
     expect(vi.mocked(api.feedback).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(api.rerank).mock.invocationCallOrder[0]!);
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Dislike Unwanted song' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Dislike Unwanted song and remove it from the queue' })).toBeNull());
     expect(screen.getByText('Better song')).toBeTruthy();
   });
   it('does not rerank from unsaved feedback when the write fails', async () => {
     vi.mocked(api.feedback).mockRejectedValueOnce(new Error('Disk unavailable'));
     render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Dislike Unwanted song' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Dislike Unwanted song and remove it from the queue' }));
     await waitFor(() => expect(screen.getByText(/Could not save that: Disk unavailable/)).toBeTruthy());
     expect(api.rerank).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Dislike Unwanted song' }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: 'Dislike Unwanted song and remove it from the queue' }).getAttribute('aria-pressed')).toBe('false');
   });
   it('undo teaches and reranks too', async () => {
     vi.mocked(api.feedbackState).mockResolvedValueOnce({ state: { bad: { dislike: true } }, taste: null } as never);
@@ -52,7 +52,7 @@ describe('explicit dislike immediately teaches the current queue', () => {
   it('still refreshes taste when there is no pool to rerank yet', async () => {
     vi.mocked(api.rerank).mockRejectedValueOnce(new Error('Find recommendations first'));
     render(<App />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Dislike Unwanted song' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Dislike Unwanted song and remove it from the queue' }));
     await waitFor(() => expect(api.rerank).toHaveBeenCalled());
     await waitFor(() => expect(api.feedbackState).toHaveBeenCalledTimes(2));
   });

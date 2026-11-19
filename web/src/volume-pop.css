@@ -1,0 +1,99 @@
+/* VOLUME-POP-001: one speaker icon; a tap opens this slider card above it. Loaded after the
+   older volume rules, so the docked/panel sizes for the inline slider no longer apply. */
+.vol.vol--pop {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  gap: 0;
+  width: auto;
+  min-width: 0;
+}
+.vol.vol--pop .vol__btn {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  margin: 0;
+  border-radius: 999px;
+  flex: none;
+}
+.vol.vol--pop .vol__btn[data-muted] { color: var(--muted, #6b6f76); }
+.vol__pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 8px 14px;
+  background: var(--card, #fff);
+  color: var(--ink, #161616);
+  border: 1px solid var(--line, #dcdad4);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  animation: vol-pop-in 140ms ease-out;
+}
+.vol__pop::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  margin-left: -6px;
+  border: 6px solid transparent;
+  border-top-color: var(--line, #dcdad4);
+}
+.vol.vol--pop .vol__pop .vol__bar,
+.np--docked .np__controls .vol.vol--pop .vol__pop .vol__bar,
+.np--panel .np__side .vol.vol--pop .vol__pop .vol__bar,
+.radio-player__side .vol.vol--pop .vol__pop .vol__bar {
+  display: block;
+  width: 148px;
+  min-width: 148px;
+  flex: none;
+  margin: 0;
+}
+.vol.vol--pop .vol__pop .vol__n,
+.np--docked .vol.vol--pop .vol__pop .vol__n,
+.np--panel .np__side .vol.vol--pop .vol__pop .vol__n,
+.radio-player__side .vol.vol--pop .vol__pop .vol__n {
+  display: inline-block;
+  min-width: 3ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+.vol__mute {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.vol__mute[aria-pressed='true'] { color: var(--accent, #0071e3); }
+@media (hover: hover) { .vol__mute:hover { background: var(--accent-soft, #e8f1fd); color: var(--accent, #0071e3); } }
+/* On a phone the card would leave the screen beside an edge icon: anchor it to the icon's right. */
+@media (max-width: 899px) {
+  .vol__pop { left: auto; right: -8px; transform: none; }
+  .vol__pop::after { left: auto; right: 22px; }
+}
+@keyframes vol-pop-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+@media (max-width: 899px) {
+  @keyframes vol-pop-in-phone { from { opacity: 0; translate: 0 4px; } to { opacity: 1; translate: 0 0; } }
+  .vol__pop { animation-name: vol-pop-in-phone; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vol__pop { animation: none; }
+}

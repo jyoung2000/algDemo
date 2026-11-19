@@ -75,7 +75,8 @@ describe('the search list never hides Play (NP-ALWAYS-001)', () => {
     expect(search).toMatch(/<RowPlayButton track=\{t\}/);
     expect(search).not.toMatch(/\{\w+ && <RowPlayButton track=\{t\}/);
     const button = readFileSync(new URL('../RowPlay.tsx', import.meta.url), 'utf8');
-    expect(button).toMatch(/aria-label=\{`Play \$\{track\.title\}`\}/);
+    // PLAY-DISC-001: RowPlayButton hands its label to the shared PlayDisc.
+    expect(button).toMatch(/label=\{`Play \$\{track\.title\}`\}/);
   });
 });
 

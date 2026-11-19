@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { CardCacheContext } from './card-cache-context';
 import { Radio } from './Radio';
 import { RadioPlayer } from './RadioPlayer';
@@ -23,14 +23,17 @@ import { useCardCache } from './useCardCache';
 import { useKeptKeys } from './useKeptKeys';
 import { useQueueGenres } from './useQueueGenres';
 import { savedTracks, playbackRows, preparationTracks, contextRows, addTargetOf, addedRow, insertAfter, SEARCH_CONTEXT } from './engine/queue-context';
-import { decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pickCarContext, pushMediaLibrary, pushMediaState, pushMediaTracks, setMediaHandlers, songFromTrack } from './engine/media-native';
+import { runCarSimilar } from './engine/car-similar';
+import { captureRows, moodMovable, placeMood, playMoodMove } from './engine/mood-apply';
+import { phoneWait } from './engine/native-http';
+import { PHONE_LIST, decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pickCarContext, pushMediaLibrary, pushMediaState, pushMediaTracks, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { engineAvailable, engineSend, listenFromEvent, markEngineEvent, subscribeEngineState } from './engine/native-engine';
 import { SettingsView } from './Settings';
 import { markSavedSettingsApplied, setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
 import { PLAY_THROUGH_DEFAULT } from './engine/crossfade';
 import { dl, downloadsAvailable } from './engine/downloads';
 import { readResume } from './engine/resume';
-import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, canPlayHere, classNames, describeTaste, dropExpired, expiredKeysOf, fmtBytes, LIST_LOOK_MS, keepFocus, historyBack, listStart, mergeRerank, nextRepeat, playbackOfTrack, readyFilter, settledWithin, stepQueue, type RepeatMode } from './util';
+import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, canPlayHere, classNames, describeTaste, dropExpired, expiredKeysOf, fmtBytes, LIST_LOOK_MS, keepFocus, historyBack, listStart, mergeRerank, nextRepeat, playbackOfTrack, readyFilter, settledWithin, similarSummary, stepQueue, type RepeatMode } from './util';
 import { queueAudio } from './engine/queue-audio';
 import { CarCatalog } from './engine/car-catalog';
 
@@ -82,6 +85,8 @@ const MAX_PAGES = 12;
 
 export function App() {
   const [tab, setTab] = useState<Tab>('discover');
+  const tabRef = useRef<Tab>('discover');
+  tabRef.current = tab;
   // ALBUM-OPEN-001: an album open over the tab it was opened from; the tab's own view stays mounted
   // (hidden) so its search, results and scroll come back unchanged with Back.
   // ARTIST-PAGE-001: artist and album pages open from each other, so they stack; Back returns to the
@@ -110,6 +115,10 @@ export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [job, setJob] = useState<JobStatus | null>(null);
+  const [similarBusy, setSimilarBusy] = useState(false);
+  const [similarStatus, setSimilarStatus] = useState('');
+  const setSimilarStatusState = setSimilarStatus;
+  const similarRef = useRef(false);
   const [result, setResult] = useState<RecResult | null>(null);
   const [runErr, setRunErr] = useState<string | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
@@ -127,7 +136,7 @@ export function App() {
   const [shuffle, setShuffle] = useState(() => readFlag(SHUFFLE_KEY) === 'on');
   const [repeat, setRepeat] = useState<RepeatMode>(() => {
     const v = readFlag(REPEAT_KEY);
-    return v === 'all' || v === 'one' ? v : 'off';
+    return v === 'once' || v === 'twice' || v === 'one' ? v : 'off';
   });
   /** Songs played this round (the shuffle never repeats one before every other has played) and the order they came in. */
   const heardRef = useRef<Set<string>>(new Set());
@@ -154,6 +163,14 @@ export function App() {
   const shownRef = useRef<Set<string>>(new Set());
   const playedRef = useRef<Set<string>>(new Set());
   const rerankSeq = useRef(0);
+  // MOOD-QUEUE-001: the listening mood's last order of the songs still to come, and its animation.
+  const moodSeq = useRef(0);
+  const moodOrderRef = useRef<string[]>([]);
+  const moodPreferRef = useRef<Map<string, number> | null>(null);
+  const moodBefore = useRef<Map<string, number>>(new Map());
+  const [moodTrigger, setMoodTrigger] = useState(0);
+  const [moodPulse, setMoodPulse] = useState<{ tick: number; leading: string[]; moved: string[]; at: number } | null>(null);
+  const nudgeMood = () => setMoodTrigger((n) => n + 1);
   // One id per app session: groups this sitting's events for the session taste horizon.
   const sessionRef = useRef(`s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   const [taste, setTaste] = useState<TasteSummary | null>(null);
@@ -299,6 +316,39 @@ export function App() {
     }
   };
 
+  /** SIMILAR-SOUND-001: the selected song itself, not a general taste seed. Its job is distinct
+   * from discovery's progressive job: only the final, audio-verified additions update the queue. */
+  /** Returns what it found (or why not), for a caller that is not showing the queue's status line. */
+  const findSimilar = async (track: Track): Promise<string | null> => {
+    if (similarRef.current) return null;
+    let said = '';
+    const setSimilarStatus = (m: string) => { said = m; setSimilarStatusState(m); };
+    similarRef.current = true; setSimilarBusy(true); setSimilarStatus(`Looking for songs that sound like “${track.title}” on all services…`);
+    try {
+      if (jobRef.current && !job?.done) void api.cancelJob(jobRef.current).catch(() => undefined);
+      // Stop the old progressive result from replacing this queue after the new request starts.
+      jobRef.current = null;
+      const { job: id } = await api.similar(track);
+      for (;;) {
+        const status = await api.job(id);
+        if (status.done) {
+          if (status.error) throw new Error(status.error);
+          const out = status.result as unknown as { added: number; reached?: number; below?: number; unmeasured?: number; minimum: number; queue?: RecResult; reason?: string } | null;
+          if (!out) throw new Error('The sound comparison did not return a result.');
+          if (out.queue && out.added > 0) {
+            setResult(out.queue);
+            setSimilarStatus(similarSummary(out, track.title));
+          } else setSimilarStatus(out.reason || `No new songs reached ${out.minimum}% sound match. The list is unchanged.`);
+          break;
+        }
+        setSimilarStatus(status.progress || 'Comparing the sound…');
+        await new Promise((r) => setTimeout(r, POLL_MS));
+      }
+    } catch (e) { setSimilarStatus(`Could not find similar songs: ${(e as Error).message}`); }
+    finally { similarRef.current = false; setSimilarBusy(false); nudgeMood(); }
+    return said;
+  };
+
   const cancel = () => {
     if (jobRef.current) void api.cancelJob(jobRef.current).catch(() => undefined);
   };
@@ -412,10 +462,16 @@ export function App() {
   };
   /** SHUFFLE-START-001: bumped by every play, so a list start still looking gives way to it. */
   const startTokenRef = useRef(0);
+  const cancelFiniteFor = (key: string) => {
+    if (playing?.track.key !== key && (repeat === 'once' || repeat === 'twice')) {
+      writeFlag(REPEAT_KEY, 'off'); setRepeat('off');
+    }
+  };
   const play = (it: RecItem, o?: { newRound?: boolean; back?: boolean; keepList?: boolean }) => {
     if (it.track.provider === 'radio' && it.track.radio_station) { tune(it.track.radio_station); return; }
     if (radioSession.get().station) { void radioSession.stop().then(() => play(it, o)); return; }
     startTokenRef.current++;
+    cancelFiniteFor(it.track.key);
     // Playing from the queue leaves any saved list behind, so the queue's own rule applies again.
     if (!o?.keepList) { playingListRef.current = null; enterPlayingContext(null); }
     playedRef.current.add(it.track.key);
@@ -428,7 +484,7 @@ export function App() {
   const previewTrack = (t: Track) => {
     if (t.provider === 'radio' && t.radio_station) { tune(t.radio_station); return; }
     if (radioSession.get().station) { void radioSession.stop().then(() => previewTrack(t)); return; }
-    startTokenRef.current++; setPlaying({ track: t, playback: playbackOfTrack(t) });
+    startTokenRef.current++; cancelFiniteFor(t.key); setPlaying({ track: t, playback: playbackOfTrack(t) });
   };
   /** A radio song or artist name was clicked: leave the live stream and play the real catalogue song. */
   const playFromRadio = (t: Track) => {
@@ -482,6 +538,57 @@ export function App() {
   // The rows the skip buttons walk: the queue, the saved list played from, or the search results.
   const activeItems = useMemo(() => contextRows(playingContext, { queueRows, search: searchList, saved, lists }), [queueRows, playingContext, searchList, saved, lists]);
   const playingKey = playing?.track.key ?? null;
+  /**
+   * MOOD-QUEUE-001 (owner, 2026-11-19): the now playing queue follows the listening mood. It never
+   * applies to an album or saved list played in order (only with shuffle on), nor to search results.
+   */
+  const moodOn = settings?.mood_queue !== false && !result?.sample;
+  const moodQueueScope = moodOn && playingContext === null && (!queueList || shuffle);
+  const moodListScope = moodOn && playingContext !== null && playingContext !== SEARCH_CONTEXT && shuffle;
+  /** A re-rank answer keeps the songs the mood had placed where they were until the mood answers again. */
+  const keepMood = (xs: RecItem[]): RecItem[] => {
+    if (!moodQueueScope || !moodOrderRef.current.length) return xs;
+    const movable = new Set(moodMovable(xs, { currentKey: playingKey, played: playedRef.current, hidden }).map((x) => x.track.key));
+    return placeMood(xs, moodOrderRef.current.filter((k) => movable.has(k)));
+  };
+  useEffect(() => {
+    if (!moodQueueScope && !moodListScope) { moodPreferRef.current = null; moodOrderRef.current = []; return; }
+    const rows = moodQueueScope ? (result?.items ?? []) : activeItems;
+    const movable = moodMovable(rows, { currentKey: playingKey, played: playedRef.current, hidden });
+    if (movable.length < 2) return;
+    const seq = ++moodSeq.current;
+    const keys = movable.map((x) => x.track.key);
+    const shownNow = moodOrderRef.current.filter((k) => keys.includes(k));
+    const timer = window.setTimeout(() => {
+      const cur = playing ? { track: playing.track, characteristics: rows.find((x) => x.track.key === playingKey)?.characteristics ?? null } : undefined;
+      api.mood({ upcoming: movable.map((x) => ({ track: x.track, characteristics: x.characteristics ?? null })), shown: shownNow.length ? shownNow : keys, current: cur })
+        .then((plan) => {
+          if (seq !== moodSeq.current || plan.off) return;
+          moodPreferRef.current = new Map(plan.order.map((k, i) => [k, i] as const));
+          if (!moodQueueScope) return;
+          moodOrderRef.current = plan.order;
+          if (!plan.changed) return;
+          moodBefore.current = captureRows(document);
+          setResult((prev) => (prev && !prev.sample ? { ...prev, items: placeMood(prev.items, plan.order) } : prev));
+          setMoodPulse((p) => ({ tick: (p?.tick ?? 0) + 1, leading: plan.leading, moved: plan.moved, at: Date.now() }));
+        }, () => undefined);
+    }, 600);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moodTrigger, playingKey, moodQueueScope, moodListScope, settings?.adventurous]);
+  // The moved rows slide from their old places (FLIP); with reduced motion they are only marked.
+  useLayoutEffect(() => {
+    if (!moodPulse) return;
+    const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    playMoodMove(document, moodBefore.current, new Set(moodPulse.moved.map(rowId)), reduced);
+  }, [moodPulse?.tick]);
+  const [moodNoteOn, setMoodNoteOn] = useState(false);
+  useEffect(() => {
+    if (!moodPulse) return;
+    setMoodNoteOn(true);
+    const t = window.setTimeout(() => setMoodNoteOn(false), 4500);
+    return () => window.clearTimeout(t);
+  }, [moodPulse?.tick]);
   const playingLiked = Boolean(playingKey && flags[playingKey]?.like);
   const playingDisliked = Boolean(playingKey && flags[playingKey]?.dislike);
   const inQueue = playingKey != null && activeItems.some((x) => x.track.key === playingKey);
@@ -490,7 +597,8 @@ export function App() {
   // SEARCH-QUEUE-001: sequential search Next may fetch its selected full song. Shuffle, however,
   // must obey local readiness even in a search list (SHUFFLE-ROUND-001).
   const stepReady = playingContext === SEARCH_CONTEXT && !shuffle ? undefined : ready;
-  const queueOpts = { shuffle, repeat, heard: heardRef.current, ready: stepReady };
+  // MOOD-QUEUE-001: with shuffle on, the next song is picked from the few that fit the mood best.
+  const queueOpts = { shuffle, repeat, heard: heardRef.current, ready: stepReady, prefer: moodOn && shuffle ? moodPreferRef.current ?? undefined : undefined };
   const nextStep = stepQueue(activeItems, inQueue ? playingKey : null, 1, hidden, queueOpts);
   const back = shuffle ? historyBack(historyRef.current, playingKey, stepReady ? activeItems.filter(x => stepReady(x.track)) : activeItems, hidden) : null;
   const prevStep = shuffle ? (back ? { item: back.item, wrapped: false } : null) : inQueue ? stepQueue(activeItems, playingKey, -1, hidden, queueOpts) : null;
@@ -613,6 +721,8 @@ export function App() {
   /** The ready song as the native side needs it, including the exact file the native engine plays. */
   const nativeSong = (t: Track) => { const r = nativeReady(t); return songFromTrack(t, r, r ? queueAudio.readyUrl(t) : null); };
   /** A song chosen by its id — a car row (playlist-scoped or not), or the song the engine is playing. */
+  /** CAR-RADIO-CONTROLS-001: the song identified on the radio, for a star or playlist pick made in the car. */
+  const onAirSong = (id: string): Track | undefined => { const r = radioSession.get(); return r.identified && r.track?.key === id && r.track.provider !== 'radio' ? r.track : undefined; };
   const trackById = (id: string): Track | undefined =>
     activeItems.find((x) => x.track.key === id)?.track
     ?? lists.flatMap((l) => savedTracks(saved, lists, l.id)).find((t) => t.key === id)
@@ -640,6 +750,15 @@ export function App() {
           return;
         }
         const scoped = decodePlaylistMediaId(id);
+        // CAR-LOCAL-001: a song from the car's "On this phone" list plays in that list (held songs only).
+        if (scoped?.listId === PHONE_LIST) {
+          const seen = new Set<string>();
+          const held = [...activeItems.map((x) => x.track), ...lists.flatMap((l) => savedTracks(saved, lists, l.id))]
+            .filter((t) => t && !seen.has(t.key) && seen.add(t.key) && nativeReady(t));
+          const track = held.find((t) => t.key === scoped.key);
+          if (track) playFromSearch(track, held); else playFromService(id, seq);
+          return;
+        }
         if (scoped) {
           const list = lists.find((l) => l.id === scoped.listId);
           const track = list && savedTracks(saved, lists, list.id).find((t) => t.key === scoped.key);
@@ -677,13 +796,49 @@ export function App() {
       },
       shuffle: (on) => { if (on !== shuffle) toggleShuffle(); },
       // CAR-ACTIONS-001: the car's Star and Dislike buttons teach the same taste as the app's own.
-      feedback: (id, kind) => {
-        const t = trackById(id) ?? (playing?.track.key === id ? playing.track : undefined);
+      feedback: (id, kind, carTrack) => {
+        const t = trackById(id) ?? (playing?.track.key === id ? playing.track : undefined) ?? onAirSong(id) ?? carTrack;
         if (!t) return;
         learnFeedback(t, kind).catch((e) => flash(`Could not save that: ${(e as Error).message}`));
       },
+      // CAR-CONTROLS-001: a playlist picked in the car after a row's star, saved like the app's own add.
+      playlistAdd: (id, listId, carTrack) => {
+        const t = trackById(id) ?? (playing?.track.key === id ? playing.track : undefined) ?? onAirSong(id) ?? carTrack;
+        const list = lists.find((l) => l.id === listId && !l.album);
+        if (!t || !list) return;
+        void (async () => {
+          try {
+            await api.feedback('save', t, { event_id: newEventId('save', t.key) });
+            const r = await api.playlistEdit('add', { ids: [list.id], key: t.key, tracks: [t] });
+            setLists(r.lists);
+          } catch (e) {
+            flash(`Could not add that to ${list.name}: ${(e as Error).message}`);
+          }
+        })();
+      },
+      // CAR-SIMILAR-001: the car's Find similar button runs the phone's own sound match for the car's song.
+      findSimilar: async (id) => {
+        if (similarRef.current) throw new Error('Already looking for similar songs. Try again when that finishes.');
+        similarRef.current = true; setSimilarBusy(true);
+        try {
+          if (jobRef.current && !job?.done) void api.cancelJob(jobRef.current).catch(() => undefined);
+          jobRef.current = null;
+          const out = await runCarSimilar(id, {
+            findTrack: (k) => trackById(k) ?? (playing?.track.key === k ? playing.track : null),
+            similar: api.similar, job: api.job, song: nativeSong, wait: phoneWait,
+            onQueue: (q) => setResult(q as RecResult),
+          });
+          setSimilarStatus(out.added
+            ? `Added ${out.added} new song${out.added === 1 ? '' : 's'} with at least ${out.minimum}% sound match, from the car.`
+            : out.reason || `No new songs reached ${out.minimum}% sound match. The list is unchanged.`);
+          return out;
+        } catch (e) {
+          setSimilarStatus(`Could not find similar songs: ${(e as Error).message}`);
+          throw e;
+        } finally { similarRef.current = false; setSimilarBusy(false); nudgeMood(); }
+      },
       repeat: (mode) => {
-        const target: RepeatMode = mode === 1 ? 'one' : mode === 2 ? 'all' : 'off';
+        const target: RepeatMode = mode === 1 ? 'one' : mode === 3 ? 'once' : mode === 4 ? 'twice' : 'off';
         setRepeat(() => { writeFlag(REPEAT_KEY, target); return target; });
       },
     });
@@ -702,7 +857,7 @@ export function App() {
       canNext: Boolean(nextStep),
       canPrev: Boolean(prevStep),
       shuffle,
-      repeat: repeat === 'one' ? 1 : repeat === 'all' ? 2 : 0,
+      repeat: repeat === 'one' ? 1 : repeat === 'once' ? 3 : repeat === 'twice' ? 4 : 0,
       queue: activeItems.map((x) => nativeSong(x.track)),
       queueIndex: idx,
       liked: playingLiked,
@@ -749,11 +904,12 @@ export function App() {
         return sample || !result ? null : api.rerank([...playedRef.current]);
       })
       .then((r) => {
+        nudgeMood();
         if (!r || seq !== rerankSeq.current) return;
         setTaste(r.taste);
         setResult((prev) => {
           if (!prev || prev.sample) return prev;
-          const merged = mergeRerank(prev.items, r.items, playedRef.current);
+          const merged = keepMood(mergeRerank(prev.items, r.items, playedRef.current));
           setFocusKey((f) => keepFocus(prev.items.map((x) => x.track.key), f, merged.map((x) => x.track.key)));
           return { ...prev, items: merged, count: merged.length };
         });
@@ -842,6 +998,8 @@ export function App() {
       }
       if (result?.sample) return;
       const seq = ++rerankSeq.current;
+      // MOOD-QUEUE-001: a star or a dislike re-plans the songs to come for the mood.
+      nudgeMood();
       await refreshTaste();
       if (!result) return;
       // Protect playback/history and owner-added entries, but apply the learned order to upcoming
@@ -854,7 +1012,7 @@ export function App() {
           if (!prev || prev.sample) return prev;
           const protectedKeys = new Set(playedRef.current);
           if (playing) protectedKeys.add(playing.track.key);
-          const merged = mergeRerank(prev.items, r.items, protectedKeys);
+          const merged = keepMood(mergeRerank(prev.items, r.items, protectedKeys));
           setFocusKey(f => keepFocus(prev.items.map(x => x.track.key), f, merged.map(x => x.track.key)));
           return { ...prev, items: merged, count: merged.length };
         });
@@ -909,15 +1067,27 @@ export function App() {
   const failed = srcEntries.filter(([, s]) => s.state !== 'ok' && s.state !== 'skipped');
 
   // The desktop player bar is fixed to the bottom; its measured height keeps the last song clear of it.
+  // STRIP-H-001 (QA, 2026-11-19): the bar is often rendered after this effect first runs (or replaced),
+  // which left the 120px fallback under a 165px bar and hid the last row; it is found whenever it appears.
   useEffect(() => {
-    const rail = document.querySelector<HTMLElement>('.rail');
-    if (!rail || docked) return;
-    const set = () => document.documentElement.style.setProperty('--strip-h', `${rail.offsetHeight}px`);
-    set();
-    const ro = new ResizeObserver(set);
-    ro.observe(rail);
-    return () => ro.disconnect();
-  }, [docked, Boolean(playing), Boolean(radioStation)]);
+    if (docked) return;
+    let ro: ResizeObserver | null = null;
+    let seen: HTMLElement | null = null;
+    const attach = () => {
+      const rail = document.querySelector<HTMLElement>('.rail');
+      if (!rail || rail === seen) return;
+      ro?.disconnect();
+      seen = rail;
+      const set = () => document.documentElement.style.setProperty('--strip-h', `${rail.offsetHeight}px`);
+      set();
+      ro = new ResizeObserver(set);
+      ro.observe(rail);
+    };
+    attach();
+    const mo = new MutationObserver(attach);
+    mo.observe(document.body, { childList: true, subtree: true });
+    return () => { mo.disconnect(); ro?.disconnect(); };
+  }, [docked]);
 
   // The phone dock is measured the same way: its rows (title, progress, controls, song actions) wrap
   // differently by width and language, so a fixed --dock-h would either cover the last song or leave a gap.
@@ -1119,11 +1289,11 @@ export function App() {
               />
             )}
 
-            <section className="queue" aria-labelledby="queue-h" aria-busy={running}>
+            <section className="queue" aria-labelledby="queue-h" aria-busy={running || similarBusy}>
               {queueList && (
                 <div className="banner banner--list" role="note">
-                  <Glyph name="info" size={14} />
                   <span>
+                    <Glyph name="info" size={14} />
                     Playing your list <strong>“{queueList.name}”</strong>. All {visibleSeeds.length} of its songs are starting songs, and new music is found from them.
                   </span>
                   {canRestore && (
@@ -1143,6 +1313,7 @@ export function App() {
                   <Glyph name="info" size={14} /> Your last now playing queue, from {new Date(result.saved_at * 1000).toLocaleString()}. Press “Find my next favorite” for a fresh one.
                 </p>
               )}
+              {similarStatus && <p className="state" role="status" aria-live="polite">{similarBusy && <span className="sdot sdot--busy" aria-hidden="true" />} {similarStatus}</p>}
               {runErr && (
                 <p className="state state--bad" role="alert">
                   <Glyph name="warning" size={14} /> {runErr}
@@ -1214,6 +1385,12 @@ export function App() {
                       It is reported in Settings, next to the other runtime checks. */}
                   {items.length || visibleSeeds.length ? (
                     <>
+                    {moodPulse && moodNoteOn && (
+                      <p className="mood-note" role="status" aria-label={`Queue re-arranged for your mood${moodPulse.leading.length ? `: ${moodPulse.leading.join(', ')}` : ''}`} key={moodPulse.tick}>
+                        <span className="mood-note__icon" aria-hidden="true"><Glyph name="shuffle" size={14} /></span>
+                        <span>Queue re-arranged for your mood{moodPulse.leading.length ? `: ${moodPulse.leading.join(' · ')}` : ''}</span>
+                      </p>
+                    )}
                     <ListDownloadBar tracks={queueTracks} label="now playing queue" />
                     <Results
                       seeds={visibleSeeds}
@@ -1227,6 +1404,8 @@ export function App() {
                       onPlay={play}
                       onPlayTrack={previewTrack}
                       onFeedback={onFeedback}
+                      onSimilar={sample ? undefined : (t) => void findSimilar(t)}
+                      similarBusy={similarBusy}
                       onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
                       cacheOf={cardCache}
                       lists={lists}
@@ -1277,6 +1456,8 @@ export function App() {
                     onPlay={play}
                     onPlayTrack={previewTrack}
                     onFeedback={onFeedback}
+                    onSimilar={(t) => void findSimilar(t)}
+                    similarBusy={similarBusy}
                     onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
                     cacheOf={cardCache}
                   />
@@ -1313,6 +1494,9 @@ export function App() {
             onOpenAlbum={(t) => openAlbum({ track: t })}
             onOpenAlbumId={(id) => openAlbum({ id })}
             onOpenArtist={openArtist}
+            // ROW-UNIFY-001: Find similar on a saved song adds to the Discover queue; the outcome is shown here.
+            onSimilar={(t) => void findSimilar(t).then((m) => { if (m) flash(m); })}
+            similarBusy={similarBusy}
           />
           </div>
         )}
@@ -1381,6 +1565,9 @@ export function App() {
           cacheGb={settings?.cache_gb ?? 1}
           actions={{
             songKey: playing?.track.key,
+            // STAR-MENU-001: the player's star opens the same saved-list menu as a song row.
+            songTitle: playing?.track.title,
+            onLists: setLists,
             lists,
             flags: (playing && flags[playing.track.key]) || {},
             downloadState: dls.trackState(playing?.track.key),
@@ -1392,9 +1579,17 @@ export function App() {
             onDownload: async () => (playing ? dls.downloadTrack(playing.track) : false),
             // DOWNLOADS-IN-SETTINGS-001: the download list lives in the Settings Downloads section.
             onDownloads: () => setTab('settings'),
+            // PLAYER-SIMILAR-001: the song playing, from any tab; the queue's status line is on Discover,
+            // so elsewhere the outcome is also shown as a short notice.
+            onSimilar: playing ? () => {
+              const track = playing.track;
+              void findSimilar(track).then((m) => { if (m && tabRef.current !== 'discover') flash(m); });
+            } : undefined,
+            similarBusy,
           }}
           onShuffle={toggleShuffle}
           onRepeat={cycleRepeat}
+          onRepeatConsumed={(remaining) => setRepeat(() => { writeFlag(REPEAT_KEY, remaining); return remaining; })}
           onPrev={goPrev}
           onNext={goNext}
           onListen={onListen}

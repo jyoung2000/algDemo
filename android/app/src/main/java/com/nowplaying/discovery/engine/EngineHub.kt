@@ -150,7 +150,12 @@ object EngineHub {
 
   private fun dispatch(p: EnginePlayer, cmd: JSONObject) {
     when (cmd.optString("op")) {
-      "radio-meta" -> p.pageRadioMetadata(cmd.optString("id"), cmd.optString("title"), cmd.optString("artist"), cmd.optString("artwork"))
+      "radio-meta" -> p.pageRadioMetadata(
+        cmd.optString("id"), cmd.optString("title"), cmd.optString("artist"), cmd.optString("artwork"),
+        song = songFrom(cmd.optJSONObject("song")), track = cmd.optJSONObject("track"),
+        startMs = cmd.optDouble("start", Double.NaN).takeIf { it.isFinite() && kotlin.math.abs(it) < 1e7 }?.let { (it * 1000).toLong() },
+        lengthMs = cmd.optDouble("duration", Double.NaN).takeIf { it.isFinite() && it > 0 && it < 1e6 }?.let { (it * 1000).toLong() },
+      )
       "radio" -> p.pageRadio(cmd.optString("id"), cmd.optString("title"), cmd.optString("station"))
       "radio-shuffle" -> p.radioShuffleChanged()
       "load" -> {
@@ -164,7 +169,7 @@ object EngineHub {
       "seek" -> p.pageSeek(cmd.optLong("positionMs", 0))
       "settings" -> { mergeSettings(cmd); applySettings(p, cmd) }
       "ack" -> p.ack(cmd.optInt("seq", 0))
-      "hello" -> page?.state(p.snapshotForPage())
+      "hello" -> { page?.state(p.snapshotForPage()); p.resendRepeatToPage() }
       else -> Log.w(TAG, "unknown op ${cmd.optString("op").take(40)}")
     }
   }

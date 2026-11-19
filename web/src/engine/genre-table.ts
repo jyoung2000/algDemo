@@ -52,7 +52,10 @@ export const SUBS: SubDef[] = [
   { key: 'hardcore-punk', name: 'Hardcore punk revival', family: 'rock', aliases: ['hardcore punk', 'hardcore', 'hardcore-punk'] },
   // Hip-hop
   { key: 'lo-fi', name: 'Lo-fi hip-hop', family: 'hip-hop', aliases: ['lo fi hip hop', 'lofi hip hop', 'lo fi beats', 'chillhop'] },
-  { key: 'boom-bap', name: 'Boom bap revival', family: 'hip-hop', aliases: ['boom bap', 'boom-bap', 'old school hip hop', 'golden age hip hop', 'east coast hip hop', 'east coast rap', 'new york hip hop'] },
+  { key: 'boom-bap', name: 'Boom bap revival', family: 'hip-hop', aliases: ['boom bap', 'boom-bap', 'old school hip hop', 'golden age hip hop'] },
+  // NAMESAKE-001 / owner 2026-11-19: 'east coast hip hop' is a coast, not a sound: it is tagged on
+  // Lil Tecca and Pop Smoke as much as on Nas, so it no longer stands in for boom bap.
+  { key: 'east-coast', name: 'East Coast hip-hop', family: 'hip-hop', aliases: ['east coast hip hop', 'east coast rap', 'new york hip hop', 'new york rap', 'ny hip hop', 'philly rap'], short: 'East Coast' },
   { key: 'jersey-club', name: 'Jersey club (rap crossover)', family: 'hip-hop', aliases: ['jersey club', 'jersey-club'] },
   { key: 'trap', name: 'Trap', family: 'hip-hop', aliases: ['trap music', 'southern trap', 'atlanta trap', 'mumble rap', 'hip hop trap'] },
   // This cell is the picker's NY cell (Pop Smoke, Fivio, Ice Spice), with its own tempo range, so

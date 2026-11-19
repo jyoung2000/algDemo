@@ -2,6 +2,7 @@ import type { ArtistTarget, Track } from './api';
 import { ArtistNames, artistTargetsOf } from './ArtistLinks';
 import { artistOf } from './util';
 import { creditedTrack } from './engine/credited-names';
+import { Marquee } from './Marquee';
 import './song-credits.css';
 
 /**
@@ -19,18 +20,22 @@ export function SongCredits({ track, onOpenAlbum, onOpenArtist, artistClassName 
 }) {
   const album = hideAlbum ? '' : track.album?.trim();
   const credits = creditedTrack(track);
+  const names = artistTargetsOf(credits).map((part) => part.name).join(', ') || artistOf(track);
   return (
     <>
       {album && (
-        <span className="song-credits__album-line">
+        // LINES-001 (owner, 2026-11-19): album and artists keep a line each and scroll when cut off.
+        <span className="song-credits__album-line"><Marquee title={album}>
           {onOpenAlbum ? (
             <button type="button" className="song-credits__album" aria-label={`Open the album ${album}`} onClick={(event) => { event.stopPropagation(); onOpenAlbum(track); }}>
               {album}
             </button>
           ) : <span className="song-credits__album">{album}</span>}
-        </span>
+        </Marquee></span>
       )}
-      {onOpenArtist ? <ArtistNames track={credits} onOpen={onOpenArtist} className={artistClassName} /> : <span className={artistClassName}>{artistTargetsOf(credits).map((part) => part.name).join(', ') || artistOf(track)}</span>}
+      <Marquee className={artistClassName} title={names}>
+        {onOpenArtist ? <ArtistNames track={credits} onOpen={onOpenArtist} className="song-credits__artists" /> : <span className="song-credits__artists">{names}</span>}
+      </Marquee>
     </>
   );
 }

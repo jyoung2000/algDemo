@@ -22,9 +22,18 @@ export function parseBroadcast(raw: string | null, source: string, checkedAt = D
   return { state: 'current', kind: item.artist ? 'song' : 'programme', title: item.title, artist: item.artist, source, checkedAt };
 }
 export function freshBroadcast(b: Broadcast, now = Date.now()): Broadcast { return b.state === 'current' && (now - b.checkedAt > 90000 || !!b.validUntil && now > b.validUntil || !!b.startedAt && !!b.duration && now > b.startedAt + (b.duration + 15) * 1000) ? { ...b, state: 'stale' } : b; }
-export function heardCredit(x: { identified: boolean; kind: Broadcast['kind']; heard: number; duration: number | null }): { eligible: boolean; coverage: number } {
+/** RADIO-TASTE-001: this share of a song's own length heard on the radio is a full listen. */
+export const RADIO_FULL_LISTEN_SHARE = 0.7;
+/**
+ * What a stretch of radio listening is worth to the listener's taste. Nothing unless the song is
+ * identified and thirty seconds of it were really heard; a full listen once most of the recording
+ * was heard. A song of unknown length can never be called a full listen.
+ */
+export function heardCredit(x: { identified: boolean; kind: Broadcast['kind']; heard: number; duration: number | null }): { eligible: boolean; coverage: number; full: boolean } {
   const coverage = Math.max(0, Math.min(x.heard, x.duration || x.heard));
-  return { eligible: x.identified && x.kind === 'song' && Number.isFinite(coverage) && coverage >= 30, coverage };
+  const eligible = x.identified && x.kind === 'song' && Number.isFinite(coverage) && coverage >= 30;
+  const dur = Number(x.duration);
+  return { eligible, coverage, full: eligible && Number.isFinite(dur) && dur > 0 && coverage >= dur * RADIO_FULL_LISTEN_SHARE };
 }
 export type RadioRequest = (url: string) => Promise<string>;
 export interface RadioSearch { query?: string; country?: string; language?: string; tag?: string; letter?: string; offset?: number }
@@ -188,6 +197,22 @@ export function broadcastTimeline(b: Broadcast | null, track: { duration?: numbe
   const max = elapsed !== null ? publishedDuration ?? Math.max(1, duration ?? 0, measured ? elapsed : elapsed + behind) : 1;
   const value = elapsed !== null ? elapsed : 0;
   return { elapsed, duration, durationSource: publishedDuration ? 'broadcaster' : catalogueDuration ? 'catalogue' : null, clockSource: elapsed === null ? null : measured ? 'audio' as const : 'broadcaster' as const, behind, max, value, rewindable: Math.max(0, (snap?.position ?? 0) - (snap?.oldest ?? 0)) };
+}
+/**
+ * CAR-RADIO-CONTROLS-001: the on-air item's clock for Android Auto, on the ring's sample clock: where
+ * the item began (seconds; the car shows position minus this) and its length, with the same sources
+ * and precedence as [broadcastTimeline]: a start measured from the audio, else a published start;
+ * a published length, else the identified recording's (songs only). Unknown stays null; a guess is
+ * never shown as a time.
+ */
+export function radioItemClock(b: Broadcast | null, track: { duration?: number | null } | null, identified: boolean, snap: { received: number; position: number } | null, now = Date.now(), measuredStart?: number | null): { start: number | null; duration: number | null } {
+  const positive = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0;
+  const published = positive(b?.duration) ? b.duration : null;
+  const catalogue = b?.kind === 'song' && identified && positive(track?.duration) ? track.duration : null;
+  const round = (n: number) => Math.round(n * 100) / 100;
+  const start = snap && typeof measuredStart === 'number' && Number.isFinite(measuredStart) ? round(measuredStart)
+    : snap && snap.received > 0 && positive(b?.startedAt) && b.startedAt <= now ? round(snap.received - (now - b.startedAt) / 1000) : null;
+  return { start, duration: published ?? catalogue };
 }
 /**
  * RADIO-CLOCK-001: where a song's first second lies on the ring's sample clock (seconds), from one

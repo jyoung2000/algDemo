@@ -38,6 +38,8 @@ interface Run {
   name: string;
   tracks: readonly Track[];
   sent: Set<string>;
+  /** Songs (by key) the shell has put in the folder. */
+  keys: Set<string>;
   busy: boolean;
   again: boolean;
   state: SaveState;
@@ -47,7 +49,7 @@ interface Run {
 export class FolderSaves {
   private readonly runs = new Map<string, Run>();
   private readonly listeners = new Set<() => void>();
-  private remembered: Record<string, { held: number; total: number; folder: string }>;
+  private remembered: Record<string, { held: number; total: number; folder: string; keys?: string[] }>;
 
   constructor(private readonly deps: SaveDeps) {
     try { this.remembered = JSON.parse(deps.storage?.getItem(STORE) ?? '{}') ?? {}; } catch { this.remembered = {}; }
@@ -72,12 +74,16 @@ export class FolderSaves {
     this.runs.get(id)?.stop();
     const before = this.remembered[id];
     const run: Run = {
-      kind, name, tracks, sent: new Set(), busy: false, again: false, stop: () => {},
+      kind, name, tracks, sent: new Set(), keys: new Set(before?.keys ?? []), busy: false, again: false, stop: () => {},
       state: { phase: 'running', held: before?.held ?? 0, total: tracks.length, folder: before?.folder ?? null, missing: 0, error: null },
     };
     this.runs.set(id, run);
     run.stop = this.deps.subscribe(() => void this.step(run));
-    this.deps.downloadAll(tracks);
+    // LIST-FOLDER-002 (owner, 2026-11-19): "download the missing songs, dont re download music". A song
+    // already in the list's folder is not asked for again, even after the cache has let its copy go.
+    const inFolder = new Set(before?.keys ?? []);
+    const missing = tracks.filter((t) => !inFolder.has(t.key));
+    if (missing.length) this.deps.downloadAll(missing);
     this.emit();
     void this.step(run);
   }
@@ -91,14 +97,14 @@ export class FolderSaves {
     if (run.busy) { run.again = true; return; }
     const songs = run.tracks.flatMap((t, i) => {
       const url = this.deps.readyUrl(t);
-      return url ? [{ url, title: t.title, artist: t.artists?.[0] ?? t.artist ?? '', n: i + 1 }] : [];
+      return url ? [{ url, title: t.title, artist: t.artists?.[0] ?? t.artist ?? '', n: i + 1, key: t.key }] : [];
     });
     const fresh = songs.some((s) => !run.sent.has(s.url));
     if (fresh) {
       run.busy = true;
       try {
-        const r = await this.deps.save(run.kind, run.name, songs, run.tracks.length);
-        for (const s of songs) run.sent.add(s.url);
+        const r = await this.deps.save(run.kind, run.name, songs.map(({ key: _k, ...s }) => s), run.tracks.length);
+        for (const s of songs) { run.sent.add(s.url); run.keys.add(s.key); }
         run.state = { ...run.state, held: r.held, folder: r.folder, error: null };
         this.remember(run);
       } catch (e) {
@@ -112,7 +118,10 @@ export class FolderSaves {
     // Over when every song is in the folder, or every song not in it has been given up on.
     const snap = this.deps.snapshot(run.tracks);
     const settled = snap.ready + snap.failed >= snap.total && snap.retrying === 0 && snap.active === 0;
-    if (run.state.held >= run.tracks.length || (settled && run.sent.size >= snap.ready) || snap.blocked) {
+    const waiting = run.tracks.filter((t) => !run.keys.has(t.key));
+    const rest = waiting.length < run.tracks.length ? this.deps.snapshot(waiting) : snap;
+    const restSettled = rest.ready + rest.failed >= rest.total && rest.retrying === 0 && rest.active === 0;
+    if (run.state.held >= run.tracks.length || !waiting.length || (settled && run.sent.size >= snap.ready) || (restSettled && waiting.every((t) => !this.deps.readyUrl(t) || run.sent.has(this.deps.readyUrl(t)!))) || snap.blocked) {
       run.stop();
       run.state = { ...run.state, phase: 'done', missing: Math.max(0, run.tracks.length - run.state.held) };
       this.emit();
@@ -121,7 +130,7 @@ export class FolderSaves {
 
   private remember(run: Run): void {
     if (!run.state.folder) return;
-    this.remembered[idOf(run.kind, run.name)] = { held: run.state.held, total: run.tracks.length, folder: run.state.folder };
+    this.remembered[idOf(run.kind, run.name)] = { held: run.state.held, total: run.tracks.length, folder: run.state.folder, keys: [...run.keys] };
     try { this.deps.storage?.setItem(STORE, JSON.stringify(this.remembered)); } catch { /* storage full: the run still works */ }
   }
 

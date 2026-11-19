@@ -68,6 +68,15 @@ class CarActionButtonsTest {
   @After fun tearDown() {
     main {
       controller?.let { c -> actionNamed(c, "Shuffle on")?.let { c.transportControls.sendCustomAction(it.action, null) } }
+      controller?.let { c ->
+        // REPEAT-COUNT-001: the service outlives a test; leave the song repeat off for the next one.
+        for (n in 0 until 3) {
+          val a = c.playbackState?.customActions?.firstOrNull { it.action.endsWith(".REPEAT") } ?: break
+          if (a.name.toString() == "Repeat song: off") break
+          c.transportControls.sendCustomAction(a.action, null)
+          Thread.sleep(250)
+        }
+      }
       controller?.transportControls?.stop()
       browser?.disconnect()
     }
@@ -157,6 +166,63 @@ class CarActionButtonsTest {
     press(c, ".SHUFFLE")
     until("shuffle turned off") { "Shuffle off" in names(c) }
     assertTrue("shuffle is not a taste judgement", sent.isEmpty())
+  }
+
+  /**
+   * REPEAT-COUNT-001 (owner, 2026-11-18): the car shows how many more times this song will play,
+   * with the same four states and wording as the phone: off, 1, 2, infinity.
+   */
+  @Test fun repeatButtonCyclesOffOneTwoInfinityWithItsOwnIconEach() {
+    MediaHub.setCommandSink(sink)
+    main { seed() }
+    val c = connect()
+    playTone(c, 1)
+    val order = listOf("Repeat song: off", "Repeat song: 1 extra play", "Repeat song: 2 extra plays", "Repeat song: infinite plays")
+    until("repeat button starts off") { order[0] in names(c) }
+    val icons = mutableListOf<Int>()
+    for (step in 0 until 4) {
+      until("repeat shows ${order[step]}") { order[step] in names(c) }
+      icons += actions(c).first { it.name.toString() == order[step] }.icon
+      press(c, ".REPEAT")
+    }
+    until("repeat is off again") { order[0] in names(c) }
+    assertTrue("every state has an icon the car can draw", icons.all { it != 0 })
+    assertEquals("each count is its own picture", 4, icons.toSet().size)
+    assertTrue("repeat is not a taste judgement", sent.isEmpty())
+    assertTrue("star, dislike and shuffle keep their places", names(c).containsAll(listOf("Star", "Dislike", "Shuffle off")))
+  }
+
+  /**
+   * REPEAT-COUNT-001: the car draws these four pictures itself, so prove Android can: each renders
+   * a ring (ink on both the left and the right half, none at the very top or bottom where the two
+   * arrows part), the centre is empty only when repeat is off, and no two states look alike.
+   * The bitmaps are kept in the cache directory so a person can look at exactly what was drawn.
+   */
+  @Test fun repeatIconsDrawTwoArrowsAndACountTheCarCanShow() {
+    val ids = listOf("off" to R.drawable.car_repeat_off, "once" to R.drawable.car_repeat_once, "twice" to R.drawable.car_repeat_twice, "infinite" to R.drawable.car_repeat_infinite)
+    val size = 96
+    fun ink(b: android.graphics.Bitmap, x0: Int, y0: Int, x1: Int, y1: Int): Int {
+      var n = 0
+      for (y in y0 until y1) for (x in x0 until x1) if (android.graphics.Color.alpha(b.getPixel(x, y)) > 128) n++
+      return n
+    }
+    val drawn = ids.map { (name, id) ->
+      val d = androidx.core.content.ContextCompat.getDrawable(ctx, id) ?: throw AssertionError("$name does not load")
+      val b = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+      d.setBounds(0, 0, size, size); d.draw(android.graphics.Canvas(b))
+      File(ctx.cacheDir, "car_repeat_$name.png").outputStream().use { b.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+      name to b
+    }
+    for ((name, b) in drawn) {
+      assertTrue("$name: left arrow", ink(b, 0, 28, 28, 68) > 60)
+      assertTrue("$name: right arrow", ink(b, 68, 28, 96, 68) > 60)
+      assertEquals("$name: the arrows part at the top", 0, ink(b, 44, 0, 52, 22))
+      assertEquals("$name: and at the bottom", 0, ink(b, 44, 74, 52, 96))
+      val centre = ink(b, 34, 32, 62, 64) // inside the heads' inner corners
+      if (name == "off") assertEquals("off: nothing in the middle", 0, centre) else assertTrue("$name: a count in the middle", centre > 40)
+    }
+    val pictures = drawn.map { (_, b) -> (0 until size).flatMap { y -> (0 until size).map { x -> android.graphics.Color.alpha(b.getPixel(x, y)) > 128 } } }
+    assertEquals("four different pictures", 4, pictures.toSet().size)
   }
 
   @Test fun aStarPressedWhileTheAppIsClosedReachesTheAppWhenItOpens() {

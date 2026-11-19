@@ -1,0 +1,62 @@
+/*
+ * PLAYER-INLINE-001 (owner, 2026-11-19): "player controls on android and windows should be inline".
+ * Windows (the bar, 900px and wider): the song's actions and the volume icon sit on the SAME row as
+ * shuffle / previous / play / next / repeat, centred on them; the service links take the row above,
+ * beside the progress bar. The cluster's box is dissolved (display: contents) so each part has a cell.
+ * Phone (the docked strip): transport, volume and the song's actions are one row that never wraps.
+ */
+@media (min-width: 900px) {
+  .np.np--panel:not(.is-empty) {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 1fr) 176px 44px;
+    grid-template-areas:
+      'main prog open open'
+      'main tx acts vol';
+  }
+  .np.np--panel.has-upcoming:not(.is-empty) {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 1fr) 176px 44px 64px;
+    grid-template-areas:
+      'main prog open open upcoming'
+      'main tx acts vol upcoming';
+  }
+  .np.np--panel .np__side { display: contents; }
+  .np.np--panel .np__side > .np__track-actions { grid-area: acts; justify-self: end; align-self: center; display: flex; gap: 0; }
+  .np.np--panel .np__side > .vol { grid-area: vol; align-self: center; justify-self: start; margin-left: -12px; }
+  .np.np--panel .np__side > .np__open { grid-area: open; align-self: center; justify-self: end; max-width: 100%; display: flex; flex-wrap: nowrap; }
+  .np.np--panel .transport { align-self: center; }
+}
+
+/* PLAYER-SIMILAR-001 (owner, 2026-11-19): Find similar songs joined the row, so the phone's row holds
+   ten controls: shuffle, previous, play, next, repeat, star, X, download, Find similar, volume. The
+   transport and the song's actions are dissolved (display: contents) so every control is one flex item;
+   all but Play share the row equally up to 44px each (412px: 37px, 360px: 30px, 320px: 26px), each
+   keeping its 44px height and a centred 17px icon. Play keeps a 44px disc (40px below 341px). */
+@media (max-width: 899px) {
+  .np.np--docked .np__controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0;
+    min-width: 0;
+  }
+  .np.np--docked .np__controls > .transport,
+  .np.np--docked .np__controls > .np__track-actions { display: contents; }
+  .np.np--docked .np__controls .tbtn,
+  .np.np--docked .np__controls .np__track-actions > button,
+  .np.np--docked .np__controls > .vol {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    max-width: 44px;
+    padding: 0;
+    margin: 0;
+  }
+  .np.np--docked .np__controls .np__track-actions > button { order: 1; }
+  .np.np--docked .np__controls > .vol { order: 2; display: flex; justify-content: center; }
+  .np.np--docked .np__controls > .vol .vol__btn { width: 100%; min-width: 0; max-width: 44px; }
+  .np.np--docked .np__controls .tbtn.tbtn--main { flex: 0 0 44px; width: 44px; max-width: 44px; }
+  .np.np--docked .np__controls .np__action-error { order: 3; flex: 1 0 100%; }
+}
+@media (max-width: 340px) {
+  .np.np--docked .np__controls .tbtn.tbtn--main { flex-basis: 40px; width: 40px; }
+}

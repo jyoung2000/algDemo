@@ -202,6 +202,57 @@ it('when a song plays out with nothing cued, the page chooses what follows', asy
   expect(ops('play')).toHaveLength(1);
 });
 
+/**
+ * REPEAT-COUNT-001: 1 and 2 are EXTRA whole plays. An engine that stops at the end and waits for
+ * the page (Windows) is restarted by the page, which is then the one that counts a replay down.
+ */
+it('counts one extra play down per real end, then moves on to the next song', async () => {
+  readyUrls.set('one', SRC_ONE);
+  held.add(SRC_ONE);
+  const onRepeatConsumed = vi.fn();
+  const playing = song('one');
+  const end = (seq: number) => report({ playing: false, ended: true, positionMs: 180000, event: { seq, cause: 'end', advanced: false, from: { id: 'one', heardMs: 180000, durationMs: 180000 } } });
+  const view = render(createElement(Player, { ...props, repeat: 'twice', onRepeatConsumed, playing }));
+  await settle();
+  await end(2);
+  expect(onRepeatConsumed).toHaveBeenLastCalledWith('once');
+  expect(ops('play'), 'the same song starts again').toHaveLength(1);
+  view.rerender(createElement(Player, { ...props, repeat: 'once', onRepeatConsumed, playing }));
+  await report({ positionMs: 1000 });
+  await end(3);
+  expect(onRepeatConsumed).toHaveBeenLastCalledWith('off');
+  expect(ops('play')).toHaveLength(2);
+  expect(props.onNext, 'no next song while replays are owed').not.toHaveBeenCalled();
+  view.rerender(createElement(Player, { ...props, repeat: 'off', onRepeatConsumed, playing }));
+  await report({ positionMs: 1000 });
+  await end(4);
+  expect(props.onNext, 'both extra plays are done').toHaveBeenCalledTimes(1);
+  expect(onRepeatConsumed).toHaveBeenCalledTimes(2);
+});
+
+it('infinity never counts down', async () => {
+  readyUrls.set('one', SRC_ONE);
+  held.add(SRC_ONE);
+  const onRepeatConsumed = vi.fn();
+  render(createElement(Player, { ...props, repeat: 'one', onRepeatConsumed, playing: song('one') }));
+  await settle();
+  await report({ playing: false, ended: true, positionMs: 180000, event: { seq: 2, cause: 'end', advanced: false, from: { id: 'one', heardMs: 180000, durationMs: 180000 } } });
+  expect(ops('play')).toHaveLength(1);
+  expect(onRepeatConsumed.mock.calls.every(([m]) => m === 'one')).toBe(true);
+  expect(props.onNext).not.toHaveBeenCalled();
+});
+
+it('an engine that loops the song itself (Android) is not counted a second time by the page', async () => {
+  readyUrls.set('one', SRC_ONE);
+  held.add(SRC_ONE);
+  const onRepeatConsumed = vi.fn();
+  render(createElement(Player, { ...props, repeat: 'twice', onRepeatConsumed, playing: song('one') }));
+  await settle();
+  await report({ positionMs: 0, event: { seq: 2, cause: 'repeat', advanced: false, from: { id: 'one', heardMs: 180000, durationMs: 180000 } } });
+  expect(onRepeatConsumed, 'the service already counted this replay and says so itself').not.toHaveBeenCalled();
+  expect(ops('play'), 'the engine is already playing it again').toHaveLength(0);
+});
+
 it('a song chosen before its file is here waits in the engine and gets its file when it lands', async () => {
   // Its own link: the local library is shared by the whole file, and other tests made theirs ready.
   const SRC_LATE = 'https://music.youtube.com/watch?v=ccccccccccc';

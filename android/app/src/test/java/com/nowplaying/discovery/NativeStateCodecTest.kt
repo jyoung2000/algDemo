@@ -105,7 +105,7 @@ class NativeStateCodecTest {
       "playlist/p1/track/b" to NativeStateCodec.songOf(song("b"), allowed)!!,
       "c" to NativeStateCodec.songOf(song("c"), allowed)!!,
     )
-    val control = PlayQueue.Control(1, PlayQueue.Repeat.ALL, true, listOf("c", "a", "b"), listOf("b", "c"), listOf("c", "a"))
+    val control = PlayQueue.Control(1, PlayQueue.Repeat.TWICE, true, listOf("c", "a", "b"), listOf("b", "c"), listOf("c", "a"))
     val json = NativeStateCodec.nativeJson(NativeStateCodec.NativeQueue(entries, control, 61_000))
     val io = MapIo()
     assertTrue(NativeStateCodec.Store(io).recordNativeState(json))
@@ -117,6 +117,15 @@ class NativeStateCodecTest {
     // The round is restored as saved, not restarted.
     assertEquals(control, back.control)
     assertEquals(61_000L, back.positionMs)
+    // REPEAT-COUNT-001: every offered repeat state survives a restart; the retired repeat-list
+    // setting (wire value 2) comes back as off rather than as something the button cannot show.
+    for (r in listOf(PlayQueue.Repeat.OFF, PlayQueue.Repeat.ONCE, PlayQueue.Repeat.TWICE, PlayQueue.Repeat.ONE)) {
+      val saved = NativeStateCodec.nativeJson(NativeStateCodec.NativeQueue(entries, control.copy(repeat = r), 0))
+      assertEquals(r, NativeStateCodec.nativeOf(saved, allowed)!!.control.repeat)
+    }
+    val legacy = NativeStateCodec.nativeJson(NativeStateCodec.NativeQueue(entries, control.copy(repeat = PlayQueue.Repeat.ALL), 0))
+    assertEquals(PlayQueue.Repeat.OFF, NativeStateCodec.nativeOf(legacy, allowed)!!.control.repeat)
+    assertEquals(PlayQueue.Repeat.OFF, NativeStateCodec.nativeOf(JSONObject(json.toString()).put("repeat", 2), allowed)!!.control.repeat)
     // A link the guard no longer allows is dropped, and the song is then not ready.
     val strict = NativeStateCodec.nativeOf(json, { false })!!
     assertNull(strict.entries[0].second.source)

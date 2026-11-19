@@ -15,12 +15,15 @@ export function SaveMenu({
   lists: allLists,
   onLists,
   onClose,
+  onUnstar,
 }: {
   songKey: string;
   title: string;
   lists: PlaylistSummary[];
   onLists: (lists: PlaylistSummary[]) => void;
   onClose: () => void;
+  /** STAR-MENU-001: the star always opens this menu, so a starred song is unstarred from here. */
+  onUnstar?: (() => void) | undefined;
 }) {
   // ALBUM-SAVE-001: a saved album holds the album's songs only, so it is never offered here.
   const lists = allLists.filter((l) => !l.album);
@@ -164,9 +167,16 @@ export function SaveMenu({
           ? 'Liked songs stay in Saved whether or not you pick a list.'
           : `In ${holding.size} ${holding.size === 1 ? 'list' : 'lists'}. Changes save as you tick.`}
       </p>
-      <button className="savemenu__done" type="button" onClick={onClose}>
-        Done
-      </button>
+      <div className="savemenu__foot">
+        {onUnstar && (
+          <button className="linkbtn savemenu__unstar" type="button" disabled={busy} onClick={() => { onUnstar(); onClose(); }}>
+            Remove star
+          </button>
+        )}
+        <button className="savemenu__done" type="button" onClick={onClose}>
+          Done
+        </button>
+      </div>
     </div>
   );
 }

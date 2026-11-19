@@ -132,10 +132,8 @@
   }
 }
 @media (max-width: 379px) {
-  /* 335px of row: nothing left for the speaker either; the rocker is the volume. */
-  .np--docked .np__controls .vol {
-    display: none;
-  }
+  /* VOLUME-POP-001 (owner, 2026-11-19): the volume is one icon that opens a slider, so it stays even
+     here. The controls share the row equally (player-inline.css PLAYER-SIMILAR-001). */
 }
 /* DOCK-NARROW-001: a 320px phone has 296px of row. The eight controls at their 360px sizes need 330, so
    the last action (Download) hung 23px off the right edge. Every control keeps its 44px height; the

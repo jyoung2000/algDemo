@@ -171,8 +171,85 @@ describe('media-native bridge', () => {
     expect(feedback.mock.calls).toEqual([['k1', 'like'], ['k1', 'unlike'], ['k1', 'dislike'], ['k1', 'undislike']]);
   });
 
+  // CAR-CONTROLS-001: a playlist chosen in the car's picker after its star.
+  it('passes a car playlist pick to the playlistAdd handler and drops malformed ones', () => {
+    const playlistAdd = vi.fn();
+    setMediaHandlers({ playlistAdd });
+    const cmd = (o: unknown) => (win().__awMediaCmd as (json: string) => void)(JSON.stringify(o));
+    cmd({ type: 'playlistAdd', id: 'k1', list: 'road' });
+    cmd({ type: 'playlistAdd', id: 'k1' }); // no list named
+    cmd({ type: 'playlistAdd', list: 'road' }); // no song named
+    cmd({ type: 'playlistAdd', id: 'k1', list: 'x'.repeat(201) }); // not a list id
+    expect(playlistAdd.mock.calls).toEqual([['k1', 'road']]);
+  });
+
   it('tells the car whether the song now playing is starred or disliked', () => {
     pushMediaState({ mediaId: 'k1', liked: true, disliked: false });
     expect(JSON.parse(media.mock.calls.at(-1)![0]).state).toMatchObject({ mediaId: 'k1', liked: true, disliked: false });
+  });
+});
+
+describe('car listening mood (CAR-MOOD-001)', () => {
+  beforeEach(() => { installMediaCommands(); });
+  afterEach(() => { delete win().AirwaveNative; setMediaHandlers({ moodOrder: undefined }); });
+  const cmd = (o: unknown) => (win().__awMediaCmd as (json: string) => void)(JSON.stringify(o));
+
+  it('passes the car\u2019s movable songs and press to the engine and answers with the order', async () => {
+    const media = vi.fn();
+    win().AirwaveNative = { media };
+    const order = vi.fn(async () => ({ order: ['b', 'a'], moved: ['b'], changed: true, leading: ['Rap'] }));
+    setMediaHandlers({ moodOrder: order });
+    cmd({ type: 'moodOrder', requestId: 'm1', current: 'c', upcoming: ['a', 'b', 7], signal: { id: 'c', kind: 'like' } });
+    await vi.waitFor(() => expect(media).toHaveBeenCalled());
+    expect(order).toHaveBeenCalledWith({ current: 'c', upcoming: ['a', 'b'], signal: { id: 'c', kind: 'like' } });
+    expect(JSON.parse(media.mock.calls.at(-1)![0]).mood).toEqual({ requestId: 'm1', order: ['b', 'a'], moved: ['b'], changed: true, leading: ['Rap'] });
+  });
+
+  it('answers with the list unchanged when the engine cannot arrange it', async () => {
+    const media = vi.fn();
+    win().AirwaveNative = { media };
+    setMediaHandlers({ moodOrder: async () => { throw new Error('boom'); } });
+    cmd({ type: 'moodOrder', upcoming: ['a'] });
+    cmd({ type: 'moodOrder', requestId: 'm2', upcoming: ['a', 'b'] });
+    await vi.waitFor(() => expect(media).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(media.mock.calls[0]![0]).mood).toEqual({ requestId: 'm2', order: ['a', 'b'], moved: [], changed: false, leading: [], error: 'boom' });
+  });
+});
+
+describe('car Find similar (CAR-SIMILAR-001)', () => {
+  beforeEach(() => { installMediaCommands(); });
+  afterEach(() => { delete win().AirwaveNative; setMediaHandlers({ findSimilar: undefined }); });
+  const cmd = (o: unknown) => (win().__awMediaCmd as (json: string) => void)(JSON.stringify(o));
+
+  it('asks for songs that sound like the car\u2019s song and answers with what was added', async () => {
+    const media = vi.fn();
+    win().AirwaveNative = { media };
+    const song = songFromTrack(track({ key: 'k9', title: 'Like it' }), true);
+    const find = vi.fn(async () => ({ added: 1, minimum: 70, reason: '', songs: [song] }));
+    setMediaHandlers({ findSimilar: find });
+    cmd({ type: 'findSimilar', requestId: 's1', id: 'k1' });
+    await vi.waitFor(() => expect(media).toHaveBeenCalled());
+    expect(find).toHaveBeenCalledWith('k1');
+    expect(JSON.parse(media.mock.calls.at(-1)![0]).similar).toEqual({ requestId: 's1', id: 'k1', added: 1, minimum: 70, reason: '', songs: [song] });
+  });
+
+  it('answers with the reason when nothing could be found, and drops malformed requests', async () => {
+    const media = vi.fn();
+    win().AirwaveNative = { media };
+    setMediaHandlers({ findSimilar: async () => { throw new Error('No analysed audio is available for this song.'); } });
+    cmd({ type: 'findSimilar', id: 'k1' });
+    cmd({ type: 'findSimilar', requestId: 's2' });
+    cmd({ type: 'findSimilar', requestId: 'x'.repeat(101), id: 'k1' });
+    cmd({ type: 'findSimilar', requestId: 's3', id: 'k1' });
+    await vi.waitFor(() => expect(media).toHaveBeenCalledTimes(1));
+    expect(JSON.parse(media.mock.calls[0]![0]).similar).toEqual({ requestId: 's3', id: 'k1', added: 0, songs: [], error: 'No analysed audio is available for this song.' });
+  });
+
+  it('tells the car to open the phone when no page can run the search', async () => {
+    const media = vi.fn();
+    win().AirwaveNative = { media };
+    cmd({ type: 'findSimilar', requestId: 's4', id: 'k1' });
+    await vi.waitFor(() => expect(media).toHaveBeenCalled());
+    expect(JSON.parse(media.mock.calls[0]![0]).similar.error).toBe('Open Airwave on your phone to find similar songs.');
   });
 });

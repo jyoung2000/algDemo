@@ -1,10 +1,11 @@
 import { api, type Characteristics, type Track } from '../api';
 import { parseTitle } from './identity';
-import { RadioDirectory, parseBroadcast, freshBroadcast, heardCredit, pickShuffleIndex, songStartFromFingerprint, type Broadcast, type RadioStation } from './radio';
+import { RadioDirectory, parseBroadcast, freshBroadcast, heardCredit, pickShuffleIndex, radioItemClock, songStartFromFingerprint, type Broadcast, type RadioStation } from './radio';
 import { publisherBroadcast, icecastBroadcast } from './radio-feeds';
 import { normaliseRadioArtist, radioArtistKey, radioSongFits } from './radio-artist';
 import { ListenMeter } from '../util';
 import { radioOutput } from '../audio-engine';
+import { songFromTrack, type NativeSong } from './media-native';
 
 export interface RadioSnapshot { id: string; stationId: string; station?: RadioStation; paused: boolean; position: number; received: number; oldest: number; heard: number; dropped: boolean; state: string; error: string | null; native: boolean; pcm?: string }
 export async function radioNative<T = RadioSnapshot>(q: Record<string, unknown>): Promise<T> {
@@ -49,7 +50,7 @@ export function programmeTrack(s: RadioStation, b: Broadcast): Track {
 export interface RadioState { station: RadioStation | null; snapshot: RadioSnapshot | null; broadcast: Broadcast | null; track: Track | null; identified: boolean; characteristics?: Characteristics | null; identifying: boolean; analysis: string; error: string | null; shuffle?: boolean;
   /** RADIO-CLOCK-001: where the current song's first second lies on the ring clock (seconds), measured from the audio; null when not measured. */
   songStart?: number | null }
-type Marker = { at: number; broadcast: Broadcast; track: Track | null; identified: boolean; heardAt: number; characteristics?: Characteristics | null; meter?: ListenMeter; startAt?: number | null; overruns?: number };
+type Marker = { at: number; broadcast: Broadcast; track: Track | null; identified: boolean; heardAt: number; /** CAR-RADIO-CONTROLS-001: a published start, pinned to the ring clock once audio arrived. */ carStart?: number | null; characteristics?: Characteristics | null; meter?: ListenMeter; startAt?: number | null; overruns?: number; /** RADIO-TASTE-001: the song's own genres are still being looked up. */ genresPending?: boolean };
 
 /**
  * The station list tries to show real song information and cover art for what each station is
@@ -82,7 +83,7 @@ export async function matchSongBroadcast(b: Broadcast, opts?: { force?: boolean 
 }
 class RadioSession {
   private value: RadioState = { station: null, snapshot: null, broadcast: null, track: null, identified: false, identifying: false, analysis: '', error: null, shuffle: false };
-  private listeners = new Set<() => void>(); private generation = 0; private markers: Marker[] = []; private credited = new Set<string>(); private timer: ReturnType<typeof setTimeout> | null = null; private metaTimer: ReturnType<typeof setInterval> | null = null;
+  private listeners = new Set<() => void>(); private generation = 0; private markers: Marker[] = []; private credited = new Map<string, { kind: 'qualified' | 'complete'; coverage: number }>(); private timer: ReturnType<typeof setTimeout> | null = null; private metaTimer: ReturnType<typeof setInterval> | null = null;
   async restore() {
     if (this.value.station) return;
     try { const snap = await radioNative({ op: 'state' }); if (snap.native && snap.station) this.adopt(snap); } catch { /* no active native session */ }
@@ -130,6 +131,7 @@ class RadioSession {
   get = () => this.value;
   private put(v: Partial<RadioState>) { this.value = { ...this.value, ...v }; this.listeners.forEach(l => l()); }
   async start(s: RadioStation) {
+    void this.credit(true); // RADIO-TASTE-001: moving straight to another station still counts what was heard on this one
     const gen = ++this.generation; this.clear(); this.markers = []; this.credited.clear(); this.lastHeard = 0; this.itemHeard = 0; this.lastItem = ''; this.lastIdentify = 0; this.currentMarker = null;
     if (!this.stationList.some(x => x.id === s.id)) this.stationList = [s, ...this.stationList];
     this.identifyAfter = Infinity; this.overrunAfter = 0;
@@ -146,8 +148,8 @@ class RadioSession {
   private clear() { if (this.timer) clearTimeout(this.timer); if (this.metaTimer) clearInterval(this.metaTimer); this.timer = null; this.metaTimer = null; this.flushAudio(); this.graph?.dispose(); this.graph = null; }
   private flushAudio() { for (const s of this.sources) { try { s.stop(); s.disconnect(); } catch {} } this.sources.clear(); this.nextAt = 0; }
   volume(v: number) { this.graph?.volume(v); }
-  async stop() { this.credit(); ++this.generation; this.clear(); await radioNative({ op: 'stop' }).catch(() => {}); this.put({ station: null, snapshot: null, broadcast: null, track: null, error: null, songStart: null }); }
-  async pause() { const s = this.value.snapshot; if (!s) return; this.credit(); const paused = !s.paused;
+  async stop() { void this.credit(true); ++this.generation; this.clear(); await radioNative({ op: 'stop' }).catch(() => {}); this.put({ station: null, snapshot: null, broadcast: null, track: null, error: null, songStart: null }); }
+  async pause() { const s = this.value.snapshot; if (!s) return; void this.credit(); const paused = !s.paused;
     if (paused && this.graph && !s.native) { const ahead = Math.max(0, this.nextAt - this.graph.ctx.currentTime); if (ahead > 0) await radioNative({ op: 'rewind', id: s.id, seconds: ahead }); }
     this.flushAudio(); const snap = await radioNative({ op: 'pause', id: s.id, paused }); this.put({ snapshot: snap }); }
   async downloadRecording(): Promise<{ saved_to: string; file: string; seconds: number; partial: boolean }> {
@@ -156,15 +158,18 @@ class RadioSession {
     const next = m ? this.markers[this.markers.indexOf(m) + 1] : null;
     return radioNative({ op: 'export', id: snap.id, from: Math.max(snap.oldest, m?.at ?? snap.oldest), to: Math.min(snap.received, next?.at ?? snap.received), title: m?.broadcast.title || this.value.station.name });
   }
-  async rewind(seconds = 15) { const s = this.value.snapshot; if (!s) return; this.credit(); this.flushAudio(); this.lastItem = ''; this.itemHeard = 0; const snap = await radioNative({ op: 'rewind', id: s.id, seconds: Math.max(0, Math.min(600, seconds)) }); this.put({ snapshot: snap }); this.selectItem(); }
+  async rewind(seconds = 15) { const s = this.value.snapshot; if (!s) return; void this.credit(true); this.flushAudio(); this.lastItem = ''; this.itemHeard = 0; const snap = await radioNative({ op: 'rewind', id: s.id, seconds: Math.max(0, Math.min(600, seconds)) }); this.put({ snapshot: snap }); this.selectItem(); }
   private selectItem() {
     const snap = this.value.snapshot; if (!snap) return;
     const m = [...this.markers].reverse().find(x => x.at <= snap.position + 0.5) || this.markers[0]; if (!m) return;
-    if (this.currentMarker !== m) { this.credit(); this.itemHeard = 0; this.lastItem = m.broadcast.title; this.currentMarker = m;
+    if (this.currentMarker !== m) { void this.credit(true); this.itemHeard = 0; this.lastItem = m.broadcast.title; this.currentMarker = m;
  (m.meter ??= new ListenMeter()).seeked(snap.position); }
     if (snap.native) {
-      const update = { op: 'nowplaying', id: snap.id, title: m.track?.title || m.broadcast.title || this.value.station?.name, artist: m.track?.artists?.join(', ') || m.broadcast.artist || this.value.station?.name,
-        artwork: (m.identified ? m.track?.artwork : null) || m.broadcast.artwork || this.value.station?.image || '' };
+      // CAR-RADIO-CONTROLS-001: the car's star, playlist pick and elapsed/length follow what the phone shows.
+      // A published start drifts with network bursts if recomputed, so it is pinned once per item (as the phone's bufferOffset is).
+      if (m.carStart === undefined && snap.received > 0 && m.broadcast.startedAt) m.carStart = radioItemClock(m.broadcast, null, false, snap).start;
+      const clock = radioItemClock(m.broadcast, m.track, m.identified, snap, Date.now(), m.startAt ?? null);
+      const update = radioNowPlaying(snap.id, m, this.value.station, { start: m.startAt != null ? clock.start : m.carStart ?? null, duration: clock.duration });
       const key = JSON.stringify(update);
       if (this.lastNativeMetadata !== key) { this.lastNativeMetadata = key; void radioNative(update).catch(() => { if (this.lastNativeMetadata === key) this.lastNativeMetadata = ''; }); }
     }
@@ -188,7 +193,7 @@ class RadioSession {
       const nativeShuffle = (snap as { shuffle?: unknown }).shuffle;
       this.put({ snapshot: snap, ...(typeof nativeShuffle === 'boolean' && this.shuffleSync === 0 && nativeShuffle !== this.value.shuffle ? { shuffle: nativeShuffle } : {}), ...(snap.error ? { error: snap.error } : {}) }); this.selectItem();
       if (this.currentMarker) { const meter = this.currentMarker.meter ??= new ListenMeter(); meter.tick(snap.position, !snap.paused && this.value.identified && snap.heard > 0); this.itemHeard = meter.coverage; }
-      if (this.itemHeard >= 30) this.credit();
+      if (this.itemHeard >= 30) void this.credit();
       const due = Date.now() - this.lastIdentify > 60000 && (!this.value.identified || this.value.broadcast?.kind === 'song');
       // A song that began while listening is measured as soon as a whole window of it has played, not up to a minute later.
       const newSong = snap.position >= this.identifyAfter;
@@ -208,13 +213,26 @@ class RadioSession {
       } }
     if (gen === this.generation) this.timer = setTimeout(() => void this.poll(gen), s.native ? 500 : 100);
   }
-  private async credit() {
-    const { track, broadcast, identified, snapshot } = this.value; if (!track || !broadcast || !snapshot) return;
-    const qualified = heardCredit({ identified, kind: broadcast.kind, heard: this.currentMarker?.meter?.coverage ?? 0, duration: track.duration ?? null }); if (!qualified.eligible) return;
-    const id = `${snapshot.id}:${track.key}:${this.lastItem}`; if (this.credited.has(id)) return; this.credited.add(id);
+  /**
+   * RADIO-TASTE-001: a song heard on the radio counts towards the listener's taste like any other
+   * listen, once it is identified and really heard. Thirty seconds is noted as a listen; most of
+   * the recording heard is a full listen and replaces that note. Programmes, unnamed songs and the
+   * station's tags never count. `leaving` is the last chance to report this item.
+   */
+  private async credit(leaving = false) {
+    const { track, broadcast, identified, snapshot } = this.value; const marker = this.currentMarker; if (!track || !broadcast || !snapshot || !marker) return;
+    const heard = heardCredit({ identified, kind: broadcast.kind, heard: marker.meter?.coverage ?? 0, duration: track.duration ?? null }); if (!heard.eligible) return;
+    // Taste learns from the song's own genres, so the note waits for that lookup, but never past the listen itself.
+    if (marker.genresPending && !leaving && !heard.full) return;
+    const kind = heard.full ? 'complete' : 'qualified';
+    const id = `${snapshot.id}:${track.key}:${this.lastItem}`; const had = this.credited.get(id);
+    // Each stage is reported once; on leaving, a full listen is reported again when more of the song was heard since.
+    if (had && (had.kind === kind || had.kind === 'complete') && !(leaving && kind === 'complete' && heard.coverage >= had.coverage + 5)) return;
+    this.credited.set(id, { kind, coverage: heard.coverage });
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(track.key));
     const hash = [...new Uint8Array(digest)].slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join('');
-    void api.feedback('qualified', track, { event_id: `radio:${snapshot.id}:${hash}`, listened: qualified.coverage, coverage: qualified.coverage, duration: track.duration, medium: 'radio', origin: 'radio', confidence: 0.7 }).catch(() => {});
+    const noted = `radio:${snapshot.id}:${hash}`; const coverage = Math.round(heard.coverage * 10) / 10;
+    void api.feedback(kind, track, { event_id: kind === 'complete' ? `${noted}:full` : noted, ...(kind === 'complete' ? { supersedes: noted } : {}), listened: coverage, coverage, duration: track.duration, medium: 'radio', origin: 'radio', confidence: 0.7 }).catch(() => {});
   }
   private async refreshMetadata(gen: number) {
     const s = this.value.station; if (!s || gen !== this.generation) return; const b = await stationMetadata(s); if (gen !== this.generation) return;
@@ -227,7 +245,7 @@ class RadioSession {
     if (b.kind !== 'song' || b.state !== 'current' || !b.artist) return;
     try { const r = await api.search(`${normaliseRadioArtist(b.artist) ?? b.artist} ${b.title}`); const t = r.results.find(t => radioSongFits(t, b)); /* RADIO-ARTIST-001: "JACKSON 5, THE" is the catalogue's "Jackson 5" */ if (gen !== this.generation || !t) return; marker.track = t; marker.identified = true; this.put({ analysis: 'Matched broadcaster title to catalogue' }); this.selectItem(); void this.genres(t, marker, gen); } catch { /* published programme/title stays visible, no speculative match */ }
   }
-  private async genres(t: Track, marker: Marker, gen: number) { try { const got = await api.radioGenres(t); if (got && gen === this.generation) { marker.track = { ...t, ...got.track }; marker.characteristics = got.characteristics; this.selectItem(); } } catch {} }
+  private async genres(t: Track, marker: Marker, gen: number) { marker.genresPending = true; try { const got = await api.radioGenres(t); if (got && gen === this.generation) { marker.track = { ...(marker.track?.key === t.key ? marker.track : t), ...got.track }; marker.characteristics = got.characteristics; } } catch { /* the listen still counts, without genres */ } finally { marker.genresPending = false; if (gen === this.generation) this.selectItem(); } }
   async identify() {
     const { snapshot, station } = this.value; if (!snapshot || !station || this.value.identifying) return; this.lastIdentify = Date.now(); const gen = this.generation; this.put({ identifying: true, analysis: 'Fingerprinting broadcast audio on this device…' });
     try {
@@ -265,6 +283,20 @@ class RadioSession {
   }
 }
 export const radioSession = new RadioSession();
+/**
+ * CAR-RADIO-CONTROLS-001: what the native player (and so Android Auto) is told about the item on air.
+ * `song`/`track` only for a song identified by fingerprint or catalogue match: programmes and
+ * unmatched titles never get a star (programmes never train taste). `start` is where the item began
+ * on the ring clock and `duration` its length, both seconds or null when not known.
+ */
+export function radioNowPlaying(id: string, m: { broadcast: Broadcast; track: Track | null; identified: boolean }, station: RadioStation | null, clock: { start: number | null; duration: number | null }) {
+  const named = m.identified && m.track && m.track.provider !== 'radio' ? m.track : null;
+  let track: Track | null = named;
+  try { if (named && JSON.stringify(named).length > 16_000) track = null; } catch { track = null; }
+  const song: NativeSong | null = track ? songFromTrack(track, false) : null;
+  return { op: 'nowplaying', id, title: m.track?.title || m.broadcast.title || station?.name, artist: m.track?.artists?.join(', ') || m.broadcast.artist || station?.name,
+    artwork: (m.identified ? m.track?.artwork : null) || m.broadcast.artwork || station?.image || '', song, track, start: clock.start, duration: clock.duration };
+}
 // RADIO-PEEK-001: a read-only picture of the live session for checks on a real build, beside
 // __airwaveEngine (ENGINE-PEEK-001). No station link and no audio: only what the player shows or why not.
 if (typeof window !== 'undefined') {

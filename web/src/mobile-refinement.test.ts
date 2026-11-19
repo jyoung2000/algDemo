@@ -231,8 +231,8 @@ describe('the controls are flat and reachable', () => {
     expect(block).not.toMatch(/display: none/);
   });
 
-  it('drops the dock volume entirely on a very narrow phone, where the rocker is the volume (DOCK-SHUFFLE-001)', () => {
-    expect(css).toMatch(/@media \(max-width: 379px\) \{[\s\S]*?\.np--docked \.np__controls \.vol \{[^}]*display: none;/);
+  it('keeps the volume icon on a very narrow phone: it opens a slider, so it fits (VOLUME-POP-001 replaces DOCK-SHUFFLE-001 here)', () => {
+    expect(css).not.toMatch(/@media \(max-width: 379px\) \{[\s\S]*?\.np--docked \.np__controls \.vol \{[^}]*display: none;/);
   });
 
   it('drops the panel around the search sliders on a phone only', () => {

@@ -57,8 +57,20 @@ class CarLegacyControlsTest {
     MediaHub.apply(JSONObject().put("state",JSONObject().put("queue",songs)).put("library",JSONObject()
       .put("songs",songs).put("playlists",JSONArray().put(JSONObject().put("id","car-qa").put("title","Transport test fixtures").put("songs",songs)))))
   }
+  private fun resetServiceQueue() {
+    // A prior instrumentation class can leave the service player's timeline populated.
+    // CarQueue plans a single car tap against that timeline, so clear it before this test
+    // checks expansion from MediaHub's three-song fixture rather than inherited items.
+    val future = main { MediaController.Builder(ctx, SessionToken(ctx, ComponentName(ctx, PlaybackService::class.java))).buildAsync() }
+    val modern = future.get(15, TimeUnit.SECONDS)
+    try {
+      main { modern.stop(); modern.clearMediaItems() }
+      until("service timeline cleared") { main { modern.mediaItemCount == 0 } }
+    } finally { main { modern.release() } }
+  }
   @Test fun platformMusicSessionOffersTrackSkipAndPlayPauseNotTimedJumps() {
     for(i in 1..3)storeTone(i)
+    resetServiceQueue()
     main {seed()}
     val ready=CountDownLatch(1)
     var browser:MediaBrowser?=null

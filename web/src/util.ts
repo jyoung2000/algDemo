@@ -139,10 +139,12 @@ export function toggleMuteState(v: VolumeState, lastLevel: number): VolumeState 
   return { value: v.value > 0 ? v.value : lastLevel > 0 ? lastLevel : 0.5, muted: false };
 }
 
-/** What happens when a song ends: stop at the end of the list, loop the list, or loop the song. */
-export type RepeatMode = 'off' | 'all' | 'one';
-export const REPEAT_ORDER: readonly RepeatMode[] = ['off', 'all', 'one'];
-export const nextRepeat = (m: RepeatMode): RepeatMode => REPEAT_ORDER[(REPEAT_ORDER.indexOf(m) + 1) % REPEAT_ORDER.length]!;
+/** 1 and 2 count EXTRA full plays of this song; 'one' is the legacy id for infinity. */
+export type RepeatMode = 'off' | 'once' | 'twice' | 'one' | 'all'; // 'all' is read-only legacy
+export const REPEAT_ORDER: readonly RepeatMode[] = ['off', 'once', 'twice', 'one'];
+export const nextRepeat = (m: RepeatMode): RepeatMode => m === 'all' ? 'off' : REPEAT_ORDER[(REPEAT_ORDER.indexOf(m) + 1) % REPEAT_ORDER.length]!;
+/** Called only once the decoder actually ended and the requested extra playback has begun. */
+export const consumeRepeat = (m: RepeatMode): RepeatMode => m === 'twice' ? 'once' : m === 'once' ? 'off' : m;
 
 export interface QueueStep {
   item: RecItem;
@@ -170,7 +172,7 @@ export function stepQueue(
   fromKey: string | null,
   dir: 1 | -1,
   hidden: Set<string>,
-  o: { shuffle: boolean; repeat: RepeatMode; heard: ReadonlySet<string>; rand?: () => number; ready?: (track: Track) => boolean },
+  o: { shuffle: boolean; repeat: RepeatMode; heard: ReadonlySet<string>; rand?: () => number; ready?: (track: Track) => boolean; prefer?: ReadonlyMap<string, number> },
 ): QueueStep | null {
   const playable = items.filter((x) => !hidden.has(x.track.key) && canPlayHere(x.playback));
   /**
@@ -184,7 +186,9 @@ export function stepQueue(
   const ok = o.ready ? playable.filter((x) => x.track.key === fromKey || o.ready!(x.track)) : playable;
   if (!ok.length) return null;
   const rand = o.rand ?? Math.random;
-  const pick = (from: RecItem[]) => from[Math.min(from.length - 1, Math.floor(rand() * from.length))]!;
+  // MOOD-QUEUE-001: with a listening mood, shuffle picks among the three songs that fit it best.
+  const best = (from: RecItem[]) => (o.prefer ? [...from].sort((a, b) => (o.prefer!.get(a.track.key) ?? 1e9) - (o.prefer!.get(b.track.key) ?? 1e9)).slice(0, 3) : from);
+  const pick = (all: RecItem[]) => { const from = best(all); return from[Math.min(from.length - 1, Math.floor(rand() * from.length))]!; };
   if (o.shuffle && dir === 1) {
     const fresh = choosable.filter((x) => x.track.key !== fromKey && !o.heard.has(x.track.key));
     if (fresh.length) {
@@ -483,4 +487,18 @@ export function mergeRerank(prev: RecItem[], next: RecItem[], played: ReadonlySe
   const kept = prev.filter((x) => played.has(x.track.key) || x.added);
   const keptKeys = new Set(kept.map((x) => x.track.key));
   return [...kept, ...next.filter((x) => !keptKeys.has(x.track.key))].map((x, i) => ({ ...x, rank: i + 1 }));
+}
+
+const songsN = (n: number) => `${n} new song${n === 1 ? '' : 's'}`;
+/**
+ * SIMILAR-MIN-001: what Find similar added, said truthfully: how many reached the chosen sound match,
+ * how many are the closest below it, and how many are related songs whose sound was not compared.
+ */
+export function similarSummary(out: { added: number; reached?: number; below?: number; unmeasured?: number; minimum: number; reason?: string }, title: string): string {
+  const reached = out.reached ?? out.added, below = out.below ?? 0, unmeasured = out.unmeasured ?? 0;
+  const parts: string[] = [];
+  if (reached) parts.push(`${songsN(reached)} with at least ${out.minimum}% sound match`);
+  if (below) parts.push(`${reached ? `${below} more` : songsN(below)} that ${below === 1 ? 'is' : 'are'} the closest below ${out.minimum}%`);
+  if (unmeasured) parts.push(`${reached || below ? `${unmeasured} more` : songsN(unmeasured)} related by the services, sound not compared`);
+  return `Added ${parts.join(', ')} to “${title}”.`;
 }

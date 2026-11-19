@@ -38,6 +38,54 @@ class PlayQueueTest {
     assertEquals("Next under repeat-one still moves on", 1, q.advance(pressed = true))
   }
 
+  @Test fun finiteRepeatCountsExtraWholePlaysThenReturnsToTheNextSong() {
+    val q = queue(S("a"), S("b"))
+    q.repeat = PlayQueue.Repeat.TWICE
+    assertEquals(0, q.peekAfterEnd())
+    assertEquals(PlayQueue.Repeat.ONCE, q.consumeRepeat())
+    assertEquals(0, q.peekAfterEnd())
+    assertEquals(PlayQueue.Repeat.OFF, q.consumeRepeat())
+    assertEquals(1, q.peekAfterEnd())
+    q.repeat = PlayQueue.Repeat.ONCE
+    assertEquals(PlayQueue.Repeat.OFF, q.consumeRepeat())
+    q.repeat = PlayQueue.Repeat.ONE
+    assertEquals(PlayQueue.Repeat.ONE, q.consumeRepeat())
+  }
+
+  @Test fun aCountedReplayBelongsToItsSongAndIsDroppedWhenTheListenerLeavesIt() {
+    val changes = mutableListOf<PlayQueue.Repeat>()
+    fun fresh() = queue(S("a"), S("b"), S("c")).also { q -> q.onRepeatChanged = { changes += q.repeat } }
+    var q = fresh(); q.repeat = PlayQueue.Repeat.TWICE
+    assertEquals(1, q.advance(pressed = true))
+    assertEquals("Next leaves the song: no replays carried to the next one", PlayQueue.Repeat.OFF, q.repeat)
+    q = fresh(); q.select(1); q.repeat = PlayQueue.Repeat.ONCE
+    assertEquals(0, q.previous())
+    assertEquals(PlayQueue.Repeat.OFF, q.repeat)
+    q = fresh(); q.repeat = PlayQueue.Repeat.ONCE
+    assertTrue(q.select(2))
+    assertEquals(PlayQueue.Repeat.OFF, q.repeat)
+    q = fresh(); q.repeat = PlayQueue.Repeat.TWICE
+    assertTrue("choosing the same song again keeps its count", q.select(0))
+    assertEquals(PlayQueue.Repeat.TWICE, q.repeat)
+    q = fresh(); q.repeat = PlayQueue.Repeat.ONE
+    q.advance(pressed = true); q.select(2); q.previous()
+    assertEquals("infinity is a mode, not a count: it stays", PlayQueue.Repeat.ONE, q.repeat)
+    assertEquals(
+      listOf(PlayQueue.Repeat.TWICE, PlayQueue.Repeat.OFF, PlayQueue.Repeat.ONCE, PlayQueue.Repeat.OFF, PlayQueue.Repeat.ONCE, PlayQueue.Repeat.OFF, PlayQueue.Repeat.TWICE, PlayQueue.Repeat.ONE),
+      changes,
+    )
+  }
+
+  @Test fun everyRepeatChangeIsAnnouncedOnceIncludingTheCountdown() {
+    val q = queue(S("a"), S("b"))
+    var n = 0
+    q.onRepeatChanged = { n++ }
+    q.repeat = PlayQueue.Repeat.TWICE; q.repeat = PlayQueue.Repeat.TWICE
+    assertEquals(1, n)
+    q.consumeRepeat(); q.consumeRepeat(); q.consumeRepeat()
+    assertEquals("twice, once, off; a third end changes nothing", 3, n)
+  }
+
   @Test fun nextPressedWrapsEvenWithRepeatOff() {
     val q = queue(S("a"), S("b"))
     q.advance(true)
@@ -307,5 +355,27 @@ class PlayQueueTest {
     assertTrue(q.select("c"))
     assertEquals(S("c"), q.current)
     assertTrue(!q.select("missing"))
+  }
+
+  /** CAR-MOOD-001: the listening mood re-arranges what is still to come in a shuffle round, nothing else. */
+  @Test fun theMoodReArrangesOnlyTheRestOfAShuffleRound() {
+    val q = queue(S("a"), S("b"), S("c"), S("d"), S("e"))
+    q.shuffle = true
+    val ahead = q.roundAhead()
+    assertEquals(4, ahead.size)
+    assertTrue("the playing song is not ahead", q.current!!.key !in ahead)
+    val wanted = ahead.reversed()
+    assertTrue(q.arrangeRound(wanted))
+    assertEquals(wanted, q.roundAhead())
+    val first = q.advance(pressed = false)!!
+    assertEquals(wanted[0], q.items[first].key)
+    assertEquals("a heard song never comes back", wanted.drop(1), q.roundAhead())
+    assertTrue(!q.arrangeRound(listOf(wanted[0])))
+  }
+
+  @Test fun theMoodLeavesAnInOrderQueueToTheList() {
+    val q = queue(S("a"), S("b"), S("c"))
+    assertEquals(emptyList<String>(), q.roundAhead())
+    assertTrue(!q.arrangeRound(listOf("c", "b")))
   }
 }

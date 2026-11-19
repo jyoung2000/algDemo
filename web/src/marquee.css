@@ -1,0 +1,32 @@
+/* MARQUEE-001: cut-off row text glides to its end and back. Only `transform` animates. */
+.mq {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.mq__inner {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: auto;
+}
+.mq.is-moving {
+  /* A soft fade at the edge says "there is more" while it waits. */
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+}
+.mq.is-moving .mq__inner {
+  will-change: transform;
+  animation: mq-glide var(--mq-time, 12s) ease-in-out infinite;
+}
+/* 0-15% wait at the start, glide, 50-65% wait at the end, glide back. */
+@keyframes mq-glide {
+  0%, 15% { transform: translateX(0); }
+  50%, 65% { transform: translateX(var(--mq-shift, 0)); }
+  100% { transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mq.is-moving .mq__inner { animation: none; }
+  .mq.is-moving { -webkit-mask-image: none; mask-image: none; text-overflow: ellipsis; }
+}

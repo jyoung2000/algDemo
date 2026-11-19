@@ -5,8 +5,10 @@ import { TastePicker, type TrailPoint } from './TastePicker';
 import { familyName, placeGenre, placeSong } from './taste-map';
 import { Art } from './Art';
 import { AlgorithmManager } from './AlgorithmManager';
-import { formulaText } from './engine/algorithms';
+import { PARAM_FIELDS, formulaText, getParam } from './engine/algorithms';
 import { useAlgorithms } from './useAlgorithms';
+import { useAlgorithmDraft } from './useAlgorithmDraft';
+import './algorithm-manager.css';
 
 /** What each scoring factor means, in the words the rest of the app uses. */
 const FACTOR_TEXT: Record<string, [string, string]> = {
@@ -23,6 +25,7 @@ const FACTOR_TEXT: Record<string, [string, string]> = {
 
 const KIND_LABEL: Record<string, string> = {
   complete: 'Full listens',
+  qualified: 'Part listens',
   replay: 'Replays',
   skip: 'Skips',
   like: 'Likes',
@@ -82,6 +85,15 @@ function Bar({ value, label }: { value: number; label: string }) {
   );
 }
 
+/** What the running engine is using for one algorithm parameter (the Now column). */
+function engineNow(p: Profile, path: string): number | undefined {
+  const [group, key] = path.split('.');
+  const f = p.formula;
+  if (group === 'seedWeights') return f.affinity.factors.find((x) => x.factor === key)?.weight;
+  if (group === 'globalWeights') return f.affinity.global.find((x) => x.factor === key)?.weight;
+  return ({ bestSeedShare: f.affinity.best_seed_share, tasteWeight: f.taste.weight, coverageFloor: f.coverage.floor, exposurePerShow: f.exposure.per_show, exposureMax: f.exposure.max } as Record<string, number>)[path];
+}
+
 /** "Your profile": everything the recommender tracks, what it learned, and how it uses it. Read-only. */
 export function ProfileView() {
   const [p, setP] = useState<Profile | null>(null);
@@ -91,6 +103,8 @@ export function ProfileView() {
   // ALGO-MANAGER-001: the same active algorithm Settings shows; its numbers drive the formula below.
   const algs = useAlgorithms(null);
   const alg = algs.active;
+  // ALGO-FORM-001: the unsaved edits of the form above, so this card never contradicts it.
+  const draft = useAlgorithmDraft(alg);
 
   const load = () => {
     setBusy(true);
@@ -223,6 +237,7 @@ export function ProfileView() {
               ['Starting songs', p.seeds.length],
               ['Events recorded', t.events],
               ['Songs played', t.songs_played],
+              ['Heard on radio', t.radio_listens ?? 0],
               ['Listening time', fmtListen(t.listened_sec)],
               ['Artists heard', t.artists],
               ['Shown in lists', `${t.impressions.shown}`],
@@ -337,6 +352,7 @@ export function ProfileView() {
                   {s.artist ? ` — ${s.artist}` : ''}
                   <span className="note">
                     {' '}
+                    {s.radio ? '· radio ' : ''}
                     {s.bpm !== null ? `· ${s.bpm} BPM` : '· no tempo'}
                     {s.genres.length ? ` · ${s.genres.join(', ')}` : ' · no genre'}
                   </span>
@@ -423,71 +439,48 @@ export function ProfileView() {
         </section>
       )}
 
-      <section className="card" aria-labelledby="pf-formula">
+      <section className="card algo" aria-labelledby="pf-formula">
         <h2 id="pf-formula">Recommendation formula</h2>
         <p className="note">
-          The score the app gives each candidate, from the active algorithm “{alg.name}” (the same one shown at the top and in Settings). The
-          slider and the new-releases switch then scale some weights; the Now column is read from the engine.
+          The score the app gives each candidate, from the active algorithm “{alg.name}”: the same parameters, in the same order, as the form at the
+          top and in Settings. Value is what the algorithm holds; Now is what the engine is using after the slider and the new-releases switch
+          scale some weights. Listening events count half after {p.formula.taste.half_life_days} days, and the repeat penalty looks at the last{' '}
+          {p.formula.exposure.window_days} days.
         </p>
-        <pre className="formula">{formulaText(alg)}</pre>
-        <table className="ptable">
-          <thead>
-            <tr>
-              <th scope="col">Term</th>
-              <th scope="col">Value</th>
-              <th scope="col">Now</th>
-              <th scope="col">Meaning</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(['audio', 'genre', 'artist', 'provider', 'feedback', 'tempo'] as const).map((k) => (
-              <tr key={`seed-${k}`}>
-                <th scope="row">{(FACTOR_TEXT[k] ?? [k])[0]} (seed fit)</th>
-                <td>{alg.params.seedWeights[k]}</td>
-                <td>{p.formula.affinity.factors.find((f) => f.factor === k)?.weight ?? '—'}</td>
-                <td>{(FACTOR_TEXT[k] ?? ['', ''])[1]}</td>
+        {draft.unsaved && (
+          <p className="note" role="status">
+            Showing unsaved changes to “{alg.name}”. The Now column changes when they are saved.
+          </p>
+        )}
+        <pre className="formula algo__formula" aria-label={`Formula of ${alg.name} as scored`}>{formulaText(draft.shown)}</pre>
+        <div className="algo__scroll">
+          <table className="ptable algo__table">
+            <thead>
+              <tr>
+                <th scope="col">Parameter</th>
+                <th scope="col">Value</th>
+                <th scope="col">Now</th>
+                <th scope="col">Meaning</th>
               </tr>
-            ))}
-            {(['feedback', 'freshness', 'novelty'] as const).map((k) => (
-              <tr key={`global-${k}`}>
-                <th scope="row">{(FACTOR_TEXT[k] ?? [k])[0]} (global)</th>
-                <td>{alg.params.globalWeights[k]}</td>
-                <td>{p.formula.affinity.global.find((f) => f.factor === k)?.weight ?? '—'}</td>
-                <td>{(FACTOR_TEXT[k] ?? ['', ''])[1]}</td>
+            </thead>
+            <tbody>
+              {PARAM_FIELDS.map((f) => (
+                <tr key={f.path}>
+                  <th scope="row">{f.label}</th>
+                  <td>{getParam(draft.shown.params, f.path)}</td>
+                  <td>{engineNow(p, f.path) ?? '—'}</td>
+                  <td>{f.meaning}</td>
+                </tr>
+              ))}
+              <tr>
+                <th scope="row">Final step</th>
+                <td colSpan={3}>
+                  <code>{draft.shown.finalFormula}</code>
+                </td>
               </tr>
-            ))}
-            <tr>
-              <th scope="row">Best starting song share</th>
-              <td>{alg.params.bestSeedShare}</td>
-              <td>{p.formula.affinity.best_seed_share}</td>
-              <td>Share of the blend taken from the single best-matching starting song.</td>
-            </tr>
-            <tr>
-              <th scope="row">Listening taste</th>
-              <td>{alg.params.tasteWeight}</td>
-              <td>{p.formula.taste.weight}</td>
-              <td>
-                Blended into the affinity; a song's genres and tempo, with events counting half after {p.formula.taste.half_life_days} days.
-              </td>
-            </tr>
-            <tr>
-              <th scope="row">Coverage floor</th>
-              <td>{alg.params.coverageFloor}</td>
-              <td>{p.formula.coverage.floor}</td>
-              <td>The score kept when a song has little evidence.</td>
-            </tr>
-            <tr>
-              <th scope="row">Repeat penalty</th>
-              <td>
-                {alg.params.exposurePerShow} per show, max {alg.params.exposureMax}
-              </td>
-              <td>
-                {p.formula.exposure.per_show} per show, max {p.formula.exposure.max}
-              </td>
-              <td>Subtracted for songs already shown in the last {p.formula.exposure.window_days} days.</td>
-            </tr>
-          </tbody>
-        </table>
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="card" aria-labelledby="pf-algo">
@@ -707,6 +700,7 @@ export function ProfileView() {
                 <span className="plog__what">
                   {e.title}
                   {e.artist ? ` — ${e.artist}` : ''}
+                  {e.radio ? <span className="note"> · radio</span> : null}
                 </span>
                 {e.listened !== null && <span className="plog__len">{fmtListen(Math.round(e.listened))}</span>}
               </li>

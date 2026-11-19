@@ -20,6 +20,8 @@ export interface ProfileEventRow {
   track: Dict | null;
   listened: number | null;
   ts: number;
+  /** 'radio' when the song was heard on a station (RADIO-TASTE-001). */
+  medium?: string | null;
 }
 
 export interface ProfileInput {
@@ -143,7 +145,7 @@ export function buildProfile(inp: ProfileInput): Dict {
   const recent = [...events]
     .reverse()
     .slice(0, 40)
-    .map((e) => ({ ts: e.ts, kind: e.kind, key: e.key, title: titleOf(e.track, e.key), artist: artistOf(e.track, e.artist), listened: e.listened }));
+    .map((e) => ({ ts: e.ts, kind: e.kind, key: e.key, title: titleOf(e.track, e.key), artist: artistOf(e.track, e.artist), listened: e.listened, radio: e.medium === 'radio' }));
 
   // ---- the last songs actually played, with the tempo and genres the taste model used -----
   // A play is a finished listen, a replay or a skip (the same kinds that count as plays above).
@@ -166,6 +168,7 @@ export function buildProfile(inp: ProfileInput): Dict {
         genres: tags.map((g) => String(g['label'] ?? g['name'])).slice(0, 4),
         genre_names: tags.map((g) => String(g['name'])).slice(0, 4),
         listened: e.listened,
+        radio: e.medium === 'radio',
       };
     });
 
@@ -196,6 +199,7 @@ export function buildProfile(inp: ProfileInput): Dict {
       plays,
       listened_sec: Math.round(listenedSec),
       songs_played: playedKeys.size,
+      radio_listens: events.filter((e) => e.medium === 'radio' && (e.kind === 'complete' || e.kind === 'qualified')).length,
       artists: artists.size,
       first: events[0]?.ts ?? null,
       last: events[events.length - 1]?.ts ?? null,

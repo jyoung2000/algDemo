@@ -214,6 +214,22 @@ export class Store {
   feedback(): FeedbackRow[] {
     return this.fb.map(({ id: _id, ...r }) => structuredClone(r));
   }
+  hasFeedback(eventId: string): boolean {
+    return this.fbIds.has(eventId);
+  }
+  /**
+   * RADIO-TASTE-001: remove the one event a fuller report of the same listen replaces. Only that
+   * event, and only when it is what the caller says it is; anything else is left alone.
+   */
+  replaceFeedback(eventId: string, match: { key: string; kind: string; medium: string; coverageBelow?: number }): { ts: number } | null {
+    const row = this.fb.find((r) => r.event_id === eventId);
+    if (!row || row.key !== match.key || row.kind !== match.kind || row.medium !== match.medium) return null;
+    if (match.coverageBelow !== undefined && !((row.coverage ?? 0) < match.coverageBelow)) return null;
+    this.fb = this.fb.filter((r) => r !== row);
+    this.fbIds.delete(eventId);
+    this.write(() => this.be.del('feedback', String(row.id)));
+    return { ts: row.ts };
+  }
   removeFeedback(key: string, kinds: string[]): number {
     const gone = this.fb.filter((r) => r.key === key && kinds.includes(r.kind));
     if (!gone.length) return 0;

@@ -18,7 +18,15 @@ class PlayQueue<T>(
   private val isPlayable: (T) -> Boolean,
   private val random: Random = Random.Default,
 ) {
-  enum class Repeat { OFF, ONE, ALL }
+  /** ONE is the old id for infinite song repeat; ALL survives only for legacy saved states. */
+  enum class Repeat { OFF, ONE, ALL, ONCE, TWICE }
+
+  val repeatsSong: Boolean get() = repeat == Repeat.ONE || repeat == Repeat.ONCE || repeat == Repeat.TWICE
+  /** A decoder-confirmed end has started one more full play; show the number still owed. */
+  fun consumeRepeat(): Repeat {
+    repeat = when (repeat) { Repeat.TWICE -> Repeat.ONCE; Repeat.ONCE -> Repeat.OFF; else -> repeat }
+    return repeat
+  }
 
   var items: List<T> = emptyList()
     private set
@@ -26,7 +34,9 @@ class PlayQueue<T>(
   var index: Int = -1
     private set
   var repeat: Repeat = Repeat.OFF
-    set(value) { if (field != value) { field = value; version++ } }
+    set(value) { if (field != value) { field = value; version++; onRepeatChanged?.invoke() } }
+  /** Told of every change, including the ones made here: a count used up, or dropped with its song. */
+  var onRepeatChanged: (() -> Unit)? = null
   var shuffle: Boolean = false
     set(value) {
       if (field == value) return
@@ -101,6 +111,7 @@ class PlayQueue<T>(
     version++
     this.items = items
     index = if (items.isEmpty()) -1 else startIndex.coerceIn(0, items.size - 1)
+    if (oldKey != null && current?.let(keyOf) != oldKey && (repeat == Repeat.ONCE || repeat == Repeat.TWICE)) repeat = Repeat.OFF
     if (items.isEmpty()) {
       heard.clear()
       order = emptyList()
@@ -148,6 +159,7 @@ class PlayQueue<T>(
   /** Explicit replay is allowed, but must not erase what automatic shuffle already played. */
   fun select(i: Int): Boolean {
     if (i !in items.indices) return false
+    if (i != index && (repeat == Repeat.ONCE || repeat == Repeat.TWICE)) repeat = Repeat.OFF
     if (shuffle) {
       // Native natural-end and blend handoffs also select the peek. Commit that prepared round,
       // just as advance() would, instead of redrawing the rest after each song.
@@ -161,12 +173,35 @@ class PlayQueue<T>(
   }
 
   /**
-   * What plays when the current song ends by itself: repeat-one repeats it, otherwise the next
-   * playable song, carrying on into the next round only under repeat-all. Null means stop.
+   * CAR-MOOD-001: under shuffle the next songs come from this round's drawn order, not the list's.
+   * [roundAhead] names the songs of the round still to come, in play order; [arrangeRound] plays the
+   * ones [keys] names in that order, in the same slots. Songs heard this round never move back.
    */
-  fun peekAfterEnd(): Int? = if (repeat == Repeat.ONE && index >= 0) index else findNext(repeat == Repeat.ALL)?.first
+  fun roundAhead(): List<String> {
+    if (!shuffle) return emptyList()
+    return order.map { keyOf(items[it]) }.filter { it !in heard && it != current?.let(keyOf) }
+  }
 
-  /** The listener pressed Next: always moves on, even under repeat-one, wrapping like the page's Next. */
+  fun arrangeRound(keys: List<String>): Boolean {
+    if (!shuffle) return false
+    val rank = HashMap<String, Int>()
+    keys.forEachIndexed { i, k -> rank.putIfAbsent(k, i) }
+    val now = current?.let(keyOf)
+    val slots = order.indices.filter { val k = keyOf(items[order[it]]); k in rank && k !in heard && k != now }
+    if (slots.size < 2) return false
+    val sorted = slots.map { order[it] }.sortedBy { rank[keyOf(items[it])] }
+    val next = order.toMutableList()
+    slots.forEachIndexed { j, s -> next[s] = sorted[j] }
+    if (next == order) return false
+    order = next
+    version++
+    return true
+  }
+
+  /** On a natural end, repeat this song while extra plays remain; then move to the next. */
+  fun peekAfterEnd(): Int? = if (repeatsSong && index >= 0) index else findNext(repeat == Repeat.ALL)?.first
+
+  /** The listener pressed Next: always moves on, including under song repeat. */
   fun peekNextPressed(): Int? = findNext(wrap = true)?.first
 
   /** The previous playable song of this round, or null at its start. */
@@ -178,8 +213,9 @@ class PlayQueue<T>(
 
   /** Commit what [peekAfterEnd] ([pressed] false) or [peekNextPressed] ([pressed] true) said. */
   fun advance(pressed: Boolean): Int? {
-    if (!pressed && repeat == Repeat.ONE && index >= 0) return index
+    if (!pressed && repeatsSong && index >= 0) { consumeRepeat(); return index }
     val (i, wrapped) = findNext(wrap = pressed || repeat == Repeat.ALL) ?: return null
+    if (pressed && i != index && (repeat == Repeat.ONCE || repeat == Repeat.TWICE)) repeat = Repeat.OFF
     if (wrapped) commitRound(i)
     index = i
     version++
@@ -191,6 +227,7 @@ class PlayQueue<T>(
   /** Commit what [peekPrevious] said. */
   fun previous(): Int? {
     val i = peekPrevious() ?: return null
+    if (i != index && (repeat == Repeat.ONCE || repeat == Repeat.TWICE)) repeat = Repeat.OFF
     index = i
     version++
     heard += keyOf(items[i])

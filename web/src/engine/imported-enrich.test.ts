@@ -163,7 +163,7 @@ describe('saved rows show genres for every song (SAVED-GENRES-001)', () => {
     const genres = ((item['characteristics'] as Dict | undefined)?.['genres'] ?? []) as string[];
     expect(genres.length).toBeGreaterThan(0);
   });
-  it('lends a confident imported match\'s genres to a same-key copy streamed earlier (no tags of its own)', async () => {
+  it('keeps the imported file as the source when the same song was streamed, queued and seeded earlier', async () => {
     const { api, store } = await open();
     const { name, tracks } = folderPlaylist('C:\\Music\\Mix', [imported('Sicko Mode', 'Travis Scott')]);
     await api.handle('POST', '/api/playlists', { action: 'create', name, tracks });
@@ -175,7 +175,15 @@ describe('saved rows show genres for every song (SAVED-GENRES-001)', () => {
     await api.handle('PUT', '/api/seeds', { seeds: [{ key, id: 'ytmusic:s1', provider: 'ytmusic', platform_id: 's1', title: 'Sicko Mode', artists: ['Travis Scott'], artist: 'Travis Scott', url: 'https://music.youtube.com/watch?v=s1' }] });
     const list = await listOf(api);
     const item = (list['items'] as Dict[])[0]!;
-    expect((item['track'] as Dict)['provider']).toBe('ytmusic');
+    const held = item['track'] as Dict;
+    expect(held['provider']).toBe('imported');
+    expect(held['url']).toBe((tracks[0] as unknown as Dict)['url']);
     expect((((item['characteristics'] as Dict | undefined)?.['genres']) ?? []) as string[]).not.toHaveLength(0);
+    // Pressing Play list must also hand the local source to the player, not the online copy.
+    const queued = await api.handle('POST', '/api/queue/playlist', { id: list['id'] });
+    expect(queued.status).toBe(200);
+    const seeds = ((queued.body as Dict)['seeds'] ?? []) as Dict[];
+    expect(seeds[0]?.['provider']).toBe('imported');
+    expect(seeds[0]?.['url']).toBe(held['url']);
   });
 });

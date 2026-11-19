@@ -1,3 +1,5 @@
+import { classifyStation } from './engine/radio-genres';
+import type { RadioStation } from './engine/radio';
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 
@@ -7,6 +9,8 @@ import { ListDownloadBar } from './ListDownloadBar';
 import { ListSaveButton } from './ListSaveButton';
 import { albumFolderName } from './engine/list-save';
 import { SaveMenu } from './SaveMenu';
+import { SongStar, inPlaylist } from './SongStar';
+import { SimilarGlyph } from './icons';
 import { ALBUM_KIND } from './AlbumShelf';
 import { SongCredits } from './SongCredits';
 import { SoundCard } from './SoundCard';
@@ -16,6 +20,8 @@ import type { CardCache } from './engine/queue-controls';
 import { classNames, genreBubbles } from './util';
 import { GenreBubbleView } from './Results';
 import { RowPlayButton, playOnDoubleClick } from './RowPlay';
+import { Marquee } from './Marquee';
+import { ROW_COVER } from './row-cover';
 import { listStrip, listTaste } from './list-strip';
 import './save-menu.css';
 import './saved-lists.css';
@@ -44,6 +50,9 @@ interface Props {
   onOpenAlbumId?: ((id: string) => void) | undefined;
   /** ARTIST-PAGE-001: each artist named on a song opens that artist's page. */
   onOpenArtist?: ((t: ArtistTarget) => void) | undefined;
+  /** ROW-UNIFY-001: Find similar sound, as on a Discover row. */
+  onSimilar?: ((t: Track) => void) | undefined;
+  similarBusy?: boolean;
 }
 
 const ALL = 'all';
@@ -56,7 +65,7 @@ const ALL = 'all';
  * and the owner asked for that control to go. A whole list can become the now playing queue instead,
  * and then every song in it is a starting song (PLAYLIST-QUEUE-001).
  */
-export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemoveSaved, onDownload, cacheOf, onVisibleList, onUseAsQueue, queueListId, onOpenAlbum, onOpenAlbumId, onOpenArtist }: Props) {
+export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemoveSaved, onDownload, cacheOf, onVisibleList, onUseAsQueue, queueListId, onOpenAlbum, onOpenAlbumId, onOpenArtist, onSimilar, similarBusy }: Props) {
   const [view, setView] = useState<string>(ALL);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
@@ -171,7 +180,8 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
   const byKey = new Map((saved ?? []).map((s) => [s.track.key, s.track]));
   const rows: { track: Track; played?: boolean; characteristics?: Characteristics }[] =
     current === null
-      ? (saved ?? []).map((s) => ({ track: s.track }))
+      // TAGS-ALWAYS-001: the engine sends every saved song's genres worked out (as a Discover row).
+      ? (saved ?? []).map((s) => ({ track: s.track, characteristics: s.characteristics }))
       : current.items
           // IMPORT-GENRES-001: an imported song's list copy carries the cover and genres it was given.
           .map((i) => ({ track: (String(i.track?.provider) === 'imported' ? i.track : byKey.get(i.key) ?? i.track) as Track | null, played: i.played, characteristics: (i as typeof i & { characteristics?: Characteristics }).characteristics }))
@@ -408,7 +418,11 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
           {rows.map(({ track, played, characteristics }) => {
             const cache = cacheOf?.(track.key) ?? null;
             // IMPORT-GENRES-001 / SAVED-GENRES-001: every saved song the engine placed shows its genre bubbles.
-            const bubbles = genreBubbles(characteristics);
+            // RADIO-GENRES-001: a programme bookmark shows what its station broadcasts (a format, not a song genre).
+            const station = (track as Track & { radio_station?: RadioStation }).radio_station;
+            const bubbles = track.kind === 'radio-programme' && station
+              ? classifyStation({ tags: station.tags ?? [], name: station.name, language: station.language, countryCode: station.countryCode })
+              : genreBubbles(characteristics);
             return (
             <li key={track.key} className="track" data-dl={cache?.state} onDoubleClick={playOnDoubleClick(() => onPreview(track, current?.id))}
               style={cache ? ({ '--dl': `${cache.progress}%` } as CSSProperties) : undefined}>
@@ -418,9 +432,9 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
                   <span className="sr">{cache.keptText ? `${cache.text}. ${cache.keptText}.` : `${cache.text}.`}</span>
                 </span>
               )}
-              <Art src={track.artwork} size={44} />
+              <Art src={track.artwork} size={ROW_COVER} />
               <div className="track__text">
-                <span className="track__title">{track.title}</span>
+                <Marquee className="track__title" title={track.title}>{track.title}</Marquee>
                 <SongCredits track={track} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} />
                 {bubbles.length > 0 && (
                   <span className="rec__facts list-strip__facts" aria-label="Song details">
@@ -434,21 +448,18 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
                 </span>
               )}
               <span className="track__actions">
+                {/* ROW-UNIFY-001 / STAR-MENU-001 (owner, 2026-11-19): the Discover row's order - Play, star
+                    (the saved-list menu), X, Download, Find similar - so the three lists work alike. */}
                 <RowPlayButton track={track} cache={cache} onPlay={() => onPreview(track, current?.id)} />
-                {onDownload && (
-                  <button className="iconbtn" type="button" aria-label={`Download ${track.title}`} title="Download" onClick={() => onDownload(track)}>
-                    <Glyph name="download" size={14} />
-                  </button>
-                )}
                 <button
                   className={classNames('iconbtn', menuFor === track.key && 'is-on')}
                   type="button"
                   aria-expanded={menuFor === track.key}
-                  aria-label={`Choose lists for ${track.title}`}
+                  aria-label={`Choose lists for ${track.title}${inPlaylist(track.key, lists) ? ' — saved to a playlist' : ''}`}
                   title="Save to lists"
                   onClick={() => setMenuFor(menuFor === track.key ? null : track.key)}
                 >
-                  <Glyph name="folder" size={14} />
+                  <SongStar saved={inPlaylist(track.key, lists)} />
                 </button>
                 {/* A saved album keeps the album's songs (ALBUM-SAVE-001); it is removed whole. */}
                 {!albumOf && <button
@@ -463,6 +474,16 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
                 >
                   <Glyph name="close" size={14} />
                 </button>}
+                {onDownload && (
+                  <button className="iconbtn" type="button" aria-label={`Download ${track.title}`} title="Download" onClick={() => onDownload(track)}>
+                    <Glyph name="download" size={14} />
+                  </button>
+                )}
+                {onSimilar && (
+                  <button className="iconbtn rec__similar" type="button" onClick={() => onSimilar(track)} disabled={similarBusy} aria-label={`Find similar sound to ${track.title}`} title="Find similar sound">
+                    <SimilarGlyph size={16} />
+                  </button>
+                )}
               </span>
               {menuFor === track.key && (
                 <div className="track__savemenu">

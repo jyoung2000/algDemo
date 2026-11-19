@@ -51,18 +51,19 @@ export function ListDownloadButton({ tracks, label }: { tracks: Track[]; label?:
   const status = useListStatus(tracks);
   if (!downloadsAvailable() || !tracks.length) return null;
   const complete = status.total > 0 && status.ready === status.total;
+  // LIST-FOLDER-002 (owner, 2026-11-19): a list that is all on the device has nothing to download; the
+  // folder button beside this one opens it.
+  if (complete) return null;
   const busy = status.bulkActive && !status.blocked;
   const where = label ?? 'this list';
-  const name = complete
-    ? `All songs ready in ${where}`
-    : busy ? `Downloading ${where}`
-    : `Download all songs in ${where}`;
+  const name = busy ? `Downloading ${where}` : status.ready > 0 ? `Download the ${status.total - status.ready} missing songs in ${where}` : `Download all songs in ${where}`;
   return (
     <button
       type="button"
       className="iconbtn"
-      onClick={() => queueAudio.downloadAll(tracks)}
-      disabled={complete || busy}
+      // Only the songs not on the device yet: a song already downloaded is never asked for again.
+      onClick={() => queueAudio.downloadAll(tracks.filter((t) => !queueAudio.readyUrl(t)))}
+      disabled={busy}
       aria-label={name}
       title={name}
     >

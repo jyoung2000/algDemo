@@ -87,15 +87,14 @@ it('keeps its folder button a full target, and controls clear of the docked play
   expect(css).toMatch(/html \{\s*scroll-padding-bottom: calc\(var\(--tab-h\) \+ var\(--dock-h\)/);
 });
 
-it('shows a finished folder as done, and a failure to write it plainly', async () => {
+it('shows a finished folder as a folder button only (LIST-FOLDER-002), and a failure to write it plainly', async () => {
   state = { phase: 'done', held: 3, total: 3, folder: 'F', missing: 0, error: null };
   await draw();
-  expect(main().textContent).toContain('In its folder');
-  // Still pressable: it puts back songs deleted from the folder since.
-  expect(main().disabled).toBe(false);
-  expect(main().title).toBe('Check the folder with the album A Great Chaos and put back any missing song');
-  await act(async () => main().click());
-  expect(start).toHaveBeenCalledWith('album', 'Ken Carson - A Great Chaos', tracks);
+  // Owner, 2026-11-19: "remove the download icon and replace it with a folder icon to open the local folder".
+  expect(host.querySelector('button.push')).toBeNull();
+  await act(async () => folder().click());
+  expect(open).toHaveBeenCalledWith('album', 'Ken Carson - A Great Chaos');
+  expect(start).not.toHaveBeenCalled();
   await set({ phase: 'running', error: 'Disk full' });
   expect(host.querySelector('[role="status"]')!.textContent).toContain('The folder could not be written: Disk full');
 });

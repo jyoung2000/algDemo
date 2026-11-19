@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { SourceMark } from './SourceMark';
-import { ShuffleGlyph } from './icons';
+import { RepeatGlyph, ShuffleGlyph } from './icons';
 import { api, type ArtistTarget, type Playback, type Track } from './api';
 import { ArtistNames } from './ArtistLinks';
 import { warmer } from './engine/warm-shell';
 import { PREVIEW_ROUTE } from './engine/shape';
 import { Art } from './Art';
 import './player-upcoming.css';
+import './player-inline.css';
 import { Volume } from './Volume';
 import { PlayerActions, type TrackActionProps } from './PlayerActions';
 import { Wheel } from './Wheel';
@@ -24,7 +25,7 @@ import { queueAudio } from './engine/queue-audio';
 import { clearResume, writeResume } from './engine/resume';
 import { type DeckId } from './engine/audio-bus';
 import { PreviewMixer } from './engine/preview-mixer';
-import { COMPLETE_S, ListenMeter, PROVIDER_LABEL, SKIP_MAX_S, SKIP_MIN_S, artistOf, classNames, fmtDuration, isSilent, qualifiesCompletion, toggleMuteState, type RepeatMode } from './util';
+import { COMPLETE_S, ListenMeter, PROVIDER_LABEL, SKIP_MAX_S, SKIP_MIN_S, artistOf, classNames, fmtDuration, isSilent, qualifiesCompletion, toggleMuteState, consumeRepeat, type RepeatMode } from './util';
 
 export interface Playing {
   track: Track;
@@ -65,6 +66,8 @@ interface Props {
   actions: TrackActionProps;
   onShuffle: () => void;
   onRepeat: () => void;
+  /** Called only when a requested extra play actually starts. Native sends its own updated mode. */
+  onRepeatConsumed?: (remaining: RepeatMode) => void;
   onPrev: () => void;
   onNext: () => void;
   /** Only real, observed listening: a preview played to its end, or skipped by the user after a short listen.
@@ -138,7 +141,7 @@ type Mode = 'full' | 'local' | 'preview' | 'embed' | 'none';
  * A song with no YouTube Music version falls back to its 30-second Deezer preview in an <audio>
  * element. SoundCloud songs play in SoundCloud's widget, whose progress and volume Airwave cannot reach.
  */
-export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, repeat, cacheGb = 1, actions, onShuffle, onRepeat, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext, onOpenArtist }: Props) {
+export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, repeat, cacheGb = 1, actions, onShuffle, onRepeat, onRepeatConsumed, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext, onOpenArtist }: Props) {
   // Two decks, because a crossfade needs both songs audible at once: the outgoing song keeps
   // playing on its own element while the incoming one starts on the other. Both elements live for
   // the player's lifetime — a MediaElementAudioSourceNode can be made only once per element.
@@ -579,7 +582,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const nextKey = upNext[0]?.key ?? null;
   const nextPreview = upNext[0]?.preview ?? null;
   const nextTrack = upNext[0]?.track ?? null;
-  const repeatingOne = repeat === 'one';
+  const repeatingThis = repeat === 'one' || repeat === 'once' || repeat === 'twice';
   // A held full song is cued as the next deck (LOCAL-AUDIO-001): the blend lands on the whole
   // song. One the shell does not hold yet is downloaded now, so it is there by the time this song
   // ends — and if it is not, that song plays whole in YouTube's player, with no blend.
@@ -587,7 +590,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // One song of lookahead regardless of the crossfader position. Never fetch the entire discovery
   // list: the private disk cache is bounded and a changing queue cancels this intent naturally.
   useEffect(() => {
-    if (!canLocal || !nextTrack || repeatingOne) return;
+    if (!canLocal || !nextTrack || repeatingThis) return;
     let live = true;
     void (nextKnownId ? Promise.resolve({ id: nextKnownId }) : api.fullSong(nextTrack)).then((match) => {
       if (!live) return;
@@ -598,22 +601,22 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       void queueAudio.protect(cacheGb, protectedUrls).then(() => localLibrary.ensure(source, `${nextTrack.title} — ${nextTrack.artist}`, false, true)).catch(() => undefined);
     }).catch(() => undefined);
     return () => { live = false; };
-  }, [canLocal, nextKey, nextKnownId, repeatingOne, cacheGb, localSource]);
+  }, [canLocal, nextKey, nextKnownId, repeatingThis, cacheGb, localSource]);
   // The engine is told what comes next as soon as its file is here: it blends into it with the
   // mixer on, and with the mixer off still starts it the moment this song ends, page or no page.
-  const nextReady = native && nextTrack && !repeatingOne ? readyLocalUrl(nextTrack) : null;
+  const nextReady = native && nextTrack && !repeatingThis ? readyLocalUrl(nextTrack) : null;
   useEffect(() => {
     if (!native) return;
     engineSend({ op: 'cue', song: nextTrack && nextReady ? songFromTrack(nextTrack, true, nextReady) : null });
     // libraryTick: the next song's download finishing makes it ready to cue.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [native, key, nextKey, nextReady, repeatingOne, mix, libraryTick]);
+  }, [native, key, nextKey, nextReady, repeatingThis, mix, libraryTick]);
   useEffect(() => {
     if (native) return;
-    if (mix <= 0 || !onDeck || !nextKey || repeatingOne) {
+    if (mix <= 0 || !onDeck || !nextKey || repeatingThis) {
       if (mix <= 0 || !onDeck) mixer.current?.cancel();
       else void mixer.current?.prepare(null); // dropping lookahead must not erase this song's entrance
-      setMixNote(repeatingOne && mix > 0 ? 'Repeating this song — nothing to blend into.' : null);
+      setMixNote(repeatingThis && mix > 0 ? 'Repeating this song — nothing to blend into.' : null);
       return;
     }
     let live = true;
@@ -670,7 +673,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     };
     // libraryTick: a download finishing re-runs this so the song is cued once it is held.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mix, onDeck, nextKey, nextPreview, nextTrack, nextKnownId, repeatingOne, canLocal, libraryTick]);
+  }, [mix, onDeck, nextKey, nextPreview, nextTrack, nextKnownId, repeatingThis, canLocal, libraryTick]);
 
   const toggle = () => {
     if (canLocal && localSource && localStatus === 'missing') {
@@ -738,7 +741,11 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   };
   onEndRef.current = async (engineHeard?: number) => {
     recordEnd(engineHeard);
-    if (repeatRef.current === 'one') {
+    if (repeatRef.current === 'one' || repeatRef.current === 'once' || repeatRef.current === 'twice') {
+      // REPEAT-COUNT-001: this page is the one starting the extra play, so it counts it down. An
+      // engine that loops by itself (Android) reports 'repeat' instead and never reaches here.
+      const remaining = consumeRepeat(repeatRef.current);
+      if (remaining !== repeatRef.current) { repeatRef.current = remaining; onRepeatConsumed?.(remaining); }
       // Repeating this song means there is no next song to blend into.
       mixer.current?.cancel();
       // Play this song again. The next end of the same playback counts as a replay (see above), not a new listen.
@@ -791,7 +798,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
 
   const t = playing?.track;
   // CURRENT-PRIMARY-001: lookahead is supplementary; never use it as current metadata.
-  const upcoming = repeat === 'one' ? undefined : upNext.find((u) => u.key !== t?.key);
+  const upcoming = repeatingThis ? undefined : upNext.find((u) => u.key !== t?.key);
   const upcomingUrl = upcoming ? cuedSources.current.get(upcoming.key) ?? (upcoming.track ? readyLocalUrl(upcoming.track) : null) ?? upcomingSource : null;
   const upcomingState = upcomingUrl ? localLibrary.status(upcomingUrl) : 'idle';
   const loadingNext = upcomingState === 'running' || /^(Preparing|Downloading|Waiting for the next)/i.test(mixNote ?? '');
@@ -827,10 +834,11 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
         className={classNames('tbtn', 'tbtn--mode', repeat !== 'off' && 'is-on')}
         type="button"
         onClick={onRepeat}
-        aria-label={repeat === 'one' ? 'Repeat: this song' : repeat === 'all' ? 'Repeat: the whole list' : 'Repeat: off'}
-        title={repeat === 'one' ? 'Repeating this song' : repeat === 'all' ? 'Repeating the whole list' : 'Repeat is off'}
+        data-repeat={repeat}
+        aria-label={repeat === 'once' ? 'Repeat song: 1 extra play' : repeat === 'twice' ? 'Repeat song: 2 extra plays' : repeat === 'one' ? 'Repeat song: infinite plays' : 'Repeat song: off'}
+        title={repeat === 'once' ? 'Play this song once more, then continue' : repeat === 'twice' ? 'Play this song twice more, then continue' : repeat === 'one' ? 'Repeat this song forever' : 'Do not repeat this song'}
       >
-        <Glyph name={repeat === 'one' ? 'repeat-one' : 'repeat'} size={16} />
+        <RepeatGlyph mode={repeat} size={22} />
       </button>
     </div>
   );
@@ -880,7 +888,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // In the Android app the note follows from what the engine has been given, and a blend is what
   // the engine says it is doing; elsewhere the page's own mixer sets both.
   const nativeNote = !native || mix <= 0 ? null
-    : repeatingOne ? 'Repeating this song — nothing to blend into.'
+    : repeatingThis ? 'Repeating this song — nothing to blend into.'
     : nextTrack && !nextReady ? 'Downloading the next song so it can be blended in…'
     : null;
   const note = native ? nativeNote : mixNote;

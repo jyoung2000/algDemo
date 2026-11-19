@@ -12,7 +12,7 @@ import { decodeToMono48k } from './decode';
 import { type Ctx, type Deezer, ProviderError, cached } from './deezer';
 import { albumKeyOf } from './album-key';
 import { fold, matchRecordings } from './identity';
-import { needsSub, tagsFromMusicBrainz } from './infer';
+import { artistTagsFit, needsSub, tagsFromMusicBrainz } from './infer';
 import { ARTIST_SUBS_KEY, MUSICBRAINZ_UA, artistName, artistsToAsk, lookupArtistSubs, type ArtistSubsMap } from './artist-subs';
 import { BudgetExceeded, CancelToken, Cancelled, type Http, Meter } from './net';
 import type { SoundCloud } from './soundcloud';
@@ -484,7 +484,7 @@ export class Pipeline {
         subs = await ask(artist, k);
         done.set(k, subs);
       }
-      if (subs.length) {
+      if (subs.length && (bare || artistTagsFit(tags, subs))) {
         cand['tags'] = bare ? [...subs] : [...tags, ...subs];
         job.sources['musicbrainz_artist'] = { labeled: Number((job.sources['musicbrainz_artist'] as Dict | undefined)?.['labeled'] ?? 0) + 1 };
       }

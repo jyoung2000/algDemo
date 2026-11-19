@@ -255,6 +255,14 @@
 }
 .banner--list > span {
   flex: 1 1 220px;
+  /* UI-POLISH-001: the icon rides in the first line of the words (hanging indent), so it stays level
+     with that line whether the words wrap or sit beside the 44px button. */
+  padding-left: 22px;
+  text-indent: -22px;
+}
+.banner--list > span > .aqua-icon {
+  margin-right: 8px;
+  vertical-align: -2px;
 }
 /* A 44px target, like every other control (the small push is 40px). */
 .banner--list > .push {

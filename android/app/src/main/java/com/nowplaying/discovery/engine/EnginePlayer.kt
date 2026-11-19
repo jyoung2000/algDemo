@@ -103,11 +103,29 @@ class EnginePlayer(
   private var streamingKey: String? = null
   private var radioLive = false
 
+  /**
+   * CAR-RADIO-CONTROLS-001: where the item on air began on the ring clock (ms) and how long it is, as
+   * the page measured or the broadcaster published them; null when not known, and then the car is
+   * shown no elapsed time or length rather than the time since tuning in.
+   */
+  private var radioStartMs: Long? = null
+  private var radioLengthMs: Long? = null
+
+  private fun forgetRadioItem() {
+    radioStartMs = null; radioLengthMs = null
+    MediaHub.setRadioSong(null, null)
+  }
+
   /** RADIO-001: the same native engine and EQ, fed by a bounded live PCM source. */
-  fun pageRadioMetadata(id: String, title: String, artist: String, artwork: String = "") {
+  fun pageRadioMetadata(
+    id: String, title: String, artist: String, artwork: String = "",
+    song: MediaHub.Song? = null, track: JSONObject? = null, startMs: Long? = null, lengthMs: Long? = null,
+  ) {
     if (!radioLive || loadedKey != "radio:$id" || title.isBlank()) return
     val old = queue.current ?: return
-    queue.set(listOf(Entry(old.song.copy(title = title.take(200), artist = artist.take(200), artwork = artwork.takeIf { it.isNotBlank() }))), 0)
+    radioStartMs = startMs; radioLengthMs = lengthMs
+    MediaHub.setRadioSong(song, track)
+    queue.set(listOf(Entry(old.song.copy(title = title.take(200), artist = artist.take(200), artwork = artwork.takeIf { it.isNotBlank() }, durationMs = lengthMs ?: -1L))), 0)
     invalidateState(); emitSoon()
   }
 
@@ -115,6 +133,7 @@ class EnginePlayer(
     val live = com.nowplaying.discovery.RadioNative.session?.takeIf { it.id == id } ?: return
     loadGeneration++; restored = false; stopLanded()
     radioLive = true; loadedKey = "radio:$id"; waitingFor = null; streamingKey = null
+    forgetRadioItem()
     val song = MediaHub.Song("radio:$id", title, station, "Live radio", null, -1, true, null)
     queue.set(listOf(Entry(song)), 0); queue.shuffle = false; queue.repeat = PlayQueue.Repeat.OFF
     cue = null; cueFor = null; preparedNextKey = null; ended = false; error = null
@@ -129,6 +148,8 @@ class EnginePlayer(
   data class Entry(val song: MediaHub.Song, val mediaId: String = song.id)
 
   private val queue = PlayQueue<Entry>(keyOf = { it.mediaId }, isPlayable = { it.song.source != null && it.song.ready })
+  private val repeatSync = RepeatSync()
+  private var repeatFromPage = false
   private var playWhenReady = false
   private var ended = false
   private var error: PlaybackException? = null
@@ -210,7 +231,7 @@ class EnginePlayer(
    * the newest [rev] the page had seen; a load from before a change the service made is stale.
    */
   fun pageLoad(song: MediaHub.Song, mediaId: String?, positionMs: Long, play: Boolean, pageRev: Int) {
-    if (radioLive) { radioLive = false; com.nowplaying.discovery.RadioNative.stop(); com.nowplaying.discovery.RadioNative.shuffle = false }
+    if (radioLive) { radioLive = false; forgetRadioItem(); com.nowplaying.discovery.RadioNative.stop(); com.nowplaying.discovery.RadioNative.shuffle = false }
     val id = mediaId ?: song.id
     val current = queue.current
     Log.i(TAG, "page load ${song.id.take(60)} link=${song.source != null} play=$play rev=$pageRev/$rev")
@@ -256,7 +277,7 @@ class EnginePlayer(
     invalidateState()
     emitSoon()
   }
-  fun pageRepeat(mode: Int) = applyRepeat(mode)
+  fun pageRepeat(mode: Int) = applyRepeat(mode, fromPage = true)
   fun pageShuffle(on: Boolean) { queue.shuffle = on }
 
   /** RADIO-SHUFFLE-001: a radio op changed the station-shuffle flag; the session must mirror it. */
@@ -280,7 +301,9 @@ class EnginePlayer(
         else -> queue.set(entries + current, entries.size)
       }
       queue.shuffle = shuffle
-      if (repeat != repeatMode()) applyRepeat(repeat)
+      val chosen = repeatSync.fromPage(repeat)
+      if (chosen != null) { if (chosen != repeatMode()) applyRepeat(chosen, fromPage = true) }
+      else resendRepeatToPage() // it still shows a value the service has since changed: say so again
       invalidateState()
     } else if (queue.items.isNotEmpty()) {
       // Carrying on alone (or with no page list at all: a car cold start): keep the native order and
@@ -300,7 +323,30 @@ class EnginePlayer(
     loadCurrent(pendingStartMs, chosen = true)
   }
 
-  private fun repeatMode() = when (queue.repeat) { PlayQueue.Repeat.ONE -> 1; PlayQueue.Repeat.ALL -> 2; else -> 0 }
+  /** Wire modes: 0 off, 1 infinite, 3 one extra, 4 two extra. 2 was repeat-list (retired). */
+  private fun repeatMode() = when (queue.repeat) {
+    PlayQueue.Repeat.ONE -> 1
+    PlayQueue.Repeat.ONCE -> 3
+    PlayQueue.Repeat.TWICE -> 4
+    else -> 0
+  }
+
+  /** Current repeat-song selection (wire mode) for the car's button: 0 off, 3 one extra, 4 two extra, 1 infinite. */
+  val repeatSelection: Int get() = repeatMode()
+  /** The selection changed, by anyone: the phone, the car, a replay counted down, a song left. */
+  var onRepeatSelectionChanged: (() -> Unit)? = null
+
+  /** The car's repeat button: the same four-state cycle as the phone's. */
+  fun cycleSongRepeat(): Int {
+    val next = when (repeatMode()) { 0 -> 3; 3 -> 4; 4 -> 1; else -> 0 }
+    applyRepeat(next)
+    return next
+  }
+
+  /** A page that just woke: tell it a repeat change it slept through (the car's button, a countdown). */
+  fun resendRepeatToPage() {
+    if (repeatSync.owed != null && pageLive) page?.command(JSONObject().put("type", "repeat").put("mode", repeatMode()))
+  }
 
   /** The page handled service-made changes up to [upTo]; forget them. */
   fun ack(upTo: Int) { while (unacked.isNotEmpty() && unacked.first().optInt("seq") <= upTo) unacked.removeFirst() }
@@ -325,7 +371,7 @@ class EnginePlayer(
     if (queue.items.isNotEmpty() || loadedKey != null || waitingFor != null) return false
     val q = NativeStateCodec.nativeOf(saved, sourceAllowed)?.takeIf { it.entries.isNotEmpty() } ?: return false
     queue.restore(q.entries.map { (m, s) -> Entry(s, m) }, q.control)
-    engine.setRepeatOne(queue.repeat == PlayQueue.Repeat.ONE)
+    engine.setRepeatOne(queue.repeatsSong)
     playWhenReady = false
     pendingStartMs = q.positionMs
     ended = false
@@ -364,8 +410,8 @@ class EnginePlayer(
       .setRepeatMode(
         when (queue.repeat) {
           PlayQueue.Repeat.ONE -> Player.REPEAT_MODE_ONE
-          PlayQueue.Repeat.ALL -> Player.REPEAT_MODE_ALL
-          PlayQueue.Repeat.OFF -> Player.REPEAT_MODE_OFF
+          PlayQueue.Repeat.ALL -> Player.REPEAT_MODE_OFF // legacy list mode is no longer offered
+          PlayQueue.Repeat.OFF, PlayQueue.Repeat.ONCE, PlayQueue.Repeat.TWICE -> Player.REPEAT_MODE_OFF
         },
       )
       .build()
@@ -383,6 +429,13 @@ class EnginePlayer(
 
   private fun positionMs(snap: AudioEngine.Snapshot): Long {
     val current = queue.current ?: return 0
+    if (radioLive) {
+      // CAR-RADIO-CONTROLS-001: the item's own elapsed time, from where it began on the ring.
+      val start = radioStartMs ?: return 0
+      val ring = if (snap.key == current.song.id) snap.positionFrames * 1000 / SAMPLE_RATE else 0
+      val elapsed = (ring - start).coerceAtLeast(0)
+      return radioLengthMs?.let { elapsed.coerceAtMost(it) } ?: elapsed
+    }
     return if (snap.key == current.song.id) snap.positionFrames * 1000 / SAMPLE_RATE else pendingStartMs
   }
 
@@ -399,6 +452,10 @@ class EnginePlayer(
   override fun handleSetMediaItems(mediaItems: MutableList<MediaItem>, startIndex: Int, startPositionMs: Long): ListenableFuture<*> {
     val start = if (startIndex == C.INDEX_UNSET) 0 else startIndex.coerceIn(0, (mediaItems.size - 1).coerceAtLeast(0))
     val chosen = mediaItems.getOrNull(start)?.mediaId
+    // CAR-CONTROLS-001: a pick in the car's playlist picker hands back the queue as it is. The song
+    // stays loaded where it is (Media3 then only resumes it); the page would restart it and drop a
+    // repeat count, so it is not asked.
+    if (chosen != null && chosen == queue.current?.mediaId && mediaItems[start].requestMetadata.extras?.getBoolean(KEEP_PLAYING) == true) return Futures.immediateVoidFuture()
     // Radio is native even with a live page: never send station ids through music lookup/playId.
     if (chosen != null && RadioCatalog.stationId(chosen) != null) return RadioCatalog.play(context, chosen)
     if (pageLive && chosen != null) {
@@ -421,6 +478,53 @@ class EnginePlayer(
     queue.set(next, next.indexOfFirst { it.mediaId == keep }.coerceAtLeast(0))
     if (keep == null) loadCurrent(0, chosen = true) else prepareNext()
     return Futures.immediateVoidFuture()
+  }
+
+  /**
+   * CAR-SIMILAR-001: songs the car's Find similar added go to the end of the queue, after the song
+   * playing, which carries on. A live page owns the queue and sends its own list, so nothing here.
+   */
+  fun appendFound(songs: List<MediaHub.Song>): Int {
+    if (pageLive) return 0
+    val have = queue.items.map { it.mediaId }.toSet()
+    val add = songs.filter { it.id !in have }.map { Entry(MediaHub.sourced(it)) }
+    if (add.isEmpty()) return 0
+    val keep = queue.current?.mediaId
+    val next = queue.items + add
+    queue.set(next, next.indexOfFirst { it.mediaId == keep }.coerceAtLeast(0))
+    nativeChange()
+    prepareNext()
+    invalidateState(); emitSoon()
+    return add.size
+  }
+
+  /**
+   * CAR-MOOD-001: the song playing and the songs the listening mood may re-arrange, or null. Only with
+   * the phone app closed (a live page arranges its own queue, MOOD-QUEUE-001) and never on the radio.
+   * In order: Discover queue songs after the current one. Shuffle: the rest of this round, any list.
+   */
+  fun moodCandidates(): Pair<String?, List<String>>? {
+    if (pageLive || radioLive) return null
+    val ids = if (queue.shuffle) queue.roundAhead().filterNot { it.startsWith("radio") }
+      else com.nowplaying.discovery.CarMood.movable(queue.items.map { it.mediaId }, queue.index, shuffle = false)
+    return if (ids.size < 2) null else queue.current?.mediaId to ids
+  }
+
+  /** CAR-MOOD-001: play the movable songs in [order] (media ids). True when the queue changed. */
+  fun applyMood(order: List<String>): Boolean {
+    if (pageLive || radioLive) return false
+    val changed = if (queue.shuffle) queue.arrangeRound(order) else {
+      val ids = queue.items.map { it.mediaId }
+      val next = com.nowplaying.discovery.CarMood.apply(ids, queue.index, false, order) ?: return false
+      val pool = queue.items.groupBy { it.mediaId }.mapValues { ArrayDeque(it.value) }
+      queue.set(next.map { pool.getValue(it).removeFirst() }, queue.index)
+      true
+    }
+    if (!changed) return false
+    nativeChange()
+    prepareNext()
+    invalidateState(); emitSoon()
+    return true
   }
 
   /** A car/controller may clear or remove queue entries between playback requests. Advertising
@@ -493,7 +597,8 @@ class EnginePlayer(
         Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> return RadioCatalog.skip(context, 1)
         Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> return RadioCatalog.skip(context, -1)
         Player.COMMAND_SEEK_BACK -> pageSeek((engine.snapshot.positionFrames * 1000 / SAMPLE_RATE - 15000).coerceAtLeast(0))
-        Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM -> pageSeek(positionMs)
+        // The car's bar shows the item's own time: a drag lands that far into the item on the ring.
+        Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM -> radioStartMs?.let { pageSeek((it + positionMs).coerceAtLeast(0)) }
       }
       return Futures.immediateVoidFuture()
     }
@@ -515,9 +620,11 @@ class EnginePlayer(
   }
 
   override fun handleSetRepeatMode(repeatMode: Int): ListenableFuture<*> {
-    val mode = when (repeatMode) { Player.REPEAT_MODE_ONE -> 1; Player.REPEAT_MODE_ALL -> 2; else -> 0 }
+    val mode = when (repeatMode) { Player.REPEAT_MODE_ONE, Player.REPEAT_MODE_ALL -> 1; else -> 0 }
+    // The platform has no "N more times": a counted replay shows there as off, and a controller
+    // that merely re-sends off must not cancel the count the listener asked for.
+    if (mode == 0 && (queue.repeat == PlayQueue.Repeat.ONCE || queue.repeat == PlayQueue.Repeat.TWICE)) return Futures.immediateVoidFuture()
     applyRepeat(mode)
-    if (pageLive) page?.command(JSONObject().put("type", "repeat").put("mode", mode))
     return Futures.immediateVoidFuture()
   }
 
@@ -589,12 +696,32 @@ class EnginePlayer(
     return true
   }
 
-  private fun applyRepeat(mode: Int) {
-    queue.repeat = when (mode) { 1 -> PlayQueue.Repeat.ONE; 2 -> PlayQueue.Repeat.ALL; else -> PlayQueue.Repeat.OFF }
-    engine.setRepeatOne(queue.repeat == PlayQueue.Repeat.ONE)
+  private fun applyRepeat(mode: Int, fromPage: Boolean = false) {
+    repeatFromPage = fromPage
+    try {
+      queue.repeat = when (mode) { 1 -> PlayQueue.Repeat.ONE; 3 -> PlayQueue.Repeat.ONCE; 4 -> PlayQueue.Repeat.TWICE; else -> PlayQueue.Repeat.OFF }
+    } finally { repeatFromPage = false }
+    engine.setRepeatOne(queue.repeatsSong)
     preparedNextKey = null
     prepareNext()
     invalidateState()
+  }
+
+  /**
+   * REPEAT-COUNT-001: every change of the queue's repeat lands here, whoever made it. The engine
+   * follows at once (a count dropped by Next must not loop the next song). A change the page did
+   * not make is owed to the page, and both it and the car's button are told once the queue has
+   * finished whatever it was doing.
+   */
+  private fun queueRepeatChanged() {
+    engine.setRepeatOne(queue.repeatsSong)
+    if (!repeatFromPage) repeatSync.serviceSet(repeatMode())
+    val tellPage = !repeatFromPage
+    main.post {
+      if (tellPage && repeatSync.owed == repeatMode() && pageLive) page?.command(JSONObject().put("type", "repeat").put("mode", repeatMode()))
+      onRepeatSelectionChanged?.invoke()
+      invalidateState()
+    }
   }
 
   /* -------------------------------------------------------------- loading */
@@ -699,7 +826,7 @@ class EnginePlayer(
   /** What comes after the current song: the page's cue when it gave one, else the queue's choice. */
   private fun upcoming(): MediaHub.Song? {
     val now = queue.current?.song?.id ?: return null
-    if (queue.repeat == PlayQueue.Repeat.ONE) return null
+    if (queue.repeatsSong) return null
     if (cueFor == now) return cue
     if (pageLive) return null // the page has not decided yet; never guess ahead of it
     return queue.peekAfterEnd()?.let { queue.items[it].song }?.takeIf { it.id != now }
@@ -771,7 +898,11 @@ class EnginePlayer(
   }
 
   private fun repeated(heard: AudioEngine.Heard) {
+    // One more whole play of this song has begun: one fewer is owed (infinity owes them all).
+    if (queue.current?.song?.id == heard.key) queue.consumeRepeat()
     log("repeat", heard, advanced = false)
+    preparedNextKey = null
+    prepareNext() // on the last owed play, cue what follows it
     invalidateState()
   }
 
@@ -952,10 +1083,15 @@ class EnginePlayer(
     }
   }
 
-  init { main.post(ticker) }
+  init {
+    queue.onRepeatChanged = { queueRepeatChanged() }
+    main.post(ticker)
+  }
 
   companion object {
     private const val TAG = "AirwaveEnginePlayer"
+    /** CAR-CONTROLS-001: request-metadata flag on the item the car's playlist picker answers with: keep it as it is. */
+    const val KEEP_PLAYING = "com.nowplaying.discovery.KEEP_PLAYING"
     private const val SAMPLE_RATE = 48000L
     private const val RESTART_THRESHOLD_MS = 3000L
     private const val TICK_MS = 250L

@@ -9,6 +9,7 @@ import { ShuffleGlyph } from './icons';
 import { engineSend } from './engine/native-engine';
 import { genreBubbles } from './util';
 import { GenreBubbleView } from './Results';
+import { classifyStation } from './engine/radio-genres';
 import { radioArtistTarget, type RadioArtistTarget } from './engine/radio-artist';
 import './radio.css';
 export function RadioPlayer({ docked = false, onOpenArtist, onPlaySong, onDownloadSong }: { docked?: boolean; onOpenArtist?: (target: RadioArtistTarget) => void; onPlaySong?: (t: NonNullable<ReturnType<typeof radioSession.get>['track']>) => void; onDownloadSong?: (t: NonNullable<ReturnType<typeof radioSession.get>['track']>) => Promise<unknown> } = {}) {
@@ -64,7 +65,8 @@ export function RadioPlayer({ docked = false, onOpenArtist, onPlaySong, onDownlo
           ? <button type="button" className="artistlink radio-player__artist" aria-label={`Open the artist ${target.name}`} onClick={() => onOpenArtist(target)}>{name}</button>
           : name}</span>; });
       })()} · {s.name}</span><small>{stationLocation(s)}{r.broadcast?.state === 'stale' ? ' · last published metadata' : ''}</small>
-      {r.characteristics && <div className="radio-player__tags">{genreBubbles(r.characteristics).map((g, i) => <GenreBubbleView key={i} bubble={g} />)}</div>}
+      {/* RADIO-GENRES-001: an identified song shows its own genres; a programme or unidentified song shows what the station plays. */}
+      <div className="radio-player__tags">{(r.identified && r.characteristics ? genreBubbles(r.characteristics) : classifyStation({ tags: s.tags, name: s.name, language: s.language, countryCode: s.countryCode })).map((g, i) => <GenreBubbleView key={i} bubble={g} />)}</div>
     </div></div>
     <div className="radio-player__timeline">
 

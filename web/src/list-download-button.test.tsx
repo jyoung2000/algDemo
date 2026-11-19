@@ -24,6 +24,7 @@ vi.mock('./engine/queue-audio', () => ({
     snapshotFor: () => ({ ...snapshot }),
     subscribe: (fn: () => void) => { subscribers.add(fn); return () => subscribers.delete(fn); },
     downloadAll: (...args: unknown[]) => downloadAll(...args),
+    readyUrl: () => null,
   },
 }));
 
@@ -65,11 +66,10 @@ it('downloads the list when pressed', async () => {
   expect(downloadAll).toHaveBeenCalledTimes(1);
 });
 
-it('is disabled once every song is already local', async () => {
+it('LIST-FOLDER-002: is gone once every song is already local (the folder button beside it opens them)', async () => {
   Object.assign(snapshot, { ready: 97 });
   const el = await mount();
-  expect(el.querySelector('button')!.disabled).toBe(true);
-  expect(el.querySelector('button')!.getAttribute('aria-label')).toMatch(/all songs ready|already/i);
+  expect(el.querySelector('button')).toBeNull();
 });
 
 it('is disabled while a bulk download is already running', async () => {

@@ -10,10 +10,8 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.nowplaying.discovery.engine.AudioOutput
-import com.nowplaying.discovery.engine.Crossfade
 import com.nowplaying.discovery.engine.EngineHub
 import com.nowplaying.discovery.engine.EnginePlayer
-import com.nowplaying.discovery.engine.MixInputs
 import com.nowplaying.discovery.engine.EqJson
 import com.nowplaying.discovery.dsp.EqMath
 import org.json.JSONArray
@@ -120,7 +118,9 @@ class NativeSoundTest {
     }
     try {
       EngineHub.attachPlayer(player.get())
-      EngineHub.fromPage(settings.put("op", "settings").toString())
+      // The previous instrumentation class can leave the shared hub at 80% volume. Every amplitude
+      // assertion below describes the test's own signal, so give this fresh player a known level.
+      EngineHub.fromPage(settings.put("volume", 1.0).put("op", "settings").toString())
       instr.waitForIdleSync()
       instr.runOnMainSync {
         val p = player.get()
@@ -288,24 +288,21 @@ class NativeSoundTest {
     return Triple(span(pcm, 440.0), span(pcm, 880.0), pcm)
   }
 
-  @Test fun theCrossfaderBlendsTheNextSongOnlyAfterThePlayThroughShare() {
+  @Test fun theCrossfaderWaitsForTheDecoderConfirmedEndAtEveryPlayThroughSetting() {
     for (pt in listOf(95, 80)) {
-      val plan = Crossfade.mixPlan(MIX.toDouble(), SONG_S, SONG_S, MixInputs(minPlayedFraction = pt / 100.0))
-      assertTrue("the app's planner blends at slider $MIX ($plan)", plan.seconds > 0.5)
       val (a, b, pcm) = blend(MIX, pt)
       val startS = (b.first - a.first) / 48000.0
       val overlapS = (a.last - b.first) / 48000.0
       val bLenS = (b.last - b.first) / 48000.0
-      android.util.Log.i("NativeSoundTest", "playThrough $pt: plan start ${plan.startAt} s for ${plan.seconds} s (${plan.style}); heard B from $startS s, overlap $overlapS s, B lasted $bLenS s")
-      assertTrue("song A played at least $pt% before B came in ($startS s)", startS >= pt / 100.0 * SONG_S - 0.03)
-      assertEquals("B comes in where the app's planner says", plan.startAt, startS, 0.1)
-      assertTrue("both songs sound together for most of the planned ${plan.seconds} s (heard $overlapS s)", overlapS >= 0.6 * plan.seconds)
-      assertTrue("A is gone by the end of the planned blend (overlap $overlapS s)", overlapS <= plan.seconds + 0.1)
-      assertEquals("B plays whole, from its start", SONG_S, bLenS, 0.1)
-      // Halfway through the blend both are clearly audible: a mix, not a gap or a jump.
-      val mid = (b.first + a.last) / 2 - 1200
-      assertTrue("A audible mid-blend", amp(pcm, 440.0, mid) > 0.05)
-      assertTrue("B audible mid-blend", amp(pcm, 880.0, mid) > 0.05)
+      android.util.Log.i("NativeSoundTest", "playThrough $pt: heard B from $startS s, overlap $overlapS s, B lasted $bLenS s")
+      // The slider chooses the length of the transition AFTER A's actual end. It cannot start B
+      // early, even when the old overlap planner would have blended at 80% or 95%.
+      assertEquals("all of A plays before B enters", SONG_S, startS, 0.12)
+      assertTrue("A and B do not overlap before decoder end", b.first >= a.last - 2400)
+      assertEquals("B plays whole, from its first frame", SONG_S, bLenS, 0.12)
+      val switch = (b.first + a.last) / 2
+      assertTrue("only A just before the switch", amp(pcm, 880.0, switch - 4800 - 2400) < 0.005)
+      assertTrue("only B just after it", amp(pcm, 440.0, switch + 4800) < 0.005)
     }
   }
 
@@ -317,7 +314,8 @@ class NativeSoundTest {
   @Test fun theCrossfaderStillBlendsAfterTheProgressBarIsMoved() {
     val a = wav("mix-a.wav", 440.0, SONG_S, 0.5)
     val b = wav("mix-b.wav", 880.0, SONG_S, 0.5)
-    val plan = Crossfade.mixPlan(MIX.toDouble(), SONG_S, SONG_S, MixInputs(minPlayedFraction = 0.95))
+    // A seek must keep B cued, but A must still render through its actual end. The old overlap
+    // planner's earlier start is no longer permission to cut the ending off.
     var seekedAt = 0
     val (pcm, _) = play(listOf("a" to a, "b" to b), JSONObject().put("eq", eq(on = false)).put("mix", MIX).put("playThrough", 95)) { rec ->
       seekedAt = rec.size
@@ -332,12 +330,12 @@ class NativeSoundTest {
       s += 480
     }
     assertTrue("B was heard after the seek", bFirst > 0)
-    // In the output, A runs from the seek at SEEK_S to its end; B should come in at the planned point.
+    // A's decoder-confirmed end, not the old overlap plan, gates B after the seek.
     val bInS = (bFirst - seekedAt) / 48000.0 + SEEK_S
     val overlapS = (aSpan.last - bFirst) / 48000.0
-    android.util.Log.i("NativeSoundTest", "after a seek to $SEEK_S s: B came in at song time $bInS s (plan ${plan.startAt}), overlap $overlapS s (plan ${plan.seconds})")
-    assertEquals("B blends in where the app's planner says, after the seek", plan.startAt, bInS, 0.15)
-    assertTrue("both songs sound together through the blend ($overlapS s)", overlapS >= 0.6 * plan.seconds)
+    android.util.Log.i("NativeSoundTest", "after a seek to $SEEK_S s: B came in at song time $bInS s, overlap $overlapS s")
+    assertEquals("B enters only after A's decoder end, after the seek", SONG_S, bInS, 0.15)
+    assertTrue("no pre-end overlap after the seek", bFirst >= aSpan.last - 2400)
   }
 
   @Test fun theCrossfaderAtOffPlaysEachSongWholeWithNoOverlap() {
@@ -353,8 +351,79 @@ class NativeSoundTest {
     assertEquals("B plays whole", SONG_S, (b.last - b.first) / 48000.0, 0.1)
   }
 
+  /**
+   * REPEAT-COUNT-001 (owner, 2026-11-18): "1" and "2" are EXTRA whole plays of this song, counted
+   * on the sound itself: each replay starts only at the decoder-confirmed end, the count goes down
+   * as that replay begins, and when none is owed the next song follows, once.
+   */
+  private fun repeatRun(presses: Int, alsoDuring: ((EnginePlayer) -> Unit)? = null): Triple<FloatArray, List<Int>, Int> {
+    val a = wav("rep-a.wav", 440.0, REPEAT_S, 0.5)
+    val b = wav("rep-b.wav", 880.0, REPEAT_S, 0.5)
+    val seen = java.util.concurrent.CopyOnWriteArrayList<Int>()
+    var last = -1
+    val (pcm, _) = play(listOf("a" to a, "b" to b), JSONObject().put("eq", eq(on = false)).put("mix", 0).put("playThrough", 95)) { _ ->
+      instr.runOnMainSync {
+        val p = hubField("player").get(EngineHub) as EnginePlayer
+        p.onRepeatSelectionChanged = { seen += p.repeatSelection; last = p.repeatSelection }
+        repeat(presses) { p.cycleSongRepeat() }
+      }
+      instr.waitForIdleSync() // the selection is announced once the queue has settled
+      if (alsoDuring != null) instr.runOnMainSync { alsoDuring(hubField("player").get(EngineHub) as EnginePlayer) }
+    }
+    instr.waitForIdleSync()
+    // Changes are announced after the queue settles, so two quick presses can read the same value.
+    return Triple(pcm, seen.fold(listOf<Int>()) { acc, v -> if (acc.lastOrNull() == v) acc else acc + v }, last)
+  }
+
+  /**
+   * Where a test tone is really playing. [span]'s 0.005 threshold is right for finding a faded
+   * edge, but the instant a looped song restarts is a tiny step that leaks into every frequency
+   * and reads as "880 Hz heard" at 1% of the tone's level. A fifth of the tone's own level cannot
+   * be a click.
+   */
+  private fun playing(pcm: FloatArray, hz: Double): IntRange {
+    var first = -1; var last = -1
+    var s = 0
+    while (s + 2400 <= pcm.size) {
+      if (amp(pcm, hz, s) > 0.1) { if (first < 0) first = s + 1200; last = s + 1200 }
+      s += 480
+    }
+    assertTrue("$hz Hz was played", first >= 0)
+    return first..last
+  }
+
+  @Test fun oneExtraPlayRepeatsTheSongOnceThenTheNextSongFollows() {
+    val (pcm, seen, last) = repeatRun(presses = 1)
+    val a = playing(pcm, 440.0); val b = playing(pcm, 880.0)
+    android.util.Log.i("NativeSoundTest", "repeat +1: A ${(a.last - a.first) / 48000.0} s, B ${(b.last - b.first) / 48000.0} s, selections $seen")
+    assertEquals("A is heard twice, back to back", 2 * REPEAT_S, (a.last - a.first) / 48000.0, 0.3)
+    assertEquals("B plays once, whole", REPEAT_S, (b.last - b.first) / 48000.0, 0.3)
+    assertTrue("B waits for the end of the extra play", b.first >= a.last - 2400)
+    assertEquals("the count shown goes 1, then nothing", listOf(3, 0), seen)
+    assertEquals(0, last)
+  }
+
+  @Test fun twoExtraPlaysRepeatTheSongTwiceCountingDown() {
+    val (pcm, seen, _) = repeatRun(presses = 2)
+    val a = playing(pcm, 440.0); val b = playing(pcm, 880.0)
+    android.util.Log.i("NativeSoundTest", "repeat +2: A ${(a.last - a.first) / 48000.0} s, B ${(b.last - b.first) / 48000.0} s, selections $seen")
+    assertEquals("A is heard three times", 3 * REPEAT_S, (a.last - a.first) / 48000.0, 0.4)
+    assertEquals("B plays once, whole", REPEAT_S, (b.last - b.first) / 48000.0, 0.3)
+    assertEquals("the count shown goes 2, 1, nothing", listOf(4, 3, 0), seen)
+  }
+
+  @Test fun nextDropsTheCountSoTheNextSongIsNotRepeated() {
+    val (pcm, seen, _) = repeatRun(presses = 2) { p -> p.seekToNext() }
+    val a = playing(pcm, 440.0); val b = playing(pcm, 880.0)
+    android.util.Log.i("NativeSoundTest", "repeat +2 then Next: A ${(a.last - a.first) / 48000.0} s, B ${(b.last - b.first) / 48000.0} s, selections $seen")
+    assertTrue("A was left early", (a.last - a.first) / 48000.0 < REPEAT_S - 1)
+    assertEquals("B plays once: the count belonged to A", REPEAT_S, (b.last - b.first) / 48000.0, 0.3)
+    assertEquals(listOf(4, 0), seen)
+  }
+
   private companion object {
     const val SONG_S = 30.0
+    const val REPEAT_S = 6.0
     const val SEEK_S = 20.0
     const val MIX = 60
   }

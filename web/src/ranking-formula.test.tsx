@@ -4,12 +4,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { SettingsView } from './Settings';
 import { api, type Settings } from './api';
 import { DEFAULT_RANKING_FORMULA } from './engine/ranking-formula';
+import { clearAlgorithmDrafts } from './useAlgorithmDraft';
 vi.mock('./api', () => ({ api: { health: () => new Promise(() => {}), status: () => new Promise(() => {}), putSettings: vi.fn() } }));
 vi.mock('./MicSettings', () => ({ MicSettings: () => null }));
 const saved: Settings = { fresh: false, adventurous: 0.5, audio: true, daily_mb: 100, request_mb: 20, sample_mode: false };
 const props = () => ({ settings: saved, onSettings: vi.fn(), onReset: vi.fn(), onResetTaste: vi.fn(), onFormulaSaved: vi.fn() });
 const input = () => screen.getByRole('textbox', { name: 'Discovery ranking formula' }) as HTMLTextAreaElement;
-beforeEach(() => { vi.mocked(api.putSettings).mockReset().mockImplementation(async patch => ({ ...saved, ...patch })); Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined), readText: vi.fn().mockResolvedValue('0.7 * genre + 0.3 * novelty') } }); });
+beforeEach(() => { clearAlgorithmDrafts(); vi.mocked(api.putSettings).mockReset().mockImplementation(async patch => ({ ...saved, ...patch })); Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined), readText: vi.fn().mockResolvedValue('0.7 * genre + 0.3 * novelty') } }); });
 afterEach(cleanup);
 it('makes the existing algorithm editable and previews labelled example scores', () => {
   render(<SettingsView {...props()} />);

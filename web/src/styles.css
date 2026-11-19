@@ -233,6 +233,16 @@ body {
   margin: 0;
   padding: 10px 2px;
 }
+/* UI-POLISH-001: a note that wraps keeps its icon on the first line (it was centred between lines).
+   Notes holding a button keep centring, so the words stay level with the button. */
+.state:not(:has(> button)) {
+  align-items: flex-start;
+}
+.state:not(:has(> button)) > svg:first-child {
+  flex: none;
+  margin-top: 3px;
+  margin-top: calc((1lh - 14px) / 2);
+}
 .state--bad {
   color: var(--danger);
 }
@@ -274,12 +284,18 @@ body {
 .banner {
   display: flex;
   gap: 8px;
-  align-items: center;
+  /* UI-POLISH-001: the icon belongs to the first line; centred on a wrapped note it floated between lines. */
+  align-items: flex-start;
   margin: 0;
   padding: 9px 12px;
   border-radius: 9px;
   border: 1px solid var(--hair);
   background: var(--panel);
+}
+.banner:not(.banner--list) > .aqua-icon {
+  flex: none;
+  margin-top: 3px;
+  margin-top: calc((1lh - 14px) / 2);
 }
 .banner--bad {
   border-color: #e6b3b0;
@@ -1215,7 +1231,7 @@ a.push {
      3. one unbroken row of controls, using the row's full width.
      Every child has a named cell, so nothing wraps into the rank or art column. */
   display: grid;
-  grid-template-columns: 26px 56px minmax(0, 1fr) auto auto;
+  grid-template-columns: 26px 64px minmax(0, 1fr) auto auto;
   grid-template-areas:
     'rank art text tier dur'
     '. . sub sub sub'
@@ -1276,8 +1292,8 @@ a.push {
   cursor: pointer;
 }
 .rec__art .art {
-  width: 56px;
-  height: 56px;
+  width: 64px;
+  height: 64px;
   border-radius: 8px;
 }
 .rec__playover {
@@ -1343,6 +1359,10 @@ a.push {
   color: var(--ink-3);
   font-size: 11px;
 }
+/* UI-POLISH-001: on the baseline the 11px icon sat 2px above its words; this centres it on them. */
+.rec__why1 > svg {
+  vertical-align: -2px;
+}
 .rec__tier {
   grid-area: tier;
   white-space: nowrap;
@@ -1358,6 +1378,12 @@ a.push {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+/* SIMILAR-SOUND-001: a separate, named row; do not squeeze a seventh action into the six
+   compact transport/feedback controls (those must remain on one line even at 320px). */
+/* SIMILAR-ICON-001: Find similar sound is one of the row's round icon buttons (Results.tsx). */
+@media (hover: hover) { .rec__similar:hover { color: var(--accent); } }
+.rec__similar:disabled { opacity: 0.55; cursor: wait; }
+.rec__similar:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .rec__actions {
   grid-area: actions;
   display: flex;
@@ -2356,18 +2382,6 @@ a.push {
   margin: 8px 0 0;
   white-space: pre;
 }
-@media (max-width: 360px) {
-  /* A 320px phone: the bars may shrink so the table never pushes the page (and the fixed tab bar) sideways. */
-  .pcell .sbar,
-  .pcell .pbar {
-    min-width: 40px;
-  }
-  .ptable th,
-  .ptable td {
-    padding-left: 4px;
-    padding-right: 4px;
-  }
-}
 @media (max-width: 480px) {
   /* On a phone the bar column takes the room the other columns leave, so a bar stays readable. */
   .ptable__bar {
@@ -2389,6 +2403,24 @@ a.push {
   .plog__what {
     flex-basis: 100%;
     order: 3;
+  }
+}
+@media (max-width: 400px) {
+  /* A narrow phone (320 to 400px): the bars may shrink so a table never leaves its card or pushes the page
+     (and the fixed tab bar) sideways. PROFILE-NARROW-001: this block must stay after the 480px one, or
+     that one's 72px bars win. */
+  .pcell .sbar,
+  .pcell .pbar {
+    min-width: 32px;
+  }
+  /* The shared .num box is 64px wide; a score here needs 48px, and the table needs the difference. */
+  .ptable .num {
+    width: 48px;
+  }
+  .ptable th,
+  .ptable td {
+    padding-left: 4px;
+    padding-right: 4px;
   }
 }
 
@@ -2618,7 +2650,7 @@ html {
     padding: 14px 12px;
   }
   .rec {
-    grid-template-columns: 20px 56px minmax(0, 1fr) auto;
+    grid-template-columns: 20px 64px minmax(0, 1fr) auto;
     grid-template-areas:
       'rank art text dur'
       'sub sub sub tier'
@@ -3683,6 +3715,9 @@ html {
 .rec__actions .iconbtn.playbtn[data-ready='true'] {
   /* ROW-PLAY-001: the same light blue fill as every other list (row-play.css); the old #e6effb was too faint. */
   background: #bcd8ff;
+  /* PLAY-DISC-001: the shorthand above resets the clip to the border box, which painted the fill into
+     the transparent 44px target borders: a 36 x 44 pill whose blue sat off the ring's circle. */
+  background-clip: content-box;
   color: var(--accent);
   box-shadow: inset 0 0 0 1px #8fbcf5;
 }
@@ -4128,9 +4163,8 @@ ul.radio-stations > li.radio-station > .skel-develop { display: grid; grid-templ
    line, vertically centred on them. The button keeps its 44px target and never shrinks; the text
    column takes the rest and may shrink to nothing, so a long title is cut with an ellipsis rather
    than pushing the button off the row (checked at 320, 390, 768 and 1440px wide). */
-.radio-station__body > .radio-station__playrow { display: flex; align-items: center; gap: 12px; min-width: 0; margin: 6px 0 2px; }
-.radio-station__playrow > .radio-station__play { flex: 0 0 44px; width: 44px; min-width: 44px; height: 44px; min-height: 44px; margin: 0; }
-.radio-station__playrow > .radio-station__info { flex: 1 1 auto; min-width: 0; }
+/* ROW-UNIFY-001 (owner, 2026-11-19): Play and Star moved to one row of buttons under the text, the
+   same as every song row (song-row.css); the text lines below keep their single-line rules. */
 .radio-station__info > .radio-location { margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .radio-station__info > .radio-now { min-width: 0; overflow-wrap: normal; }
 /* The 4px padding gives the artist and song links' focus ring room inside the clipped box. */
@@ -4145,8 +4179,8 @@ ul.radio-stations > li.radio-station > .skel-develop { display: grid; grid-templ
    ellipsis; they stay on one line (no wrap) so the row keeps its height. */
 .radio-station__info > h2 { display: flex; align-items: center; gap: 4px; min-width: 0; margin: 0; overflow-wrap: normal; }
 .radio-station__info > h2 > .radio-station__name { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-block: 2px; margin-block: -2px; }
-/* The star keeps its 44px target; negative margins stop it making the name line 44px tall. */
-.radio-station__info > h2 > .radio-station__star { flex: 0 0 auto; margin-block: -12px; }
+/* POLISH-ICONS-001: the station star was a text glyph clipped into the bottom 28px of a 44px box next
+   to the name (its place moved with the name's length). It is now a drawn star in the row of buttons. */
 .radio-station__info > .radio-now { flex-direction: row; align-items: baseline; gap: 6px; }
 .radio-station__info > .radio-station__tags { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-width: 0; margin-top: 4px; overflow: hidden; }
 .radio-station__tags > .genre { display: inline-block; flex: 0 1 auto; min-width: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

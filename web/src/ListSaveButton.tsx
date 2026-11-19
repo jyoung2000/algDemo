@@ -35,6 +35,19 @@ export function ListSaveButton({ tracks, kind, name, label }: { tracks: Track[];
       setNote(`The folder could not be opened: ${(e as Error).message}`);
     }
   };
+  // LIST-FOLDER-002 (owner, 2026-11-19): "If an album or playlist has already been downloaded locally 100%
+  // then remove the download icon and replace it with a folder icon to open the local folder".
+  if (complete && !running) {
+    return (
+      <>
+        <button type="button" className="iconbtn list-save__folder" onClick={() => void open()}
+          aria-label={`Open the folder with ${label}`} title={`All ${songs(tracks.length)} of ${label} are downloaded. Open the folder.`}>
+          <Glyph name="folder" size={14} />
+        </button>
+        {note && <span className="list-save__note" role="status">{note}</span>}
+      </>
+    );
+  }
   return (
     <>
       <button
@@ -45,7 +58,7 @@ export function ListSaveButton({ tracks, kind, name, label }: { tracks: Track[];
         // focus is not dropped to the page when they press it.
         aria-disabled={running || undefined}
         aria-busy={running}
-        title={complete ? `Check the folder with ${label} and put back any missing song` : `Download every song in ${label} into a folder of its own`}
+        title={s.held > 0 ? `Download the ${songs(Math.max(0, tracks.length - s.held))} of ${label} not in its folder yet` : `Download every song in ${label} into a folder of its own`}
         onClick={() => { if (running) return; setNote(null); folderSaves.start(kind, name, tracks); }}
       >
         <Glyph name={complete ? 'check' : 'download'} size={14} /> {text}

@@ -159,6 +159,8 @@ object MediaHub {
   fun applyCatalog(json: JSONObject) {
     json.optJSONObject("search")?.let { acceptCatalogReply(it) }
     json.optJSONObject("identify")?.let { acceptIdentifyReply(it) }
+    json.optJSONObject("similar")?.let { acceptSimilarReply(it) }
+    json.optJSONObject("mood")?.let { acceptMoodReply(it) }
   }
 
   /** A native surface (lock screen, Bluetooth, car) asked for something; hand it to the page. */
@@ -181,6 +183,7 @@ object MediaHub {
     json.optJSONArray("rememberTracks")?.let { runCatching { NativeLibraryState.rememberTracks(it) } }
     json.optJSONObject("search")?.let { acceptCatalogReply(it) }
     json.optJSONObject("identify")?.let { acceptIdentifyReply(it) }
+    json.optJSONObject("similar")?.let { acceptSimilarReply(it) }
     // CAR-ACTIONS-001: judgements made in the car while no page could answer go to it now that it
     // can, once it holds a library to find their songs in.
     if (firstAnswer) carFeedbackDelivered = false
@@ -307,12 +310,48 @@ object MediaHub {
         catalogResults.values.flatMap { it.songs }.firstOrNull { it.id == id }
           ?: catalogAlbums.values.firstNotNullOfOrNull { a -> a.songs.firstOrNull { it.id == id } }
           ?: identified.firstOrNull { it.id == id }
+          ?: similarFound.firstOrNull { it.id == id }
       }
+      ?: radioSong?.takeIf { it.id == id }
     )?.let(::sourced)
 
-  fun playlist(id: String): Folder? = playlists.firstOrNull { it.id == id }
+  fun playlist(id: String): Folder? =
+    if (id == PHONE_LIST) Folder(PHONE_LIST, "On this phone", phoneSongs()) else playlists.firstOrNull { it.id == id }
+
+  /**
+   * CAR-LOCAL-001: every song whose complete recording is held on the phone (the page sends a song's
+   * file link only while it is), once each: the queue first, then the playlists in their order.
+   */
+  fun phoneSongs(): List<Song> =
+    (state.queue + songs + playlists.flatMap { it.songs }).filter { it.ready && !it.source.isNullOrEmpty() }.distinctBy { it.id }
+
+  /**
+   * CAR-RADIO-CONTROLS-001: the song identified on the radio now (by fingerprint or catalogue match),
+   * and its own Track as the page knows it; null for a programme or an unmatched title. The car's
+   * star and playlist pick act on it, and the Track travels with them so the page can learn it.
+   */
+  @Volatile var radioSong: Song? = null; private set
+  @Volatile var radioTrack: JSONObject? = null; private set
+  fun setRadioSong(song: Song?, track: JSONObject?) {
+    radioSong = song
+    radioTrack = track?.takeIf { song != null && it.optString("key") == song.id }
+  }
+
+  /** CAR-CONTROLS-001: show a song added from the car in that playlist now; the page's next push confirms it. */
+  fun addToPlaylistNow(listId: String, songId: String) {
+    val song = findSong(songId) ?: return
+    var changed = false
+    playlists = playlists.map { f ->
+      if (f.id != listId || f.album || f.songs.any { it.id == songId }) f
+      else { changed = true; f.copy(songs = f.songs + song) }
+    }
+    if (changed) notifyListeners()
+  }
 
   /** ALBUM-SAVE-001: saved albums, listed under Albums in the car; the rest are playlists. */
+  /** CAR-LOCAL-001: the car's "On this phone" list (a list id no saved playlist can have). */
+  const val PHONE_LIST = "airwave:on-this-phone"
+
   fun savedAlbums(): List<Folder> = playlists.filter { it.album }
   fun savedLists(): List<Folder> = playlists.filter { !it.album }
 
@@ -514,6 +553,85 @@ object MediaHub {
     return future
   }
 
+  /** CAR-SIMILAR-001: what one press of the car's Find similar button added, or why nothing was. */
+  data class SimilarAnswer(val added: Int, val minimum: Int, val reason: String, val songs: List<Song>)
+
+  /** CAR-SIMILAR-001: the songs Find similar added from the car, so the queue can find and play them. */
+  @Volatile var similarFound: List<Song> = emptyList(); private set
+  private val pendingSimilar = LinkedHashMap<String, SettableFuture<SimilarAnswer>>()
+
+  /**
+   * CAR-SIMILAR-001 (owner, 2026-11-18): ask the engine page to run the phone's audio-verified sound
+   * match (SIMILAR-SOUND-001) for car song [id]. The page in front answers when there is one, else the
+   * service's own engine; the songs it adds are at the end of the now playing list, as on the phone.
+   */
+  fun findSimilar(id: String, timeoutMs: Long = 200000): ListenableFuture<SimilarAnswer> {
+    val page = sink?.takeIf { pageVisible && pageAnswering }
+    val target = page ?: catalogSink?.takeIf { catalogReady } ?: sink
+      ?: return Futures.immediateFailedFuture(IllegalStateException("Open Airwave on your phone to find similar songs"))
+    val requestId = UUID.randomUUID().toString()
+    val future = SettableFuture.create<SimilarAnswer>()
+    synchronized(catalogLock) { pendingSimilar[requestId] = future }
+    main.postDelayed({
+      synchronized(catalogLock) { pendingSimilar.remove(requestId) }?.setException(TimeoutException("Finding similar songs took too long"))
+    }, timeoutMs.coerceIn(50, 300000))
+    try {
+      target(JSONObject().put("type", "findSimilar").put("requestId", requestId).put("id", id))
+    } catch (e: Exception) {
+      synchronized(catalogLock) { pendingSimilar.remove(requestId) }
+      future.setException(e)
+    }
+    return future
+  }
+
+  /** CAR-MOOD-001: the engine's order for the car's movable songs, and the moods leading it. */
+  data class MoodAnswer(val order: List<String>, val changed: Boolean, val leading: List<String>)
+  private val pendingMood = LinkedHashMap<String, SettableFuture<MoodAnswer>>()
+
+  /**
+   * CAR-MOOD-001 (owner, 2026-11-19): ask the service's engine page for the listening-mood order of
+   * the car's movable songs [upcoming], after the press [signal] (kind like/dislike/similar/complete/
+   * skip on song id). Only the service page is asked: with the phone app open its own queue follows
+   * the mood and is the car's queue.
+   */
+  fun moodOrder(current: String?, upcoming: List<String>, signal: Pair<String, String>?, timeoutMs: Long = 30000): ListenableFuture<MoodAnswer> {
+    val target = catalogSink?.takeIf { catalogReady && !(pageVisible && pageAnswering) }
+      ?: return Futures.immediateFailedFuture(IllegalStateException("No engine to arrange the queue"))
+    val requestId = UUID.randomUUID().toString()
+    val future = SettableFuture.create<MoodAnswer>()
+    synchronized(catalogLock) { pendingMood[requestId] = future }
+    main.postDelayed({
+      synchronized(catalogLock) { pendingMood.remove(requestId) }?.setException(TimeoutException("Arranging the queue took too long"))
+    }, timeoutMs.coerceIn(50, 60000))
+    try {
+      val cmd = JSONObject().put("type", "moodOrder").put("requestId", requestId)
+        .put("current", current ?: JSONObject.NULL).put("upcoming", JSONArray(upcoming.take(500)))
+      signal?.let { (id, kind) -> cmd.put("signal", JSONObject().put("id", id).put("kind", kind)) }
+      target(cmd)
+    } catch (e: Exception) {
+      synchronized(catalogLock) { pendingMood.remove(requestId) }
+      future.setException(e)
+    }
+    return future
+  }
+
+  private fun acceptMoodReply(reply: JSONObject) {
+    val future = synchronized(catalogLock) { pendingMood.remove(reply.optString("requestId")) } ?: return
+    val error = reply.optString("error")
+    if (error.isNotBlank()) { future.setException(IllegalStateException(error.take(200))); return }
+    fun strings(a: JSONArray?) = (0 until (a?.length() ?: 0)).mapNotNull { a!!.optString(it).takeIf { s -> s.isNotBlank() } }
+    future.set(MoodAnswer(strings(reply.optJSONArray("order")).take(500), reply.optBoolean("changed"), strings(reply.optJSONArray("leading")).take(3)))
+  }
+
+  private fun acceptSimilarReply(reply: JSONObject) {
+    val future = synchronized(catalogLock) { pendingSimilar.remove(reply.optString("requestId")) } ?: return
+    val error = reply.optString("error")
+    if (error.isNotBlank()) { future.setException(IllegalStateException(error.take(200))); return }
+    val songs = parseSongs(reply.optJSONArray("songs") ?: JSONArray()).distinctBy { it.id }.take(10)
+    if (songs.isNotEmpty()) similarFound = (songs + similarFound).distinctBy { it.id }.take(50)
+    future.set(SimilarAnswer(reply.optInt("added", songs.size), reply.optInt("minimum", 0), reply.optString("reason").take(200), songs))
+  }
+
   private fun acceptIdentifyReply(reply: JSONObject) {
     val future = synchronized(catalogLock) { pendingIdentify.remove(reply.optString("requestId")) } ?: return
     val error = reply.optString("error")
@@ -568,7 +686,7 @@ object MediaHub {
       canNext = o.optBoolean("canNext", false),
       canPrev = o.optBoolean("canPrev", false),
       shuffle = o.optBoolean("shuffle", false),
-      repeat = o.optInt("repeat", 0).coerceIn(0, 2),
+      repeat = o.optInt("repeat", 0).takeIf { it == 0 || it == 1 || it == 3 || it == 4 } ?: 0,
       queue = q,
       queueIndex = o.optInt("queueIndex", 0).coerceIn(0, maxOf(0, q.size - 1)),
       reportedAt = android.os.SystemClock.elapsedRealtime(),

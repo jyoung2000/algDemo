@@ -3,7 +3,7 @@ import type { RecItem, TasteSummary } from './api';
 import { classify } from './engine/classify';
 import { SUBS } from './engine/genre-table';
 import type { Tag } from './engine/genres';
-import { ListenMeter, addSeed, historyBack, isSilent, nextRepeat, stepQueue, toggleMuteState, describeCharacteristics, describeTaste, genreBubbles, genreTags, mergeRerank, pickerColorFor, playbackOfTrack, qualifiesCompletion, toneLabel } from './util';
+import { ListenMeter, addSeed, consumeRepeat, historyBack, isSilent, nextRepeat, stepQueue, toggleMuteState, describeCharacteristics, describeTaste, genreBubbles, genreTags, mergeRerank, pickerColorFor, playbackOfTrack, qualifiesCompletion, toneLabel } from './util';
 
 const item = (key: string, rank: number): RecItem => ({ rank, track: { key } }) as unknown as RecItem;
 
@@ -318,8 +318,10 @@ describe('historyBack', () => {
 });
 
 describe('repeat modes and volume helpers', () => {
-  it('cycles off, all, one, off', () => {
-    expect([nextRepeat('off'), nextRepeat('all'), nextRepeat('one')]).toEqual(['all', 'one', 'off']);
+  it('cycles off, one extra replay, two extra replays, infinity, off', () => {
+    expect([nextRepeat('off'), nextRepeat('once'), nextRepeat('twice'), nextRepeat('one')]).toEqual(['once', 'twice', 'one', 'off']);
+    expect(nextRepeat('all')).toBe('off'); // old repeat-list setting is not an option in this control
+    expect([consumeRepeat('off'), consumeRepeat('once'), consumeRepeat('twice'), consumeRepeat('one')]).toEqual(['off', 'off', 'once', 'one']);
   });
 
   it('treats slider 0 as silent, since YouTube ignores a volume of 0', () => {

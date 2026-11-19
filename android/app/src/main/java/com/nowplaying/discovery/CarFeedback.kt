@@ -7,7 +7,8 @@ import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * CAR-ACTIONS-001: what the Android Auto player's Star and Dislike buttons say about a song.
+ * CAR-ACTIONS-001: what the Android Auto player's Star and Dislike buttons say about a song, and
+ * (CAR-CONTROLS-001) the playlist a song was added to from the car's picker.
  *
  * The page owns taste: a judgement goes to it as `{type:"feedback", id, kind}` and is learned exactly
  * as the app's own star / thumbs-down are. With no page able to answer (the app was swiped away and
@@ -46,8 +47,26 @@ object CarFeedback {
       "dislike" -> false to true
       else -> starred to false
     }
-    val cmd = JSONObject().put("type", "feedback").put("id", songId).put("kind", kind)
+    val cmd = withRadioTrack(JSONObject().put("type", "feedback").put("id", songId).put("kind", kind), songId)
     if (MediaHub.hasPage() && MediaHub.pageAnswering) MediaHub.command(cmd) else enqueue(cmd)
+  }
+
+  /**
+   * CAR-CONTROLS-001: the car's playlist picker adds [songId] to the listener's playlist [listId].
+   * The car's own Playlists show the song at once; the page saves it (or is handed the add when it
+   * next opens, exactly like a star pressed while the app was closed).
+   */
+  fun addToPlaylist(songId: String, listId: String) {
+    MediaHub.addToPlaylistNow(listId, songId)
+    val cmd = withRadioTrack(JSONObject().put("type", "playlistAdd").put("id", songId).put("list", listId), songId)
+    if (MediaHub.hasPage() && MediaHub.pageAnswering) MediaHub.command(cmd) else enqueue(cmd)
+  }
+
+  /** CAR-RADIO-CONTROLS-001: a song starred on the radio is in no list the page holds, so its Track goes along. */
+  private fun withRadioTrack(cmd: JSONObject, songId: String): JSONObject {
+    val track = MediaHub.radioTrack
+    if (MediaHub.radioSong?.id == songId && track != null) cmd.put("track", track)
+    return cmd
   }
 
   /** The page pushed its state; a press it now agrees with no longer needs holding. */

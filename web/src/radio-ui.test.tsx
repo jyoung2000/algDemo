@@ -45,9 +45,9 @@ describe('world radio browse and favourites (RADIO-001)', () => {
     f.favourites.mockResolvedValue([{...station('k'),name:'KEXP'},{...station('j'),name:'Jazz FM'}]);
     await mount();
     await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Stations beginning with K"]')!.click()); await flush();
-    expect([...host.querySelectorAll('.radio-station h2')].map(x=>x.textContent)).toEqual(['KEXP★']);
+    expect([...host.querySelectorAll('.radio-station h2')].map(x=>x.textContent)).toEqual(['KEXP']);
     await act(async()=> [...host.querySelectorAll<HTMLButtonElement>('[aria-label="Station sections"] button')].find(b=>b.textContent?.startsWith('Starred'))!.click());await flush();
-    expect([...host.querySelectorAll('.radio-station h2')].map(x=>x.textContent)).toEqual(['KEXP★']);
+    expect([...host.querySelectorAll('.radio-station h2')].map(x=>x.textContent)).toEqual(['KEXP']);
   });
   it('keeps country and genre selections when the alphabet is changed or cleared', async () => {
     await mount();
@@ -198,59 +198,51 @@ describe('live information loading (RADIO-UI-006)', () => {
 });
 
 describe('decluttered page with actionable names (RADIO-UI-008)', () => {
-  it('drops the typing hint and the names-and-locations note, and the star sits beside the title', async () => {
+  it('drops the typing hint and the names-and-locations note; Play and Star sit in one row of buttons under the text (ROW-UNIFY-001)', async () => {
     await mount();
     expect(host.querySelector('.search__hint')).toBeNull();
     expect(host.textContent).not.toContain('Names and locations come from');
     expect(host.textContent).not.toContain('Type a station');
-    const star = host.querySelector('.radio-station h2 .radio-station__star');
-    expect(star).not.toBeNull();
-    // RADIO-UI-009/012: the play control leads the row and the title sits beside it, not in a trailing column.
-    const h2 = host.querySelector('.radio-station h2')!;
-    const playrow = host.querySelector('.radio-station__playrow')!;
-    expect(playrow).not.toBeNull();
-    expect(playrow.contains(h2)).toBe(true);
-    expect(playrow.querySelector('.radio-station__play')!.compareDocumentPosition(h2) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(host.querySelector('.radio-station__actions')).toBeNull();
+    // Owner, 2026-11-19: consistent buttons and rows across Discover, Radio and Saved. The station
+    // row reads like a song row: text first, then [Play][Star], with a drawn star (not a text glyph).
+    const row = host.querySelector('.radio-station')!;
+    const actions = row.querySelector('.radio-station__body > .radio-station__actions.song-actions')!;
+    expect(actions).not.toBeNull();
+    expect([...actions.children].map(c => c.getAttribute('aria-label'))).toEqual(['Play Station a', 'Star station Station a']);
+    expect(actions.querySelector('.radio-station__star svg')).not.toBeNull();
+    expect(row.querySelector('h2')!.textContent).toBe('Station a');
+    expect(row.querySelector('.radio-station__play')!.classList.contains('playbtn')).toBe(true);
   });
-  it('puts play inline with the name, location, now-playing line and tags (RADIO-UI-011/012)', async () => {
+  it('keeps the name, location, now-playing line and tags as single lines that scroll when cut off (MARQUEE-001)', async () => {
     const long = 'An extremely long song title that keeps going well past the width of any phone screen ever made';
     f.probe.mockImplementation(async s => ({ state: 'current', kind: 'song', title: s.id === 'a' ? long : `Song ${s.id}`, artist: 'Artist', source: 'Broadcaster', checkedAt: Date.now() }));
     await mount(); await flush();
     const rows = [...host.querySelectorAll('.radio-station')];
     expect(rows.length).toBe(2);
     for (const row of rows) {
-      const playrow = row.querySelector('.radio-station__body > .radio-station__playrow')!;
-      expect(playrow).not.toBeNull();
-      // One row: [play][info: name, location, now playing, tags]; nothing else beside the button.
-      expect([...playrow.children].map(c => c.className.split(' ').find(k => k.startsWith('radio-station__')))).toEqual(['radio-station__play', 'radio-station__info']);
-      const info = playrow.querySelector(':scope > .radio-station__info')!;
+      const info = row.querySelector('.radio-station__body > .radio-station__info')!;
       expect([...info.children].map(c => c.classList[0] ?? c.tagName.toLowerCase())).toEqual(['h2', 'radio-location', 'radio-now', 'radio-station__tags']);
       expect(info.querySelector('h2 .radio-station__name')!.textContent).toMatch(/^Station [ab]$/);
+      expect(info.querySelector('h2 .radio-station__name')!.classList.contains('mq')).toBe(true);
       expect(info.querySelector('.radio-station__tags')!.textContent).toContain('Jazz');
-      expect(row.querySelectorAll('.radio-station__tags')).toHaveLength(1); // tags are not repeated under the row
+      expect(row.querySelectorAll('.radio-station__tags')).toHaveLength(1);
       expect(info.querySelector('.radio-location')!.textContent).toContain('Canada');
-      expect(info.querySelector('.radio-now > .radio-now__text')).not.toBeNull();
-      expect(row.querySelectorAll('.radio-location')).toHaveLength(1); // not duplicated outside the row
+      expect(info.querySelector('.radio-location .mq')).not.toBeNull();
+      expect(info.querySelector('.radio-now > .radio-now__text .mq')).not.toBeNull();
     }
     const text = rows[0]!.querySelector('.radio-now__text')!;
     expect(text.textContent).toContain(long);
-    expect(text.getAttribute('title')).toBe(`Artist — ${long}`); // the cut-off title stays readable on hover
+    expect(text.getAttribute('title')).toBe(`Artist — ${long}`);
     expect(rows[0]!.querySelector('.radio-station__play')!.getAttribute('aria-label')).toBe('Play Station a');
   });
-  it('styles the inline row so the button keeps 44px and long titles end in an ellipsis (RADIO-UI-011)', () => {
+  it('styles the text lines to stay on one line; the cut-off part scrolls instead of wrapping (RADIO-UI-011)', () => {
     const block = css.slice(css.indexOf('RADIO-UI-011'));
     const rule = (sel: string) => { const i = block.indexOf(`${sel} {`); expect(i, sel).toBeGreaterThan(-1); return block.slice(i, block.indexOf('}', i)); };
-    const row = rule('.radio-station__body > .radio-station__playrow');
-    expect(row).toMatch(/display: flex/); expect(row).toMatch(/align-items: center/); expect(row).toMatch(/min-width: 0/);
-    expect(row).not.toMatch(/flex-wrap: wrap/);
-    const play = rule('.radio-station__playrow > .radio-station__play');
-    for (const p of ['flex: 0 0 44px', 'width: 44px', 'min-width: 44px', 'height: 44px', 'min-height: 44px']) expect(play).toContain(p);
-    expect(rule('.radio-station__playrow > .radio-station__info')).toMatch(/flex: 1 1 auto; min-width: 0/);
     for (const sel of ['.radio-station__info > .radio-location', '.radio-now > .radio-now__text']) {
       const r = rule(sel);
-      for (const p of ['white-space: nowrap', 'overflow: hidden', 'text-overflow: ellipsis']) expect(r, sel).toContain(p);
+      for (const p of ['white-space: nowrap', 'overflow: hidden']) expect(r, sel).toContain(p);
     }
+    expect(css).not.toMatch(/\.radio-station__playrow/);
   });
   it('opens the artist and plays the matched song from the now-playing line', async () => {
     const matched = { key: 'song-key', title: 'Song a', artist: 'Artist', duration: 200 };

@@ -17,7 +17,7 @@ it('keeps album above individually navigable lead and guest credits without star
     const button=host.querySelector<HTMLButtonElement>('.song-credits__album')!;
     expect(button.textContent).toBe('A Great Chaos');
     expect(button.querySelector('svg')).toBeNull();
-    expect(button.parentElement!.nextElementSibling!.textContent).toContain('Ken Carson, Destroy Lonely');
+    expect(button.closest('.song-credits__album-line')!.nextElementSibling!.textContent).toContain('Ken Carson, Destroy Lonely');
     await act(async () => button.click());
     expect(album).toHaveBeenCalledWith(track);
     for (const b of host.querySelectorAll<HTMLButtonElement>('.artistlink')) await act(async () => b.click());

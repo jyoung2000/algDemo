@@ -55,9 +55,11 @@ describe('the song card (SONG-CARD-001)', () => {
     expect(css).toMatch(/\.rec__actions \{[^}]*min-width: 0;/);
   });
 
-  it('keeps the six controls in the markup order the owner asked for', () => {
+  it('keeps the controls in the markup order the owner asked for', () => {
+    // UI-MOOD-001 (owner, 2026-11-19): Why is gone, Dislike also removes the song (no separate Hide),
+    // and Find similar sound is the last icon in the row.
     const actions = results.slice(results.indexOf('<div className="rec__actions">', results.indexOf('items.map')));
-    const order = ['Play', 'Like', 'Dislike', 'Download', 'Hide', 'Why this song?'];
+    const order = ['Play', 'Like', 'Dislike', 'Download', 'Find similar sound'];
     let at = -1;
     for (const label of order) {
       const next = actions.indexOf(label, at + 1);
@@ -93,8 +95,6 @@ describe('the song card (SONG-CARD-001)', () => {
     expect(css).toMatch(/\.rec__actions \.iconbtn:hover[^{]*\{[^}]*border-color: transparent;/);
     expect(css).toMatch(/\.rec__actions \.iconbtn,\s*\.track__actions \.iconbtn \{[^}]*box-shadow: inset 0 0 0 1px/);
     expect(css).not.toMatch(/\.rec__actions \.iconbtn::after/);
-    // The why pill shares the row, so it must be the same height to tap reliably.
-    expect(css).toMatch(/\.rec__actions \.whybtn \{\s*min-height: 44px;/);
   });
 
   it('gives the title a bigger, tighter face than the artist under it', () => {
@@ -124,10 +124,14 @@ describe('the song card (SONG-CARD-001)', () => {
   });
 
   it('levels the artwork with the title and artist, not with the whole row', () => {
-    // Title and artist share row 1 with the art; the secondary line and the actions sit below it.
-    expect(css).toMatch(
-      /\.rec \{[^}]*grid-template-areas:\s*'rank art text tier dur'\s*'\. \. sub sub sub'\s*'\. \. actions actions actions';/,
-    );
+    // Three bands: rank/cover/title, the reason line and tags, one row of controls (Find similar
+    // sound is an icon in that row since UI-MOOD-001, so its own band is gone).
+    const areaText = /\.rec \{[^}]*grid-template-areas:\s*((?:'[^']*'\s*)+);/.exec(css)?.[1] ?? '';
+    const rows = [...areaText.matchAll(/'([^']*)'/g)].map((m) => m[1]!.split(/\s+/));
+    expect(rows[0]).toEqual(['rank', 'art', 'text', 'tier', 'dur']);
+    expect(rows[1]).toEqual(['.', '.', 'sub', 'sub', 'sub']);
+    expect(rows[2]).toEqual(['.', '.', 'actions', 'actions', 'actions']);
+    expect(rows).toHaveLength(3);
     expect(css).toMatch(/\.rec__rank \{[^}]*align-self: center;/);
     expect(css).toMatch(/\.rec__art \{[^}]*align-self: center;/);
     expect(css).toMatch(/\.rec__text \{[^}]*align-self: center;/);
@@ -174,17 +178,14 @@ describe('the song card (SONG-CARD-001)', () => {
     expect(css).toMatch(/\.rec__sub \{[^}]*grid-area: sub;/);
   });
 
-  it('asks for artwork at the size Astra specifies for a list row', () => {
-    expect(results).toMatch(/<Art src=\{[^}]*\} size=\{56\} \/>/);
-    expect(css).toMatch(/\.rec__art \.art \{[^}]*width: 56px;[^}]*height: 56px;/);
+  it('asks for artwork at the one row size (COVER-BIG-001: 64px, was 56px)', () => {
+    expect(results).toMatch(/<Art src=\{[^}]*\} size=\{ROW_COVER\} \/>/);
+    expect(readFileSync(join(here, 'row-cover.ts'), 'utf8')).toMatch(/ROW_COVER = 64;/);
+    expect(css).toMatch(/\.rec__art \.art \{[^}]*width: 64px;[^}]*height: 64px;/);
   });
 
-  it('keeps the why control readable when the row is narrow, and named in full for AT', () => {
-    expect(results).toMatch(/aria-label=\{`Why \$\{t\.title\}\?`\}/);
-    expect(results).toMatch(/className="whybtn__short"/);
-    expect(css).toMatch(/\.whybtn \{[^}]*text-overflow: ellipsis;/);
-    // Below 480px the phrase is replaced by "Why?" rather than ellipsised to nothing.
-    expect(css).toMatch(/@media \(max-width: 480px\) \{\s*\.whybtn__full \{\s*display: none;/);
+  it('has no Why control (owner, 2026-11-19: "remove the why button")', () => {
+    expect(results).not.toMatch(/Why this song\?|whybtn/);
   });
 
   it('draws the familiar-to-adventurous track flat, with no inset shadow box', () => {

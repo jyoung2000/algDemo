@@ -112,6 +112,20 @@
   font-size: 11px;
   color: var(--ink-3);
 }
+.savemenu__foot { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.savemenu__unstar { min-height: 44px; margin-right: auto; }
+/* STAR-MENU-001: the player's star opens the menu above the player, inside the window. */
+.np__savemenu {
+  position: fixed;
+  z-index: 60;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: var(--np-menu-bottom, 120px);
+  width: min(340px, calc(100vw - 24px));
+  max-height: min(70vh, calc(100vh - var(--np-menu-bottom, 120px) - 24px));
+  overflow: auto;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 18%);
+  border-radius: 14px;
+}
 .savemenu__done {
   appearance: none;
   justify-self: end;

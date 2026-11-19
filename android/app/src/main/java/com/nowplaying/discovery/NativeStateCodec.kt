@@ -135,7 +135,7 @@ object NativeStateCodec {
       .put("id", cur?.second?.id ?: JSONObject.NULL)
       .put("mediaId", cur?.first ?: JSONObject.NULL)
       .put("positionMs", q.positionMs.coerceAtLeast(0))
-      .put("repeat", when (c.repeat) { com.nowplaying.discovery.engine.PlayQueue.Repeat.ONE -> 1; com.nowplaying.discovery.engine.PlayQueue.Repeat.ALL -> 2; else -> 0 })
+      .put("repeat", when (c.repeat) { com.nowplaying.discovery.engine.PlayQueue.Repeat.ONE -> 1; com.nowplaying.discovery.engine.PlayQueue.Repeat.ONCE -> 3; com.nowplaying.discovery.engine.PlayQueue.Repeat.TWICE -> 4; else -> 0 })
       .put("shuffle", c.shuffle)
       .put("order", JSONArray(c.order))
       .put("nextRound", JSONArray(c.nextRound))
@@ -153,7 +153,7 @@ object NativeStateCodec {
       entries += e.getString("mediaId") to song
     }
     fun keys(k: String) = o.optJSONArray(k)?.let { a -> (0 until minOf(a.length(), MAX_QUEUE)).map { a.optString(it) }.filter { it.isNotEmpty() } } ?: emptyList()
-    val repeat = when (o.optInt("repeat", 0)) { 1 -> com.nowplaying.discovery.engine.PlayQueue.Repeat.ONE; 2 -> com.nowplaying.discovery.engine.PlayQueue.Repeat.ALL; else -> com.nowplaying.discovery.engine.PlayQueue.Repeat.OFF }
+    val repeat = when (o.optInt("repeat", 0)) { 1 -> com.nowplaying.discovery.engine.PlayQueue.Repeat.ONE; 3 -> com.nowplaying.discovery.engine.PlayQueue.Repeat.ONCE; 4 -> com.nowplaying.discovery.engine.PlayQueue.Repeat.TWICE; else -> com.nowplaying.discovery.engine.PlayQueue.Repeat.OFF }
     val control = com.nowplaying.discovery.engine.PlayQueue.Control(
       o.optInt("index", -1), repeat, o.optBoolean("shuffle", false), keys("order"), keys("nextRound"), keys("heard"),
     )

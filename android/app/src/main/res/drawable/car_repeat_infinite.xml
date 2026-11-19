@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- REPEAT-COUNT-001: the same paths as the phone and desktop button (web/src/icons.tsx
+     REPEAT_ARCS / REPEAT_HEADS / REPEAT_MARKS). repeat-glyph.test.tsx fails if they drift. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M16.04 4.41A8.6 8.6 0 0 1 17.53 18.59" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.9" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000"/>
+    <path android:pathData="M7.96 19.59A8.6 8.6 0 0 1 6.47 5.41" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.9" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000"/>
+    <path android:pathData="M19.2 20.58L14.37 20.27L15.86 16.6Z" android:fillColor="#FFFFFFFF" android:strokeColor="#FFFFFFFF" android:strokeWidth="1" android:strokeLineJoin="round"/>
+    <path android:pathData="M4.8 3.42L9.63 3.73L8.14 7.4Z" android:fillColor="#FFFFFFFF" android:strokeColor="#FFFFFFFF" android:strokeWidth="1" android:strokeLineJoin="round"/>
+    <path android:pathData="M12 12C10.6 9.9 7.6 9.7 7.6 12C7.6 14.3 10.6 14.1 12 12C13.4 9.9 16.4 9.7 16.4 12C16.4 14.3 13.4 14.1 12 12Z" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000"/>
+</vector>

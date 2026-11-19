@@ -9,9 +9,9 @@
  * "guessed" instead of presenting an inference as metadata. Confidences stay below real metadata
  * (Deezer album genre is 0.8): artist 0.45, sound 0.3..0.55 by similarity, seed 0.25.
  */
-import { type Tag, makeTag, tagStrength } from './genres';
+import { type Tag, makeTag, normalize, tagStrength } from './genres';
 import { FAMILY_TAGS, SUBS } from './genre-table';
-import { familyOfGenre } from './classify';
+import { classify, familyOfGenre } from './classify';
 import { fold } from './identity';
 import type { Store } from './store';
 import type { Dict } from './shape';
@@ -179,6 +179,50 @@ export function subsFromArtist(body: Dict, artist: string): Tag[] {
     // real ones ('r&b', 'soul', 'dance-pop') before the votes thin out.
     .slice(0, 3)
     .map(([name]) => ({ name, label: label.get(name) ?? name, source: MB_ARTIST_SOURCE, scope: 'artist', confidence: 0.5, inferred: false }));
+}
+
+const SUB_FAMILY = new Map(SUBS.map((x) => [x.key, x.family]));
+const familyOfTag = (t: Tag): string | null => SUB_FAMILY.get(t.name) ?? FAMILY_TAGS[t.name] ?? familyOfGenre(t.name) ?? classify([t], null)?.familySlug ?? null;
+
+/**
+ * NAMESAKE-001 (owner, 2026-11-19: genres "as accurate as possible"): MusicBrainz's artist search is by
+ * name, so a rapper called Cochise got the tags of Cochise the 1970s folk-rock band. When a song's own
+ * service genres name a family and none of the artist's tags fall in any of those families, the tags
+ * are about someone else with that name and are not used. A song nothing has placed has nothing to
+ * check against, and an artist who shares a family keeps all their tags (a rapper's country record).
+ */
+export function artistTagsFit(songTags: readonly Tag[], artistTags: readonly Tag[]): boolean {
+  const own = new Set(songTags.filter((t) => t && !t.inferred && t.source !== MB_ARTIST_SOURCE).map(familyOfTag).filter((f): f is string => !!f));
+  if (!own.size || !artistTags.length) return true;
+  // Only a clear namesake is dropped: every artist tag places in a family and none of them is the song's.
+  const theirs = artistTags.map(familyOfTag);
+  if (theirs.some((f) => !f)) return true;
+  return theirs.some((f) => own.has(f!));
+}
+
+/** A song's tags without the artist tags that belong to a namesake (NAMESAKE-001); for tags merged earlier. */
+export function withoutNamesake(tags: readonly Tag[]): Tag[] {
+  const artist = tags.filter((t) => t && t.source === MB_ARTIST_SOURCE);
+  if (!artist.length) return [...tags];
+  return artistTagsFit(tags, artist) ? [...tags] : tags.filter((t) => t && t.source !== MB_ARTIST_SOURCE);
+}
+
+/**
+ * A song's tags as the genre table reads them today: namesake artist tags dropped (NAMESAKE-001), and
+ * a subgenre saved under a key the table has since corrected renamed from its own words ("east coast
+ * hip hop" was saved as boom bap). Tags already right come back unchanged (same array).
+ */
+export function currentTags(tags: readonly Tag[]): readonly Tag[] {
+  const kept = withoutNamesake(tags);
+  let changed = kept.length !== tags.length;
+  const out = kept.map((t) => {
+    if (!t || !t.label || !SUB_KEYS.has(t.name)) return t;
+    const now = normalize(t.label);
+    if (!now || now === t.name || !SUB_KEYS.has(now)) return t;
+    changed = true;
+    return { ...t, name: now };
+  });
+  return changed ? out : tags;
 }
 
 /** @deprecated Use {@link subsFromArtist}; kept so the hip-hop rules keep their own name in tests. */

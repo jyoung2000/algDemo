@@ -22,6 +22,16 @@ describe('world radio identity and metadata (RADIO-001)', () => {
     expect(heardCredit({ identified: false, kind: 'song', heard: 180, duration: 200 }).eligible).toBe(false);
     expect(heardCredit({ identified: true, kind: 'programme', heard: 180, duration: 200 }).eligible).toBe(false);
   });
+  it('calls it a full listen only when most of a song of known length was heard (RADIO-TASTE-001)', () => {
+    expect(heardCredit({ identified: true, kind: 'song', heard: 65, duration: 200 }).full).toBe(false);
+    expect(heardCredit({ identified: true, kind: 'song', heard: 139, duration: 200 }).full).toBe(false);
+    expect(heardCredit({ identified: true, kind: 'song', heard: 140, duration: 200 })).toEqual({ eligible: true, coverage: 140, full: true });
+    expect(heardCredit({ identified: true, kind: 'song', heard: 900, duration: 200 })).toEqual({ eligible: true, coverage: 200, full: true }); // never more than the song itself
+    expect(heardCredit({ identified: true, kind: 'song', heard: 900, duration: null }).full).toBe(false);
+    expect(heardCredit({ identified: false, kind: 'song', heard: 190, duration: 200 }).full).toBe(false);
+    expect(heardCredit({ identified: true, kind: 'programme', heard: 190, duration: 200 }).full).toBe(false);
+    expect(heardCredit({ identified: true, kind: 'song', heard: 25, duration: 30 }).full).toBe(false); // under thirty seconds heard is nothing at all
+  });
   it('falls over between directory servers; deduplicates paging; never hides later pages', async () => {
     const calls: string[] = []; const d = new RadioDirectory(async u => { calls.push(u); if (u.includes('de1.')) throw Error('offline'); return JSON.stringify([raw]); });
     const a = await d.search({ country: 'CA', query: 'Radio', offset: 24 }); expect(a[0]!.name).toBe('Radio Test'); expect(calls.some(u => u.includes('offset=24'))).toBe(true); expect(calls).toHaveLength(2);

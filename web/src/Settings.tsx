@@ -12,6 +12,7 @@ import { AudioSettings } from './AudioSettings';
 import { RankingFormulaSettings } from './RankingFormulaSettings';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, classNames, fmtBytes } from './util';
 import './discovery-settings.css';
+import { SIMILAR_DEFAULT, SIMILAR_MAX, SIMILAR_MIN } from './engine/similar-sound';
 
 const CAPS: [string, string][] = [
   ['search', 'Search'],
@@ -222,6 +223,35 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFo
             Look for more songs once you finish one from your now playing queue and 3 or fewer unplayed ones are
             left. Pausing, seeking, skipping or replaying never starts a search on its own.
           </p>
+          <label className="chk discovery-settings__toggle">
+            <input
+              type="checkbox"
+              checked={settings?.mood_queue ?? true}
+              aria-describedby="mood-queue-help"
+              onChange={(e) => onSettings({ mood_queue: e.target.checked })}
+            />
+            <span className="box" aria-hidden="true" />
+            <span>Follow my listening mood</span>
+          </label>
+          <p className="note" id="mood-queue-help">
+            Re-arrange the songs still to come in your now playing queue, here and in Android Auto, to match what you
+            are listening to now: its genre, subgenre and sound. Starring a song, Find similar sound and dislikes count
+            most. Familiar keeps the queue close to your mood; Adventurous lets in more variety. Albums and saved
+            playlists keep their order unless shuffle is on. The song playing and songs you added yourself never move.
+          </p>
+        </section>
+        <section className="discovery-settings" aria-labelledby="similar-h">
+          <h3 id="similar-h">Similar sound</h3>
+          <div className="discovery-settings__heading">
+            <label htmlFor="similar-percent">Minimum sound match</label>
+            <output htmlFor="similar-percent">{settings?.similar_percent ?? SIMILAR_DEFAULT}%</output>
+          </div>
+          <div className="dial discovery-settings__range">
+            <input id="similar-percent" type="range" min={SIMILAR_MIN} max={SIMILAR_MAX} step={1}
+              value={settings?.similar_percent ?? SIMILAR_DEFAULT} disabled={!settings}
+              onChange={(e) => onSettings({ similar_percent: Number(e.target.value) })} />
+          </div>
+          <p className="note">The “Find similar sound” button on any song in the now playing list adds only new songs whose analysed sound scores at least this much. It searches all seven full-song services, then compares available audio; songs without analysed audio never pass. The percentage is an audio-model match score, not a guarantee you’ll hear them as alike. Uses the discovery transfer allowance.</p>
         </section>
         <AudioSettings settings={settings} onSettings={onSettings} />
         <RankingFormulaSettings settings={settings} onSaved={onFormulaSaved} />

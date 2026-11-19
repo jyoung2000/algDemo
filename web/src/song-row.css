@@ -1,0 +1,242 @@
+/*
+ * ROW-UNIFY-001 / COVER-BIG-001 / ROW-SPACE-001 / PLAY-DISC-001 (owner, 2026-11-19), from the two
+ * design answers (claude-fable-5, gpt-6-astra; scratch/ui-mood/*.md):
+ * every song and station row reads the same on Discover, Saved and Radio: a 64px cover, the text
+ * beside it, and ONE row of buttons under the text that starts with the same Play disc. 16px between
+ * cover and text, 8px between buttons, 12px above and below each row, so nothing touches the cover.
+ * Loaded after styles.css and radio.css; the button contract still goes in last.
+ */
+:root {
+  --row-cover: 64px;
+  --row-gap: 16px;
+}
+@media (max-width: 360px) {
+  :root { --row-cover: 56px; --row-gap: 12px; }
+}
+
+/* ---------------------------------------------------------------- covers */
+.tracks--saved > .track > .art,
+.tracks--saved > .track > .art--none {
+  width: var(--row-cover);
+  height: var(--row-cover);
+  --art-size: var(--row-cover);
+  border-radius: 8px;
+}
+
+/* ---------------------------------------------------------------- Saved rows: the queue's shape */
+.tracks--saved > .track {
+  display: grid;
+  grid-template-columns: var(--row-cover) minmax(0, 1fr) auto;
+  grid-template-areas:
+    'art text played'
+    'art actions actions';
+  column-gap: var(--row-gap);
+  row-gap: 8px;
+  align-items: center;
+  padding: 12px 14px;
+  min-height: 0;
+}
+.tracks--saved > .track > .art,
+.tracks--saved > .track > .art--none { grid-area: art; align-self: start; }
+.tracks--saved > .track > .track__text { grid-area: text; min-width: 0; gap: 2px; }
+.tracks--saved > .track > .track__played { grid-area: played; align-self: start; }
+.tracks--saved > .track > .track__actions { grid-area: actions; justify-content: flex-start; justify-self: start; gap: 8px; min-width: 0; margin-left: 0; flex: none; }
+.tracks--saved > .track > .track__savemenu { grid-column: 1 / -1; }
+
+/* The phone rule (saved-lists.css SAVED-MOBILE-001) set 44px art, actions at the right and 44 x 44
+   border-box buttons, whose 4px transparent borders left a 44 x 36 content box: the light-blue fill
+   was a pill. One row shape at every width; the buttons keep the 36px circle in a 44px target. */
+@media (max-width: 480px) {
+  ul.tracks--saved > li.track {
+    grid-template-columns: var(--row-cover) minmax(0, 1fr);
+    grid-template-areas: 'art text' 'actions actions';
+    gap: 8px var(--row-gap);
+    padding: 12px;
+  }
+  ul.tracks--saved > li.track > .track__actions { justify-self: start; }
+}
+ul.tracks--saved .track__actions .iconbtn:not(.playbtn) {
+  box-sizing: content-box;
+  width: 36px;
+  height: 36px;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---------------------------------------------------------------- the queue row: room to breathe */
+.recs > .rec {
+  row-gap: 8px;
+  column-gap: var(--row-gap);
+  padding: 12px 14px 12px 10px;
+}
+.recs > .rec .rec__actions { gap: 8px; }
+
+/* ---------------------------------------------------------------- Radio rows */
+/* The row's grid lives on the develop-in wrapper (styles.css RADIO-SKEL-001), so the column sizes are
+   set there; radio.css's phone rule put the buttons in a second body column, beside the text. */
+ul.radio-stations > li.radio-station > .skel-develop,
+ul.radio-stations > li.radio-station:not(:has(> .skel-develop)) {
+  grid-template-columns: var(--row-cover) minmax(0, 1fr);
+  column-gap: var(--row-gap);
+  row-gap: 0;
+}
+ul.radio-stations > li.radio-station { padding: 14px 0; }
+ul.radio-stations .radio-station__art {
+  width: var(--row-cover);
+  height: var(--row-cover);
+  border-radius: 8px;
+}
+ul.radio-stations .radio-station__body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; }
+ul.radio-stations .radio-station__body > .radio-station__actions.song-actions { grid-column: 1 / -1; justify-content: flex-start; }
+.radio-station__info { min-width: 0; }
+.radio-station h2 { display: block; margin: 0 0 2px; min-width: 0; }
+.radio-station__name { font-size: 16px; font-weight: 700; }
+.radio-station__actions.song-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.radio-station__details { margin-top: 0; }
+
+/* ---------------------------------------------------------------- one icon button paint for every row */
+/* A 36px circle in a 44px-tall target: transparent top and bottom borders carry the extra height,
+   and the fill stays in the content box (background-clip), so it is a true circle, never a pill. */
+.song-actions .iconbtn,
+ul.radio-stations .radio-station__actions.song-actions .iconbtn {
+  box-sizing: content-box;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  padding: 0;
+  margin: 0;
+  border: 4px solid transparent;
+  border-left-width: 0;
+  border-right-width: 0;
+  background-color: #fff;
+  background-clip: content-box;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--hair);
+  display: grid;
+  place-items: center;
+  font-size: 0;
+  color: var(--ink-2);
+}
+.song-actions .iconbtn[aria-pressed='true'],
+ul.radio-stations .radio-station__actions.song-actions .iconbtn[aria-pressed='true'] {
+  color: var(--accent);
+  background-color: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px #b8cff0;
+}
+
+/* ---------------------------------------------------------------- the Play disc (PLAY-DISC-001) */
+/* PLAY-DISC-002 (owner, 2026-11-19): "ensure the blue bubble is contained nicely in the play button".
+   The disc was a 40 x 44 box with 2px transparent top/bottom borders and a 999px radius: a radius on a
+   box taller than wide draws a stadium, so the fill read as an oval inside the round ring. Now the
+   whole 44px target IS the circle (aspect-ratio 1, no border band), the fill and the ring share it.
+   Light blue = plays at once (ready, local file, live station); white with a ring = still to be
+   fetched; solid blue with Pause = playing now. */
+.rec__actions .iconbtn.playbtn,
+.track__actions .iconbtn.playbtn,
+ul.tracks--saved .track__actions .iconbtn.playbtn,
+.song-actions .iconbtn.playbtn,
+ul.radio-stations .radio-station__actions.song-actions .iconbtn.playbtn {
+  box-sizing: border-box;
+  flex: 0 0 44px;
+  min-width: 44px;
+  max-width: 44px;
+  min-height: 44px;
+  width: 44px;
+  height: 44px;
+  aspect-ratio: 1;
+  border: 0;
+  padding: 0;
+  border-radius: 50%;
+  background-color: #fff;
+  background-clip: border-box;
+  box-shadow: inset 0 0 0 1px #8fbcf5;
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+}
+.rec__actions .iconbtn.playbtn[data-ready='true'],
+.track__actions .iconbtn.playbtn[data-ready='true'],
+.song-actions .iconbtn.playbtn[data-ready='true'],
+ul.radio-stations .radio-station__actions.song-actions .iconbtn.playbtn[data-ready='true'] {
+  background-color: #bcd8ff;
+  background-clip: border-box;
+  box-shadow: inset 0 0 0 1px #8fbcf5;
+  color: var(--accent);
+}
+.rec__actions .iconbtn.playbtn[data-playing='true'],
+.track__actions .iconbtn.playbtn[data-playing='true'],
+.song-actions .iconbtn.playbtn[data-playing='true'],
+ul.radio-stations .radio-station__actions.song-actions .iconbtn.playbtn[data-playing='true'] {
+  background-color: var(--accent);
+  box-shadow: none;
+  color: #fff;
+}
+/* A triangle's visual centre sits left of its box's centre; one pixel right centres it optically. */
+.playbtn .playbtn__tri { transform: translateX(1px); }
+.playbtn svg { display: block; }
+@media (hover: hover) {
+  .song-actions .iconbtn.playbtn[data-ready='true']:hover:not(:disabled),
+  .rec__actions .iconbtn.playbtn[data-ready='true']:hover:not(:disabled),
+  .track__actions .iconbtn.playbtn[data-ready='true']:hover:not(:disabled) {
+    background-color: #a9cdfd;
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+}
+
+/* ---------------------------------------------------------------- Find similar sound, as an icon */
+.rec__actions .iconbtn.rec__similar { grid-area: auto; color: var(--ink-2); }
+
+/* ---------------------------------------------------------------- Preload target (PRELOAD-RING-001) */
+/* The outer pill hugs its two segments instead of stretching across the card. */
+.seg[aria-labelledby='preload-target-label'] {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px;
+  gap: 2px;
+}
+
+/* ---------------------------------------------------------------- listening mood (MOOD-QUEUE-001) */
+.mood-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 10px;
+  padding: 6px 12px 6px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 13px;
+  animation: mood-note-in 220ms ease-out;
+}
+.mood-note__icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  animation: mood-spin 700ms ease-in-out;
+}
+.recs > .rec.is-mood-moved {
+  animation: mood-moved 1500ms ease-out;
+}
+@keyframes mood-note-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes mood-spin { from { transform: rotate(-180deg); } to { transform: none; } }
+@keyframes mood-moved {
+  0% { background-color: color-mix(in srgb, var(--accent) 22%, var(--panel, #fff)); }
+  100% { background-color: inherit; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mood-note, .mood-note__icon { animation: none; }
+  .recs > .rec.is-mood-moved { animation: none; box-shadow: inset 3px 0 0 var(--accent); }
+}
+
+/* STAR-MENU-001: a starting song's "counts double" is a 2x mark, so a star always means the save menu. */
+.emph-2x { font-size: 12px; font-weight: 700; letter-spacing: -0.02em; line-height: 1; }

@@ -142,7 +142,14 @@ object RadioNative {
     val s = session ?: error("Radio session has ended")
     require(!cmd.has("id") || cmd.optString("id") == s.id) { "Radio session has ended" }
     when (cmd.optString("op")) {
-      "nowplaying" -> { EngineHub.fromPage(JSONObject().put("op", "radio-meta").put("id", s.id).put("title", cmd.optString("title")).put("artist", cmd.optString("artist")).put("artwork", cmd.optString("artwork")).toString()) }
+      "nowplaying" -> {
+        // CAR-RADIO-CONTROLS-001: also the identified song (for the car's star and playlist pick) and its clock.
+        val meta = JSONObject().put("op", "radio-meta").put("id", s.id).put("title", cmd.optString("title")).put("artist", cmd.optString("artist")).put("artwork", cmd.optString("artwork"))
+        cmd.optJSONObject("song")?.let { meta.put("song", it) }
+        cmd.optJSONObject("track")?.takeIf { it.toString().length <= 16_000 }?.let { meta.put("track", it) }
+        for (k in listOf("start", "duration")) cmd.optDouble(k, Double.NaN).takeIf { !cmd.isNull(k) && it.isFinite() }?.let { meta.put(k, it) }
+        EngineHub.fromPage(meta.toString())
+      }
       "export" -> {
         val from = cmd.optDouble("from", Double.NaN); val to = cmd.optDouble("to", Double.NaN)
         require(from.isFinite() && to.isFinite()) { "Invalid recording range" }

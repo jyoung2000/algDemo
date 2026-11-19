@@ -5,14 +5,21 @@
   color: var(--ink-2);
   font-size: 12px;
   line-height: 1.4;
-  white-space: normal;
-  overflow-wrap: anywhere;
 }
+/* LINES-001 (owner, 2026-11-19): "title, album info and artist information should all be on there
+   respective lines and shouldnt wrap ... too long ... should marquis or scroll", on every list.
+   Each line is one Marquee: it never wraps, and cut-off text glides to show the rest. */
+.song-credits__album-line,
+.song-credits__album,
+.song-credits__artists,
+.song-credits__artists .artistlink {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+.song-credits__album-line { display: block; overflow: hidden; }
 .song-credits__album {
   color: inherit;
   font: inherit;
-  white-space: normal;
-  overflow-wrap: anywhere;
 }
 button.song-credits__album {
   appearance: none;
@@ -42,6 +49,12 @@ button.song-credits__album:focus-visible {
 /* Existing artist links use negative margins. Stacked credits use non-overlapping link targets. */
 .rec__text > .rec__artist .artistlink,
 .track__text > .track__artist .artistlink {
+  margin: 0;
+  padding: 2px 0;
+}
+/* UI-POLISH-001: the player's artist sits right under the title; a 6px reach above it covered the
+   title's last pixels, so a tap on the title opened the artist. A 2px reach stays clear. */
+.np__artist .artistlink {
   margin: 0;
   padding: 2px 0;
 }

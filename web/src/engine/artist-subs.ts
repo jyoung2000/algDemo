@@ -8,7 +8,7 @@
 import type { Tag } from './genres';
 import { fold } from './identity';
 import { stylesFromArtist } from './genre-fill';
-import { needsSub, subsFromArtist } from './infer';
+import { artistTagsFit, needsSub, subsFromArtist } from './infer';
 import type { Http, Meter } from './net';
 import type { Dict } from './shape';
 import type { Store } from './store';
@@ -37,7 +37,7 @@ export function withArtistSubs<T extends Dict>(track: T, map: ArtistSubsMap | un
   const tags = (track?.['tags'] as Tag[] | undefined) ?? [];
   if (!map || !needsSub(tags)) return track;
   const subs = map[fold(artistName(track, fallbackArtist))]?.tags;
-  return subs?.length ? { ...track, tags: [...tags, ...subs] } : track;
+  return subs?.length && artistTagsFit(tags, subs) ? { ...track, tags: [...tags, ...subs] } : track;
 }
 
 /** Ask MusicBrainz about one artist (cached a month by the caller's store) and remember the answer. */

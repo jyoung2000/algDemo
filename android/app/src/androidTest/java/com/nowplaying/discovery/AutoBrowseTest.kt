@@ -124,7 +124,8 @@ class AutoBrowseTest {
       assertEquals(emptyList<String>(), ids(await { b.getChildren("songs", 2, 1, null) }))
 
       val playlists = await { b.getChildren("playlists", 0, 50, null) }.value!!
-      assertEquals(listOf("albums", "playlist/p1"), playlists.map { it.mediaId })
+      // CAR-LOCAL-001 (owner, 2026-11-19): "On this phone" (every downloaded or imported song) leads the list.
+      assertEquals(listOf("playlist/airwave%3Aon-this-phone", "albums", "playlist/p1"), playlists.map { it.mediaId })
       assertTrue("playlist folder is browsable", playlists.first().mediaMetadata.isBrowsable == true)
 
       // ALBUM-SAVE-001: a saved album is under Albums, not Playlists, with its artist and cover, songs in order.

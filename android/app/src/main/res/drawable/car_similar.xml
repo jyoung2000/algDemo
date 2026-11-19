@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- CAR-SIMILAR-001 (owner, 2026-11-18): the car's "Find similar songs" button beside Repeat: a note
+     sending out sound, i.e. "more that sounds like this". One colour, as car icons are. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M3.6 17.6a2.6 2.6 0 1 0 5.2 0a2.6 2.6 0 1 0 -5.2 0Z" android:fillColor="#FFFFFFFF"/>
+    <path android:pathData="M8.8 17.6V4.6c1.7 0.4 3.2 1.5 3.2 3.4" android:strokeColor="#FFFFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000"/>
+    <path android:pathData="M15 9a4.2 4.2 0 0 1 0 6" android:strokeColor="#FFFFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:fillColor="#00000000"/>
+    <path android:pathData="M18.2 6.2a8 8 0 0 1 0 11.6" android:strokeColor="#FFFFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:fillColor="#00000000"/>
+</vector>

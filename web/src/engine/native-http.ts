@@ -60,6 +60,19 @@ function nativeTimer(ms: number, fire: () => void): () => void {
   };
 }
 
+/**
+ * A pause that still ends while the page is hidden (CAR-SIMILAR-001 polls a job from the car with the
+ * phone's screen off): the phone's clock when the bridge has one, else a DOM timer.
+ */
+export function phoneWait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window !== 'undefined' && hasClock() && window.__awDelay) {
+      try { nativeTimer(ms, resolve); return; } catch { /* fall back to the DOM timer */ }
+    }
+    setTimeout(resolve, ms);
+  });
+}
+
 export function nativeHttpPort(): HttpPort {
   window.__awHttp = (id, json) => {
     const cb = pending.get(id);

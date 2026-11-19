@@ -1,6 +1,9 @@
 import { useState, type CSSProperties } from 'react';
 import { Glyph, type GlyphName } from '@now-playing/aqua-ui/icons';
-import { SourceMark } from './SourceMark';
+import { SimilarGlyph } from './icons';
+import { Marquee } from './Marquee';
+import { ROW_COVER } from './row-cover';
+import './song-row.css';
 import type { ArtistTarget, Characteristics, FeedbackKind, PlaylistSummary, RecItem, Track } from './api';
 import type { CacheState, CardCache } from './engine/queue-controls';
 import { RowPlayButton, playOnDoubleClick } from './RowPlay';
@@ -60,6 +63,9 @@ interface Props {
   onPlayTrack: (track: Track) => void;
   onFeedback: (item: RecItem, kind: FeedbackKind) => void;
   onDownload?: (track: Track) => void;
+  /** Adds only new songs whose analysed audio clears Settings' similarity threshold. */
+  onSimilar?: (track: Track) => void;
+  similarBusy?: boolean;
   /** Per-song cache state for the card rail; absent in contexts with no local downloader. */
   cacheOf?: (key: string) => CardCache | null;
   /** The listener's saved lists, for the menu that opens when a song is liked. */
@@ -76,8 +82,7 @@ interface Props {
  * diversified order; nothing here re-sorts it.
  * Arrow keys / j k move between rows; Enter plays; the row keeps focus when results refresh.
  */
-export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload, cacheOf, lists, onLists, onOpenAlbum, onOpenArtist }: Props) {
-  const [open, setOpen] = useState<string | null>(null);
+export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload, onSimilar, similarBusy, cacheOf, lists, onLists, onOpenAlbum, onOpenArtist }: Props) {
   /** Which row's save menu is showing, by song key. Only one opens at a time. */
   const [saving, setSaving] = useState<string | null>(null);
 
@@ -106,6 +111,8 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         const pb = playbackOfTrack(s);
         const seedPlayable = canPlayHere(pb);
         const seedReady = cacheOf?.(s.key)?.state === 'ready';
+        const sf = flags[s.key] ?? {};
+        const seedItem = (items.find((x) => x.track.key === s.key) ?? { track: s, rank: 0, reasons: [], playback: playbackOfTrack(s), characteristics: s.characteristics ?? {} }) as RecItem;
         // GENRE-ALL-001: the engine sends a starting song's genres worked out; an older answer has only its tags.
         const seedBubbles = genreBubbles(s.characteristics ?? ({ genres: (s.tags ?? []).map((g) => g.label || g.name) } as Characteristics));
         return (
@@ -121,7 +128,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               aria-label={seedPlayable ? `Play ${s.title}` : `${s.title} has no player here`}
               tabIndex={-1}
             >
-              <Art src={s.artwork} size={56} />
+              <Art src={s.artwork} size={ROW_COVER} />
               {seedPlayable && (
                 <span className="rec__playover" aria-hidden="true">
                   <Glyph name="play" size={16} />
@@ -129,9 +136,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               )}
             </button>
             <div className="rec__text">
-              <span className="rec__title" title={s.title}>
-                {s.title}
-              </span>
+              <Marquee className="rec__title" title={s.title}>{s.title}</Marquee>
               <SongCredits track={s} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} artistClassName="rec__artist" />
             </div>
             <div className="rec__sub">
@@ -149,28 +154,52 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               {seedPlayable && (
                 <RowPlayButton track={s} cache={seedReady ? ({ state: 'ready' } as CardCache) : null} onPlay={() => onPlayTrack(s)} />
               )}
+              {/* STAR-MENU-001 / ROW-UNIFY-001: Play, star (saved-list menu), X, Download, Find similar - the
+                  order of every song row - then the starting song's own "counts double". */}
               <button
-                className={classNames('iconbtn', strong && 'is-on')}
+                className={classNames('iconbtn', sf.like && 'is-on')}
                 type="button"
-                aria-pressed={strong}
-                title={strong ? 'Emphasised: counts double' : 'Emphasise this song'}
-                aria-label={strong ? `Stop emphasising ${s.title}` : `Emphasise ${s.title}`}
-                onClick={() => onEmphasis(s.key, strong ? 1 : 2)}
+                aria-pressed={Boolean(sf.like)}
+                aria-expanded={onLists ? saving === s.key : undefined}
+                onClick={() => {
+                  if (!onLists) { onFeedback(seedItem, sf.like ? 'unlike' : 'like'); return; }
+                  if (saving === s.key) { setSaving(null); return; }
+                  if (!sf.like) onFeedback(seedItem, 'like');
+                  setSaving(s.key);
+                }}
+                aria-label={`${sf.like ? `Liked: choose lists for ${s.title}` : `Like ${s.title} and choose lists`}${inPlaylist(s.key, lists) ? ' — saved to a playlist' : ''}`}
+                title={`${sf.like ? 'Liked' : 'Like'}${inPlaylist(s.key, lists) ? ' — saved to a playlist' : ''}`}
               >
-                <Glyph name="star" size={14} />
+                <SongStar saved={inPlaylist(s.key, lists)} />
+              </button>
+              <button className="iconbtn" type="button" aria-label={`Remove ${s.title}`} title="Remove from the queue" onClick={() => onRemoveSeed(s.key)}>
+                <Glyph name="close" size={14} />
               </button>
               {onDownload && (
                 <button className="iconbtn" type="button" onClick={() => onDownload(s)} aria-label={`Download ${s.title}`} title="Download">
                   <Glyph name="download" size={14} />
                 </button>
               )}
-              <button className="iconbtn" type="button" aria-label={`Remove ${s.title}`} title="Remove" onClick={() => onRemoveSeed(s.key)}>
-                <Glyph name="close" size={14} />
+              {onSimilar && (
+                <button className="iconbtn rec__similar" type="button" onClick={() => onSimilar(s)} disabled={similarBusy} aria-label={`Find similar sound to ${s.title}`} title="Find similar sound">
+                  <SimilarGlyph size={16} />
+                </button>
+              )}
+              <button
+                className={classNames('iconbtn', strong && 'is-on')}
+                type="button"
+                aria-pressed={strong}
+                title={strong ? 'Emphasised: counts double' : 'Emphasise this song (counts double)'}
+                aria-label={strong ? `Stop emphasising ${s.title}` : `Emphasise ${s.title}`}
+                onClick={() => onEmphasis(s.key, strong ? 1 : 2)}
+              >
+                <span className="emph-2x" aria-hidden="true">2×</span>
               </button>
             </div>
             {saving === s.key && onLists && (
               <div className="rec__savemenu">
-                <SaveMenu songKey={s.key} title={s.title} lists={lists ?? []} onLists={onLists} onClose={() => setSaving(null)} />
+                <SaveMenu songKey={s.key} title={s.title} lists={lists ?? []} onLists={onLists} onClose={() => setSaving(null)}
+                  onUnstar={sf.like ? () => onFeedback(seedItem, 'unlike') : undefined} />
               </div>
             )}
           </SwipeLi>
@@ -180,7 +209,6 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         const t = it.track;
         const f = flags[t.key] ?? {};
         const playable = canPlayHere(it.playback);
-        const isOpen = open === t.key;
         const facts = describeCharacteristics(it.characteristics);
         // One coloured bubble per genre or subgenre, no separators. The Taste Picker colour sits on the family/subgenre bubble.
         const bubbles = genreBubbles(it.characteristics);
@@ -236,7 +264,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               {playingKey === t.key ? <Glyph name="speaker" size={12} /> : it.rank}
             </span>
             <button className="rec__art" type="button" onClick={() => (playable ? onPlay(it) : undefined)} disabled={!playable} aria-label={playable ? `Play ${t.title}` : `${t.title} has no player here`} tabIndex={-1}>
-              <Art src={t.artwork} size={56} />
+              <Art src={t.artwork} size={ROW_COVER} />
               {playable && (
                 <span className="rec__playover" aria-hidden="true">
                   <Glyph name="play" size={16} />
@@ -249,7 +277,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               )}
             </button>
             <div className="rec__text">
-              <span className="rec__title" title={t.title}>
+              <Marquee className="rec__title" title={t.title}>
                 {t.title}
                 {(t.versions ?? (t.version ? [t.version] : [])).map((v) => (
                   <span key={v} className="vtag">
@@ -257,7 +285,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                   </span>
                 ))}
                 {it.new_release && <span className="vtag vtag--new">New</span>}
-              </span>
+              </Marquee>
               <SongCredits track={t} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} artistClassName="rec__artist" />
             </div>
             <div className="rec__sub">
@@ -284,6 +312,55 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
             </span>
             <span className="rec__dur">{fmtDuration(t.duration)}</span>
             <div className="rec__actions">
+              {playable && (
+                <RowPlayButton track={t} cache={cache} onPlay={() => onPlay(it)} />
+              )}
+              <button
+                className={classNames('iconbtn', f.like && 'is-on')}
+                type="button"
+                aria-pressed={Boolean(f.like)}
+                aria-expanded={onLists ? saving === t.key : undefined}
+                onClick={() => {
+                  // STAR-MENU-001 (owner, 2026-11-19): the star always opens the saved-list menu. A first
+                  // press also stars the song; a starred song is unstarred from the menu.
+                  if (!onLists) { onFeedback(it, f.like ? 'unlike' : 'like'); return; }
+                  if (saving === t.key) { setSaving(null); return; }
+                  if (!f.like) onFeedback(it, 'like');
+                  setSaving(t.key);
+                }}
+                aria-label={`${f.like ? (onLists ? `Liked: choose lists for ${t.title}` : `Remove like from ${t.title}`) : `Like ${t.title} and choose lists`}${inPlaylist(t.key, lists) ? ' — saved to a playlist' : ''}`}
+                title={`${f.like ? 'Liked' : 'Like'}${inPlaylist(t.key, lists) ? ' — saved to a playlist' : ''}`}
+              >
+                <SongStar saved={inPlaylist(t.key, lists)} />
+              </button>
+              {/* DISLIKE-REMOVE-001 (owner, 2026-11-19): one button. Disliking teaches the algorithm and
+                  takes the song out of the queue; the X that only hid it is gone. */}
+              <button
+                className={classNames('iconbtn', f.dislike && 'is-bad')}
+                type="button"
+                aria-pressed={Boolean(f.dislike)}
+                onClick={() => {
+                  if (f.dislike) { onFeedback(it, 'undislike'); return; }
+                  if (seed) onRemoveSeed(seed.key);
+                  onFeedback(it, 'dislike');
+                }}
+                aria-label={f.dislike ? `Undo dislike of ${t.title}` : `Dislike ${t.title} and remove it from the queue`}
+                title={f.dislike ? 'Disliked' : 'Not for me — remove from the queue'}
+              >
+                <Glyph name="close" size={14} />
+              </button>
+              {onDownload && (
+                <button className="iconbtn" type="button" onClick={() => onDownload(t)} aria-label={`Download ${t.title}`} title="Download">
+                  <Glyph name="download" size={14} />
+                </button>
+              )}
+              {/* SIMILAR-ICON-001: Find similar sound is an icon in the row, not a line of words. */}
+              {onSimilar && (
+                <button className="iconbtn rec__similar" type="button" onClick={() => onSimilar(t)} disabled={similarBusy} aria-label={`Find similar sound to ${t.title}`} title="Find similar sound">
+                  <SimilarGlyph size={16} />
+                </button>
+              )}
+              {/* STAR-MENU-001: the star is only ever the save menu; "counts double" is its own 2× button. */}
               {seed && (
                 <>
                   <button
@@ -294,7 +371,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                     aria-label={seedStrong ? `Stop emphasising ${t.title}` : `Emphasise ${t.title}`}
                     onClick={() => onEmphasis(seed.key, seedStrong ? 1 : 2)}
                   >
-                    <Glyph name="star" size={14} />
+                    <span className="emph-2x" aria-hidden="true">2×</span>
                   </button>
                   <button
                     className="iconbtn"
@@ -307,70 +384,13 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                   </button>
                 </>
               )}
-              {playable && (
-                <RowPlayButton track={t} cache={cache} onPlay={() => onPlay(it)} />
-              )}
-              <button
-                className={classNames('iconbtn', f.like && 'is-on')}
-                type="button"
-                aria-pressed={Boolean(f.like)}
-                aria-expanded={onLists ? saving === t.key : undefined}
-                onClick={() => {
-                  // Liking opens the save menu so the song can go straight into chosen lists.
-                  // Unliking is immediate: there is nothing to choose.
-                  if (f.like) {
-                    onFeedback(it, 'unlike');
-                    setSaving(null);
-                    return;
-                  }
-                  onFeedback(it, 'like');
-                  if (onLists) setSaving(t.key);
-                }}
-                aria-label={`${f.like ? `Remove like from ${t.title}` : `Like ${t.title} and choose lists`}${inPlaylist(t.key, lists) ? ' — saved to a playlist' : ''}`}
-                title={`${f.like ? 'Liked' : 'Like'}${inPlaylist(t.key, lists) ? ' — saved to a playlist' : ''}`}
-              >
-                <SongStar saved={inPlaylist(t.key, lists)} />
-              </button>
-              <button
-                className={classNames('iconbtn', f.dislike && 'is-bad')}
-                type="button"
-                aria-pressed={Boolean(f.dislike)}
-                onClick={() => onFeedback(it, f.dislike ? 'undislike' : 'dislike')}
-                aria-label={f.dislike ? `Undo dislike of ${t.title}` : `Dislike ${t.title}`}
-                title={f.dislike ? 'Disliked' : 'Not for me'}
-              >
-                <Glyph name="thumb-down" size={14} />
-              </button>
-              {onDownload && (
-                <button className="iconbtn" type="button" onClick={() => onDownload(t)} aria-label={`Download ${t.title}`} title="Download">
-                  <Glyph name="download" size={14} />
-                </button>
-              )}
-              <button className="iconbtn" type="button" onClick={removeRow} aria-label={`Hide ${t.title}`} title="Hide">
-                <Glyph name="close" size={14} />
-              </button>
-              <button
-                className={classNames('linkbtn', 'whybtn')}
-                type="button"
-                aria-expanded={isOpen}
-                aria-controls={`why-${rowId(t.key)}`}
-                aria-label={`Why ${t.title}?`}
-                title="Why this song?"
-                onClick={() => setOpen(isOpen ? null : t.key)}
-              >
-                {/* A phone has no room for the full phrase beside five icons; the name stays whole for AT. */}
-                <span className="whybtn__full">Why this song?</span>
-                <span className="whybtn__short" aria-hidden="true">
-                  Why?
-                </span>
-              </button>
             </div>
             {saving === t.key && onLists && (
               <div className="rec__savemenu">
-                <SaveMenu songKey={t.key} title={t.title} lists={lists ?? []} onLists={onLists} onClose={() => setSaving(null)} />
+                <SaveMenu songKey={t.key} title={t.title} lists={lists ?? []} onLists={onLists} onClose={() => setSaving(null)}
+                  onUnstar={f.like ? () => onFeedback(it, 'unlike') : undefined} />
               </div>
             )}
-            {isOpen && <Why item={it} id={`why-${rowId(t.key)}`} />}
           </SwipeLi>
         );
       })}
@@ -378,48 +398,6 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
   );
 }
 
-function Why({ item, id }: { item: RecItem; id: string }) {
-  const t = item.track;
-  return (
-    <div className="why" id={id}>
-      <ul className="why__reasons">
-        {item.reasons.map((r) => (
-          <li key={r.factor + r.text}>{r.text}</li>
-        ))}
-      </ul>
-      {item.best_seed && (
-        <p className="why__line">
-          Closest to your starting song <b>{item.best_seed.title}</b> — {item.best_seed.artist}.
-        </p>
-      )}
-      {item.uncertainty.length > 0 && (
-        <ul className="why__unsure">
-          {item.uncertainty.map((u) => (
-            <li key={u}>
-              <Glyph name="info" size={11} /> {u}
-            </li>
-          ))}
-        </ul>
-      )}
-      <p className="why__meta">
-        Evidence {item.evidence} · found via {item.sources.join(', ') || 'provider search'}
-        {t.release ? ` · ${fmtRelease(t.release)} (${t.release.source})` : ''}
-      </p>
-      <p className="why__open">
-        {item.playback.open.map((o) => (
-          <a key={o.provider} className="openlink" href={o.url} target="_blank" rel="noreferrer noopener">
-            <SourceMark provider={o.provider} size={13} /> {o.label}
-          </a>
-        ))}
-        {!item.playback.open.length && t.url && (
-          <a className="openlink" href={t.url} target="_blank" rel="noreferrer noopener">
-            <SourceMark provider={t.provider} size={13} /> Open in {PROVIDER_LABEL[t.provider] ?? t.provider}
-          </a>
-        )}
-      </p>
-    </div>
-  );
-}
 
 export function rowId(key: string): string {
   let h = 0;

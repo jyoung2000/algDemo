@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- CAR-SIMILAR-001: the same note while the sound match runs, its waves replaced by three dots. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M3.6 17.6a2.6 2.6 0 1 0 5.2 0a2.6 2.6 0 1 0 -5.2 0Z" android:fillColor="#FFFFFFFF"/>
+    <path android:pathData="M8.8 17.6V4.6c1.7 0.4 3.2 1.5 3.2 3.4" android:strokeColor="#FFFFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000"/>
+    <path android:pathData="M13.3 12a1.3 1.3 0 1 0 2.6 0a1.3 1.3 0 1 0 -2.6 0Z" android:fillColor="#FFFFFFFF"/>
+    <path android:pathData="M17 12a1.3 1.3 0 1 0 2.6 0a1.3 1.3 0 1 0 -2.6 0Z" android:fillColor="#FFFFFFFF"/>
+    <path android:pathData="M20.7 12a1.3 1.3 0 1 0 2.6 0a1.3 1.3 0 1 0 -2.6 0Z" android:fillColor="#FFFFFFFF"/>
+</vector>
