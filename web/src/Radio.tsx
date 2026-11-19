@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { STATION_LETTERS, STATION_NUMBERS, stationMatchesInitial, stationMatchesQuery, MetadataPoller, BackgroundRetry, freshBroadcast, stationLocation, type RadioStation, type Broadcast } from './engine/radio';
-import { favouriteStations, saveFavouriteStations, matchSongBroadcast, radioDirectory, radioSession, stationMetadata } from './engine/radio-client';
+import { favouriteStations, saveFavouriteStations, matchSongBroadcast, radioDirectory, radioSession, stationMetadata, radioGeocode, shareRadioPlaces } from './engine/radio-client';
+import { readPlaces, savePlaces, stationInPlace, PLACES_MAX, type RadioPlace } from './engine/radio-places';
 import type { Track } from './api';
 import { genreIdentity } from './engine/genre-identity';
 import { GenreBubbleView } from './Results';
@@ -47,6 +48,26 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
   useEffect(() => { if (indexRef.current) indexRef.current.scrollLeft = 0; }, [numericMode]);
   const [query, setQuery] = useState(''), [country, setCountry] = useState(''), [language, setLanguage] = useState(''), [tag, setTag] = useState('');
   const [draft, setDraft] = useState(''), [menu, setMenu] = useState<'' | 'genre' | 'country' | 'language'>(''), [langDraft, setLangDraft] = useState(''), [stars, setStars] = useState(readStars), [saved, setSaved] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [hasMore, setHasMore] = useState(true), [nextOffset, setNextOffset] = useState<number | null>(0);
+  // RADIO-PLACES-001: the listener's saved places, and which are chosen; both survive closing the app.
+  const [places, setPlacesState] = useState<RadioPlace[]>(readPlaces), [placeDraft, setPlaceDraft] = useState(''), [placeNote, setPlaceNote] = useState(''), [placeBusy, setPlaceBusy] = useState(false);
+  const setPlaces = (next: RadioPlace[]) => setPlacesState(savePlaces(next));
+  // CAR-RADIO-FILTERS-001: Android Auto offers the same saved places as location presets.
+  const placesKey = places.map(p => p.id).join('|');
+  useEffect(() => { void shareRadioPlaces(places); }, [placesKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const chosen = places.filter(p => p.selected);
+  const chosenKey = chosen.map(p => p.id).join('|');
+  const addPlace = async () => {
+    const text = placeDraft.trim(); if (!text || placeBusy) return;
+    setPlaceBusy(true); setPlaceNote('');
+    try {
+      const p = await radioGeocode(text);
+      if (!p) { setPlaceNote(`No place found for “${text}”. Try a city, an address or a region.`); return; }
+      const rest = places.filter(x => x.id !== p.id);
+      if (rest.length >= PLACES_MAX) { setPlaceNote(`You can keep up to ${PLACES_MAX} places. Remove one first.`); return; }
+      setCountry(''); setPlaces([...rest, { ...p, selected: true }]); setPlaceDraft('');
+    } catch { setPlaceNote('The place could not be looked up. Check the connection and try again.'); }
+    finally { setPlaceBusy(false); }
+  };
   const [info, setInfo] = useState<Record<string, Broadcast>>({});
   const [match, setMatch] = useState<Record<string, Track>>({});
   // RADIO-ART-003: artwork URLs that errored in the DOM; never rendered again, so the art chain
@@ -54,14 +75,14 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
   const [badArt, setBadArt] = useState<Record<string, true>>({});
   const [refreshing, setRefreshing] = useState(false); const generation = useRef(0), lastRequested = useRef(0); const poller = useRef<MetadataPoller | null>(null);
   const retrier = useRef<BackgroundRetry | null>(null); const infoRef = useRef(info); const shownRef = useRef<RadioStation[]>([]);
-  const matchingStars = stars.filter(s => stationMatchesInitial(s.name, letter) && stationMatchesQuery(s.name, query) && (!country || s.countryCode === country) && (!language || s.language.toLowerCase().includes(language.toLowerCase())) && (!tag || s.tags.includes(tag)));
+  const matchingStars = stars.filter(s => stationMatchesInitial(s.name, letter) && stationMatchesQuery(s.name, query) && (chosen.length ? chosen.some(p => stationInPlace(s, p)) : !country || s.countryCode === country) && (!language || s.language.toLowerCase().includes(language.toLowerCase())) && (!tag || s.tags.includes(tag)));
   const shown = (saved ? matchingStars : [...new Map([...matchingStars, ...stations].map(s => [s.id, s])).values()]).filter(s => stationMatchesInitial(s.name, letter) && stationMatchesQuery(s.name, query));
   if (letter) shown.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base', numeric: true }));
   useEffect(() => { let live = true; const read = () => { void favouriteStations().then(v => { if (live) setStars(v); }); }; read(); window.addEventListener('airwave-radio-favourites', read); return () => { live = false; window.removeEventListener('airwave-radio-favourites', read); }; }, []);
   useEffect(() => { let gone = false; void radioDirectory.countries().then(v => { if (!gone) setCountries(v.sort((a, b) => countryName(a.code).localeCompare(countryName(b.code)))); }).catch(() => {}); return () => { gone = true; }; }, []);
   const load = async (offset: number) => {
     const g = ++generation.current; lastRequested.current = offset; setBusy(true); setError('');
-    try { const result = await radioDirectory.page({ query, country, language, tag, letter, offset }); if (g !== generation.current) return; const rows = result.stations; setStations(was => offset ? [...new Map([...was, ...rows].map(s => [s.id, s])).values()] : rows); setHasMore(result.nextOffset !== null); setNextOffset(result.nextOffset); if (!offset) window.scrollTo?.({ top: 0 }); /* RADIO-TOP-001: a fresh directory page presents from the top; More stations keeps the reader's place */ }
+    try { const result = await radioDirectory.page({ query, country: chosen.length ? '' : country, language, tag, letter, offset, places: chosen.length ? chosen : undefined }); if (g !== generation.current) return; const rows = result.stations; setStations(was => offset ? [...new Map([...was, ...rows].map(s => [s.id, s])).values()] : rows); setHasMore(result.nextOffset !== null); setNextOffset(result.nextOffset); if (!offset) window.scrollTo?.({ top: 0 }); /* RADIO-TOP-001: a fresh directory page presents from the top; More stations keeps the reader's place */ }
     catch (e) { if (g === generation.current) setError(e instanceof Error ? e.message : 'Station directory unavailable. Try again.'); }
     finally { if (g === generation.current) setBusy(false); }
   };
@@ -75,7 +96,7 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
     document.addEventListener('mousedown', away); document.addEventListener('keydown', key);
     return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', key); };
   }, [menu]);
-  useEffect(() => { if (!saved) void load(0); return () => { generation.current++; }; }, [query, country, language, tag, letter, saved]);
+  useEffect(() => { if (!saved) void load(0); return () => { generation.current++; }; }, [query, country, language, tag, letter, saved, chosenKey]);
   const ids = shown.map(s => s.id).join('|');
   /** RADIO-LIVE-001: the rows on screen (with a margin), as the browser reports them; null until it has. */
   const onScreen = useRef<Set<string> | null>(null);
@@ -166,8 +187,8 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
         <span className="radio-search__filters">
           <button type="button" className="radio-search__filter" aria-label="Genre filter" aria-haspopup="listbox" aria-expanded={menu === 'genre'} data-set={tag ? '' : undefined} style={tag ? { ['--tone' as string]: genreTone(tag) } : undefined}
             onClick={() => setMenu(m => m === 'genre' ? '' : 'genre')}>{tag && <span className="radio-search__dot" aria-hidden="true" />}{tag ? (genreIdentity(tag)?.label ?? cap(tag)) : 'Genre'}<span className="radio-search__caret" aria-hidden="true">▾</span></button>
-          <button type="button" className="radio-search__filter" aria-label="Country filter" aria-haspopup="listbox" aria-expanded={menu === 'country'} data-set={country ? '' : undefined}
-            onClick={() => setMenu(m => m === 'country' ? '' : 'country')}>{country ? countryName(country) : 'Country'}<span className="radio-search__caret" aria-hidden="true">▾</span></button>
+          <button type="button" className="radio-search__filter" aria-label="Country filter" aria-haspopup="listbox" aria-expanded={menu === 'country'} data-set={country || chosen.length ? '' : undefined}
+            onClick={() => { setPlaceNote(''); setMenu(m => m === 'country' ? '' : 'country'); }}>{chosen.length ? `${chosen[0]!.label.split(',')[0]}${chosen.length > 1 ? ` +${chosen.length - 1}` : ''}` : country ? countryName(country) : 'Country'}<span className="radio-search__caret" aria-hidden="true">▾</span></button>
           <button type="button" className="radio-search__filter" aria-label="Language filter" aria-haspopup="listbox" aria-expanded={menu === 'language'} data-set={language ? '' : undefined}
             onClick={() => { setLangDraft(language); setMenu(m => m === 'language' ? '' : 'language'); }}>{language ? cap(language) : 'Language'}<span className="radio-search__caret" aria-hidden="true">▾</span></button>
         </span>
@@ -176,9 +197,24 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
           {GENRE_SECTIONS.map(x => <button type="button" role="option" key={x} aria-selected={tag === x} onClick={() => { setTag(x); setMenu(''); }}>
             <span className="radio-search__dot" aria-hidden="true" style={{ ['--tone' as string]: genreTone(x) }} />{genreIdentity(x)?.label ?? cap(x)}</button>)}
         </div>}
-        {menu === 'country' && <div className="radio-search__menu" role="listbox" aria-label="Choose a country">
-          <button type="button" role="option" aria-selected={!country} onClick={() => { setCountry(''); setMenu(''); }}>Anywhere</button>
-          {countries.map(c => <button type="button" role="option" key={c.code} aria-selected={country === c.code} onClick={() => { setCountry(c.code); setMenu(''); }}>{countryName(c.code)}<span className="radio-search__count">{c.count}</span></button>)}
+        {menu === 'country' && <div className="radio-search__menu radio-search__menu--places" role="listbox" aria-label="Choose a country">
+          <button type="button" role="option" aria-selected={!country && !chosen.length} onClick={() => { setCountry(''); if (chosen.length) setPlaces(places.map(p => ({ ...p, selected: false }))); setMenu(''); }}>Anywhere</button>
+          {/* RADIO-PLACES-001: type a city, address or region, save it, and choose any number of saved places. */}
+          <div className="radio-search__lang radio-places__add">
+            <input aria-label="Add a place" value={placeDraft} placeholder="City, address or region" autoComplete="off" spellCheck={false} disabled={placeBusy}
+              onChange={e => { setPlaceDraft(e.target.value); setPlaceNote(''); }}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); void addPlace(); } }} />
+            <button type="button" aria-label="Save place" disabled={placeBusy || !placeDraft.trim()} onClick={() => void addPlace()}>{placeBusy ? 'Finding…' : 'Save'}</button>
+          </div>
+          {placeNote && <p className="radio-places__note" role="status">{placeNote}</p>}
+          {places.length > 0 && <div className="radio-places" role="group" aria-label="Your places">
+            {places.map(p => <div className="radio-places__row" key={p.id}>
+              <label><input type="checkbox" checked={p.selected} onChange={() => { setCountry(''); setPlaces(places.map(x => x.id === p.id ? { ...x, selected: !x.selected } : x)); }} /><span className="radio-places__label">{p.label}</span></label>
+              <button type="button" className="radio-places__remove" aria-label={`Remove ${p.label}`} title="Remove this place" onClick={() => setPlaces(places.filter(x => x.id !== p.id))}>×</button>
+            </div>)}
+          </div>}
+          {countries.length > 0 && <div className="radio-places__heading" aria-hidden="true">Countries</div>}
+          {countries.map(c => <button type="button" role="option" key={c.code} aria-selected={country === c.code} onClick={() => { setCountry(c.code); if (chosen.length) setPlaces(places.map(p => ({ ...p, selected: false }))); setMenu(''); }}>{countryName(c.code)}<span className="radio-search__count">{c.count}</span></button>)}
         </div>}
         {menu === 'language' && <div className="radio-search__menu" role="listbox" aria-label="Choose a language">
           <div className="radio-search__lang">

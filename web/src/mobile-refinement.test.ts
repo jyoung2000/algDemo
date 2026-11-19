@@ -184,7 +184,7 @@ describe('the controls are flat and reachable', () => {
     const player = readFileSync(new URL('./Player.tsx', import.meta.url), 'utf8');
     const docked = /<div className="np__dockctl">([\s\S]*?)\n            <\/div>/.exec(player);
     expect(docked, 'docked dock markup not found').toBeTruthy();
-    const controls = /<div className="np__controls">([\s\S]*?)<\/div>/.exec(docked![1]!);
+    const controls = /<div className="np__controls[^"]*">([\s\S]*?)\n              <\/div>/.exec(docked![1]!);
     expect(controls, 'np__controls not found in the docked layout').toBeTruthy();
     expect(controls![1]).toContain('<PlayerActions');
   });

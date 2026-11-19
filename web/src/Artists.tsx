@@ -16,6 +16,7 @@ import { songKey } from './engine/song-key';
 import { cleanAlbumTitle } from './engine/album-key';
 import { fold } from './engine/identity';
 import './artist-section.css';
+import { ArtistCircle } from './ArtistCircle';
 
 /** RESULT-TYPES-001: the icon menu near the top of the discography. */
 const PAGE_TYPES: readonly ResultType[] = ['singles', 'albums', 'features', 'songs'];
@@ -566,6 +567,10 @@ export function ArtistView({ target, onBack, onPreview, onPlayAll, onOpenAlbum, 
                   )}
                 </div>
               </>
+            )}
+            {/* ARTIST-CIRCLE-001: who they work with, and who sounds like them. */}
+            {types.size === 0 && !a.local && (
+              <ArtistCircle name={a.name} songs={full} features={feats} similar={a.similar ?? []} waiting={every.state === 'loading' || featsWaiting} onOpenArtist={onOpenArtist} />
             )}
             {types.size > 0 && !(types.has('features') && (featsWaiting || featsShort)) && PAGE_TYPES.filter((t) => types.has(t)).every((t) => (t === 'songs' ? full.length : t === 'albums' ? a.albums.length : t === 'singles' ? a.singles.length : feats.length) === 0) && (
               <p className="state" role="status">

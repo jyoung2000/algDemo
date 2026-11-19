@@ -26,9 +26,11 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.nowplaying.discovery.Downloads
 import com.nowplaying.discovery.MediaHub
 import com.nowplaying.discovery.NativeStateCodec
+import com.nowplaying.discovery.NowPlayingLabel
 import com.nowplaying.discovery.Streams
 import com.nowplaying.discovery.WebPlayer
 import com.nowplaying.discovery.dsp.EqConfig
+import com.nowplaying.discovery.dsp.EqMath
 import com.nowplaying.discovery.dsp.TransitionStyle
 import org.json.JSONArray
 import org.json.JSONObject
@@ -102,6 +104,8 @@ class EnginePlayer(
   /** The song now playing from its source rather than from a file (STREAM-DL-001). */
   private var streamingKey: String? = null
   private var radioLive = false
+  /** CAR-RADIO-NOWPLAYING-001: the station playing, kept on the car's screen beside the song and album. */
+  private var radioStation = ""
 
   /**
    * CAR-RADIO-CONTROLS-001: where the item on air began on the ring clock (ms) and how long it is, as
@@ -125,7 +129,9 @@ class EnginePlayer(
     val old = queue.current ?: return
     radioStartMs = startMs; radioLengthMs = lengthMs
     MediaHub.setRadioSong(song, track)
-    queue.set(listOf(Entry(old.song.copy(title = title.take(200), artist = artist.take(200), artwork = artwork.takeIf { it.isNotBlank() }, durationMs = lengthMs ?: -1L))), 0)
+    val album = song?.album ?: track?.optString("album")?.takeIf { it.isNotBlank() && it != "null" }
+    queue.set(listOf(Entry(old.song.copy(title = title.take(200), artist = NowPlayingLabel.radioArtist(artist, radioStation).take(200),
+      album = NowPlayingLabel.radioAlbum(radioStation, album).take(300), artwork = artwork.takeIf { it.isNotBlank() }, durationMs = lengthMs ?: -1L))), 0)
     invalidateState(); emitSoon()
   }
 
@@ -134,7 +140,8 @@ class EnginePlayer(
     loadGeneration++; restored = false; stopLanded()
     radioLive = true; loadedKey = "radio:$id"; waitingFor = null; streamingKey = null
     forgetRadioItem()
-    val song = MediaHub.Song("radio:$id", title, station, "Live radio", null, -1, true, null)
+    radioStation = station.trim().take(200)
+    val song = MediaHub.Song("radio:$id", title, NowPlayingLabel.radioArtist(station, radioStation), NowPlayingLabel.radioAlbum(radioStation, null), null, -1, true, null)
     queue.set(listOf(Entry(song)), 0); queue.shuffle = false; queue.repeat = PlayQueue.Repeat.OFF
     cue = null; cueFor = null; preparedNextKey = null; ended = false; error = null
     engine.setNext(null, null); engine.setRepeatOne(false)
@@ -216,7 +223,8 @@ class EnginePlayer(
 
   fun setEq(config: EqConfig) = engine.setEq(config)
   fun setPlayThrough(percent: Int) = engine.setPlayThrough(percent)
-  fun setVolume(v: Double) = engine.setVolume(v.coerceIn(0.0, 1.0))
+  /** 0..2: past 1 is the VOLUME-BOOST-001 boost, carried by the mix bus before its limiter. */
+  fun setVolume(v: Double) = engine.setVolume(v.coerceIn(0.0, EqMath.VOLUME_MAX))
   fun setMix(slider: Int) {
     mix = slider.coerceIn(0, 100)
     engine.setMix(mix)
@@ -279,6 +287,14 @@ class EnginePlayer(
   }
   fun pageRepeat(mode: Int) = applyRepeat(mode, fromPage = true)
   fun pageShuffle(on: Boolean) { queue.shuffle = on }
+
+  /** RADIO-GO-LIVE-001: the listener asked for the live edge of the station playing. */
+  fun radioToLive() {
+    if (!radioLive) return
+    engine.seekWith { (it as? com.nowplaying.discovery.RadioRing)?.toLive() }
+    invalidateState()
+    emitSoon()
+  }
 
   /** RADIO-SHUFFLE-001: a radio op changed the station-shuffle flag; the session must mirror it. */
   fun radioShuffleChanged() { if (radioLive) { invalidateState(); emitSoon() } }
@@ -996,6 +1012,12 @@ class EnginePlayer(
       .put("positionMs", positionMs(snap))
       .put("durationMs", if (current != null) durationUs(current.song, snap).let { if (it == C.TIME_UNSET) -1 else it / 1000 } else -1)
       .put("blending", snap.blendingInto ?: JSONObject.NULL)
+      // PLAYER-TRUTH-001: the song the deck is actually sounding. Until a chosen song's audio opens the
+      // engine keeps playing the one before, and the page keeps showing that one.
+      .put("sounding", snap.key?.takeUnless { radioLive } ?: JSONObject.NULL)
+      .put("soundingPlaying", snap.playing)
+      .put("soundingMs", snap.positionFrames * 1000 / SAMPLE_RATE)
+      .put("soundingDurMs", if (snap.durationFrames > 0) snap.durationFrames * 1000 / SAMPLE_RATE else -1)
       .put("at", SystemClock.elapsedRealtime())
       .apply { if (event != null) put("event", event) }
   }

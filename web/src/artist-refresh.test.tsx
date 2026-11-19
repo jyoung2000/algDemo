@@ -138,15 +138,16 @@ const fresh = (token: string) => ({ refresh: true, refreshToken: token }) as Ctx
 
 it('bypasses cached artist pages and name searches once per refresh identity, then publishes the fresh page', async () => {
   const { store, m } = cache(); const w = engine(store);
-  m.set('artistview4:1::artist', { ...view, name: 'Stale' });
+  m.set('artistview5:1::artist', { ...view, name: 'Stale' });
   m.set('dz:artsearch:artist', []);
   expect((await w.artists.open({ id: 'dz:1', name: 'Artist' })).name).toBe('Stale');
   const a = await w.artists.open({ id: 'dz:1', name: 'Artist', ...fresh('one') });
-  expect(a.name).toBe('Artist'); expect(w.seen).toHaveLength(3);
+  // Four reads per page: the artist, top songs, albums, and related artists (ARTIST-CIRCLE-001).
+  expect(a.name).toBe('Artist'); expect(w.seen).toHaveLength(4);
   await w.artists.open({ id: 'dz:1', name: 'Artist', ...fresh('one') });
-  expect(w.seen).toHaveLength(3);
+  expect(w.seen).toHaveLength(4);
   await w.artists.open({ id: 'dz:1', name: 'Artist', ...fresh('two') });
-  expect(w.seen).toHaveLength(6);
+  expect(w.seen).toHaveLength(8);
   expect((await w.artists.open({ id: 'dz:1', name: 'Artist' })).name).toBe('Artist');
   await w.artists.search('Artist', 6, fresh('one'));
   expect(w.seen.some((u) => u.includes('/search/artist'))).toBe(true);

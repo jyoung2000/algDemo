@@ -1,4 +1,5 @@
 import { splitOnAir } from './radio-icy';
+import type { RadioPlace } from './radio-places';
 // RADIO-001. A station is a broadcast, not a song. Only broadcaster metadata or audio recognition
 // may identify its current item. Directory genre labels never become song or preference evidence.
 export interface RadioStation { id: string; name: string; url: string; homepage: string; image: string; country: string; countryCode: string; region: string; language: string; tags: string[]; codec: string; bitrate: number; latitude: number | null; longitude: number | null }
@@ -36,7 +37,9 @@ export function heardCredit(x: { identified: boolean; kind: Broadcast['kind']; h
   return { eligible, coverage, full: eligible && Number.isFinite(dur) && dur > 0 && coverage >= dur * RADIO_FULL_LISTEN_SHARE };
 }
 export type RadioRequest = (url: string) => Promise<string>;
-export interface RadioSearch { query?: string; country?: string; language?: string; tag?: string; letter?: string; offset?: number }
+export interface RadioSearch { query?: string; country?: string; language?: string; tag?: string; letter?: string; offset?: number;
+  /** RADIO-PLACES-001: the listener's chosen places; when any are given they replace `country`. */
+  places?: readonly RadioPlace[] }
 export const STATION_LETTERS = ['', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'] as const;
 export const STATION_NUMBERS = ['', ...'0123456789'] as const;
 const foldedStationName = (name: string) => name.normalize('NFKD').replace(/\p{M}/gu, '').toUpperCase();
@@ -89,6 +92,7 @@ export class RadioDirectory {
   /** Prefix filtering is local because Radio Browser's name parameter is a substring search.
    * Scan bounded candidate batches and return a RAW cursor, including when no match was found yet. */
   async page(opts: RadioSearch = {}): Promise<{ stations: RadioStation[]; nextOffset: number | null }> {
+    if (opts.places?.length) return this.placesPage(opts, opts.places);
     const letter = opts.letter || '';
     if (letter && !/^[A-Z0-9#]$/.test(letter)) throw new Error('Invalid station initial');
     let offset = Math.max(0, Math.floor(opts.offset || 0));
@@ -127,6 +131,45 @@ export class RadioDirectory {
       if (data.length < limit) return { stations: out, nextOffset: null };
     }
     return { stations: out, nextOffset: offset };
+  }
+
+  /**
+   * RADIO-PLACES-001: stations for the chosen places. Each place is asked for itself — an area by distance
+   * (stations with coordinates) and by the city named as the station's location (stations without), a region by
+   * state and country, a country by country — and the answers are interleaved so every place shows near the top.
+   */
+  private async placesPage(opts: RadioSearch, places: readonly RadioPlace[]): Promise<{ stations: RadioStation[]; nextOffset: number | null }> {
+    const letter = opts.letter || '';
+    if (letter && !/^[A-Z0-9#]$/.test(letter)) throw new Error('Invalid station initial');
+    const offset = Math.max(0, Math.floor(opts.offset || 0)), limit = 24;
+    const base = () => {
+      const q = new URLSearchParams({ hidebroken: 'true', order: 'clickcount', reverse: 'true', limit: String(limit), offset: String(offset) });
+      const name = opts.query?.trim() ? stationQuerySource(opts.query) : letter === '#' ? '' : letter;
+      if (name) q.set('name', name);
+      if (opts.language) q.set('language', opts.language);
+      if (opts.tag) { q.set('tag', opts.tag); q.set('tagExact', 'true'); }
+      return q;
+    };
+    const asks: URLSearchParams[] = [];
+    for (const p of places.slice(0, 8)) {
+      if (p.kind === 'country') { const q = base(); q.set('countrycode', p.countryCode); asks.push(q); continue; }
+      if (p.kind === 'region') { const q = base(); q.set('state', p.region); if (p.countryCode) q.set('countrycode', p.countryCode); asks.push(q); continue; }
+      const near = base(); near.set('geo_lat', p.lat.toFixed(5)); near.set('geo_long', p.lon.toFixed(5)); near.set('geo_distance', String(Math.round(p.radiusKm * 1000))); asks.push(near);
+      if (p.city) { const named = base(); named.set('state', p.city); if (p.countryCode) named.set('countrycode', p.countryCode); asks.push(named); }
+    }
+    const lists = await Promise.all(asks.map(async (q) => {
+      const data = await this.read(`/json/stations/search?${q}`).catch(() => []);
+      return Array.isArray(data) ? data : [];
+    }));
+    const out: RadioStation[] = [], seen = new Set<string>();
+    for (let i = 0; lists.some((l) => i < l.length); i++) {
+      for (const l of lists) {
+        const station = i < l.length ? normalizeStation(l[i]) : null;
+        if (!station || seen.has(station.id) || !stationMatchesInitial(station.name, letter) || !stationMatchesQuery(station.name, opts.query || '')) continue;
+        seen.add(station.id); out.push(station);
+      }
+    }
+    return { stations: out, nextOffset: lists.some((l) => l.length === limit) ? offset + limit : null };
   }
 
   async countries(): Promise<{ name: string; code: string; count: number }[]> { const v = await this.read('/json/countrycodes'); return Array.isArray(v) ? v.filter(x => /^[A-Z]{2}$/.test(String(x.iso_3166_1 || x.name))).map(x => ({ name: txt(x.name), code: txt(x.iso_3166_1 || x.name), count: Number(x.stationcount) || 0 })).sort((a, b) => a.name.localeCompare(b.name)) : []; }

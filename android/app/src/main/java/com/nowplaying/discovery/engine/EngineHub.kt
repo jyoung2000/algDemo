@@ -11,6 +11,8 @@ import com.nowplaying.discovery.MediaHub
 import com.nowplaying.discovery.NativeLibraryState
 import com.nowplaying.discovery.NativeStateCodec
 import com.nowplaying.discovery.Streams
+import com.nowplaying.discovery.CarVolume
+import com.nowplaying.discovery.CarSettings
 import org.json.JSONObject
 
 /**
@@ -59,6 +61,73 @@ object EngineHub {
 
   /** A copy of the settings a new player starts with (the page's, else the saved ones); main thread. */
   internal fun settingsSnapshot(): JSONObject = JSONObject(settings.toString())
+
+  /* ---------------------------------------------------------------- VOLUME-BOOST-001 */
+  private val carVolume = CarVolume.Owed()
+
+  /** Told whenever the volume changes, from the page's slider or the car's button, so the car's Volume button reads
+   *  the level actually playing (seen on the emulator: the slider set 200% and the car still said 80%). Main thread. */
+  @Volatile var onCarLabels: (() -> Unit)? = null
+
+  /** The volume the engine plays at, 0..2 (past 1 is the boost). Main thread. */
+  fun volume(): Double = settings.optDouble("volume", 1.0).let { if (it.isFinite()) it.coerceIn(0.0, 2.0) else 1.0 }
+
+  /** The car's Volume button: the next level, applied now and told to the page's slider. Main thread. */
+  fun carVolumeStep(): Double {
+    val next = CarVolume.next(volume())
+    carVolume.carSet(next)
+    mergeSettings(JSONObject().put("volume", next))
+    player?.setVolume(next)
+    Log.i(TAG, "car volume ${CarVolume.percent(next)}%")
+    resendCarVolume()
+    return next
+  }
+
+  private fun resendCarVolume() {
+    val v = carVolume.value ?: return
+    page?.let { if (it.live) it.command(JSONObject().put("type", "volume").put("value", v)) }
+  }
+
+  /* ---------------------------------------------------------------- CAR-SETTINGS-001
+   * The car's EQ and discovery choices: applied to the engine at once, saved with the engine's settings, and told to
+   * the page (which owns the stored settings). Until the page echoes a choice back, an older value it sends (a page
+   * waking with yesterday's settings) is ignored, as for the car's volume. Main thread. */
+  private var owedEq: String? = null
+  private var owedLevel: Double? = null
+  private var owedMood: Boolean? = null
+
+  fun carEq(): String = CarSettings.presetOf(settings.optJSONObject("eq"))
+  fun carLevel(): Double = settings.optDouble("adventurous", 0.5).let { if (it.isFinite()) it.coerceIn(0.0, 1.0) else 0.5 }
+  fun carMood(): Boolean = settings.optBoolean("mood_queue", true)
+
+  fun carSettings(c: CarSettings.Change) {
+    val out = JSONObject()
+    c.eq?.let { out.put("eq", CarSettings.eqWith(settings.optJSONObject("eq"), it)); owedEq = it }
+    c.adventurous?.let { out.put("adventurous", it); owedLevel = it }
+    c.mood?.let { out.put("mood_queue", it); owedMood = it }
+    if (out.length() == 0) return
+    mergeSettings(out)
+    player?.let { applySettings(it, out) }
+    Log.i(TAG, "car settings eq=${c.eq} adventurous=${c.adventurous} mood=${c.mood}")
+    resendCarSettings()
+  }
+  fun carEqStep() = carSettings(CarSettings.Change(eq = CarSettings.nextEq(carEq())))
+  fun carLevelStep() = carSettings(CarSettings.Change(adventurous = CarSettings.nextLevel(carLevel())))
+
+  private fun resendCarSettings() {
+    val cmd = JSONObject().put("type", "carSettings")
+    owedEq?.let { cmd.put("eq", settings.optJSONObject("eq")) }
+    owedLevel?.let { cmd.put("adventurous", it) }
+    owedMood?.let { cmd.put("mood", it) }
+    if (cmd.length() > 1) page?.let { if (it.live) it.command(cmd) }
+  }
+
+  /** Drop what a page sends that contradicts a car choice it has not applied yet; clear a choice it echoes. */
+  private fun withoutStale(cmd: JSONObject) {
+    owedEq?.let { want -> if (cmd.has("eq")) { if (CarSettings.presetOf(cmd.optJSONObject("eq")) == want) owedEq = null else cmd.remove("eq") } }
+    owedLevel?.let { want -> if (cmd.has("adventurous")) { if (kotlin.math.abs(cmd.optDouble("adventurous", -1.0) - want) < 1e-6) owedLevel = null else cmd.remove("adventurous") } }
+    owedMood?.let { want -> if (cmd.has("mood_queue")) { if (cmd.optBoolean("mood_queue") == want) owedMood = null else cmd.remove("mood_queue") } }
+  }
 
   fun addObserver(listener: (String) -> Unit) = main.post {
     if (listener in observers) return@post
@@ -158,6 +227,7 @@ object EngineHub {
       )
       "radio" -> p.pageRadio(cmd.optString("id"), cmd.optString("title"), cmd.optString("station"))
       "radio-shuffle" -> p.radioShuffleChanged()
+      "radio-live" -> p.radioToLive()
       "load" -> {
         val song = songFrom(cmd.optJSONObject("song")) ?: run { Log.w(TAG, "load without a usable song"); return }
         val mediaId = cmd.optString("mediaId").takeIf { it.isNotEmpty() && it.length <= 1024 && !cmd.isNull("mediaId") }
@@ -167,9 +237,14 @@ object EngineHub {
       "play" -> p.pagePlay(true)
       "pause" -> p.pagePlay(false)
       "seek" -> p.pageSeek(cmd.optLong("positionMs", 0))
-      "settings" -> { mergeSettings(cmd); applySettings(p, cmd) }
+      "settings" -> {
+        // VOLUME-BOOST-001: a page that slept through the car's Volume press sends its stale level first.
+        if (cmd.has("volume") && !carVolume.pageSent(cmd.optDouble("volume", 1.0))) cmd.remove("volume")
+        withoutStale(cmd)
+        mergeSettings(cmd); applySettings(p, cmd)
+      }
       "ack" -> p.ack(cmd.optInt("seq", 0))
-      "hello" -> { page?.state(p.snapshotForPage()); p.resendRepeatToPage() }
+      "hello" -> { page?.state(p.snapshotForPage()); p.resendRepeatToPage(); resendCarVolume(); resendCarSettings() }
       else -> Log.w(TAG, "unknown op ${cmd.optString("op").take(40)}")
     }
   }
@@ -196,8 +271,9 @@ object EngineHub {
   }
 
   private fun mergeSettings(cmd: JSONObject) {
-    for (k in listOf("eq", "mix", "playThrough", "volume")) if (cmd.has(k)) settings.put(k, cmd.get(k))
+    for (k in listOf("eq", "mix", "playThrough", "volume", "adventurous", "mood_queue")) if (cmd.has(k)) settings.put(k, cmd.get(k))
     NativeLibraryState.recordSettings(settings)
+    if (listOf("volume", "eq", "adventurous", "mood_queue").any(cmd::has)) onCarLabels?.let { runCatching { it() } }
   }
 
   private fun applySettings(p: EnginePlayer, s: JSONObject) {

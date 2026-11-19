@@ -64,6 +64,11 @@ export const EQ_PREAMP_MAX_DB = 12;
 
 /** Safety limiter: a −1 dBFS ceiling, as the player's. */
 export const LIMITER = { thresholdDb: -1, knee: 0, ratio: 20, attackSeconds: 0.001, releaseSeconds: 0.05 } as const;
+/**
+ * The mix limiter while the volume is boosted past 100% (VOLUME-BOOST-001). A 50 ms release pumps on every bass
+ * beat once it is working constantly; 250 ms holds steady, and -2 dB leaves room for the soft ceiling.
+ */
+export const LIMITER_BOOST = { thresholdDb: -2, knee: 0, ratio: 20, attackSeconds: 0.003, releaseSeconds: 0.25 } as const;
 
 /** Ramp for a gain change, in seconds. Long enough not to click, short enough to feel immediate. */
 const RAMP_S = 0.04;
@@ -272,6 +277,8 @@ export interface EqContext {
   createBiquadFilter(): BiquadFilterNode;
   createDynamicsCompressor(): DynamicsCompressorNode;
   createMediaElementSource(el: HTMLMediaElement): MediaElementAudioSourceNode;
+  /** Optional: only the mix bus's soft ceiling uses it, and it is skipped where missing. */
+  createWaveShaper?(): WaveShaperNode;
 }
 
 export interface EqGraph {

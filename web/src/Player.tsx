@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { OpenLinkCycle } from './OpenLinkCycle';
+import { usePlayerSwipe } from './usePlayerSwipe';
+import { heldOverKey } from './engine/player-truth';
 import { RepeatGlyph, ShuffleGlyph } from './icons';
 import { api, type ArtistTarget, type Playback, type Track } from './api';
 import { ArtistNames } from './ArtistLinks';
@@ -10,11 +12,13 @@ import { Art } from './Art';
 import './player-upcoming.css';
 import './player-inline.css';
 import './player-big.css';
+import './dock-centre.css';
 import { Volume } from './Volume';
+import { VOLUME_MAX, elementVolume, readVolume } from './engine/volume-boost';
 import { PlayerActions, type TrackActionProps } from './PlayerActions';
 import { Wheel } from './Wheel';
 import { loadYouTube, youtubeEmbedUrl, type YTPlayer } from './youtube';
-import { attachElement, bus as audioBus, eqConfig, savedSettingsApplied, mixSlider, playThrough, resumeEngine, setUnprocessable, subscribeEngine } from './audio-engine';
+import { attachElement, bus as audioBus, eqConfig, savedSettingsApplied, mixSlider, playThrough, resumeEngine, setUnprocessable, setVolumeBoost, subscribeEngine } from './audio-engine';
 import { localLibrary, sourceUrlFor } from './engine/local-audio';
 import { rescueSource } from './engine/rescue';
 import { pickStream } from './engine/stream-pick';
@@ -99,9 +103,7 @@ const VOLUME_KEY = 'airwave.volume';
 
 function loadVolume(): { value: number; muted: boolean } {
   try {
-    const v = JSON.parse(window.localStorage.getItem(VOLUME_KEY) ?? 'null') as { value?: unknown; muted?: unknown } | null;
-    const value = typeof v?.value === 'number' && v.value >= 0 && v.value <= 1 ? v.value : 0.8;
-    return { value, muted: v?.muted === true };
+    return readVolume(window.localStorage.getItem(VOLUME_KEY));
   } catch {
     return { value: 0.8, muted: false };
   }
@@ -165,6 +167,10 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const meter = useRef(new ListenMeter());
   const [paused, setPaused] = useState(true);
   const [cur, setCur] = useState(0);
+  // PLAYER-TRUTH-001: the song still sounding while a chosen one opens (Android engine), and the last
+  // song the engine confirmed it was sounding for this page.
+  const [held, setHeld] = useState<{ track: Track; cur: number; dur: number; paused: boolean } | null>(null);
+  const soundingTrackRef = useRef<Track | null>(null);
   const [dur, setDur] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -348,6 +354,9 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const mode: Mode = localSrc || streaming ? 'local' : canLocal ? 'none' : askingLocal || fetchingLocal ? 'none' : videoId ? 'full' : src ? 'preview' : embed ? 'embed' : 'none';
   const hasSound = mode === 'full' || mode === 'local' || mode === 'preview';
   const onDeck = mode === 'local' || mode === 'preview';
+  // VOLUME-BOOST-001: past 100% needs audio jPlay processes itself: the Android engine, or a song on this page's own
+  // decks. YouTube's and SoundCloud's own players stop at their 100%.
+  const canBoost = native || (mode !== 'full' && mode !== 'embed');
   const pending = lookingUp || ((askingLocal || fetchingLocal) && !streaming);
 
   useEffect(() => {
@@ -380,17 +389,19 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     // and leaving it at full level would make every transition jump in loudness.
     for (const el of [deckA.current, deckB.current]) {
       if (!el) continue;
-      el.volume = vol.value;
+      el.volume = elementVolume(vol.value);
       el.muted = silent;
     }
+    // VOLUME-BOOST-001: above 100% the mix bus carries the rest (Windows; Android's engine takes the whole value).
+    if (!native) setVolumeBoost(silent ? 1 : vol.value);
     const p = yt.current;
     if (p && ytReady) {
       // YouTube's player ignores a volume of 0 (it stays at about 5%), so slider 0 is a mute.
-      p.setVolume(Math.max(1, Math.round(vol.value * 100)));
+      p.setVolume(Math.max(1, Math.round(elementVolume(vol.value) * 100)));
       if (silent) p.mute();
       else p.unMute();
     }
-  }, [vol, ytReady, src]);
+  }, [vol, ytReady, src, native]);
 
   // The YouTube player for the current video: events in, controls out. The iframe belongs to React and is
   // replaced when the video changes, so the player object is only dropped here, never destroyed.
@@ -554,7 +565,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   // The mixing graph is built only once the listener asks for it. Routing an element through Web
   // Audio lasts for that element's life, so an unwanted graph is not worth creating; and both
   // decks must be routed, not just the current one, or the incoming song arrives unprocessed.
-  const wantGraph = !native && (mix > 0 || canLocal);
+  const wantGraph = !native && (mix > 0 || canLocal || vol.value > 1);
   useEffect(() => {
     if (!wantGraph) return;
     attachElement(deckA.current, 'a');
@@ -796,55 +807,74 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       });
     onNext();
   };
+  // PLAYER-SWIPE-001: on the phone's player, swipe the song left for the next one, right for the previous.
+  const swipe = usePlayerSwipe({ onNext: next, onPrev, canNext, canPrev, enabled: Boolean(docked && playing) });
 
-  const t = playing?.track;
+  // PLAYER-TRUTH-001: what is sounding is what is shown; the chosen song shows as loading next.
+  const heldShown = native && held && held.track.key !== key ? held : null;
+  const t = heldShown?.track ?? playing?.track;
   // CURRENT-PRIMARY-001: lookahead is supplementary; never use it as current metadata.
-  const upcoming = repeatingThis ? undefined : upNext.find((u) => u.key !== t?.key);
+  const upcoming: UpNext | undefined = heldShown && playing
+    ? { key: playing.track.key, title: playing.track.title, artist: artistOf(playing.track), artwork: playing.track.artwork ?? null, track: playing.track }
+    : repeatingThis ? undefined : upNext.find((u) => u.key !== t?.key);
   const upcomingUrl = upcoming ? cuedSources.current.get(upcoming.key) ?? (upcoming.track ? readyLocalUrl(upcoming.track) : null) ?? upcomingSource : null;
   const upcomingState = upcomingUrl ? localLibrary.status(upcomingUrl) : 'idle';
-  const loadingNext = upcomingState === 'running' || /^(Preparing|Downloading|Waiting for the next)/i.test(mixNote ?? '');
+  const loadingNext = Boolean(heldShown) || upcomingState === 'running' || /^(Preparing|Downloading|Waiting for the next)/i.test(mixNote ?? '');
+  const shownPaused = heldShown ? heldShown.paused : paused;
+  const shuffleBtn = (
+    <button
+      className={classNames('tbtn', 'tbtn--mode', shuffle && 'is-on')}
+      type="button"
+      onClick={onShuffle}
+      aria-pressed={shuffle}
+      aria-label="Shuffle"
+      title={shuffle ? 'Shuffle is on: songs play in a random order' : 'Shuffle is off'}
+    >
+      <ShuffleGlyph size={16} />
+    </button>
+  );
+  const prevBtn = (
+    <button className="tbtn" type="button" onClick={onPrev} disabled={!canPrev} aria-label="Previous song">
+      <Glyph name="previous" size={16} />
+    </button>
+  );
+  const playBtn = (
+    <button
+      className="tbtn tbtn--main"
+      type="button"
+      onClick={toggle}
+      disabled={heldShown ? false : mode === 'full' ? !ytReady : !src && !(canLocal && localSource && localStatus === 'missing')}
+      aria-label={!heldShown && canLocal && localSource && localStatus === 'missing' ? 'Retry full-song download' : shownPaused ? 'Play' : 'Pause'}
+      title={hasSound ? undefined : localError ?? (lookingUp ? 'Finding the full song…' : 'Waiting for a local full song')}
+    >
+      <Glyph name={shownPaused ? 'play' : 'pause'} size={18} />
+    </button>
+  );
+  const nextBtn = (
+    <button className="tbtn" type="button" onClick={next} disabled={!canNext} aria-label="Next song">
+      <Glyph name="next" size={16} />
+    </button>
+  );
+  const repeatBtn = (
+    <button
+      className={classNames('tbtn', 'tbtn--mode', repeat !== 'off' && 'is-on')}
+      type="button"
+      onClick={onRepeat}
+      data-repeat={repeat}
+      aria-label={repeat === 'once' ? 'Repeat song: 1 extra play' : repeat === 'twice' ? 'Repeat song: 2 extra plays' : repeat === 'one' ? 'Repeat song: infinite plays' : 'Repeat song: off'}
+      title={repeat === 'once' ? 'Play this song once more, then continue' : repeat === 'twice' ? 'Play this song twice more, then continue' : repeat === 'one' ? 'Repeat this song forever' : 'Do not repeat this song'}
+    >
+      <RepeatGlyph mode={repeat} size={22} />
+    </button>
+  );
   const transport = (
     <div className="transport" role="group" aria-label="Playback">
-      <button
-        className={classNames('tbtn', 'tbtn--mode', shuffle && 'is-on')}
-        type="button"
-        onClick={onShuffle}
-        aria-pressed={shuffle}
-        aria-label="Shuffle"
-        title={shuffle ? 'Shuffle is on: songs play in a random order' : 'Shuffle is off'}
-      >
-        <ShuffleGlyph size={16} />
-      </button>
-      <button className="tbtn" type="button" onClick={onPrev} disabled={!canPrev} aria-label="Previous song">
-        <Glyph name="previous" size={16} />
-      </button>
-      <button
-        className="tbtn tbtn--main"
-        type="button"
-        onClick={toggle}
-        disabled={mode === 'full' ? !ytReady : !src && !(canLocal && localSource && localStatus === 'missing')}
-        aria-label={canLocal && localSource && localStatus === 'missing' ? 'Retry full-song download' : paused ? 'Play' : 'Pause'}
-        title={hasSound ? undefined : localError ?? (lookingUp ? 'Finding the full song…' : 'Waiting for a local full song')}
-      >
-        <Glyph name={paused ? 'play' : 'pause'} size={18} />
-      </button>
-      <button className="tbtn" type="button" onClick={next} disabled={!canNext} aria-label="Next song">
-        <Glyph name="next" size={16} />
-      </button>
-      <button
-        className={classNames('tbtn', 'tbtn--mode', repeat !== 'off' && 'is-on')}
-        type="button"
-        onClick={onRepeat}
-        data-repeat={repeat}
-        aria-label={repeat === 'once' ? 'Repeat song: 1 extra play' : repeat === 'twice' ? 'Repeat song: 2 extra plays' : repeat === 'one' ? 'Repeat song: infinite plays' : 'Repeat song: off'}
-        title={repeat === 'once' ? 'Play this song once more, then continue' : repeat === 'twice' ? 'Play this song twice more, then continue' : repeat === 'one' ? 'Repeat this song forever' : 'Do not repeat this song'}
-      >
-        <RepeatGlyph mode={repeat} size={22} />
-      </button>
+      {shuffleBtn}{prevBtn}{playBtn}{nextBtn}{repeatBtn}
     </div>
   );
 
-  const total = dur || playing?.track.duration || (mode === 'preview' ? 30 : 0);
+  const total = heldShown ? heldShown.dur : dur || playing?.track.duration || (mode === 'preview' ? 30 : 0);
+  const shownCur = heldShown ? heldShown.cur : cur;
   /*
    * NP-ALWAYS-001: the bar belongs to the song, not to whether this app can play it. A strip with
    * no bar read as broken; a bar at 0:00 that cannot be dragged, with the reason in words under
@@ -852,18 +882,18 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
    */
   const progress = playing ? (
     <div className="prog">
-      <span className="prog__t">{fmtDuration(cur) || '0:00'}</span>
+      <span className="prog__t">{fmtDuration(shownCur) || '0:00'}</span>
       <input
         className="prog__bar"
         type="range"
         min={0}
         max={total || 1}
         step={0.1}
-        value={Math.min(cur, total || 1)}
-        disabled={!hasSound || (mode === 'full' && !ytReady)}
+        value={Math.min(shownCur, total || 1)}
+        disabled={Boolean(heldShown) || !hasSound || (mode === 'full' && !ytReady)}
         aria-label={mode === 'preview' ? 'Position in the preview' : 'Position in the song'}
-        aria-valuetext={`${fmtDuration(cur) || '0:00'} of ${fmtDuration(total) || '0:00'}`}
-        style={{ ['--pct' as string]: `${total ? Math.min(100, Math.max(0, (cur / total) * 100)) : 0}%` }}
+        aria-valuetext={`${fmtDuration(shownCur) || '0:00'} of ${fmtDuration(total) || '0:00'}`}
+        style={{ ['--pct' as string]: `${total ? Math.min(100, Math.max(0, (shownCur / total) * 100)) : 0}%` }}
         onChange={(e) => seek(Number(e.target.value))}
       />
       <span className="prog__t">{fmtDuration(total || null)}</span>
@@ -873,6 +903,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const volume = playing ? (
     <Volume
       value={vol.value}
+      max={canBoost ? VOLUME_MAX : 1}
       muted={isSilent(vol)}
       disabled={mode === 'embed' || mode === 'none'}
       disabledReason="SoundCloud’s player has its own volume control."
@@ -987,6 +1018,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       play: () => { if (!isPlayingNow()) toggle(); },
       pause: () => { if (isPlayingNow()) toggle(); },
       seek: (ms) => seek(Math.max(0, ms) / 1000),
+      volume: (v) => setVol({ value: v, muted: false }),
     });
   });
   /**
@@ -1033,6 +1065,15 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
         } else if (ev.advanced && st.id && st.id !== key) onPickUpNext(st.id);
       }
       if (!st.id || st.id !== key) return;
+      // PLAYER-TRUTH-001: until the chosen song sounds, show the song the listener is actually hearing.
+      const before = soundingTrackRef.current;
+      const h = heldOverKey(st, key, before?.key ?? null);
+      if (h && before) {
+        setHeld({ track: before, cur: (st.soundingMs ?? 0) / 1000, dur: (st.soundingDurMs ?? 0) > 0 ? st.soundingDurMs! / 1000 : before.duration ?? 0, paused: !st.soundingPlaying });
+        return;
+      }
+      setHeld((x) => (x ? null : x));
+      if (st.sounding === key && playing) soundingTrackRef.current = playing.track;
       const c = st.positionMs / 1000;
       const d = st.durationMs > 0 ? st.durationMs / 1000 : 0;
       // A song that played out shows Play, as the <audio> deck does; pressing it starts it again.
@@ -1118,7 +1159,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
         </div>
       ) : (
         <>
-          <div className="np__main">
+          <div className="np__main" {...(docked ? swipe : {})}>
             {ytVideoId ? (
               <iframe
                 key={ytVideoId}
@@ -1173,10 +1214,21 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
               {progress}
               {/* One control row: transport, volume, then the song's own actions. They were a third
                   row, which made the dock 200px tall and read as a separate toolbar. */}
-              <div className="np__controls">
-                {transport}
-                {volume}
-                <PlayerActions key={t!.key} {...actions} />
+              {/* DOCK-CENTRE-001 (owner, 2026-11-19): previous, play and next sit in the middle of the row;
+                  the song's star and X with shuffle on the left, repeat, download, similar and volume on the right. */}
+              <div className="np__controls np__controls--centred">
+                <div className="np__ctl-side np__ctl-side--start">
+                  <PlayerActions key={`${t!.key}:judge`} {...actions} only={['star', 'dislike']} held={Boolean(heldShown)} />
+                  {shuffleBtn}
+                </div>
+                <div className="transport np__ctl-mid" role="group" aria-label="Playback">
+                  {prevBtn}{playBtn}{nextBtn}
+                </div>
+                <div className="np__ctl-side np__ctl-side--end">
+                  {repeatBtn}
+                  <PlayerActions key={`${t!.key}:keep`} {...actions} only={['download', 'similar']} held={Boolean(heldShown)} />
+                  {volume}
+                </div>
               </div>
             </div>
           ) : (
@@ -1188,7 +1240,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
                   third row under the art. */}
               <div className="np__side">
                 {volume}
-                <PlayerActions key={t!.key} {...actions} />
+                <PlayerActions key={t!.key} {...actions} held={Boolean(heldShown)} />
                 {openLinks}
               </div>
             </>

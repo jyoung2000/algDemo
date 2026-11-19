@@ -53,6 +53,11 @@ export interface EngineState {
   positionMs: number;
   durationMs: number;
   blending: string | null;
+  /** PLAYER-TRUTH-001: the song the engine's deck is sounding (the one before, while a chosen song opens). */
+  sounding?: string | null;
+  soundingPlaying?: boolean;
+  soundingMs?: number;
+  soundingDurMs?: number;
   event?: EngineEvent;
   /** After `hello`: what the engine did while the page was away, oldest first. */
   pending?: EngineEvent[];
@@ -71,7 +76,7 @@ type Command =
   | { op: 'play' }
   | { op: 'pause' }
   | { op: 'seek'; positionMs: number }
-  | { op: 'settings'; eq?: unknown; mix?: number; playThrough?: number; volume?: number }
+  | { op: 'settings'; eq?: unknown; mix?: number; playThrough?: number; volume?: number; adventurous?: number; mood_queue?: boolean }
   | { op: 'ack'; seq: number }
   | { op: 'hello' };
 

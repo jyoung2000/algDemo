@@ -1,6 +1,7 @@
 import { downloadsAvailable } from './engine/downloads';
 import { familyIdentity, genreIdentity, subIdentity, type GenreIdentity } from './engine/genre-identity';
 import { styleCore } from './engine/genre-fill';
+import { moodShufflePick, type ShuffleMood } from './engine/mood-shuffle';
 import type { Characteristics, Playback, ProviderId, RecItem, Release, TasteSummary, Track } from './api';
 
 export const PROVIDER_LABEL: Record<string, string> = {
@@ -172,7 +173,7 @@ export function stepQueue(
   fromKey: string | null,
   dir: 1 | -1,
   hidden: Set<string>,
-  o: { shuffle: boolean; repeat: RepeatMode; heard: ReadonlySet<string>; rand?: () => number; ready?: (track: Track) => boolean; prefer?: ReadonlyMap<string, number> },
+  o: { shuffle: boolean; repeat: RepeatMode; heard: ReadonlySet<string>; rand?: () => number; ready?: (track: Track) => boolean; prefer?: ReadonlyMap<string, number>; mood?: ShuffleMood | null },
 ): QueueStep | null {
   const playable = items.filter((x) => !hidden.has(x.track.key) && canPlayHere(x.playback));
   /**
@@ -186,9 +187,15 @@ export function stepQueue(
   const ok = o.ready ? playable.filter((x) => x.track.key === fromKey || o.ready!(x.track)) : playable;
   if (!ok.length) return null;
   const rand = o.rand ?? Math.random;
-  // MOOD-QUEUE-001: with a listening mood, shuffle picks among the three songs that fit it best.
+  // MOOD-SHUFFLE-001: with a listening mood, shuffle is weighted by how well each song fits it (every
+  // song keeps a chance; the round rule below still plays each song once before any repeats).
+  // `prefer` (the mood plan's order, top three) is the older rule, kept for callers without fits.
   const best = (from: RecItem[]) => (o.prefer ? [...from].sort((a, b) => (o.prefer!.get(a.track.key) ?? 1e9) - (o.prefer!.get(b.track.key) ?? 1e9)).slice(0, 3) : from);
-  const pick = (all: RecItem[]) => { const from = best(all); return from[Math.min(from.length - 1, Math.floor(rand() * from.length))]!; };
+  const pick = (all: RecItem[]) => {
+    if (o.mood && o.mood.confidence > 0) return moodShufflePick(all, (x) => x.track.key, o.mood.fit, { adventurous: o.mood.adventurous, confidence: o.mood.confidence, rand });
+    const from = best(all);
+    return from[Math.min(from.length - 1, Math.floor(rand() * from.length))]!;
+  };
   if (o.shuffle && dir === 1) {
     const fresh = choosable.filter((x) => x.track.key !== fromKey && !o.heard.has(x.track.key));
     if (fresh.length) {

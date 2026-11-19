@@ -11,6 +11,7 @@
  * shell every call here is a no-op, so it is safe to wire unconditionally.
  */
 import type { Track } from '../api';
+import { parseEq, type EqConfig } from './eq';
 
 export interface NativeSong {
   id: string;
@@ -104,6 +105,10 @@ export interface MediaHandlers {
   identifyAudio?: (samples: Float32Array) => Promise<NativeSong[]>;
   shuffle?: (on: boolean) => void;
   repeat?: (mode: number) => void;
+  /** VOLUME-BOOST-001: the car's Volume button set the engine to `value` (0..2); the slider follows. */
+  volume?: (value: number) => void;
+  /** CAR-SETTINGS-001: the car's EQ preset / discovery level / mood choice, to save as the phone's own settings. */
+  carSettings?: (change: CarSettingsChange) => void;
   /** CAR-ACTIONS-001: Star or Dislike pressed in the car (or queued while the app was closed). */
   /** CAR-RADIO-CONTROLS-001: `track` is the radio song's own Track when the car starred a song on air. */
   feedback?: (id: string, kind: CarFeedbackKind, track?: Track) => void;
@@ -308,7 +313,7 @@ export function samplesFromPcm16(b64: string): Float32Array {
 export function installMediaCommands(): void {
   if (typeof window === 'undefined') return;
   (window as unknown as { __awMediaCmd?: (json: string) => void }).__awMediaCmd = (json: string) => {
-    let cmd: { type?: string; requestId?: string; positionMs?: number; index?: number; id?: string; query?: string; on?: boolean; mode?: number | string; album?: boolean; kind?: string; pcm?: string; list?: string; track?: unknown; current?: unknown; upcoming?: unknown; signal?: unknown };
+    let cmd: { type?: string; requestId?: string; positionMs?: number; index?: number; id?: string; query?: string; on?: boolean; mode?: number | string; album?: boolean; kind?: string; pcm?: string; list?: string; track?: unknown; current?: unknown; upcoming?: unknown; signal?: unknown; value?: unknown };
     try {
       cmd = JSON.parse(json);
     } catch {
@@ -392,6 +397,8 @@ export function installMediaCommands(): void {
       }
       case 'shuffle': handlers.shuffle?.(Boolean(cmd.on)); break;
       case 'repeat': handlers.repeat?.(Number(cmd.mode) || 0); break;
+      case 'volume': { const v = Number(cmd.value); if (Number.isFinite(v) && v >= 0 && v <= 2) handlers.volume?.(v); break; }
+      case 'carSettings': { const c = carSettingsFrom(cmd as Record<string, unknown>); if (c) handlers.carSettings?.(c); break; }
       case 'feedback':
         if (cmd.id && typeof cmd.kind === 'string' && CAR_FEEDBACK.includes(cmd.kind)) {
           const t = carTrack(cmd.track, String(cmd.id));
@@ -411,3 +418,15 @@ export function installMediaCommands(): void {
 
 // Installed on import so the native command sink always finds the hook, even before React mounts.
 installMediaCommands();
+
+/** CAR-SETTINGS-001: what the car changed, checked field by field (a malformed field is dropped, not guessed). */
+export interface CarSettingsChange { eq?: EqConfig; adventurous?: number; mood_queue?: boolean }
+export function carSettingsFrom(cmd: Record<string, unknown>): CarSettingsChange | null {
+  const out: CarSettingsChange = {};
+  const e = cmd['eq'];
+  if (e && typeof e === 'object' && !Array.isArray(e) && Array.isArray((e as { gains?: unknown }).gains)) out.eq = parseEq(e);
+  const a = cmd['adventurous'];
+  if (typeof a === 'number' && Number.isFinite(a) && a >= 0 && a <= 1) out.adventurous = a;
+  if (typeof cmd['mood'] === 'boolean') out.mood_queue = cmd['mood'];
+  return Object.keys(out).length ? out : null;
+}

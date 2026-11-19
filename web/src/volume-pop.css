@@ -97,3 +97,38 @@
 @media (prefers-reduced-motion: reduce) {
   .vol__pop { animation: none; }
 }
+
+/* VOLUME-BOOST-001: the slider runs to 200%. A tick marks the normal maximum; past it the fill turns amber. */
+.vol__track { position: relative; display: inline-flex; align-items: center; flex: none; }
+.vol__mark {
+  position: absolute;
+  left: var(--at, 50%);
+  top: 50%;
+  width: 2px;
+  height: 14px;
+  margin: -7px 0 0 -1px;
+  border-radius: 1px;
+  /* Above the fill, white with a dark edge: it shows on the blue fill and on the empty grey track alike. */
+  z-index: 1;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 45%);
+  pointer-events: none;
+}
+.vol.vol--pop .vol__pop .vol__n { min-width: 4.2ch; text-align: right; font-variant-numeric: tabular-nums; }
+/* Past the normal maximum the fill itself turns amber: blue up to the tick, amber beyond it. */
+.vol.is-boosted .vol__pop .vol__bar {
+  accent-color: #e8890c;
+  background: linear-gradient(to right, #0071e3 var(--at, 50%), #e8890c var(--at, 50%) var(--pct, 0%), rgb(0 0 0 / 14%) var(--pct, 0%));
+}
+.vol.is-boosted .vol__pop .vol__n { color: #b4610a; font-weight: 600; }
+.vol.vol--pop .vol__btn { position: relative; }
+.vol__boost-dot {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #e8890c;
+  box-shadow: 0 0 0 2px var(--card, #fff);
+}

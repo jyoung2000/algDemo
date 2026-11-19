@@ -16,6 +16,8 @@ import { LocalApi } from './engine/local-api';
 import { runCarSimilar } from './engine/car-similar';
 import { runCarMood } from './engine/car-mood';
 import { pushSourceUpdates, setMediaHandlers, songFromTrack } from './engine/media-native';
+import { applyCarSettings } from './engine/car-settings';
+import { engineSend } from './engine/native-engine';
 import { defaultHttpPort, phoneWait } from './engine/native-http';
 import { provideLocal, spotifySearchFor, startLocal } from './engine/runtime';
 import { CarSources, ChainedContexts, LibraryContexts, parseLibrary, ServiceActor, type LibrarySnapshot } from './engine/service-actor';
@@ -121,6 +123,8 @@ async function startService(n: FullBridge): Promise<void> {
           });
         } finally { similarBusy = false; }
       },
+      // CAR-SETTINGS-001: with the phone closed, the car's EQ / discovery / mood choice is saved by this engine.
+      carSettings: (change) => { void applyCarSettings(change, { save: api.putSettings, send: engineSend }).catch(() => { /* resent on the next hello */ }); },
       // CAR-MOOD-001: with the phone closed, the car's queue follows the listening mood from this engine.
       // The queue's songs are looked up once per question (up to 500 of them), not one api.last() each.
       moodOrder: async (req) => {

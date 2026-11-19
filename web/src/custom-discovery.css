@@ -1,0 +1,182 @@
+/* NEXT-FAV-CUSTOM-001: Customize discovery. A bottom sheet on a phone, a centred dialog on a wide window
+   (Astra design review, 2026-11-19): fixed header and footer, one scrolling body, no inner scroll lists. */
+.cdisc-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(20, 20, 20, 0.38);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cdisc {
+  display: flex;
+  flex-direction: column;
+  width: 640px;
+  max-width: calc(100vw - 32px);
+  max-height: 85vh;
+  background: var(--panel, #fff);
+  color: var(--ink, #161616);
+  border-radius: 16px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24);
+  overflow: hidden;
+}
+.cdisc__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 24px 12px;
+  border-bottom: 1px solid var(--hair-2, #e9e7e2);
+}
+.cdisc__head h2 { margin: 0; font-size: 18px; font-weight: 650; }
+.cdisc__close,
+.cdisc__expand,
+.cdisc__remove {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2, #4a4a4a);
+  cursor: pointer;
+}
+.cdisc__body { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; padding: 4px 24px 16px; }
+.cdisc__frozen { border: 0; margin: 0; padding: 0; min-width: 0; }
+.cdisc__frozen:disabled { opacity: 0.6; }
+.cdisc__intro { margin: 10px 0 4px; color: var(--ink-2, #4a4a4a); line-height: 1.45; }
+.cdisc__sec { padding: 14px 0 10px; border-bottom: 1px solid var(--hair-2, #e9e7e2); }
+.cdisc__sec:last-child { border-bottom: 0; }
+.cdisc__sec h3 { margin: 0; font-size: 15px; font-weight: 650; }
+.cdisc__sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
+.cdisc__help { margin: 4px 0 8px; color: var(--ink-3, #6b6f76); font-size: 12px; line-height: 1.4; }
+.cdisc__search {
+  box-sizing: border-box;
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--hair, #dcdad4);
+  border-radius: 999px;
+  background: #fff;
+  font: inherit;
+  font-size: 14px;
+}
+.cdisc__search:focus-visible { outline: 2px solid #0071e3; outline-offset: 1px; }
+.cdisc__empty, .cdisc__note { margin: 8px 2px; color: var(--ink-3, #6b6f76); }
+.cdisc__note { color: #b4610a; }
+
+/* Genre bubbles: the Taste Picker colour as a tinted face with a coloured edge (TAGS-CANON-001). */
+.gchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--c, #888) 70%, #000 0%);
+  background: color-mix(in srgb, var(--c, #888) 18%, #fff);
+  color: #1a1a1a;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.gchip button { display: grid; place-items: center; width: 22px; height: 22px; margin-right: -6px; border: 0; border-radius: 50%; background: transparent; cursor: pointer; color: inherit; }
+.gchip--context { background: transparent; border-style: dashed; font-weight: 500; color: var(--ink-2, #4a4a4a); }
+.gdot { width: 12px; height: 12px; border-radius: 50%; background: var(--c, #888); flex: none; }
+.cdisc__chips { display: flex; flex-direction: column; gap: 6px; list-style: none; margin: 0 0 10px; padding: 0; }
+.cdisc__chipgroup { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+.cdisc__fams { list-style: none; margin: 8px 0 0; padding: 0; }
+.cdisc__fam { border-bottom: 1px solid var(--hair-2, #e9e7e2); }
+.cdisc__fam:last-child { border-bottom: 0; }
+.cdisc__famrow { display: flex; align-items: center; justify-content: space-between; min-height: 48px; }
+.cdisc__check { display: flex; align-items: center; gap: 10px; min-height: 44px; flex: 1 1 auto; min-width: 0; cursor: pointer; }
+.cdisc__check input { width: 18px; height: 18px; margin: 0; accent-color: #0071e3; flex: none; }
+.cdisc__famname { font-weight: 600; font-size: 14px; }
+.cdisc__count { color: var(--ink-3, #6b6f76); font-size: 12px; }
+.cdisc__subs { list-style: none; margin: 0 0 8px; padding: 0 0 0 28px; display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0 12px; }
+.cdisc__check--sub { min-height: 40px; }
+
+.cdisc__artists, .cdisc__results { list-style: none; margin: 4px 0 8px; padding: 0; }
+.cdisc__artist { border: 1px solid var(--hair-2, #e9e7e2); border-radius: 12px; margin-bottom: 8px; padding: 0 4px 0 8px; }
+.cdisc__artistrow { display: flex; align-items: center; gap: 10px; min-height: 52px; }
+.cdisc__results .cdisc__artistrow { padding: 0 4px 0 8px; border-bottom: 1px solid var(--hair-2, #e9e7e2); }
+.cdisc__pic { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex: none; }
+.cdisc__pic--none { display: grid; place-items: center; background: var(--pearl-2, #efeee9); color: var(--ink-2, #4a4a4a); font-weight: 650; }
+.cdisc__aname { flex: 1 1 auto; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cdisc__aname small { display: block; color: var(--ink-3, #6b6f76); font-weight: 400; font-size: 11px; }
+.cdisc__include { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; padding: 0 10px; border: 0; background: transparent; color: #0071e3; font: inherit; font-weight: 600; cursor: pointer; }
+.cdisc__add { min-width: 72px; min-height: 36px; }
+.cdisc__opts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; padding: 0 8px 8px 46px; }
+.cdisc__opt { min-height: 40px; }
+
+.cdisc__slider { padding: 10px 0 4px; }
+.cdisc__slider-head { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.cdisc__slider-head output { margin-left: auto; color: #0071e3; font-variant-numeric: tabular-nums; }
+.cdisc__any { min-height: 32px; padding: 0 12px; }
+.cdisc__track { display: flex; align-items: center; gap: 10px; min-height: 44px; color: var(--ink-3, #6b6f76); font-size: 12px; }
+.cdisc__track input[type='range'] {
+  flex: 1 1 auto;
+  min-width: 80px;
+  appearance: none;
+  height: 6px;
+  padding: 19px 0;
+  background-clip: content-box;
+  border-radius: 3px;
+  background-color: transparent;
+  background-image: linear-gradient(to right, #0071e3 var(--pct, 50%), #dcdcd8 var(--pct, 50%));
+  cursor: pointer;
+}
+/* The era slider fills from the centre towards the thumb, so "Any era" reads as empty. */
+.cdisc__track input.cdisc__era {
+  background-image: linear-gradient(to right, #dcdcd8 var(--from, 50%), #0071e3 var(--from, 50%), #0071e3 var(--to, 50%), #dcdcd8 var(--to, 50%));
+}
+.cdisc__track input[type='range']::-webkit-slider-thumb { appearance: none; width: 22px; height: 22px; border-radius: 50%; background: #fff; border: 1px solid rgba(0, 0, 0, 0.22); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); }
+.cdisc__track input[type='range']::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: #fff; border: 1px solid rgba(0, 0, 0, 0.22); }
+.cdisc__reset { margin-top: 12px; min-height: 40px; padding: 0 16px; }
+
+.cdisc__foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 24px 16px;
+  border-top: 1px solid var(--hair-2, #e9e7e2);
+  background: var(--panel, #fff);
+}
+.cdisc__summary { margin: 0; color: var(--ink-2, #4a4a4a); font-size: 12px; text-align: center; min-height: 16px; }
+.cdisc__go { width: 100%; min-height: 48px; }
+
+/* Phone: a full-width bottom sheet, 92% of the screen, 16px sides, clear of the system bars. */
+@media (max-width: 899px) {
+  .cdisc-backdrop { align-items: flex-end; }
+  .cdisc {
+    width: 100%;
+    max-width: 100%;
+    height: 92vh;
+    height: 92dvh;
+    max-height: none;
+    border-radius: 18px 18px 0 0;
+    animation: cdisc-up 180ms ease-out;
+  }
+  .cdisc__head, .cdisc__body, .cdisc__foot { padding-left: 16px; padding-right: 16px; }
+  .cdisc__foot { padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .cdisc__subs { grid-template-columns: 1fr; padding-left: 28px; }
+  .cdisc__opts { grid-template-columns: 1fr; padding-left: 46px; }
+}
+@keyframes cdisc-up { from { transform: translateY(24px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+
+/* The way in, under "Find my next favorite". */
+.go__custom { min-height: 44px; padding: 0 18px; display: inline-flex; align-items: center; gap: 6px; }
+
+/* Pointer-over looks only where there is a pointer (BTN-UNIFORM-001): a phone tap must not leave one stuck. */
+@media (hover: hover) {
+  .cdisc__close:hover,
+  .cdisc__expand:hover,
+  .cdisc__remove:hover { background: var(--pearl-2, #efeee9); }
+  .gchip button:hover { background: rgba(0, 0, 0, 0.08); }
+  .cdisc__include:hover { background: var(--accent-soft, #e6effb); border-radius: 999px; }
+}
+.go__more { display: flex; margin-top: 8px; }

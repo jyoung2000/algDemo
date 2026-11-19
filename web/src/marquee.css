@@ -10,7 +10,10 @@
   display: inline-block;
   white-space: nowrap;
   will-change: auto;
+  /* MARQUEE-START-001: not scrolling = showing the first letter, never part-way along. */
+  transform: translateX(0);
 }
+.mq.is-long,
 .mq.is-moving {
   /* A soft fade at the edge says "there is more" while it waits. */
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
@@ -20,13 +23,13 @@
   will-change: transform;
   animation: mq-glide var(--mq-time, 12s) ease-in-out infinite;
 }
-/* 0-15% wait at the start, glide, 50-65% wait at the end, glide back. */
+/* 0-20% wait on the first letter, glide, 50-65% wait at the end, glide back. */
 @keyframes mq-glide {
-  0%, 15% { transform: translateX(0); }
+  0%, 20% { transform: translateX(0); }
   50%, 65% { transform: translateX(var(--mq-shift, 0)); }
   100% { transform: translateX(0); }
 }
 @media (prefers-reduced-motion: reduce) {
   .mq.is-moving .mq__inner { animation: none; }
-  .mq.is-moving { -webkit-mask-image: none; mask-image: none; text-overflow: ellipsis; }
+  .mq.is-long, .mq.is-moving { -webkit-mask-image: none; mask-image: none; text-overflow: ellipsis; }
 }

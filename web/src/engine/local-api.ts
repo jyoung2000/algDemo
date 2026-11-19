@@ -6,7 +6,9 @@
 import { applyAlgorithmPatch, engineFromSettings, settingsWithAlgorithms } from './algorithms';
 import * as A from './audio';
 import { isSimilarityPercent, selectSimilar, soundMatch, SIMILAR_DEFAULT, SIMILAR_FLOOR, SIMILAR_LIMIT, type SoundHit, type SoundTrack } from './similar-sound';
-import { MOOD, buildMood, moodOrder, moodTags, type MoodCandidate, type MoodKind, type MoodSignal } from './mood-queue';
+import { customOutcome, normaliseCriteria, runCustomDiscovery, songIdOf, type CandidateTrack, type CustomCriteria, type CustomPorts } from './custom-discovery';
+import { genreIdentity } from './genre-identity';
+import { MOOD, buildMood, moodFit, moodOrder, moodTags, type MoodCandidate, type MoodKind, type MoodSignal } from './mood-queue';
 /** CAR-MOOD-001: the presses the car may send with a mood question. */
 const CAR_MOOD_KINDS = new Set(['like', 'dislike', 'similar', 'complete', 'skip']);
 import type { Track as NativeTrack } from './track';
@@ -139,6 +141,9 @@ export function characteristicsOf(c: Dict, taste: TasteProfile | null): Dict {
 // install that predates it — no migration needed.
 /** FEATURES-FLOW-001: how long one request works on a look for features before answering with what it has. */
 const FEATURE_SLICE_MS = 2500;
+/** MOOD-DISCOVER-001: when the mood last asked for songs, and how often it may. */
+const MOOD_DISCOVERY_AT = 'mood_discovery_at';
+const MOOD_DISCOVERY_EVERY_S = 600;
 const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, similar_percent: SIMILAR_DEFAULT, cache_gb: 1, dl_parallel: 0, preload_target: 'all' as 'all' | 'count', preload_count: 20, discover_while_listening: true, mood_queue: true, rank_v2: true, eq: EQ_DEFAULTS, mix: 0, local_mix: true, play_through: PLAY_THROUGH_DEFAULT };
 /** How many songs one discovery run adds to the list: the user's choice in Settings. */
 export const QUEUE_SIZE_MIN = 5;
@@ -397,6 +402,7 @@ export class LocalApi {
       if (path === '/api/settings') return m === 'PUT' ? await this.putSettings(body ?? {}) : ok(this.settings());
       if (m === 'POST' && path === '/api/recommend') return this.recommend(body ?? {});
       if (m === 'POST' && path === '/api/similar') return this.similar(body ?? {});
+      if (m === 'POST' && path === '/api/discover/custom') return this.discoverCustom(body ?? {});
       const job = /^\/api\/jobs\/([A-Za-z0-9]+)$/.exec(path);
       if (job) return m === 'DELETE' ? this.cancelJob(job[1]!) : this.jobStatus(job[1]!);
       if (m === 'POST' && path === '/api/feedback') return await this.feedback(body ?? {});
@@ -582,7 +588,8 @@ export class LocalApi {
     const q = raw.trim().replace(/\s+/g, ' ').slice(0, 200);
     if (!q || looksLikeUrl(q)) return { query: q, artists: [] };
     const meter = this.searchMeter();
-    return { query: q, artists: await this.artists.search(q, 6, { meter }), bytes: meter.total };
+    const r = await this.artists.searchWithWhy(q, 6, { meter });
+    return { query: q, artists: r.artists, ...(r.why ? { why: r.why } : {}), bytes: meter.total };
   }
 
   /** `{ id?, name? }` opens that artist; with `every`, the songs on all their albums and singles too. */
@@ -1472,10 +1479,12 @@ export class LocalApi {
     let seeds = this.store.seeds() as Dict[];
     const settings = this.settings();
     const listening = body['trigger'] === 'listening';
+    let moodLead: string[] | undefined;
     if (listening) {
       const guard = this.listeningGuard(body, settings);
       if (guard.skip) return ok({ job: null, reason: guard.reason });
       seeds = guard.seeds;
+      moodLead = guard.mood;
     }
     if (!seeds.length) return fail(400, 'Add at least one starting song first.');
     if (this.currentJob) this.jobs.get(this.currentJob)?.token.cancel('superseded by a newer request');
@@ -1484,7 +1493,112 @@ export class LocalApi {
     this.currentJob = job.id;
     for (const [k, j] of this.jobs) if (j.done && unixNow() - j.started > 900) this.jobs.delete(k);
     void this.runJob(job, seeds, settings, listening ? 'listening' : 'search');
-    return ok({ job: job.id });
+    return ok(moodLead ? { job: job.id, mood: moodLead } : { job: job.id });
+  }
+
+  /**
+   * NEXT-FAV-CUSTOM-001 (owner, 2026-11-19): Find my next favorite with the listener's own criteria (custom-discovery.ts).
+   * Found songs go to the end of Now playing, like Find similar's; nothing already there is repeated.
+   */
+  private discoverCustom(body: Dict): LocalResponse {
+    const crit = normaliseCriteria(body['criteria'] as Dict | undefined);
+    const exclude = new Set((Array.isArray(body['exclude']) ? body['exclude'] : []).filter((k): k is string => typeof k === 'string').slice(0, 5000));
+    if (this.currentJob) this.jobs.get(this.currentJob)?.token.cancel('superseded by a newer request');
+    const job = new Job(newId());
+    this.jobs.set(job.id, job); this.currentJob = job.id;
+    void this.runCustom(job, crit, exclude, this.settings());
+    return ok({ job: job.id, criteria: crit });
+  }
+
+  private async runCustom(job: Job, crit: CustomCriteria, exclude: Set<string>, settings: Dict): Promise<void> {
+    const p = this.pipeline;
+    const meter = p.meter(settings); job.meter = meter;
+    const c: Ctx = { token: job.token, meter };
+    const lastAtStart = this.store.get<Dict>('last_result');
+    try {
+      job.phase = 'gathering'; job.progress = 'Starting';
+      const taste = this.taste();
+      const known = new Set<string>();
+      for (const s of this.store.seeds() as Dict[]) for (const a of (s['artists'] as string[] | undefined) ?? []) known.add(fold(a));
+      for (const r of this.historyRows()) {
+        if (!['like', 'save', 'complete', 'replay', 'qualified'].includes(r.kind) || !r.track) continue;
+        for (const a of ((r.track as Dict)['artists'] as string[] | undefined) ?? []) known.add(fold(a));
+      }
+      const previous = ((lastAtStart?.['items'] as Dict[] | undefined) ?? []);
+      const excludeSongs = new Set<string>();
+      for (const it of previous) {
+        const t = it['track'] as Dict | undefined;
+        if (typeof t?.['key'] === 'string') exclude.add(t['key']);
+        if (t?.['title']) excludeSongs.add(songIdOf(t as { title: string; artists?: string[]; artist?: string }));
+      }
+      const providers = [
+        ['deezer', this.dz], ['ytmusic', this.ytm], ['soundcloud', this.sc], ['bandcamp', this.bandcamp],
+        ['audius', this.audius], ['hearthis', this.hearthis], ['internet-archive', this.archive],
+      ] as const;
+      const usable = (list: NativeTrack[]) => list.filter((t) => Boolean(t?.['key']) && t['kind'] !== 'video') as unknown as CandidateTrack[];
+      // Only the artist with exactly this name: a search for a name Deezer lacks answers someone else entirely.
+      const dzTopByName = async (name: string): Promise<CandidateTrack[]> => {
+        const who = await this.dz.artistByName(name, c);
+        return who ? usable(await this.dz.artistTop(who.id, 10, c)) : [];
+      };
+      const ports: CustomPorts = {
+        progress: (s) => { job.progress = s; },
+        check: () => job.token.check(),
+        openArtist: async (t) => {
+          const v = await this.artists.open({ ...(t.id ? { id: t.id } : {}), name: t.name }, c);
+          return { name: v.name, songs: v.songs as unknown as CandidateTrack[], features: v.features as unknown as CandidateTrack[], similar: v.similar ?? [] };
+        },
+        artistTop: async (name, id) => {
+          const dz = id && /^dz:\d{1,15}$/.test(id) ? id.slice(3) : null;
+          const own = await p.call(job, `custom-top:${name.slice(0, 24)}`, () => (dz ? this.dz.artistTop(dz, 10, c).then(usable) : dzTopByName(name)), [] as CandidateTrack[]);
+          if (own.length) return own;
+          // Not on Deezer: YouTube Music by name, keeping only songs the artist leads.
+          const yt = await p.call(job, `custom-yt:${name.slice(0, 24)}`, () => this.ytm.search(name, 10, c), [] as NativeTrack[]);
+          return usable(yt).filter((t) => fold(t.artists?.[0] ?? t.artist ?? '') === fold(name));
+        },
+        search: async (term, kind) => {
+          // A genre's own words only on the catalogue services: on upload sites they match titles, not genres.
+          const asked = kind === 'words' ? providers.filter(([name]) => name === 'deezer' || name === 'ytmusic') : providers;
+          const lists = await pmap(asked, 3, async ([name, provider]) =>
+            p.call(job, `custom-${name}`, () => provider.search(name === 'deezer' && kind === 'artist' ? `artist:"${term.replace(/"/g, ' ')}"` : term, 8, c), [] as NativeTrack[]));
+          const out: NativeTrack[] = [];
+          for (let i = 0; i < 8; i++) for (const l of lists) if (l[i]) out.push(l[i] as NativeTrack);
+          return usable(out);
+        },
+        related: async (name) => p.call(job, `custom-rel:${name.slice(0, 24)}`, async () => {
+          const who = await this.dz.artistByName(name, c);
+          return who ? (await this.dz.relatedArtists(who.id, 6, c)).map((a) => ({ name: a.name, id: `dz:${a.id}` })) : [];
+        }, [] as { name: string; id?: string }[]),
+        enrichGenres: async (tracks) => { await p.enrich(job, tracks as unknown as Dict[], 60); },
+      };
+      const tasteGenres = taste.events ? this.colourList(taste).slice(0, 4).map((g) => genreIdentity(g.label || g.name)?.key).filter((k): k is string => Boolean(k)) : [];
+      const turn = Number(this.store.get<number>('custom_turn') ?? 0) || 0;
+      const res = await runCustomDiscovery(crit, ports, { exclude, excludeSongs, known, taste, year: new Date().getFullYear(), tasteGenres, turn });
+      await this.store.put('custom_turn', turn + 1);
+      job.token.check();
+      const current = this.store.get<Dict>('last_result') ?? lastAtStart ?? { phase: 'final', items: [], count: 0, asked: 0, sources: {}, audio: {}, timings: {}, transfer: {} };
+      const before = (current['items'] as Dict[] | undefined) ?? [];
+      const have = new Set(before.map((it) => (it['track'] as Dict | undefined)?.['key']));
+      const fresh = res.picked.filter((pk) => !have.has(pk.track.key));
+      const items = fresh.map((pk, i) => {
+        const track = pk.track as unknown as Dict;
+        return {
+          rank: before.length + i + 1, track: cleanTrack(track), score: round(pk.score, 3), coverage: 1, tier: 'related', evidence: 'moderate',
+          reasons: [{ factor: 'custom', weight: round(pk.score, 3), text: pk.reason }],
+          uncertainty: [], new_release: false, factors: { custom: round(pk.score, 3) }, weights: { custom: 1 },
+          sources: [String(track['provider'])], playback: playbackFor(track), characteristics: characteristicsOf(track, taste), added: true, custom: true,
+        };
+      });
+      const next = this.withKnownGenres({ ...current, phase: 'final', items: [...before, ...items], count: before.length + items.length, saved_at: unixNow() });
+      job.token.check();
+      if (items.length) await this.store.put('last_result', next);
+      job.result = {
+        added: items.length, asked: crit.count, candidates: res.candidates, missed: res.missed,
+        reason: customOutcome(items.length, crit.count, job.sources as Record<string, { state: string }>, res.missed),
+        queue: items.length ? this.completed(next) : null, sources: job.sources,
+      };
+    } catch (e) { job.error = e instanceof Cancelled ? 'cancelled' : (e as Error).message || 'Custom discovery failed.'; }
+    finally { job.done = true; job.phase = job.error ? (job.error === 'cancelled' ? 'cancelled' : 'failed') : 'done'; }
   }
 
   /** SIMILAR-SOUND-001: one song in a list, one calibrated audio threshold, every full-song source.
@@ -1650,7 +1764,7 @@ export class LocalApi {
    * came from the list counts, and only while the unplayed remainder is nearly gone; a skip, a
    * replay, a pause or a preview from search never starts a search. One listen starts one batch.
    */
-  private listeningGuard(body: Dict, settings: Dict): { skip: true; reason: string } | { skip: false; seeds: Dict[] } {
+  private listeningGuard(body: Dict, settings: Dict): { skip: true; reason: string } | { skip: false; seeds: Dict[]; mood?: string[] } {
     const seeds = this.store.seeds() as Dict[];
     const eventId = String(body['event_id'] ?? '');
     const event = this.store.feedback().find((f) => (f as unknown as Dict)['event_id'] === eventId) as unknown as Dict | undefined;
@@ -1677,8 +1791,12 @@ export class LocalApi {
     const known = items.some((x) => x.track['key'] === event['key']) || seeds.some((s) => s['key'] === event['key']);
     const inList = known && origin === 'queue';
     const remaining = items.filter((x) => !played.has(String(x.track['key']))).length;
-    if (!needsListeningDiscovery(settings['discover_while_listening'] !== false, String(event['kind'] ?? ''), inList, remaining))
-      return { skip: true, reason: 'The list does not need more songs yet.' };
+    // MOOD-DISCOVER-001: a queue with songs left can still lack any that fit the listening mood; then the
+    // mood's own songs seed a search (at most once every ten minutes, never for a saved list).
+    const enabled = settings['discover_while_listening'] !== false;
+    const low = needsListeningDiscovery(enabled, String(event['kind'] ?? ''), inList, remaining);
+    const want = !low && !listId && enabled && inList && event['kind'] === 'complete' ? this.moodWantsMore(items, played, settings) : null;
+    if (!low && !want) return { skip: true, reason: 'The list does not need more songs yet.' };
     const active = this.currentJob ? this.jobs.get(this.currentJob) : null;
     if (active && !active.done) return { skip: true, reason: 'Discovery is already running.' };
     const handled = (this.store.get<string[]>('discovery_events') ?? []) as string[];
@@ -1687,7 +1805,43 @@ export class LocalApi {
     // Follow what was actually heard as well as the original starting songs, without editing them:
     // the listener owns that list.
     const heard = (event['track'] ?? null) as Dict | null;
+    if (want) {
+      void this.store.put(MOOD_DISCOVERY_AT, unixNow());
+      const first = [...want.seeds, ...(heard ? [heard] : [])];
+      const firstKeys = new Set(first.map((t) => String(t['key'])));
+      return { skip: false, seeds: [...first.filter((t, i) => first.findIndex((u) => u['key'] === t['key']) === i), ...seeds.filter((s) => !firstKeys.has(String(s['key'])))], mood: want.leading };
+    }
     return { skip: false, seeds: heard ? [heard, ...seeds.filter((s) => s['key'] !== event['key'])] : seeds };
+  }
+
+  /**
+   * MOOD-DISCOVER-001: whether the songs left in the queue hold too few for the current mood (fewer than
+   * MOOD.lead at the Familiar/Adventurous fit bar), and if so the mood's strongest songs to search from.
+   */
+  private moodWantsMore(items: { track: Dict }[], played: Set<string>, settings: Dict): { seeds: Dict[]; leading: string[] } | null {
+    if (settings['mood_queue'] === false) return null;
+    const now = unixNow();
+    if (now - Number(this.store.get(MOOD_DISCOVERY_AT) ?? 0) < MOOD_DISCOVERY_EVERY_S) return null;
+    const tagsOf = (t: Dict) => moodTags(characteristicsOf(t, null) as never);
+    const mood = buildMood(this.moodSignals(now, tagsOf), now);
+    if (mood.confidence < 0.5) return null;
+    const left = items.filter((x) => x?.track?.['key'] && !played.has(String(x.track['key'])));
+    const { fit } = moodFit(left.map((x) => ({ key: String(x.track['key']), tags: tagsOf(x.track), vector: this.moodVector(x.track) })), mood);
+    const a = Number(settings['adventurous'] ?? 0.5);
+    const bar = 0.65 - 0.3 * Math.max(0, Math.min(1, Number.isFinite(a) ? a : 0.5));
+    if (left.filter((x) => (fit[String(x.track['key'])] ?? 0) >= bar).length >= MOOD.lead) return null;
+    // The songs the mood rests on: starred, Find similar, finished and replayed, newest first.
+    const strong = new Set(['like', 'save', 'similar', 'complete', 'replay']);
+    const seeds: Dict[] = [];
+    const rows = [
+      ...this.store.feedback().filter((r) => strong.has(r.kind) && now - r.ts <= MOOD.maxAgeS && r.track).map((r) => ({ ts: r.ts, track: r.track as Dict, w: r.kind === 'like' || r.kind === 'save' ? 2 : 1 })),
+      ...this.moodLog().filter((r) => r['kind'] === 'similar' && now - Number(r['ts']) <= MOOD.maxAgeS && r['track']).map((r) => ({ ts: Number(r['ts']), track: r['track'] as Dict, w: 3 })),
+    ].sort((x, y) => y.w - x.w || y.ts - x.ts);
+    for (const r of rows) {
+      if (seeds.length >= 3) break;
+      if (!seeds.some((t) => t['key'] === r.track['key'])) seeds.push(r.track);
+    }
+    return seeds.length ? { seeds, leading: mood.leading } : null;
   }
 
   private jobStatus(id: string): LocalResponse {
@@ -2088,7 +2242,14 @@ export class LocalApi {
     const shown = Array.isArray(body['shown']) ? (body['shown'] as unknown[]).map(String).slice(0, 500) : undefined;
     const adventurous = Number(settings['adventurous'] ?? 0.5);
     const plan = moodOrder(cands, mood, Number.isFinite(adventurous) ? adventurous : 0.5, { shown });
-    return ok({ ...plan, leading: mood.leading, confidence: round(mood.confidence, 2) });
+    // MOOD-SHUFFLE-001: how well each song fits, for the shuffle's weighted pick. `score` adds songs that
+    // may not move (hand-added, or a list played in shuffle) but are still picked from.
+    const extra = (Array.isArray(body['score']) ? (body['score'] as Dict[]) : []).slice(0, 500)
+      .filter((u) => u && typeof u === 'object' && typeof (u['track'] as Dict | undefined)?.['key'] === 'string')
+      .filter((u) => !keys.includes(String((u['track'] as Dict)['key'])))
+      .map((u) => { const t = u['track'] as Dict; return { key: String(t['key']), tags: tagsOf(t, u['characteristics'] as Dict | undefined), vector: this.moodVector(t) }; });
+    const { fit } = moodFit([...cands, ...extra], mood);
+    return ok({ ...plan, fit, leading: mood.leading, confidence: round(mood.confidence, 2) });
   }
 
   /** Songs the catalogue gave no tempo for get the one measured from their preview, when there is one. */

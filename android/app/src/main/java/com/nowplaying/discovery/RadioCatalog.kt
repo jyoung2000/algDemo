@@ -224,6 +224,53 @@ object RadioCatalog {
     rememberStations(JSONArray(result.stations.map { it.json() }))
     result
   }
+  /* --------------------------------------------------------------- CAR-RADIO-FILTERS-001 */
+  private const val FILTERS_KEY = "car-filters"
+  private const val PLACES_KEY = "places"
+  private const val FILTER_PAGE = 30
+  @Volatile private var filtersCache: CarRadioFilters.Filters? = null
+  @Volatile private var placesCache: List<CarRadioFilters.Place>? = null
+  private fun prefs(ctx: Context) = ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+  /** The car's radio filters, kept across restarts. */
+  fun carFilters(ctx: Context): CarRadioFilters.Filters =
+    filtersCache ?: CarRadioFilters.read(prefs(ctx).getString(FILTERS_KEY, null)).also { filtersCache = it }
+  fun setCarFilters(ctx: Context, f: CarRadioFilters.Filters) { filtersCache = f; prefs(ctx).edit().putString(FILTERS_KEY, CarRadioFilters.write(f)).apply() }
+
+  /** The places saved in the phone's Radio tab (sent by the page whenever they change). */
+  fun savedPlaces(ctx: Context): List<CarRadioFilters.Place> =
+    placesCache ?: CarRadioFilters.placesFrom(runCatching { JSONArray(prefs(ctx).getString(PLACES_KEY, "[]")) }.getOrNull()).also { placesCache = it }
+  @Synchronized fun setPlaces(ctx: Context, array: JSONArray?): JSONArray {
+    if (array != null) {
+      val list = CarRadioFilters.placesFrom(array)
+      placesCache = list
+      prefs(ctx).edit().putString(PLACES_KEY, CarRadioFilters.placesJson(list).toString()).apply()
+      listeners.forEach { it() }
+    }
+    return CarRadioFilters.placesJson(savedPlaces(ctx))
+  }
+
+  /** Stations for the car's filters: starred stations filtered here, otherwise the directory, most listened-to first. */
+  fun filteredStations(ctx: Context, offset: Int): ListenableFuture<StationPage> = async {
+    require(offset in 0..1_000_000) { "Invalid radio page" }
+    val f = carFilters(ctx)
+    val chosen = CarRadioFilters.chosen(f, savedPlaces(ctx))
+    if (f.starredOnly) {
+      favourites(ctx, null)
+      return@async StationPage(favouriteRows.filter { CarRadioFilters.matches(it.json(), f, chosen) }, null)
+    }
+    val paths = CarRadioFilters.searchPaths(f, chosen.take(CarRadioFilters.CAR_PLACES_ASKED), offset, FILTER_PAGE)
+    var full = false
+    val lists = paths.map { p ->
+      val raw = try { directory.raw(p) } catch (e: Exception) { if (paths.size == 1) throw e else JSONArray() }
+      if (raw.length() >= FILTER_PAGE) full = true
+      rows(raw, FILTER_PAGE)
+    }
+    val result = CarRadioFilters.interleave(lists) { it.id }
+    rememberStations(JSONArray(result.map { it.json() }))
+    StationPage(result, if (full && offset + FILTER_PAGE <= 1_000_000) offset + FILTER_PAGE else null)
+  }
+
   fun favouriteItems(ctx: Context): ListenableFuture<List<MediaItem>> = async {
     val rows = rows(favourites(ctx, null), MAX_FAVOURITES)
     rememberStations(JSONArray(rows.map { it.json() }))
@@ -291,6 +338,8 @@ internal class RadioDirectory(private val fetch: (String) -> String) {
     throw IllegalStateException("Station directory is unavailable; try Favourite stations or retry", last)
   }
   private fun read(path: String): List<RadioCatalog.Station> = RadioCatalog.sorted(RadioCatalog.rows(readRaw(path)))
+  /** A directory answer in the directory's own order (filtered car lists keep "most listened-to first"). */
+  fun raw(path: String): JSONArray { require(path.startsWith("/json/stations/search?") && path.length <= 2000) { "Invalid directory search" }; return readRaw(path) }
   fun letterPage(letter: String, offset: Int): RadioCatalog.StationPage {
     require(letter in RadioCatalog.LETTERS + RadioCatalog.NUMBERS && offset in 0..1_000_000) { "Invalid station initial or page" }
     val out = mutableListOf<RadioCatalog.Station>(); val seen = mutableSetOf<String>(); var cursor = offset

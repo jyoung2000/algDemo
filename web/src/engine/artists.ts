@@ -19,6 +19,7 @@
 import { BudgetExceeded, Cancelled, FetchError, type CancelToken, type Http, type Meter } from './net';
 import { cached, DZ, ProviderError, type Deezer } from './deezer';
 import { fold, parseTitle } from './identity';
+import { mergeSimilar, type SimilarArtist } from './artist-circle';
 import { albumKind, mergeAlbums, parseDeezerAlbums, type Albums, type AlbumSummary } from './albums';
 import { parseDuration, YT_ALBUM, type YouTubeMusic, type YtItem } from './ytmusic';
 import type { Track } from './track';
@@ -196,6 +197,8 @@ export interface ArtistView {
   singles: AlbumSummary[];
   links: { deezer?: string; ytmusic?: string };
   sources: Record<string, ArtistSource>;
+  /** ARTIST-CIRCLE-001: Deezer's related artists and YouTube Music's "Fans might also like", merged. */
+  similar?: SimilarArtist[];
 }
 
 export type ArtistTarget = { id?: string; name?: string; refresh?: boolean; refreshToken?: string };
@@ -320,6 +323,8 @@ export interface YtArtistPage {
    * ten albums and keeps the rest behind "More" (ARTIST-FEATURES-001 asked for all of them).
    */
   more: { kind: 'albums' | 'singles'; browseId: string; params: string }[];
+  /** ARTIST-CIRCLE-001: the page's "Fans might also like" shelf. */
+  related: ArtistSummary[];
 }
 
 /** A YouTube Music artist page: header, the link to every song, and the album pages it shows. */
@@ -332,6 +337,7 @@ export function parseYtArtistPage(resp: Json, uc?: string): YtArtistPage {
   const albums: AlbumSummary[] = [];
   const singles: AlbumSummary[] = [];
   const more: YtArtistPage['more'] = [];
+  const related: ArtistSummary[] = [];
   for (const s of sections) {
     const shelf = s['musicShelfRenderer'];
     if (shelf && !songsList) {
@@ -354,6 +360,12 @@ export function parseYtArtistPage(resp: Json, uc?: string): YtArtistPage {
     for (const it of ((s['musicCarouselShelfRenderer']?.['contents'] as Json[] | undefined) ?? [])) {
       const x = it['musicTwoRowItemRenderer'];
       const id = browseId(x);
+      // ARTIST-CIRCLE-001: an artist on the page ("Fans might also like") is a similar artist, never this one.
+      if (x && YT_ARTIST.test(id) && id !== uc) {
+        const sub = text(x['subtitle']);
+        related.push({ id: `yt:${id}`, provider: 'ytmusic', name: text(x['title']), picture: lastThumb(x['thumbnailRenderer']), detail: sub || null, url: `https://music.youtube.com/channel/${id}` });
+        continue;
+      }
       if (!x || !YT_ALBUM.test(id)) continue;
       const title = text(x['title']);
       const parts = text(x['subtitle']).split(' \u2022 ').map((p) => p.trim());
@@ -366,7 +378,7 @@ export function parseYtArtistPage(resp: Json, uc?: string): YtArtistPage {
       (a.kind === 'single' ? singles : albums).push(a);
     }
   }
-  return { name, picture: lastThumb(head['thumbnail']), detail: text(head['monthlyListenerCount']) || null, songsList, albums, singles, more };
+  return { name, picture: lastThumb(head['thumbnail']), detail: text(head['monthlyListenerCount']) || null, songsList, albums, singles, more, related };
 }
 
 /**
@@ -498,7 +510,18 @@ export class Artists {
 
   /** Both services, one row per artist (by name), the artist the words name first. */
   async search(q: string, limit = 6, c: Ctx = {}): Promise<ArtistSummary[]> {
-    const [dz, yt] = await Promise.all([this.searchDz(q, c).catch(() => []), this.searchYt(q, c).catch(() => [])]);
+    return (await this.searchWithWhy(q, limit, c)).artists;
+  }
+
+  /** The same search, saying why it came back empty when neither service could be read (NEXT-FAV-CUSTOM-001). */
+  async searchWithWhy(q: string, limit = 6, c: Ctx = {}): Promise<{ artists: ArtistSummary[]; why?: SourceWhy }> {
+    const errs: unknown[] = [];
+    const [dz, yt] = await Promise.all([this.searchDz(q, c).catch((e) => { errs.push(e); return []; }), this.searchYt(q, c).catch((e) => { errs.push(e); return []; })]);
+    const artists = this.mergeArtistHits(q, limit, dz, yt);
+    return !artists.length && errs.length === 2 ? { artists, why: whyNotRead(errs[0]) } : { artists };
+  }
+
+  private mergeArtistHits(q: string, limit: number, dz: ArtistSummary[], yt: ArtistSummary[]): ArtistSummary[] {
     const byName = new Map<string, ArtistSummary>();
     for (const a of [...dz, ...yt]) {
       const k = fold(a.name);
@@ -534,7 +557,8 @@ export class Artists {
     } else if (!name) throw new ProviderError('An artist needs a name or an id.');
     // Versioned with the Deezer request identity (DEEZER-UA-001) and with what each service gave
     // (ARTIST-SOURCES-001): a view built under another shape is not served.
-    const key = `artistview4:${dzId ?? ''}:${ytId ?? ''}:${fold(name)}`;
+    // artistview5: the view carries similar artists (ARTIST-CIRCLE-001).
+    const key = `artistview5:${dzId ?? ''}:${ytId ?? ''}:${fold(name)}`;
     const hit = store?.cacheGet(key);
     if (hit) return hit.value as ArtistView;
     try {
@@ -708,16 +732,19 @@ export class Artists {
       singles: newestFirst(all.filter((a) => a.kind === 'single')),
       links,
       sources,
+      similar: mergeSimilar(shown, dzSide?.related ?? [], ytPage?.page.related ?? []),
     };
     const whole = !late && !Object.values(sources).some((x) => x.state === 'failed');
     return late ? { view, whole, carry: { dz: dzSide, dzSource, ytLook: looking, ytSongs: reading } } : { view, whole };
   }
 
   private async readDz(aid: string, c: Ctx) {
-    const [head, top, first] = await Promise.all([
+    const [head, top, first, rel] = await Promise.all([
       this.dzGet(`/artist/${aid}`, c),
       this.dzGet(`/artist/${aid}/top?limit=100`, c),
       this.dzGet(`/artist/${aid}/albums?limit=100`, c),
+      // ARTIST-CIRCLE-001: Deezer's related artists. A failure here never costs the page.
+      this.dzGet(`/artist/${aid}/related?limit=20`, c).catch(() => null),
     ]);
     const name = String(head['name'] ?? '');
     const raw: Json[] = [...((first['data'] as Json[] | undefined) ?? [])];
@@ -734,6 +761,7 @@ export class Artists {
       picture: (head['picture_xl'] ?? head['picture_big'] ?? null) as string | null,
       detail: typeof head['nb_fan'] === 'number' ? `${head['nb_fan'].toLocaleString('en-US')} fans` : null,
       songs, albums: parseDeezerAlbums({ data: raw.map((a) => ({ type: 'album', ...a })) }),
+      related: rel ? parseDeezerArtists(rel) : [],
     };
   }
 

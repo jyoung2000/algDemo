@@ -9,6 +9,7 @@ import { albumFolderName } from './engine/list-save';
 import { TrackList } from './Search';
 import { SoundCard } from './SoundCard';
 import { listMixNote } from './list-mix-note';
+import { Develop, Skeleton, SkeletonList } from './Skeleton';
 
 export { AlbumShelf, albumSource } from './AlbumShelf';
 
@@ -98,9 +99,27 @@ export function AlbumView({ target, onBack, onPreview, onPlayAll, seedKeys, onAd
         </button>
       </div>
       {st.state === 'loading' && (
-        <p className="state" role="status">
-          <span className="sdot sdot--busy" aria-hidden="true" /> Opening the album…
-        </p>
+        /* ALBUM-SKELETON-001: the album page's own shape while it opens (the 112px cover beside the kind, title,
+           artist and details lines, the three action pills, then song rows), labelled once for screen readers.
+           The loaded page develops into focus where it stood, so nothing jumps. */
+        <div className="album-skel" role="status" aria-label="Opening the album…">
+          <span className="vh">Opening the album…</span>
+          <div className="album__head" aria-hidden="true">
+            <Skeleton kind="art" w={112} h={112} />
+            <span className="album__text">
+              <Skeleton kind="line" w={56} h={10} />
+              <Skeleton kind="line" w="58%" h={20} />
+              <Skeleton kind="line" w="34%" />
+              <Skeleton kind="line" w="44%" h={10} />
+            </span>
+          </div>
+          <div className="album__actions" aria-hidden="true">
+            <Skeleton kind="pill" w={118} h={36} />
+            <Skeleton kind="pill" w={112} h={36} />
+            <Skeleton kind="pill" w={104} h={36} />
+          </div>
+          <SkeletonList rows={6} art={40} label="Loading songs…" />
+        </div>
       )}
       {st.state === 'failed' && (
         <p className="state state--bad" role="alert">
@@ -111,7 +130,7 @@ export function AlbumView({ target, onBack, onPreview, onPlayAll, seedKeys, onAd
         const a = st.album;
         const meta = [a.year, `${a.tracks.length} ${a.tracks.length === 1 ? 'song' : 'songs'}`, length(a.duration)].filter(Boolean).join(' · ');
         return (
-          <>
+          <Develop>
             <div className="album__head">
               <Art src={a.artwork} size={112} />
               <div className="album__text">
@@ -200,7 +219,7 @@ export function AlbumView({ target, onBack, onPreview, onPlayAll, seedKeys, onAd
             ) : (
               <p className="empty">None of this album’s songs can be played here.</p>
             )}
-          </>
+          </Develop>
         );
       })()}
     </section>

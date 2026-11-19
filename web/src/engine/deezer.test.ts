@@ -139,3 +139,19 @@ describe('Deezer adapter', () => {
     expect(Object.keys(ids).some((k) => k.includes('unknown'))).toBe(false);
   });
 });
+
+describe('artistByName (seen live: artist:"Future" answered Future Islands and Deerhoof)', () => {
+  it('asks the artist search and takes only an exact name, the most followed first', async () => {
+    const { dz, seen } = recorded({ '/search/artist': { data: [
+      { id: 391228, name: 'Future Islands', nb_fan: 900000 },
+      { id: 11, name: 'Future', nb_fan: 50 },
+      { id: 1006, name: 'Future', nb_fan: 9000000 },
+    ] } });
+    expect(await dz.artistByName('future')).toEqual({ id: '1006', name: 'Future' });
+    expect(seen[0]).toContain('/search/artist?q=future');
+  });
+  it('a name Deezer lacks is null, never someone else', async () => {
+    const { dz } = recorded({ '/search/artist': { data: [{ id: 391228, name: 'Future Islands', nb_fan: 900000 }] } });
+    expect(await dz.artistByName('Obscure Guest')).toBeNull();
+  });
+});

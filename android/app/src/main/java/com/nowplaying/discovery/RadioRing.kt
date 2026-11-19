@@ -9,7 +9,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /** RADIO-001. Ten-minute bounded, session-only PCM ring (disk-backed in the native session). A paused reader does not advance or
- * earn listening credit; a backward seek can only enter retained audio, never skip toward live. */
+ * earn listening credit; a backward seek can only enter retained audio, never skip toward live — except [toLive]
+ * (RADIO-GO-LIVE-001), which jumps to just before the newest audio received. */
 class RadioRing(private val capacity: Int = 48000 * 600, private val file: File? = null) : PcmSource {
   private val pcm = if (file == null) ByteArray(capacity * 4) else null
   private val disk = file?.let { RandomAccessFile(it, "rw").also { f -> f.setLength(capacity.toLong() * 4) } }
@@ -63,6 +64,10 @@ class RadioRing(private val capacity: Int = 48000 * 600, private val file: File?
     return n
   }
   @Synchronized override fun seekTo(frame: Long) { if (closed) return; at = frame.coerceIn(oldest, at.coerceAtLeast(oldest)) }
+  /** RADIO-GO-LIVE-001 (owner, 2026-11-19): "a button to go to live". Jump to [cushion] frames before the newest audio
+   *  received (never backwards, never past what has arrived), so playback carries on without an immediate stall. */
+  @Synchronized fun toLive(cushion: Long = LIVE_CUSHION_FRAMES): Long { if (closed) return at; at = maxOf(at, (end - cushion).coerceAtLeast(oldest)).coerceAtMost(end); return at }
+  companion object { const val LIVE_CUSHION_FRAMES = 48000L * 2 }
   @Synchronized fun sample(): ByteArray {
     if (closed) return ByteArray(0)
     val n = min(12 * 48000L, at - oldest).toInt()

@@ -181,6 +181,18 @@ class AudioEngine(
    * the song lined up next stays lined up and starts only when this source actually ends — preview-mixer.ts keeps its candidate across a seek too. Dropping it here was why a song
    * seeked with the progress bar never blended (the player does not offer the same song twice).
    */
+  /** RADIO-GO-LIVE-001: an explicit jump the source itself performs (a live radio ring to its newest audio),
+   *  with the same cut and flush as [seekTo]. The ring is the deck's given source (no tempo wrapper on radio). */
+  fun seekWith(jump: (PcmSource) -> Unit) = post {
+    val deck = decks.getValue(active)
+    val src = deck.source ?: return@post
+    fadeUntil = 0.0
+    bus.cut(active)
+    jump(deck.given ?: src)
+    endedReported = null
+    output.flush()
+  }
+
   fun seekTo(frame: Long) = post {
     val src = decks.getValue(active).source ?: return@post
     // Seeking is explicit; keep the prepared song, but end any current fade-in.

@@ -21,12 +21,14 @@
 import {
   EQ_DEFAULTS,
   LIMITER,
+  LIMITER_BOOST,
   createEqGraph,
   type EqConfig,
   type EqContext,
   type EqGraph,
 } from './eq';
 import { equalPower, type TransitionStyle } from './crossfade';
+import { VOLUME_MAX, softClipCurve } from './volume-boost';
 
 export type DeckId = 'a' | 'b';
 
@@ -269,7 +271,25 @@ export function createAudioBus(ctx: BusContext, initialEq: EqConfig = EQ_DEFAULT
   limiter.attack.value = LIMITER.attackSeconds;
   limiter.release.value = LIMITER.releaseSeconds;
   master.connect(limiter);
-  limiter.connect(ctx.destination);
+  // VOLUME-BOOST-001: a soft ceiling after the limiter, switched in only while boosted (curve null = pass-through).
+  const ceiling = ctx.createWaveShaper ? ctx.createWaveShaper() : null;
+  if (ceiling) {
+    ceiling.oversample = '4x';
+    limiter.connect(ceiling);
+    ceiling.connect(ctx.destination);
+  } else {
+    limiter.connect(ctx.destination);
+  }
+  let boosted = false;
+  const setBoosted = (on: boolean): void => {
+    if (on === boosted) return;
+    boosted = on;
+    const l = on ? LIMITER_BOOST : LIMITER;
+    limiter.threshold.value = l.thresholdDb;
+    limiter.attack.value = l.attackSeconds;
+    limiter.release.value = l.releaseSeconds;
+    if (ceiling) ceiling.curve = on ? softClipCurve() : null;
+  };
 
   const decks = new Map<DeckId, Deck>();
   const sources = new WeakMap<HTMLMediaElement, MediaElementAudioSourceNode>();
@@ -440,7 +460,8 @@ export function createAudioBus(ctx: BusContext, initialEq: EqConfig = EQ_DEFAULT
     },
     masterGain: () => master.gain.value,
     setMasterGain(v) {
-      const want = Math.max(0, Math.min(1, Number.isFinite(v) ? v : 1));
+      const want = Math.max(0, Math.min(VOLUME_MAX, Number.isFinite(v) ? v : 1));
+      setBoosted(want > 1);
       if (disposed) return;
       const now = ctx.currentTime;
       rampParam(master.gain, want, now, now + CUT_SECONDS);

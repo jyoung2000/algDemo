@@ -13,7 +13,7 @@ vi.mock('./engine/radio-client', () => ({
   matchSongBroadcast: (...a: unknown[]) => f.match(...a),
   radioDirectory: { page: async (...a: unknown[]) => { const stations = await f.search(...a); return { stations, nextOffset: stations.length === 24 ? Number((a[0] as {offset:number}).offset) + 24 : null }; }, search: (...a: unknown[]) => f.search(...a), countries: () => f.countries() },
   radioSession: { subscribe: () => () => {}, get: () => ({ station: null }), setStations: (a: unknown) => f.setStations(a) },
-  favouriteStations: () => f.favourites(), saveFavouriteStations: (s: unknown) => f.save(s), stationMetadata: (s: RadioStation) => f.probe(s),
+  favouriteStations: () => f.favourites(), saveFavouriteStations: (s: unknown) => f.save(s), stationMetadata: (s: RadioStation) => f.probe(s), shareRadioPlaces: async () => {},
 }));
 const { Radio } = await import('./Radio');
 const station = (id: string): RadioStation => ({ id, name: `Station ${id}`, url: `https://station-${id}.example/live`, homepage: '', image: '', country: 'Canada', countryCode: 'CA', region: 'Quebec', language: 'french', tags: ['jazz'], codec: 'MP3', bitrate: 128, latitude: 45, longitude: -73 });

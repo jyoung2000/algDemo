@@ -214,3 +214,19 @@
  .radio-alphabet--numbers { gap:2px; }
  .radio-alphabet--numbers .radio-alphabet__letter:not(.radio-alphabet__mode) { flex-basis:26px; min-width:26px; width:26px; }
 }
+/* RADIO-PLACES-001: saved places under Anywhere: a box to add one, then a checklist (several may be chosen). */
+.radio-search__menu--places { max-height:min(70vh, 520px); overflow-y:auto; }
+.radio-places__note { margin:0 4px 6px; font-size:12px; color:var(--muted,#5f6b76); }
+.radio-places { display:flex; flex-direction:column; gap:2px; padding:2px 0 6px; border-bottom:1px solid var(--line,#e3e6ea); margin-bottom:4px; }
+.radio-places__row { display:flex; align-items:center; gap:4px; min-height:40px; }
+.radio-places__row label { flex:1; min-width:0; display:flex; align-items:center; gap:10px; padding:4px 8px; border-radius:8px; cursor:pointer; }
+.radio-places__row input[type=checkbox] { width:18px; height:18px; flex:0 0 auto; accent-color:#0071e3; margin:0; }
+.radio-places__label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.radio-places__remove { flex:0 0 36px; height:36px; border:0; border-radius:50%; background:transparent; color:var(--muted,#5f6b76); font-size:18px; line-height:1; cursor:pointer; }
+@media (hover: hover) { .radio-places__row label:hover, .radio-places__remove:hover { background:#f0f6ff; } }
+.radio-places__heading { padding:6px 8px 2px; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted,#5f6b76); }
+/* RADIO-GO-LIVE-001: the LIVE button sits with the transport; lit while live. BEHIND LIVE is a button too. */
+.radio-player__transport .radio-player__live { font-size:10px; font-weight:800; letter-spacing:.06em; }
+.radio-player__transport .radio-player__live.is-on { color:#a22020; }
+button.radio-live { border:0; background:transparent; padding:0; cursor:pointer; text-align:left; font-family:inherit; }
+button.radio-live--behind { color:#8a5a00; text-decoration:underline; text-underline-offset:2px; }

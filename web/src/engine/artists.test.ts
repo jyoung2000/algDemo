@@ -479,7 +479,7 @@ describe('every song the artist has released (ARTIST-PAGE-001)', () => {
     expect([...kept.m.keys()].some((k) => k.startsWith('artistsongs4:dz:2568121:'))).toBe(true);
     // artistview3: the view also says what each service gave (ARTIST-SOURCES-001). artistview4: its
     // YouTube Music shelves are read whole, by the list's own id (DISCOGRAPHY-MORE-001).
-    expect([...kept.m.keys()].some((k) => k.startsWith('artistview4:2568121:'))).toBe(true);
+    expect([...kept.m.keys()].some((k) => k.startsWith('artistview5:2568121:'))).toBe(true);
     // Only the artist namespaces moved: the old rows are left for the store's own expiry, not wiped.
     expect(kept.m.get('artistsongs3:dz:2568121:21')).toBe(old);
   });

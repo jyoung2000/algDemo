@@ -11,11 +11,17 @@ export function marqueeShift(scrollWidth: number, clientWidth: number): number {
  * MARQUEE-001 (owner, 2026-11-19): text cut off in a song list scrolls to show all of it, on Windows
  * and Android. It waits, glides to the end at a reading pace (30 px/s), waits, and glides back;
  * text that fits never moves. Reduced motion: it never moves and the full text stays in `title`.
+ *
+ * MARQUEE-START-001 (owner, 2026-11-19): "song names should start at the beginning before they start
+ * scrolling". Every row used to start its loop when the list loaded, so a row scrolled into view later was
+ * caught part-way along. Now a name only scrolls while it is on screen, and each time it comes into view
+ * (or its text changes) the loop starts again from the first letter, pausing there before it glides.
  */
 export function Marquee({ children, className, title }: { children: ReactNode; className?: string; title?: string }) {
   const box = useRef<HTMLSpanElement>(null);
   const inner = useRef<HTMLSpanElement>(null);
   const [shift, setShift] = useState(0);
+  const [onScreen, setOnScreen] = useState(() => typeof IntersectionObserver !== 'function');
   useLayoutEffect(() => {
     const b = box.current, i = inner.current;
     if (!b || !i) return;
@@ -27,9 +33,19 @@ export function Marquee({ children, className, title }: { children: ReactNode; c
     ro.observe(i);
     return () => ro.disconnect();
   }, [children]);
+  useLayoutEffect(() => {
+    const b = box.current;
+    if (!b || !shift || typeof IntersectionObserver !== 'function') return;
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.target === b) setOnScreen(e.isIntersecting);
+    });
+    io.observe(b);
+    return () => { io.disconnect(); setOnScreen(false); };
+  }, [shift, children]);
   const secs = shift ? Math.max(4, shift / 30) + 3 : 0;
+  const moving = Boolean(shift) && onScreen;
   return (
-    <span ref={box} className={`mq${shift ? ' is-moving' : ''}${className ? ` ${className}` : ''}`} title={title}
+    <span ref={box} className={`mq${shift ? ' is-long' : ''}${moving ? ' is-moving' : ''}${className ? ` ${className}` : ''}`} title={title}
       style={shift ? ({ '--mq-shift': `-${shift}px`, '--mq-time': `${(secs * 2).toFixed(1)}s` } as React.CSSProperties) : undefined}>
       <span ref={inner} className="mq__inner">{children}</span>
     </span>

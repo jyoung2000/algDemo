@@ -13,6 +13,7 @@ import { createEqGraph, EQ_DEFAULTS, parseEq, type EqConfig } from './engine/eq'
 import { createAudioBus, type AudioBus, type BusContext, type DeckId } from './engine/audio-bus';
 import { PLAY_THROUGH_DEFAULT, clampPlayThrough, clampSlider } from './engine/crossfade';
 import { engineAvailable as nativeEngineAvailable, engineSend } from './engine/native-engine';
+import { boostGain } from './engine/volume-boost';
 
 export type EngineReason =
   | 'ready'
@@ -75,6 +76,7 @@ export function startEngine(): AudioBus | null {
     state.ctx = new Ctor();
     const origin = typeof location === 'undefined' ? '' : location.origin;
     state.bus = createAudioBus(state.ctx as unknown as BusContext, state.eq, origin);
+    if (boost !== 1) state.bus.setMasterGain(boost);
     state.reason = 'ready';
   } catch {
     state.ctx = null;
@@ -196,6 +198,17 @@ export function setLocalMix(v: boolean): boolean {
   return state.localMix;
 }
 
+/**
+ * VOLUME-BOOST-001: the part of the volume above 100%, carried by the mix bus master gain (the audio element itself
+ * cannot go past 1). Kept here so a bus built later still gets it.
+ */
+let boost = 1;
+export function setVolumeBoost(volume: number): void {
+  boost = boostGain(volume);
+  state.bus?.setMasterGain(boost);
+}
+export const volumeBoost = (): number => boost;
+
 /** Whether anything would be heard through the graph: the crossfader is up, or the equaliser is on. */
 export const wantsProcessing = (): boolean => state.mix > 0 || state.eq.on;
 
@@ -218,6 +231,7 @@ export function resetEngineForTests(): void {
   state.mix = 0;
   state.localMix = false;
   state.playThrough = PLAY_THROUGH_DEFAULT;
+  boost = 1;
   savedApplied = false;
   listeners.clear();
 }

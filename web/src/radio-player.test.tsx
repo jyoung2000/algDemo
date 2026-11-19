@@ -3,10 +3,10 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RadioState } from './engine/radio-client';
-const f = vi.hoisted(() => ({ state: {} as RadioState, rewind: vi.fn().mockResolvedValue(undefined), playlistEdit: vi.fn().mockResolvedValue({ lists: [] }), setShuffle: vi.fn().mockResolvedValue(undefined), skip: vi.fn().mockResolvedValue(undefined), stop: vi.fn(), openArtist: vi.fn(), playSong: vi.fn(), downloadSong: vi.fn().mockResolvedValue(undefined), recording: vi.fn().mockResolvedValue({ saved_to: 'Music', partial: true }), volume: vi.fn() }));
+const f = vi.hoisted(() => ({ state: {} as RadioState, rewind: vi.fn().mockResolvedValue(undefined), goLive: vi.fn().mockResolvedValue(undefined), playlistEdit: vi.fn().mockResolvedValue({ lists: [] }), setShuffle: vi.fn().mockResolvedValue(undefined), skip: vi.fn().mockResolvedValue(undefined), stop: vi.fn(), openArtist: vi.fn(), playSong: vi.fn(), downloadSong: vi.fn().mockResolvedValue(undefined), recording: vi.fn().mockResolvedValue({ saved_to: 'Music', partial: true }), volume: vi.fn() }));
 vi.mock('./engine/radio-client', () => ({
-  radioSession: { subscribe: () => () => {}, get: () => f.state, canSkip: () => true, downloadRecording: () => f.recording(), rewind: (...args: unknown[]) => f.rewind(...args), pause: vi.fn(), stop: (...a: unknown[]) => f.stop(...a), skip: (...a: unknown[]) => f.skip(...a), volume: (...a: unknown[]) => f.volume(...a), setShuffle: (...a: unknown[]) => f.setShuffle(...a) },
-  favouriteStations: async () => [], saveFavouriteStations: async (v: unknown) => v,
+  radioSession: { subscribe: () => () => {}, get: () => f.state, canSkip: () => true, downloadRecording: () => f.recording(), rewind: (...args: unknown[]) => f.rewind(...args), goLive: (...args: unknown[]) => f.goLive(...args), pause: vi.fn(), stop: (...a: unknown[]) => f.stop(...a), skip: (...a: unknown[]) => f.skip(...a), volume: (...a: unknown[]) => f.volume(...a), setShuffle: (...a: unknown[]) => f.setShuffle(...a) },
+  favouriteStations: async () => [], saveFavouriteStations: async (v: unknown) => v, shareRadioPlaces: async () => {},
 }));
 vi.mock('./api', () => ({ api: { feedbackState: async () => ({ state: {} }), playlists: async () => ({ lists: [{ id: 'evening', name: 'Evening' }] }), playlistEdit: (...a: unknown[]) => f.playlistEdit(...a) }, newEventId: () => 'test' }));
 vi.mock('./Results', () => ({ GenreBubbleView: () => null }));
@@ -184,7 +184,7 @@ describe('radio player transport matches the music player and adds station shuff
 
 describe('live chip without counters (RADIO-UI-007)', () => {
   it('shows BEHIND LIVE and the rewind note without any numeric countdowns', async () => {
-    f.state = { ...f.state, snapshot: { ...f.state.snapshot!, position: 100, received: 190 } };
+    f.state = { ...f.state, timeshifted: true, snapshot: { ...f.state.snapshot!, position: 100, received: 190 } };
     await render();
     const chip = host.querySelector('.radio-live')!;
     expect(chip.textContent).toContain('BEHIND LIVE');
@@ -273,5 +273,44 @@ describe('station star and clean art (RADIO-UI-009)', () => {
     expect(labels).toContain('Add song to playlist');
     expect(labels).not.toContain('Add to playlist');
     expect(host.querySelector('.radio-player__art figcaption')).toBeNull();
+  });
+});
+
+describe('Go live, and BEHIND LIVE only when it is true (RADIO-GO-LIVE-001 / RADIO-BEHIND-TRUE-001)', () => {
+  it('a station that sent a burst of audio ahead is still LIVE RADIO: nothing was paused or rewound', async () => {
+    f.state = { ...f.state, timeshifted: false, snapshot: { ...f.state.snapshot!, position: 100, received: 190 } };
+    await render();
+    expect(host.querySelector('.radio-live')!.textContent).toContain('LIVE RADIO');
+    expect(host.querySelector('.radio-live')!.textContent).not.toContain('BEHIND');
+    const live = host.querySelector<HTMLButtonElement>('button[aria-label="Go live"]')!;
+    expect(live).not.toBeNull();
+    expect(live.getAttribute('aria-pressed')).toBe('true');
+  });
+  it('after a rewind it says BEHIND LIVE, and Go live jumps to the station live', async () => {
+    f.state = { ...f.state, timeshifted: true, snapshot: { ...f.state.snapshot!, position: 160, received: 190 } };
+    await render();
+    expect(host.querySelector('.radio-live')!.textContent).toContain('BEHIND LIVE');
+    const live = host.querySelector<HTMLButtonElement>('button[aria-label="Go live"]')!;
+    expect(live.getAttribute('aria-pressed')).toBe('false');
+    await act(async () => live.click());
+    expect(f.goLive).toHaveBeenCalledTimes(1);
+  });
+  it('the BEHIND LIVE chip itself goes live when tapped', async () => {
+    f.state = { ...f.state, timeshifted: true, snapshot: { ...f.state.snapshot!, position: 160, received: 190 } };
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>('.radio-live')!.click());
+    expect(f.goLive).toHaveBeenCalledTimes(1);
+  });
+  it('a rewind that has caught up with live again (within a few seconds) reads LIVE RADIO', async () => {
+    f.state = { ...f.state, timeshifted: true, snapshot: { ...f.state.snapshot!, position: 187, received: 190 } };
+    await render();
+    expect(host.querySelector('.radio-live')!.textContent).toContain('LIVE RADIO');
+  });
+  it('paused reads PAUSED, and Go live resumes at the live point', async () => {
+    f.state = { ...f.state, timeshifted: true, snapshot: { ...f.state.snapshot!, paused: true, position: 160, received: 190 } };
+    await render();
+    expect(host.querySelector('.radio-live')!.textContent).toContain('PAUSED');
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Go live"]')!.click());
+    expect(f.goLive).toHaveBeenCalledTimes(1);
   });
 });

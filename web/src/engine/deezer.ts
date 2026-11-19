@@ -163,6 +163,17 @@ export class Deezer {
     return cached(this.store, `dz:arttop:${artistId}:${limit}`, 'artist', 6 * H, () => this.tracksOf(`/artist/${artistId}/top?limit=${limit}`, c));
   }
 
+  /** The Deezer artist with exactly this name (the most followed when several share it), or null. A track search for
+   *  `artist:"Future"` is fuzzy (it answered Future Islands and Deerhoof), so names go through the artist search. */
+  artistByName(name: string, c: Ctx = {}): Promise<{ id: string; name: string } | null> {
+    return cached(this.store, `dz:artname:${fold(name)}`, 'search', 24 * H, async () => {
+      const d = await this.get(`/search/artist?q=${encodeURIComponent(name)}&limit=10`, c);
+      const same = ((d.data as Json[]) ?? []).filter((a) => fold(String(a.name ?? '')) === fold(name));
+      same.sort((a, b) => Number(b.nb_fan ?? 0) - Number(a.nb_fan ?? 0));
+      return same[0] ? { id: String(same[0].id), name: String(same[0].name) } : null;
+    });
+  }
+
   relatedArtists(artistId: string, limit: number, c: Ctx = {}): Promise<{ id: string; name: string }[]> {
     return cached(this.store, `dz:artrel:${artistId}:${limit}`, 'related', 24 * H, async () => {
       const d = await this.get(`/artist/${artistId}/related?limit=${limit}`, c);

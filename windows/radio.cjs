@@ -9,7 +9,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
-const RATE = 48000, FRAME = 4, KEEP = 600;
+const RATE = 48000, FRAME = 4, KEEP = 600, LIVE_CUSHION = RATE * 2;
 function publicAddress(ip) {
   if (net.isIP(ip) !== 4) return false; // use public IPv4; no mapped/ambiguous IPv6 routes
   const p = ip.split('.').map(Number);
@@ -54,6 +54,8 @@ class PcmRing {
     return Buffer.concat([h, pcm]);
   }
   rewind(seconds) { this.at = Math.max(this.start, this.at - Math.floor(Math.max(0, Math.min(KEEP, seconds)) * RATE)); }
+  // RADIO-GO-LIVE-001: jump to just before the newest audio received; never backwards, never past what arrived.
+  live(cushion = LIVE_CUSHION) { this.at = Math.min(this.end, Math.max(this.at, this.start, this.end - cushion)); }
 }
 function titleFromIcy(text) { return /StreamTitle='([\s\S]*?)';/i.exec(text)?.[1]?.replace(/\u0000/g, '').trim() || null; }
 async function probe(url) {
@@ -129,6 +131,7 @@ function createRadio({ toolsDir, saveRecording }) {
     // RADIO-UI-005: shuffle is session state the page and any remote controller agree on.
     if (op === 'shuffle') s.shuffle = Boolean(cmd.on);
     if (op === 'rewind') s.ring.rewind(Number(cmd.seconds) || 15);
+    if (op === 'live') { s.paused = false; s.ring.live(); }
     if (op === 'pull') { const pcm = s.paused ? Buffer.alloc(0) : s.ring.take(12000); return { ...snapshot(s), pcm: pcm.toString('base64') }; }
     if (op === 'sample') { const n = Math.min(RATE * 12, s.ring.at - s.ring.start); const pcm = s.ring.slice(s.ring.at - n, n); const mono = Buffer.alloc(Math.floor(n / 3) * 2); for (let i = 0; i < mono.length / 2; i++) mono.writeInt16LE(Math.round((pcm.readInt16LE(i * 12) + pcm.readInt16LE(i * 12 + 2)) / 2), i * 2); return { pcm: mono.toString('base64'), sampleRate: 16000, seconds: mono.length / 32000 }; }
     return snapshot(s);

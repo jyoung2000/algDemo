@@ -146,6 +146,31 @@ describe('media-native bridge', () => {
     expect(h.repeat).toHaveBeenCalledWith(2);
   });
 
+  it('VOLUME-BOOST-001: the car Volume button moves the slider, 0..200% only', () => {
+    const volume = vi.fn();
+    setMediaHandlers({ volume });
+    const cmd = (o: unknown) => (win().__awMediaCmd as (json: string) => void)(JSON.stringify(o));
+    cmd({ type: 'volume', value: 1.75 });
+    cmd({ type: 'volume', value: 3 });
+    cmd({ type: 'volume', value: 'loud' });
+    expect(volume.mock.calls).toEqual([[1.75]]);
+  });
+
+  it('CAR-SETTINGS-001: the car sets the EQ preset, discovery level and mood; anything malformed is dropped', () => {
+    const carSettings = vi.fn();
+    setMediaHandlers({ carSettings });
+    const cmd = (o: unknown) => (win().__awMediaCmd as (json: string) => void)(JSON.stringify(o));
+    const eq = { on: true, presetId: 'rock', gains: [5, 4, 3, 1.5, -0.5, -1, 0.5, 3, 4, 4.5], preampDb: 0, limiter: true };
+    cmd({ type: 'carSettings', eq, adventurous: 0.7, mood: false });
+    cmd({ type: 'carSettings', adventurous: 4 });
+    cmd({ type: 'carSettings', eq: 'loud', mood: 'yes' });
+    cmd({ type: 'carSettings', adventurous: 0.3 });
+    expect(carSettings.mock.calls).toEqual([
+      [{ eq: expect.objectContaining({ on: true, presetId: 'rock' }), adventurous: 0.7, mood_queue: false }],
+      [{ adventurous: 0.3 }],
+    ]);
+  });
+
   it('ignores malformed command JSON without throwing', () => {
     const play = vi.fn();
     setMediaHandlers({ play });

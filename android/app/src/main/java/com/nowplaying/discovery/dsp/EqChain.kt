@@ -40,6 +40,13 @@ object EqMath {
   const val LIMITER_RATIO = 20.0
   const val LIMITER_ATTACK_S = 0.001
   const val LIMITER_RELEASE_S = 0.05
+  /** eq.ts `LIMITER_BOOST`: the mix limiter while the volume is past 100% (VOLUME-BOOST-001). */
+  const val LIMITER_BOOST_THRESHOLD_DB = -2.0
+  const val LIMITER_BOOST_ATTACK_S = 0.003
+  const val LIMITER_BOOST_RELEASE_S = 0.25
+  /** volume-boost.ts `SOFT_CLIP_FROM`: the soft ceiling bends from -1 dBFS. */
+  const val SOFT_CLIP_FROM = 0.891f
+  const val VOLUME_MAX = 2.0
 
   const val RAMP_S = 0.04
   const val BYPASS_S = 0.03

@@ -173,10 +173,21 @@ class MixBus(val ctx: RenderContext = RenderContext(), initialEq: EqConfig = EqC
 
   fun masterGain(): Float = master.gain.value
 
+  /** VOLUME-BOOST-001: past 1.0 the limiter holds longer and a soft ceiling catches what it lets through. */
+  @Volatile var boosted = false
+    private set
+
   fun setMasterGain(v: Double) {
-    val want = max(0.0, min(1.0, if (v.isFinite()) v else 1.0))
+    val want = max(0.0, min(EqMath.VOLUME_MAX, if (v.isFinite()) v else 1.0))
     val now = ctx.currentTime
     rampParam(master.gain, want, now, now + CUT_SECONDS)
+    val on = want > 1.0
+    if (on != boosted) {
+      boosted = on
+      limiter.kernel.threshold = (if (on) EqMath.LIMITER_BOOST_THRESHOLD_DB else EqMath.LIMITER_THRESHOLD_DB).toFloat()
+      limiter.kernel.attack = (if (on) EqMath.LIMITER_BOOST_ATTACK_S else EqMath.LIMITER_ATTACK_S).toFloat()
+      limiter.kernel.release = (if (on) EqMath.LIMITER_BOOST_RELEASE_S else EqMath.LIMITER_RELEASE_S).toFloat()
+    }
   }
 
   /** The live deck's EQ trim in dB. */
@@ -192,6 +203,7 @@ class MixBus(val ctx: RenderContext = RenderContext(), initialEq: EqConfig = EqC
     val bus = limiter.pull()
     System.arraycopy(bus.channels[0], 0, out[0], offset, ctx.quantumFrames)
     System.arraycopy(bus.channels[1], 0, out[1], offset, ctx.quantumFrames)
+    if (boosted) for (c in 0..1) { val ch = out[c]; for (i in offset until offset + ctx.quantumFrames) ch[i] = softClip(ch[i]) }
     ctx.currentSampleFrame += ctx.quantumFrames
   }
 
@@ -299,4 +311,13 @@ class MixBus(val ctx: RenderContext = RenderContext(), initialEq: EqConfig = EqC
     const val CUT_SECONDS = 0.012
     const val FILTER_REST_SECONDS = 0.04
   }
+}
+
+/** volume-boost.ts `softClipSample`: identity below -1 dBFS, then a tanh bend that never reaches full scale. */
+internal fun softClip(x: Float): Float {
+  val t = EqMath.SOFT_CLIP_FROM
+  val a = kotlin.math.abs(x)
+  if (a <= t) return x
+  val y = t + (1 - t) * kotlin.math.tanh(((a - t) / (1 - t)).toDouble()).toFloat()
+  return if (x < 0) -y else y
 }

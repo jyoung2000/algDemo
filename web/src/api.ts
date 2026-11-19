@@ -161,6 +161,8 @@ export interface ArtistView {
   sources: Record<string, ArtistSourceState>;
   /** ARTIST-FALLBACK-001: no service had a page for this name; the songs are the ones held here. */
   local?: boolean;
+  /** ARTIST-CIRCLE-001: Deezer's related artists and YouTube Music's "Fans might also like", merged. */
+  similar?: import('./engine/artist-circle').SimilarArtist[];
 }
 
 export interface AlbumSearchResponse {
@@ -259,6 +261,8 @@ export interface MoodAnswer {
   leading: string[];
   confidence: number;
   off?: boolean;
+  /** MOOD-SHUFFLE-001: song key -> 0..1 fit to the mood, for the shuffle's weighted pick. */
+  fit?: Record<string, number>;
 }
 
 export interface RecItem {
@@ -656,7 +660,7 @@ export const api = {
   searchLyrics: (q: string, signal?: AbortSignal) => call<IdentifyResponse>(`/api/search/lyrics?q=${encodeURIComponent(q)}`, signal ? { signal } : {}),
   searchAlbums: (q: string, signal?: AbortSignal) => call<AlbumSearchResponse>(`/api/search/albums?q=${encodeURIComponent(q)}`, signal ? { signal } : {}),
   /** ARTIST-PAGE-001: artists named by a search; an artist's page; every song on their albums and singles. */
-  searchArtists: (q: string, signal?: AbortSignal) => call<{ query: string; artists: ArtistSummary[] }>(`/api/search/artists?q=${encodeURIComponent(q)}`, signal ? { signal } : {}),
+  searchArtists: (q: string, signal?: AbortSignal) => call<{ query: string; artists: ArtistSummary[]; why?: 'allowance' | 'offline' | 'busy' | 'refused' | 'failed' }>(`/api/search/artists?q=${encodeURIComponent(q)}`, signal ? { signal } : {}),
   artist: (target: ArtistTarget, signal?: AbortSignal) =>
     call<{ artist: ArtistView }>('/api/artist', { method: 'POST', body: json(target), ...(signal ? { signal } : {}) }),
   artistSongs: (target: ArtistTarget, signal?: AbortSignal) =>
@@ -696,8 +700,11 @@ export const api = {
   settings: () => call<Settings>('/api/settings'),
   putSettings: (patch: Partial<Settings>) => call<Settings>('/api/settings', { method: 'PUT', body: json(patch) }),
   recommend: (listening?: { event_id: string; exclude: string[]; list_id?: string }) =>
-    call<{ job: string | null; reason?: string }>('/api/recommend', { method: 'POST', body: json(listening ? { trigger: 'listening', ...listening } : {}) }),
+    call<{ job: string | null; reason?: string; mood?: string[] }>('/api/recommend', { method: 'POST', body: json(listening ? { trigger: 'listening', ...listening } : {}) }),
   similar: (track: Track) => call<{ job: string }>('/api/similar', { method: 'POST', body: json({ track }) }),
+  /** NEXT-FAV-CUSTOM-001: Find my next favorite with chosen genres, artists, count, familiarity and era. */
+  discoverCustom: (criteria: import('./engine/custom-discovery').CustomCriteria, exclude: string[]) =>
+    call<{ job: string }>('/api/discover/custom', { method: 'POST', body: json({ criteria, exclude }) }),
   job: (id: string, signal?: AbortSignal) => call<JobStatus>(`/api/jobs/${id}`, signal ? { signal } : {}),
   cancelJob: (id: string) => call<{ ok: boolean }>(`/api/jobs/${id}`, { method: 'DELETE' }),
   feedback: (kind: FeedbackKind, track: Track, extra: { event_id?: string; listened?: number; duration?: number; coverage?: number; medium?: string; session?: string; origin?: string; confidence?: number; /** RADIO-TASTE-001: the earlier, shorter report of this same radio listen. */ supersedes?: string } = {}) =>
@@ -746,7 +753,7 @@ export const api = {
   queueGenres: () => call<{ items: { key: string; tags: Track['tags']; characteristics: Characteristics }[]; left: number; spent?: boolean }>('/api/queue/genres', { method: 'POST', body: json({}) }),
   rerank: (exclude: string[]) => call<RerankResult>('/api/rerank', { method: 'POST', body: json({ exclude }) }),
   /** MOOD-QUEUE-001: the order the movable songs still to come should play in for the listening mood. */
-  mood: (body: { upcoming: { track: Track; characteristics?: Characteristics | null }[]; shown?: string[]; current?: { track: Track; characteristics?: Characteristics | null }; signal?: { track: Track; kind: 'like' | 'dislike' | 'similar' | 'complete' | 'skip' } }) =>
+  mood: (body: { upcoming: { track: Track; characteristics?: Characteristics | null }[]; score?: { track: Track; characteristics?: Characteristics | null }[]; shown?: string[]; current?: { track: Track; characteristics?: Characteristics | null }; signal?: { track: Track; kind: 'like' | 'dislike' | 'similar' | 'complete' | 'skip' } }) =>
     call<MoodAnswer>('/api/mood', { method: 'POST', body: json(body) }),
   profile: () => call<Profile>('/api/profile'),
 };

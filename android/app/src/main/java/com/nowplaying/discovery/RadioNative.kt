@@ -137,6 +137,8 @@ object RadioNative {
       }
       // One favourites store for the phone page, the car browse tree and the station star action.
       "favourites" -> return JSONObject().put("stations", RadioCatalog.favourites(ctx, cmd.optJSONArray("stations")))
+      // CAR-RADIO-FILTERS-001: the phone's saved places, so the car can offer them as location presets.
+      "places" -> return JSONObject().put("places", RadioCatalog.setPlaces(ctx, cmd.optJSONArray("places")))
       "stop" -> { EngineHub.fromPage("{\"op\":\"pause\"}"); stop(); shuffle = false; return JSONObject().put("stopped", true) }
     }
     val s = session ?: error("Radio session has ended")
@@ -163,6 +165,8 @@ object RadioNative {
       "pause" -> { s.paused = cmd.optBoolean("paused"); EngineHub.fromPage("{\"op\":\"${if (s.paused) "pause" else "play"}\"}") }
       // RADIO-SHUFFLE-001: set the station-shuffle flag; the state object below reports it.
       "shuffle" -> { shuffle = cmd.optBoolean("on"); EngineHub.fromPage(JSONObject().put("op", "radio-shuffle").put("id", s.id).toString()) }
+      // RADIO-GO-LIVE-001: the engine seeks its radio source to just before the newest audio (RadioRing.toLive).
+      "live" -> { if (s.paused) { s.paused = false; EngineHub.fromPage("{\"op\":\"play\"}") }; EngineHub.fromPage(JSONObject().put("op", "radio-live").toString()) }
       "rewind" -> EngineHub.fromPage(JSONObject().put("op", "seek").put("positionMs", ((s.ring.positionFrames / 48.0) - cmd.optDouble("seconds", 15.0).coerceIn(0.0, 600.0) * 1000).coerceAtLeast(0.0)).toString())
       "sample" -> { val b = s.ring.sample(); return JSONObject().put("pcm", Base64.encodeToString(b, Base64.NO_WRAP)).put("sampleRate", 16000).put("seconds", b.size / 32000.0) }
     }

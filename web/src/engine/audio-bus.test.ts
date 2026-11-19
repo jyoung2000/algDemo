@@ -457,7 +457,7 @@ describe('the audio bus', () => {
     const bus = createAudioBus(ctx);
     bus.attach(el(), 'a');
     for (const [input, want] of [
-      [2, 1],
+      [3, 2], // VOLUME-BOOST-001: up to 200%
       [-1, 0],
       [Number.NaN, 1],
       [0.5, 0.5],

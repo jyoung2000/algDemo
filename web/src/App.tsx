@@ -7,6 +7,8 @@ import type { RadioStation } from './engine/radio';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { api, type Characteristics, type PlaylistMix, newEventId, type FeedbackKind, type JobStatus, type Playback, type PlaylistSummary, type RecItem, type RecResult, type SavedItem, type Settings, type TasteSummary, type Track } from './api';
 import { Art } from './Art';
+import { CustomDiscovery, type CustomStatus } from './CustomDiscovery';
+import type { CustomCriteria } from './engine/custom-discovery';
 import { Player, type ListenTelemetry, type Playing } from './Player';
 import { Results, rowId, type FeedbackFlags } from './Results';
 import { useDownloads } from './Downloads';
@@ -28,6 +30,7 @@ import { captureRows, moodMovable, placeMood, playMoodMove } from './engine/mood
 import { phoneWait } from './engine/native-http';
 import { PHONE_LIST, decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pickCarContext, pushMediaLibrary, pushMediaState, pushMediaTracks, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { engineAvailable, engineSend, listenFromEvent, markEngineEvent, subscribeEngineState } from './engine/native-engine';
+import { applyCarSettings, discoveryForEngine } from './engine/car-settings';
 import { SettingsView } from './Settings';
 import { markSavedSettingsApplied, setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
 import { PLAY_THROUGH_DEFAULT } from './engine/crossfade';
@@ -122,6 +125,10 @@ export function App() {
   const [similarStatus, setSimilarStatus] = useState('');
   const setSimilarStatusState = setSimilarStatus;
   const similarRef = useRef(false);
+  // NEXT-FAV-CUSTOM-001: Customize discovery.
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customStatus, setCustomStatus] = useState<CustomStatus>({ running: false, text: '' });
+  const customJob = useRef<string | null>(null);
   const [result, setResult] = useState<RecResult | null>(null);
   const [runErr, setRunErr] = useState<string | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
@@ -170,6 +177,11 @@ export function App() {
   const moodSeq = useRef(0);
   const moodOrderRef = useRef<string[]>([]);
   const moodPreferRef = useRef<Map<string, number> | null>(null);
+  // ALBUM-NO-X-001 (owner, 2026-11-19): "When listening to an album get rid of the X button." Set while the
+  // songs playing come from an album (its page or a saved album); the player then has no Dislike.
+  const [albumPlaying, setAlbumPlaying] = useState(false);
+  // MOOD-SHUFFLE-001: how well each song fits the mood; shuffle's next pick is weighted by it.
+  const [moodFitState, setMoodFitState] = useState<{ fit: Map<string, number>; confidence: number } | null>(null);
   const moodBefore = useRef<Map<string, number>>(new Map());
   const [moodTrigger, setMoodTrigger] = useState(0);
   const [moodPulse, setMoodPulse] = useState<{ tick: number; leading: string[]; moved: string[]; at: number } | null>(null);
@@ -319,6 +331,48 @@ export function App() {
       setRunErr((e as Error).message);
       setJob(null);
     }
+  };
+
+  /**
+   * NEXT-FAV-CUSTOM-001: find songs for the listener's own criteria and add them to the end of Now playing. Songs
+   * already listed or removed are never added again.
+   */
+  const runCustom = async (criteria: CustomCriteria) => {
+    if (customJob.current) return;
+    if (jobRef.current && !job?.done) void api.cancelJob(jobRef.current).catch(() => undefined);
+    jobRef.current = null;
+    setCustomStatus({ running: true, text: 'Starting\u2026' });
+    try {
+      const exclude = [...(result?.items ?? []).map((x) => x.track.key), ...hidden];
+      const { job: id } = await api.discoverCustom(criteria, exclude);
+      customJob.current = id;
+      for (;;) {
+        const status = await api.job(id);
+        if (customJob.current !== id) return;
+        if (status.done) {
+          if (status.error === 'cancelled') { setCustomStatus({ running: false, text: 'Stopped. Nothing was added.' }); break; }
+          if (status.error) throw new Error(status.error);
+          const out = status.result as unknown as { added: number; reason?: string; queue?: RecResult | null } | null;
+          if (out?.queue && out.added > 0) setResult(out.queue);
+          const added = out?.added ?? 0;
+          setCustomStatus({ running: false, text: added > 0
+            ? `Added ${added} ${added === 1 ? 'song' : 'songs'} to Now playing.${out?.reason ? ` ${out.reason}` : ''}`
+            : out?.reason || 'No matching songs found. Try fewer genre restrictions or more artist sources.' });
+          break;
+        }
+        setCustomStatus({ running: true, text: `${status.progress || 'Finding songs'}\u2026` });
+        await new Promise((r) => setTimeout(r, POLL_MS));
+      }
+    } catch (e) {
+      setCustomStatus({ running: false, text: `Could not finish: ${(e as Error).message}` });
+    } finally {
+      customJob.current = null;
+      nudgeMood();
+    }
+  };
+  const stopCustom = () => {
+    const id = customJob.current;
+    if (id) void api.cancelJob(id).catch(() => undefined);
   };
 
   /** SIMILAR-SOUND-001: the selected song itself, not a general taste seed. Its job is distinct
@@ -478,7 +532,7 @@ export function App() {
     startTokenRef.current++;
     cancelFiniteFor(it.track.key);
     // Playing from the queue leaves any saved list behind, so the queue's own rule applies again.
-    if (!o?.keepList) { playingListRef.current = null; enterPlayingContext(null); }
+    if (!o?.keepList) { playingListRef.current = null; enterPlayingContext(null); setAlbumPlaying(false); }
     playedRef.current.add(it.track.key);
     if (o?.newRound) heardRef.current = new Set();
     heardRef.current.add(it.track.key);
@@ -497,8 +551,9 @@ export function App() {
     if (radioSession.get().station) { void radioSession.stop().then(go); } else { go(); }
   };
   /** SEARCH-QUEUE-001: a song played from a search list, with that list as what the skip buttons walk. */
-  const playFromSearch = (t: Track, list: Track[]) => {
+  const playFromSearch = (t: Track, list: Track[], o?: { album?: boolean }) => {
     playingListRef.current = null;
+    setAlbumPlaying(Boolean(o?.album));
     setSearchList(list.length ? list : [t]);
     enterPlayingContext(SEARCH_CONTEXT);
     heardRef.current.add(t.key);
@@ -508,6 +563,7 @@ export function App() {
   /** A song played from the Saved view; `listId` is the list it came from, so that list's rule judges it. */
   const playFromSaved = (t: Track, listId?: string) => {
     playingListRef.current = listId ?? null;
+    setAlbumPlaying(Boolean(listId && lists.find((l) => l.id === listId)?.album));
     enterPlayingContext(listId ?? 'all');
     heardRef.current.add(t.key);
     historyRef.current = [...historyRef.current.slice(-199), t.key];
@@ -532,6 +588,7 @@ export function App() {
     void settledWithin(Promise.resolve().then(() => look.call(queueAudio, list)), LIST_LOOK_MS).then(begin);
   };
   const playAll = (list: Track[]) => startList(list, (t) => playFromSearch(t, list));
+  const playAlbum = (list: Track[]) => startList(list, (t) => playFromSearch(t, list, { album: true }));
   const playAllSaved = (list: Track[], listId: string) => startList(list, (t) => playFromSaved(t, listId));
   // PLAYLIST-QUEUE-001: with a saved list in the now playing queue, its songs play first, in the list's
   // order, then the songs discovered from them. Otherwise the queue is the discovered songs, as before.
@@ -581,7 +638,7 @@ export function App() {
     return placeMood(xs, moodOrderRef.current.filter((k) => movable.has(k)));
   };
   useEffect(() => {
-    if (!moodQueueScope && !moodListScope) { moodPreferRef.current = null; moodOrderRef.current = []; return; }
+    if (!moodQueueScope && !moodListScope) { moodPreferRef.current = null; moodOrderRef.current = []; setMoodFitState(null); return; }
     const rows = moodQueueScope ? (result?.items ?? []) : activeItems;
     const movable = moodMovable(rows, { currentKey: playingKey, played: playedRef.current, hidden });
     if (movable.length < 2) return;
@@ -590,11 +647,15 @@ export function App() {
     const shownNow = moodOrderRef.current.filter((k) => keys.includes(k));
     const timer = window.setTimeout(() => {
       const cur = playing ? { track: playing.track, characteristics: rows.find((x) => x.track.key === playingKey)?.characteristics ?? null } : undefined;
-      api.mood({ upcoming: movable.map((x) => ({ track: x.track, characteristics: x.characteristics ?? null })), shown: shownNow.length ? shownNow : keys, current: cur })
+      // Every song the shuffle may pick from is scored too (hand-added ones, a list's songs), never moved.
+      const score = activeItems.filter((x) => !keys.includes(x.track.key) && x.track.key !== playingKey && !hidden.has(x.track.key)).slice(0, 400)
+        .map((x) => ({ track: x.track, characteristics: x.characteristics ?? null }));
+      api.mood({ upcoming: movable.map((x) => ({ track: x.track, characteristics: x.characteristics ?? null })), score, shown: shownNow.length ? shownNow : keys, current: cur })
         .then((plan) => {
           if (seq !== moodSeq.current || plan.off) return;
           setMoodLead({ leading: plan.leading ?? [], confidence: plan.confidence ?? 0 });
           moodPreferRef.current = new Map(plan.order.map((k, i) => [k, i] as const));
+          if (plan.fit) setMoodFitState({ fit: new Map(Object.entries(plan.fit)), confidence: plan.confidence ?? 0 });
           if (!moodQueueScope) return;
           moodOrderRef.current = plan.order;
           if (!plan.changed) return;
@@ -628,7 +689,8 @@ export function App() {
   // must obey local readiness even in a search list (SHUFFLE-ROUND-001).
   const stepReady = playingContext === SEARCH_CONTEXT && !shuffle ? undefined : ready;
   // MOOD-QUEUE-001: with shuffle on, the next song is picked from the few that fit the mood best.
-  const queueOpts = { shuffle, repeat, heard: heardRef.current, ready: stepReady, prefer: moodOn && shuffle ? moodPreferRef.current ?? undefined : undefined };
+  const moodShuffle = moodOn && shuffle && moodFitState ? { fit: moodFitState.fit, confidence: moodFitState.confidence, adventurous: settings?.adventurous ?? 0.5 } : null;
+  const queueOpts = { shuffle, repeat, heard: heardRef.current, ready: stepReady, mood: moodShuffle, prefer: moodOn && shuffle && !moodShuffle ? moodPreferRef.current ?? undefined : undefined };
   const nextStep = stepQueue(activeItems, inQueue ? playingKey : null, 1, hidden, queueOpts);
   const back = shuffle ? historyBack(historyRef.current, playingKey, stepReady ? activeItems.filter(x => stepReady(x.track)) : activeItems, hidden) : null;
   const prevStep = shuffle ? (back ? { item: back.item, wrapped: false } : null) : inQueue ? stepQueue(activeItems, playingKey, -1, hidden, queueOpts) : null;
@@ -952,7 +1014,8 @@ export function App() {
           // When the song was started from a saved list, the engine applies that list's stricter
           // rule instead of the queue's: nothing new until everything in the list has been played.
           .recommend({ event_id: eventId, exclude: [...playedRef.current], list_id: playingListRef.current ?? undefined })
-          .then(({ job: id }) => (id ? follow(id) : undefined))
+          // MOOD-DISCOVER-001: songs found for the mood are then put in their place by the mood.
+          .then(({ job: id, mood }) => (id ? follow(id).then(() => { if (mood?.length) nudgeMood(); }) : undefined))
           .catch(() => undefined);
       })
       .catch(() => undefined);
@@ -987,6 +1050,21 @@ export function App() {
     engineSend({ op: 'hello' });
     return off;
   }, []);
+  // CAR-SETTINGS-001: the car's EQ / discovery / mood buttons save here as the phone's own settings; the phone's
+  // discovery level and mood switch go to the engine so the car's buttons read them.
+  useEffect(() => {
+    if (!mediaNativeAvailable()) return;
+    setMediaHandlers({
+      carSettings: (change) => {
+        setSettings((s) => (s ? { ...s, ...change } : s));
+        void applyCarSettings(change, { save: (p) => api.putSettings(p).then(setSettings), send: engineSend }).catch((e: Error) => flash(e.message));
+      },
+    });
+  });
+  useEffect(() => {
+    const cmd = engineAvailable() ? discoveryForEngine(settings) : null;
+    if (cmd) engineSend(cmd);
+  }, [settings?.adventurous, settings?.mood_queue]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const wheelStep = (dir: 1 | -1) => {
     if (!items.length) return;
@@ -1022,10 +1100,9 @@ export function App() {
         if (kind === 'hide') cur.hide = true;
         return { ...f, [k]: cur };
       });
-      if (kind === 'hide') {
-        setHidden((h) => new Set(h).add(k));
-        flash(`Hidden “${track.title}”. It will be less likely to come back for a while.`);
-      }
+      // REMOVE-QUIET-001 (owner, 2026-11-19): "get rid of the message when removing a song" — the row going
+      // away is the answer; no notice follows it.
+      if (kind === 'hide') setHidden((h) => new Set(h).add(k));
       if (result?.sample) return;
       const seq = ++rerankSeq.current;
       // MOOD-QUEUE-001: a star or a dislike re-plans the songs to come for the mood.
@@ -1218,8 +1295,8 @@ export function App() {
             target={top.page.target}
             onOpenArtist={openArtist}
             onBack={closeAlbum}
-            onPreview={playFromSearch}
-            onPlayAll={playAll}
+            onPreview={(t, list) => playFromSearch(t, list, { album: true })}
+            onPlayAll={playAlbum}
             seedKeys={new Set(seeds.map((s) => s.key))}
             onAdd={onAdd}
             onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}
@@ -1295,14 +1372,33 @@ export function App() {
                     Stop
                   </button>
                 )}
-                <span id="go-why" className="go__why">
-                  {!seeds.length ? 'Add at least one starting song first.' : running ? job?.progress : ''}
+                <span id="go-why" className="go__why" aria-live="polite">
+                  {customStatus.text && (customStatus.running || !customOpen) ? customStatus.text : !seeds.length ? 'Add at least one starting song first.' : running ? job?.progress : ''}
                 </span>
+                {customStatus.running && !customOpen && (
+                  <button className="push push--big" type="button" onClick={stopCustom}>Stop</button>
+                )}
+                <CustomDiscovery
+                  open={customOpen}
+                  onClose={() => setCustomOpen(false)}
+                  defaults={{ count: queueSize, adventurous }}
+                  status={customStatus}
+                  onRun={(c) => void runCustom(c)}
+                  onStop={stopCustom}
+                />
                 {settings?.sample_mode && (
                   <button className="linkbtn go__sample" type="button" onClick={loadSample}>
                     Show sample data
                   </button>
                 )}
+              </div>
+              {/* NEXT-FAV-CUSTOM-001: the same search with the listener's own genres, artists and sliders, beneath the
+                  one-tap run (which never inherits these choices). */}
+              <div className="go__more">
+                <button className="push go__custom" type="button" disabled={!loaded} aria-haspopup="dialog" aria-expanded={customOpen}
+                  onClick={() => setCustomOpen(true)}>
+                  <Glyph name="eq" size={14} /> Customize discovery
+                </button>
               </div>
             </section>
 
@@ -1598,6 +1694,7 @@ export function App() {
             songKey: playing?.track.key,
             // STAR-MENU-001: the player's star opens the same saved-list menu as a song row.
             songTitle: playing?.track.title,
+            noDislike: albumPlaying,
             onLists: setLists,
             lists,
             flags: (playing && flags[playing.track.key]) || {},

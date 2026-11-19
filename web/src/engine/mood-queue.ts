@@ -7,7 +7,7 @@
  *
  * Merged from the two design answers (claude-fable-5, gpt-6-astra; scratch/ui-mood/*.md):
  *  - mood = the last 32 signals within 90 minutes, each halved every 15 minutes;
- *  - weights: complete +2, replay +3, star +5, similar +6, dislike -6, early skip -1.5, current +1;
+ *  - weights: complete +2, replay +3, star +5, similar +6, dislike -6, early skip -1.5, current +3;
  *  - per song: M = (.40 G + .25 U + .35 E) over the terms that exist (a song with no measured sound is
  *    not a poor match: the term is left out and the rest re-weighted), D the same against dislikes;
  *  - S = (1 - lambda) B + lambda M - .30 D, lambda = c (.65 - .30 a), c = confidence, a = adventurous;
@@ -18,6 +18,7 @@
 import { cosine, DIM } from './audio';
 import { calibrateAudio } from './engine';
 import { familyIdentity, genreIdentity, subIdentity, type GenreIdentity } from './genre-identity';
+import { MOOD_FIT_UNKNOWN } from './mood-shuffle';
 
 export type MoodKind = 'complete' | 'replay' | 'like' | 'similar' | 'dislike' | 'skip' | 'current';
 
@@ -64,7 +65,9 @@ export const MOOD = {
   repeatS: 30,
 } as const;
 
-const WEIGHT: Record<MoodKind, number> = { complete: 2, replay: 3, like: 5, similar: 6, dislike: -6, skip: -1.5, current: 1 };
+// MOOD-NOW-001 (owner, 2026-11-19): the song playing now is what the listener is in the mood for, so it
+// counts like a replay: on its own it is enough for the queue to start following it.
+const WEIGHT: Record<MoodKind, number> = { complete: 2, replay: 3, like: 5, similar: 6, dislike: -6, skip: -1.5, current: 3 };
 
 /** An early skip (before 30 s AND before a quarter of the song) says "not this"; a late one says nothing. */
 export function signalWeight(s: Pick<MoodSignal, 'kind' | 'listened' | 'duration'>): number {
@@ -273,3 +276,21 @@ export function moodTags(c: { genres?: string[] | null; family?: string | null; 
   }
   return { mains: [...mains], subs: [...subs], labels };
 }
+
+/**
+ * MOOD-SHUFFLE-001 (owner, 2026-11-19: "shuffle shouldn't ignore my listening mood"): how well each song
+ * fits the mood right now, 0..1 (the mood match less the dislike penalty). Songs with nothing to judge
+ * them by are left out; callers treat them as middling. Empty while there is no listening to go by.
+ */
+export function moodFit(cands: MoodCandidate[], mood: Mood): { fit: Record<string, number>; confidence: number } {
+  const fit: Record<string, number> = {};
+  if (mood.pos.weight <= 0 && mood.neg.weight <= 0) return { fit, confidence: 0 };
+  for (const c of cands) {
+    const { m, d } = moodMatch(c, mood);
+    if (m === null && d === 0) continue;
+    fit[c.key] = Math.round(Math.max(0, Math.min(1, (m ?? MOOD_FIT_UNKNOWN) - MOOD.dislikePenalty * d)) * 1000) / 1000;
+  }
+  return { fit, confidence: mood.confidence };
+}
+
+export { MOOD_FIT_UNKNOWN, moodShufflePick } from './mood-shuffle';

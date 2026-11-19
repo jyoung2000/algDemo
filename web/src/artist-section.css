@@ -16,3 +16,18 @@
   min-height: 44px;
   flex-shrink: 0;
 }
+
+/* ARTIST-CIRCLE-001: frequent collaborators and similar artists, as tappable cards that wrap. */
+.artist-circle { margin-top: 18px; }
+.artist-circle__list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
+.artist-circle__card {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%; min-height: 44px; padding: 12px 8px 10px;
+  border: 1px solid var(--hair-2, #e9e7e2); border-radius: 12px; background: var(--panel, #fff); color: inherit; font: inherit; cursor: pointer; text-align: center;
+}
+@media (hover: hover) { .artist-circle__card:hover { border-color: var(--hair, #dcdad4); background: var(--pearl, #f7f6f3); } }
+.artist-circle__card:focus-visible { outline: 2px solid #0071e3; outline-offset: 2px; }
+.artist-circle__pic { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; }
+.artist-circle__pic--none { display: grid; place-items: center; background: var(--pearl-2, #efeee9); color: var(--ink-2, #4a4a4a); font-size: 22px; font-weight: 650; }
+.artist-circle__name { font-weight: 650; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artist-circle__meta { color: var(--ink-3, #6b6f76); font-size: 11px; }
+@media (max-width: 599px) { .artist-circle__list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

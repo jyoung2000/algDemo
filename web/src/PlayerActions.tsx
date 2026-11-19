@@ -24,10 +24,17 @@ export interface TrackActionProps {
   /** PLAYER-SIMILAR-001: Find similar songs for the song playing; absent = no button (nothing to compare). */
   onSimilar?: () => void;
   similarBusy?: boolean;
+  /** DOCK-CENTRE-001: draw only these buttons (the phone row splits them either side of play). */
+  only?: readonly ('star' | 'dislike' | 'download' | 'similar')[];
+  /** ALBUM-NO-X-001: an album is playing, so there is no Dislike (X). */
+  noDislike?: boolean;
+  /** PLAYER-TRUTH-001: the player shows the song still sounding while the chosen one opens; these wait. */
+  held?: boolean;
 }
 
 /** These controls stay with the current song, not whichever row happens to be focused. */
-export function PlayerActions({ flags, songKey, songTitle, lists, onLists, downloadState, downloadAvailable, onFeedback, onDownload, onDownloads, onSimilar, similarBusy }: TrackActionProps) {
+export function PlayerActions({ flags, songKey, songTitle, lists, onLists, downloadState, downloadAvailable, onFeedback, onDownload, onDownloads, onSimilar, similarBusy, only, noDislike, held }: TrackActionProps) {
+  const has = (b: 'star' | 'dislike' | 'download' | 'similar') => (b !== 'dislike' || !noDislike) && (!only || only.includes(b));
   const saved = inPlaylist(songKey, lists);
   const [feedbackBusy, setFeedbackBusy] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -70,15 +77,15 @@ export function PlayerActions({ flags, songKey, songTitle, lists, onLists, downl
   const starLabel = menuOn
     ? `${flags.like ? 'Liked: choose lists for this song' : 'Like this song and choose lists'}${saved ? ' — saved to a playlist' : ''}`
     : `${flags.like ? 'Unlike this song' : 'Like this song'}${saved ? ' — saved to a playlist' : ''}`;
-  return <div className="np__track-actions" role="group" aria-label="This song" ref={group}>
-    <button className="quiet-control" type="button" aria-label={starLabel} title={saved ? 'Saved to a playlist' : flags.like ? 'Liked — choose lists' : 'Like and choose lists'} aria-pressed={Boolean(flags.like)} aria-expanded={menuOn ? menu : undefined} disabled={feedbackBusy} onClick={star}><SongStar saved={saved} size={17} /></button>
-    <button className="quiet-control" type="button" aria-label={flags.dislike ? 'Undo dislike for this song' : 'Dislike this song'} aria-pressed={Boolean(flags.dislike)} disabled={feedbackBusy} title={flags.dislike ? 'Disliked' : 'Not for me'} onClick={() => void feedback(flags.dislike ? 'undislike' : 'dislike')}><Glyph name="close" size={17} /></button>
-    <button className="quiet-control" type="button" aria-label={busy ? 'Downloading: view progress' : downloadState === 'done' ? 'Downloaded: view file' : downloadState === 'error' ? 'Retry song download' : 'Download this song'} data-download-state={busy ? 'working' : downloadState} disabled={starting} onClick={() => void download()}>
+  return <div className={held ? 'np__track-actions np__actions-held' : 'np__track-actions'} role="group" aria-label="This song" ref={group} aria-disabled={held || undefined}>
+    {has('star') && <button className="quiet-control" type="button" aria-label={starLabel} title={saved ? 'Saved to a playlist' : flags.like ? 'Liked — choose lists' : 'Like and choose lists'} aria-pressed={Boolean(flags.like)} aria-expanded={menuOn ? menu : undefined} disabled={feedbackBusy} onClick={star}><SongStar saved={saved} size={17} /></button>}
+    {has('dislike') && <button className="quiet-control" type="button" aria-label={flags.dislike ? 'Undo dislike for this song' : 'Dislike this song'} aria-pressed={Boolean(flags.dislike)} disabled={feedbackBusy} title={flags.dislike ? 'Disliked' : 'Not for me'} onClick={() => void feedback(flags.dislike ? 'undislike' : 'dislike')}><Glyph name="close" size={17} /></button>}
+    {has('download') && <button className="quiet-control" type="button" aria-label={busy ? 'Downloading: view progress' : downloadState === 'done' ? 'Downloaded: view file' : downloadState === 'error' ? 'Retry song download' : 'Download this song'} data-download-state={busy ? 'working' : downloadState} disabled={starting} onClick={() => void download()}>
       <Glyph name={downloadState === 'done' ? 'check' : 'download'} size={17} />
       {busy && <span className="action-progress" aria-hidden="true" />}
-    </button>
+    </button>}
     {/* PLAYER-SIMILAR-001 (owner, 2026-11-19): inline with the other controls, the same icon as a song row and the car. */}
-    {onSimilar && <button className="quiet-control" type="button" aria-label={similarBusy ? 'Finding similar songs…' : 'Find similar songs to this one'} title={similarBusy ? 'Finding similar songs…' : 'Find similar songs'} aria-busy={similarBusy || undefined} disabled={similarBusy} onClick={onSimilar}>
+    {onSimilar && has('similar') && <button className="quiet-control" type="button" aria-label={similarBusy ? 'Finding similar songs…' : 'Find similar songs to this one'} title={similarBusy ? 'Finding similar songs…' : 'Find similar songs'} aria-busy={similarBusy || undefined} disabled={similarBusy} onClick={onSimilar}>
       <SimilarGlyph size={17} />
       {similarBusy && <span className="action-progress" aria-hidden="true" />}
     </button>}

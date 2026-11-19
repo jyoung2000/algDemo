@@ -13,3 +13,12 @@ test('radio retains ten minutes and exports a bounded WAV without moving the lis
   assert.equal(wave.readUInt32LE(24), 48000); assert.equal(r.at, at); assert.equal(r.heard, heard);
   assert.throws(() => r.wav(2, 3), /retained audio/);
 });
+test('Go live jumps to just before the newest audio, never backwards or past it (RADIO-GO-LIVE-001)',()=>{
+  const r=new PcmRing(20);
+  for(let i=0;i<10;i++) r.write(Buffer.alloc(48000*4,1)); // 10 s received
+  r.take(48000); // listening 9 s behind the newest audio
+  r.live(); assert.equal(r.at,48000*8); // 2 s before the newest audio
+  r.live(); assert.equal(r.at,48000*8); // pressing again changes nothing
+  r.take(48000*2); r.live(); assert.equal(r.at,48000*10); // already at the newest audio: never backwards
+  const fresh=new PcmRing(20); fresh.write(Buffer.alloc(48000*4,1)); fresh.live(); assert.equal(fresh.at,0); // under 2 s received: stays at the start
+});

@@ -101,7 +101,8 @@ class PlaybackService : MediaLibraryService() {
   private val radioListener: () -> Unit = { mainHandler.post {
     refreshCarButtons()
     session?.notifyChildrenChanged(RadioCatalog.FAVOURITES, RadioCatalog.favouriteCount().coerceAtLeast(1), null)
-    session?.notifyChildrenChanged(RadioCatalog.ROOT, 3, null)
+    session?.notifyChildrenChanged(RadioCatalog.ROOT, 5, null)
+    session?.notifyChildrenChanged(CarRadioFilters.PLACE, 8, null)
   }; Unit }
   /** CAR-SEARCH-TYPES-001: Identify records on its own thread; never on the session's. */
   private val listenExec = java.util.concurrent.Executors.newSingleThreadExecutor()
@@ -154,6 +155,8 @@ class PlaybackService : MediaLibraryService() {
     player.addListener(carButtonListener)
     // A counted replay maps to the platform's "repeat off", so no player event announces it.
     player.onRepeatSelectionChanged = { refreshCarButtons() }
+    // VOLUME-BOOST-001: the car's Volume button follows the phone's slider too.
+    EngineHub.onCarLabels = { refreshCarButtons(); mainHandler.post { for ((id, n) in listOf(CarSettings.ROOT to 3, CarSettings.EQ to CarSettings.PRESETS.size + 1, CarSettings.DISCOVERY to CarSettings.LEVELS.size, FOLDER_PLAYLISTS to 8)) session?.notifyChildrenChanged(id, n, null) } }
     RadioCatalog.addListener(radioListener)
     RadioCatalog.load(this).addListener({ mainHandler.post { refreshCarButtons() } }, MoreExecutors.directExecutor())
     // CAR-CATALOG-SERVICE-001: register the command sink before returning, but make no WebView here.
@@ -184,6 +187,7 @@ class PlaybackService : MediaLibraryService() {
     RadioCatalog.removeListener(radioListener)
     MediaHub.removeListener(libraryListener)
     player.removeListener(carButtonListener)
+    EngineHub.onCarLabels = null
     listenExec.shutdownNow()
     catalog?.destroy()
     catalog = null
@@ -214,6 +218,8 @@ class PlaybackService : MediaLibraryService() {
         CommandButton.Builder(if (favourite) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED)
           .setDisplayName(if (favourite) "Remove favourite station" else "Favourite station")
           .setSessionCommand(FAVOURITE_STATION).setSlots(CommandButton.SLOT_OVERFLOW).build(),
+        volumeButton(),
+        eqButton(),
       )
     }
     val (starred, disliked) = CarFeedback.state(currentSongId())
@@ -233,8 +239,71 @@ class PlaybackService : MediaLibraryService() {
         .build(),
       repeatButton(),
       similarButton(),
+      volumeButton(),
+      eqButton(),
+      discoveryButton(),
     )
   }
+
+  /**
+   * CAR-SETTINGS-001 (owner 2026-11-19): "a button for settings to quickly change the algorithm and eq presets". A car
+   * button cannot open a list, so each press steps to the next choice; the full lists are in Playlists > Sound &
+   * discovery settings. Both sit in the menu with Volume.
+   */
+  private fun eqButton(): CommandButton =
+    CommandButton.Builder(CommandButton.ICON_UNDEFINED)
+      .setCustomIconResId(R.drawable.car_eq)
+      .setDisplayName(CarSettings.eqLabel(EngineHub.carEq()))
+      .setSessionCommand(EQ_STEP)
+      .setSlots(CommandButton.SLOT_OVERFLOW)
+      .build()
+  private fun discoveryButton(): CommandButton =
+    CommandButton.Builder(CommandButton.ICON_UNDEFINED)
+      .setCustomIconResId(R.drawable.car_discovery)
+      .setDisplayName(CarSettings.levelLabelButton(EngineHub.carLevel()))
+      .setSessionCommand(DISCOVERY_STEP)
+      .setSlots(CommandButton.SLOT_OVERFLOW)
+      .build()
+
+  /* Playlists > Sound & discovery settings: every preset and level, each row naming the value it sets. */
+  private fun settingsFolder(): MediaItem = asRow(folderItem(CarSettings.ROOT, "Sound & discovery settings", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED,
+    CarSettings.summary(EngineHub.carEq(), EngineHub.carLevel(), EngineHub.carMood())))
+  private fun settingsItem(id: String): MediaItem? = when {
+    id == CarSettings.ROOT -> settingsFolder()
+    id == CarSettings.EQ -> asRow(folderItem(id, "EQ preset: ${CarSettings.presetName(EngineHub.carEq())}", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Choose a sound for the car"))
+    id == CarSettings.DISCOVERY -> asRow(folderItem(id, "Discovery: ${CarSettings.levelShort(EngineHub.carLevel())}", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, CarSettings.levelLabel(EngineHub.carLevel())))
+    CarSettings.parse(id) != null -> asRow(folderItem(id, "Setting", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED))
+    else -> null
+  }
+  private fun settingsChildren(id: String): List<MediaItem>? {
+    val type = MediaMetadata.MEDIA_TYPE_FOLDER_MIXED
+    CarSettings.parse(id)?.let { change ->
+      EngineHub.carSettings(change)
+      return settingsChildren(if (change.eq != null) CarSettings.EQ else if (change.adventurous != null) CarSettings.DISCOVERY else CarSettings.ROOT)
+    }
+    return when (id) {
+      CarSettings.ROOT -> listOfNotNull(settingsItem(CarSettings.EQ), settingsItem(CarSettings.DISCOVERY),
+        asRow(folderItem(if (EngineHub.carMood()) CarSettings.MOOD_OFF else CarSettings.MOOD_ON, "Follow my listening mood: ${if (EngineHub.carMood()) "On" else "Off"}", type,
+          if (EngineHub.carMood()) "Tap to turn off" else "Tap to turn on")))
+      CarSettings.EQ -> { val cur = EngineHub.carEq()
+        (listOf(CarSettings.OFF) + CarSettings.PRESETS.map { it.id }).map { p -> asRow(folderItem(CarSettings.setEq(p), check(cur == p, CarSettings.presetName(p)), type)) } }
+      CarSettings.DISCOVERY -> { val cur = EngineHub.carLevel()
+        CarSettings.LEVELS.map { a -> asRow(folderItem(CarSettings.setLevel(a), check(kotlin.math.abs(cur - a) < 0.1, CarSettings.levelShort(a)), type, CarSettings.levelLabel(a))) } }
+      else -> null
+    }
+  }
+
+  /**
+   * VOLUME-BOOST-001 (owner 2026-11-19): "increase volume up to 200% with a slider or android auto". The car has no
+   * slider for an app, so each press steps 100, 125, 150, 175, 200% and back to 100%. Last in the list: in the menu on
+   * an 800x480 screen (four slots), beside Find similar on wider ones.
+   */
+  private fun volumeButton(): CommandButton =
+    CommandButton.Builder(CommandButton.ICON_VOLUME_UP)
+      .setDisplayName(CarVolume.label(EngineHub.volume()))
+      .setSessionCommand(VOLUME)
+      .setSlots(CommandButton.SLOT_OVERFLOW)
+      .build()
 
   /**
    * CAR-CONTROLS-001: Media3's stock "shuffle on" icon drew exactly like "off" on a real Android Auto
@@ -405,7 +474,84 @@ class PlaybackService : MediaLibraryService() {
     return Uri.decode(scoped.groupValues[2])
   }
 
-  private fun radioFolder(id: String): MediaItem? = when (id) {
+  /* ------------------------------------------------------------------- CAR-RADIO-FILTERS-001
+   * Genre, saved places, language and starred-only, combined, from the car. Each choice is a row whose id names the
+   * value it sets (CarRadioFilters.apply), so a car asking for the same list twice never flips a choice back. */
+  private fun check(on: Boolean, label: String) = if (on) "\u2713 $label" else label
+  /** Filter choices read as full-width rows: a grid tile cuts "Places: Chicago +1" down to "Places: Anywh...". */
+  private fun asRow(item: MediaItem): MediaItem {
+    val extras = Bundle().apply {
+      putInt(MediaConstants.EXTRAS_KEY_CONTENT_STYLE_SINGLE_ITEM, MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM)
+      putInt(MediaConstants.EXTRAS_KEY_CONTENT_STYLE_BROWSABLE, MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM)
+    }
+    return item.buildUpon().setMediaMetadata(item.mediaMetadata.buildUpon().setExtras(extras).build()).build()
+  }
+  private fun filterFolder(id: String): MediaItem? {
+    val f = RadioCatalog.carFilters(this); val saved = RadioCatalog.savedPlaces(this)
+    val chosen = CarRadioFilters.chosen(f, saved); val summary = CarRadioFilters.summary(f, saved)
+    val type = MediaMetadata.MEDIA_TYPE_FOLDER_MIXED
+    return when {
+      id == CarRadioFilters.FILTERS -> asRow(folderItem(id, "Radio filters", type, summary))
+      id.startsWith(CarRadioFilters.STATIONS) -> id.removePrefix(CarRadioFilters.STATIONS).toIntOrNull()?.takeIf { it in 0..1_000_000 }
+        ?.let { asRow(folderItem(id, if (it == 0) "Filtered stations" else "More filtered stations", type, summary)) }
+      id == CarRadioFilters.GENRE -> asRow(folderItem(id, "Genre: ${f.genre?.let(CarRadioFilters::genreLabel) ?: "Any"}", type, "Choose one genre"))
+      id == CarRadioFilters.PLACE -> asRow(folderItem(id, "Places: ${CarRadioFilters.placesLabel(chosen)}", type,
+        if (saved.isEmpty()) "Save places on your phone: Radio, Country, Anywhere" else "Choose any of your ${saved.size} saved places"))
+      id == CarRadioFilters.LANGUAGE -> asRow(folderItem(id, "Language: ${f.language?.let(CarRadioFilters::words) ?: "Any"}", type, "Your phone's languages first"))
+      CarRadioFilters.isSetRow(id) -> if (CarRadioFilters.apply(id, f, saved) != null) asRow(folderItem(id, "Radio filter", type)) else null
+      else -> null
+    }
+  }
+  private fun filterRoot(): List<MediaItem> {
+    val f = RadioCatalog.carFilters(this)
+    val type = MediaMetadata.MEDIA_TYPE_FOLDER_MIXED
+    return listOfNotNull(
+      filterFolder(CarRadioFilters.stations(0))?.let { it.buildUpon().setMediaMetadata(it.mediaMetadata.buildUpon().setTitle("Show filtered stations").build()).build() },
+      filterFolder(CarRadioFilters.GENRE), filterFolder(CarRadioFilters.PLACE), filterFolder(CarRadioFilters.LANGUAGE),
+      asRow(folderItem(if (f.starredOnly) CarRadioFilters.STARRED_OFF else CarRadioFilters.STARRED_ON, "Starred stations only: ${if (f.starredOnly) "On" else "Off"}", type,
+        if (f.starredOnly) "Tap to include every station" else "Tap to show only stations you starred")),
+      if (f.any) asRow(folderItem(CarRadioFilters.CLEAR, "Clear all filters", type, "Back to the most listened-to stations")) else null,
+    )
+  }
+  private fun genreRows(f: CarRadioFilters.Filters): List<MediaItem> = (listOf(folderItem(CarRadioFilters.setGenre(null), check(f.genre == null, "Any genre"), MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)) +
+    CarRadioFilters.GENRES.map { folderItem(CarRadioFilters.setGenre(it), check(f.genre == it, CarRadioFilters.genreLabel(it)), MediaMetadata.MEDIA_TYPE_FOLDER_MIXED) }).map(::asRow)
+  private fun languageRows(f: CarRadioFilters.Filters): List<MediaItem> {
+    val locales = resources.configuration.locales.let { l -> (0 until l.size()).map { l[it] } }
+    val choices = CarRadioFilters.languageChoices(CarRadioFilters.preferredLanguages(locales), f.language)
+    return (listOf(folderItem(CarRadioFilters.setLanguage(null), check(f.language == null, "Any language"), MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)) +
+      choices.map { folderItem(CarRadioFilters.setLanguage(it), check(f.language == it, CarRadioFilters.words(it)), MediaMetadata.MEDIA_TYPE_FOLDER_MIXED) }).map(::asRow)
+  }
+  private fun placeRows(f: CarRadioFilters.Filters): List<MediaItem> {
+    val saved = RadioCatalog.savedPlaces(this)
+    if (saved.isEmpty()) return listOf(note("No saved places yet", "On your phone: Radio, Country, Anywhere, then type a city and save it"))
+    val type = MediaMetadata.MEDIA_TYPE_FOLDER_MIXED
+    val head = folderItem(CarRadioFilters.stations(0), "Show stations: ${CarRadioFilters.summary(f, saved)}", type, "Choose more places below, or tap to listen")
+    return (listOfNotNull(head, folderItem(CarRadioFilters.ANYWHERE, check(f.places.isEmpty(), "Anywhere"), type),
+      if (saved.size > 1) folderItem(CarRadioFilters.ALL_PLACES, check(saved.all { it.id in f.places }, "All saved places"), type) else null) +
+      saved.map { p -> val on = p.id in f.places
+        folderItem(if (on) CarRadioFilters.removePlace(p.id) else CarRadioFilters.addPlace(p.id), check(on, p.label), type, if (on) "Chosen \u00b7 tap to remove" else "Tap to add") }).map(::asRow)
+  }
+  private fun filteredStationRows(offset: Int): ListenableFuture<List<MediaItem>> = Futures.transform(RadioCatalog.filteredStations(this, offset), { found ->
+    val stations = found?.stations.orEmpty().map(RadioCatalog::item)
+    val f = RadioCatalog.carFilters(this)
+    val head = if (offset == 0) listOf(note(CarRadioFilters.summary(f, RadioCatalog.savedPlaces(this)), "Change these in Radio filters")) else emptyList()
+    head + stations + if (found?.nextOffset != null) listOfNotNull(filterFolder(CarRadioFilters.stations(found.nextOffset)))
+      else if (stations.isEmpty()) listOf(note(if (f.starredOnly) "No starred stations match these filters" else "No stations match these filters", "Change a filter in Radio filters")) else emptyList()
+  }, MoreExecutors.directExecutor())
+  /** A set row: save the choice, refresh what the car shows, and answer with what the listener wants next. */
+  private fun setFilter(id: String): ListenableFuture<List<MediaItem>> {
+    val next = CarRadioFilters.apply(id, RadioCatalog.carFilters(this), RadioCatalog.savedPlaces(this))
+      ?: return Futures.immediateFailedFuture(IllegalArgumentException("Unknown radio filter"))
+    RadioCatalog.setCarFilters(this, next)
+    mainHandler.post {
+      for (parent in listOf(RadioCatalog.ROOT, CarRadioFilters.FILTERS, CarRadioFilters.GENRE, CarRadioFilters.PLACE, CarRadioFilters.LANGUAGE, CarRadioFilters.stations(0)))
+        session?.notifyChildrenChanged(parent, 8, null)
+    }
+    // Places are chosen several at a time, so the list stays; any other choice goes straight to the stations.
+    return if (id.startsWith("${CarRadioFilters.PLACE}/")) Futures.immediateFuture(placeRows(next)) else filteredStationRows(0)
+  }
+
+  private fun radioFolder(id: String): MediaItem? = filterFolder(id) ?: when (id) {
     RadioCatalog.ROOT -> folderItem(id, "Radio", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "World radio and favourite stations")
     RadioCatalog.ALL -> folderItem(id, "All stations", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Browse stations by initial: A–Z and #")
     RadioCatalog.FAVOURITES -> folderItem(id, "Favourite stations", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Shared with your phone")
@@ -422,7 +568,13 @@ class PlaybackService : MediaLibraryService() {
   )
 
   private fun radioChildren(id: String): ListenableFuture<List<MediaItem>> = when {
-    id == RadioCatalog.ROOT -> Futures.immediateFuture(listOfNotNull(radioFolder(RadioCatalog.FAVOURITES), radioFolder(RadioCatalog.ALL), radioFolder(RadioCatalog.SEARCH)))
+    id == RadioCatalog.ROOT -> Futures.immediateFuture(listOfNotNull(radioFolder(RadioCatalog.FAVOURITES), radioFolder(CarRadioFilters.stations(0)), radioFolder(CarRadioFilters.FILTERS), radioFolder(RadioCatalog.ALL), radioFolder(RadioCatalog.SEARCH)))
+    id == CarRadioFilters.FILTERS -> Futures.immediateFuture(filterRoot())
+    id == CarRadioFilters.GENRE -> Futures.immediateFuture(genreRows(RadioCatalog.carFilters(this)))
+    id == CarRadioFilters.PLACE -> Futures.immediateFuture(placeRows(RadioCatalog.carFilters(this)))
+    id == CarRadioFilters.LANGUAGE -> Futures.immediateFuture(languageRows(RadioCatalog.carFilters(this)))
+    CarRadioFilters.isSetRow(id) -> setFilter(id)
+    id.startsWith(CarRadioFilters.STATIONS) -> filteredStationRows(id.removePrefix(CarRadioFilters.STATIONS).toInt())
     id == RadioCatalog.ALL -> Futures.immediateFuture(listOfNotNull(radioFolder(RadioCatalog.AZ)) + RadioCatalog.LETTERS.mapNotNull { radioFolder("radio/letter/$it/0") })
     id == "radio/letter/#/0" -> Futures.immediateFuture(RadioCatalog.NUMBERS.mapNotNull { radioFolder("radio/letter/$it/0") })
     id.startsWith("radio/letter/") -> {
@@ -604,7 +756,7 @@ class PlaybackService : MediaLibraryService() {
     override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult =
       MediaSession.ConnectionResult.AcceptedResultBuilder(session)
         .setAvailableSessionCommands(
-          MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon().add(STAR).add(DISLIKE).add(SHUFFLE).add(REPEAT).add(SIMILAR).add(STAR_TO_PLAYLIST).add(FAVOURITE_STATION).build(),
+          MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon().add(STAR).add(DISLIKE).add(SHUFFLE).add(REPEAT).add(SIMILAR).add(VOLUME).add(EQ_STEP).add(DISCOVERY_STEP).add(STAR_TO_PLAYLIST).add(FAVOURITE_STATION).build(),
         )
         .setMediaButtonPreferences(carButtons())
         .build()
@@ -630,6 +782,8 @@ class PlaybackService : MediaLibraryService() {
             SessionResult(SessionResult.RESULT_SUCCESS)
           }, MoreExecutors.directExecutor()), Exception::class.java, { SessionResult(SessionError.ERROR_UNKNOWN) }, MoreExecutors.directExecutor())
           ACTION_SHUFFLE -> player.shuffleModeEnabled = !player.shuffleModeEnabled
+          ACTION_VOLUME -> EngineHub.carVolumeStep()
+          ACTION_EQ_STEP -> EngineHub.carEqStep()
           // CAR-RADIO-CONTROLS-001: the song on air, as the song player's star (which opens the picker).
           // A programme or an unmatched title is never starred: programmes never train taste.
           ACTION_STAR -> {
@@ -650,6 +804,9 @@ class PlaybackService : MediaLibraryService() {
       when (customCommand.customAction) {
         ACTION_SHUFFLE -> player.shuffleModeEnabled = !player.shuffleModeEnabled
         ACTION_REPEAT -> player.cycleSongRepeat()
+        ACTION_VOLUME -> EngineHub.carVolumeStep()
+        ACTION_EQ_STEP -> EngineHub.carEqStep()
+        ACTION_DISCOVERY_STEP -> EngineHub.carLevelStep()
         ACTION_SIMILAR -> findSimilar(player.currentMediaItem?.mediaId ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE)))
         ACTION_STAR -> {
           val id = currentSongId() ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE))
@@ -713,6 +870,11 @@ class PlaybackService : MediaLibraryService() {
         }, MoreExecutors.directExecutor())
       }
       radioSearchUntil = 0
+      // CAR-SETTINGS-001: Playlists > Sound & discovery settings. A set row applies its choice and shows its list again.
+      if (CarSettings.isSettings(parentId)) {
+        val kids = settingsChildren(parentId) ?: return Futures.immediateFuture(LibraryResult.ofError(SessionError.ERROR_BAD_VALUE))
+        return Futures.immediateFuture(LibraryResult.ofItemList(ImmutableList.copyOf(page(kids, page, pageSize)), params))
+      }
       val items: List<MediaItem> = when {
         parentId == ROOT -> listOfNotNull(
           folderItem(FOLDER_SONGS, "Now playing queue", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Your playback queue"),
@@ -763,6 +925,7 @@ class PlaybackService : MediaLibraryService() {
         parentId.startsWith(HINT_PREFIX) -> emptyList()
         parentId == FOLDER_SONGS -> MediaHub.songs.map { songItem(it) }
         parentId == FOLDER_PLAYLISTS -> listOfNotNull(
+          settingsFolder(),
           phoneFolder(),
           if (MediaHub.savedAlbums().isNotEmpty()) folderItem(FOLDER_ALBUMS, "Albums", MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS, "Your saved albums") else null,
         ) + MediaHub.savedLists().map {
@@ -797,6 +960,7 @@ class PlaybackService : MediaLibraryService() {
       mediaId: String,
     ): ListenableFuture<LibraryResult<MediaItem>> {
       radioFolder(mediaId)?.let { return Futures.immediateFuture(LibraryResult.ofItem(it, null)) }
+      settingsItem(mediaId)?.let { return Futures.immediateFuture(LibraryResult.ofItem(it, null)) }
       RadioCatalog.stationId(mediaId)?.let { id ->
         return Futures.catching(Futures.transform(RadioCatalog.async { RadioCatalog.resolve(this@PlaybackService, id) }, { station ->
           if (station == null) LibraryResult.ofError(SessionError.ERROR_BAD_VALUE) else LibraryResult.ofItem(RadioCatalog.item(station), null)
@@ -832,7 +996,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onSubscribe(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, parentId: String, params: LibraryParams?): ListenableFuture<LibraryResult<Void>> =
-      if (radioFolder(parentId) != null) Futures.immediateFuture(LibraryResult.ofVoid()) else super.onSubscribe(session, browser, parentId, params)
+      if (radioFolder(parentId) != null || settingsItem(parentId) != null) Futures.immediateFuture(LibraryResult.ofVoid()) else super.onSubscribe(session, browser, parentId, params)
 
     override fun onSearch(
       session: MediaLibrarySession,
@@ -1121,6 +1285,12 @@ class PlaybackService : MediaLibraryService() {
     val REPEAT = SessionCommand(ACTION_REPEAT, Bundle.EMPTY)
     const val ACTION_SIMILAR = "com.nowplaying.discovery.SIMILAR"
     val SIMILAR = SessionCommand(ACTION_SIMILAR, Bundle.EMPTY)
+    const val ACTION_VOLUME = "com.nowplaying.discovery.VOLUME"
+    val VOLUME = SessionCommand(ACTION_VOLUME, Bundle.EMPTY)
+    const val ACTION_EQ_STEP = "com.nowplaying.discovery.EQ_STEP"
+    val EQ_STEP = SessionCommand(ACTION_EQ_STEP, Bundle.EMPTY)
+    const val ACTION_DISCOVERY_STEP = "com.nowplaying.discovery.DISCOVERY_STEP"
+    val DISCOVERY_STEP = SessionCommand(ACTION_DISCOVERY_STEP, Bundle.EMPTY)
     /** CAR-STAR-PICKER-001: Android Auto cannot open a list from a player button, so the driver is told where the picker is. */
     const val DRIVER_MESSAGE_MS = 4000L
     const val PICK_HINT = "Starred \u2013 go back to choose a playlist"

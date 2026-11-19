@@ -51,4 +51,19 @@ class RadioRingTest {
     assertEquals(120, r.read(dst, 0, 120))
     assertTrue(dst[0][0] > 0)
   }
+
+  /** RADIO-GO-LIVE-001: Go live jumps to 2 s before the newest audio received; never backwards, never past it. */
+  @Test fun goLiveJumpsToJustBeforeTheNewestAudio() {
+    val r = RadioRing(48000 * 20)
+    val second = ByteArray(48000 * 4) { 5 }
+    repeat(10) { r.write(second, second.size) }
+    val dst = arrayOf(FloatArray(48000), FloatArray(48000))
+    assertEquals(48000, r.read(dst, 0, 48000))
+    assertEquals(48000L * 8, r.toLive()); assertEquals(48000L * 8, r.positionFrames)
+    assertEquals(48000L * 8, r.toLive())
+    repeat(2) { r.read(dst, 0, 48000) }
+    assertEquals(48000L * 10, r.toLive())
+    val fresh = RadioRing(48000 * 20); fresh.write(second, second.size)
+    assertEquals(0L, fresh.toLive())
+  }
 }

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- CAR-SETTINGS-001: the car's discovery button (familiar to adventurous): a compass. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M12 3.5A8.5 8.5 0 1 1 11.99 3.5Z" android:strokeColor="#FFFFFFFF" android:strokeWidth="2" android:fillColor="#00000000"/>
+    <path android:pathData="M15.5 8.5L13.2 13.2L8.5 15.5L10.8 10.8Z" android:fillColor="#FFFFFFFF"/>
+</vector>
