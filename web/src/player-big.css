@@ -1,0 +1,108 @@
+/*
+ * PLAYER-BIG-001 (owner, 2026-11-19: "make the player taller and bigger and ensure the volume popup doesnt
+ * get cut off"). The Windows bar (900px and wider) grows with the window: at 900px it is the size it was,
+ * so the title column keeps its room (it gets the larger share of the free width, so it never
+ * narrows as the window widens); on a normal window the cover, title, transport and progress bar are
+ * larger and the bar taller. Loaded after player-inline.css, which owns the grid areas.
+ */
+@media (min-width: 900px) {
+  .rail {
+    padding-top: clamp(10px, 1.4vw, 18px);
+    padding-bottom: calc(clamp(10px, 1.4vw, 18px) + env(safe-area-inset-bottom));
+  }
+  .rail .np--panel {
+    max-width: 1200px;
+  }
+  .np.np--panel {
+    /* The volume card opens above the bar; a clipping bar cut its top off (24px of 54, measured). The
+       title and note are already held to three lines each, so nothing else spills out. */
+    overflow: visible;
+    max-height: none;
+    column-gap: clamp(16px, 2vw, 28px);
+    row-gap: clamp(4px, 0.8vw, 12px);
+  }
+  .np.np--panel:not(.is-empty) {
+    grid-template-columns: minmax(0, 1.25fr) minmax(clamp(260px, 24vw, 340px), 1fr) 176px 44px;
+  }
+  .np.np--panel.has-upcoming:not(.is-empty) {
+    grid-template-columns: minmax(0, 1.25fr) minmax(clamp(260px, 24vw, 340px), 1fr) 176px 44px clamp(56px, 6.4vw, 88px);
+  }
+  .np.np--panel .np__main {
+    gap: clamp(12px, 1.2vw, 18px);
+  }
+  .np.np--panel .np__main .art {
+    width: clamp(64px, 7.6vw, 96px);
+    height: clamp(64px, 7.6vw, 96px);
+    border-radius: 8px;
+  }
+  .np.np--panel .np__upcoming {
+    width: clamp(56px, 6.4vw, 88px);
+    height: clamp(56px, 6.4vw, 88px);
+  }
+  .np.np--panel .np__title {
+    font-size: clamp(14px, 1.45vw, 18px);
+  }
+  .np.np--panel .np__artist {
+    font-size: clamp(12px, 1.15vw, 14px);
+  }
+  .np.np--panel .np__note {
+    font-size: clamp(11px, 1vw, 12px);
+  }
+  .np.np--panel .prog {
+    gap: 10px;
+  }
+  .np.np--panel .prog__t {
+    font-size: clamp(11px, 1vw, 12px);
+  }
+  .np.np--panel .prog__bar {
+    height: 6px;
+    border-radius: 3px;
+  }
+  .np.np--panel .prog__bar::-webkit-slider-thumb {
+    width: 14px;
+    height: 14px;
+  }
+  .np.np--panel .transport {
+    gap: clamp(12px, 1.4vw, 18px);
+  }
+  .np.np--panel .tbtn {
+    width: clamp(36px, 3.6vw, 44px);
+    height: clamp(36px, 3.6vw, 44px);
+  }
+  .np.np--panel .tbtn svg {
+    width: clamp(16px, 1.6vw, 20px);
+    height: clamp(16px, 1.6vw, 20px);
+  }
+  .np.np--panel .tbtn.tbtn--mode {
+    width: clamp(32px, 3.2vw, 40px);
+    height: clamp(32px, 3.2vw, 40px);
+  }
+  .np.np--panel .tbtn.tbtn--main {
+    width: clamp(44px, 4.6vw, 56px);
+    height: clamp(44px, 4.6vw, 56px);
+  }
+  .np.np--panel .tbtn.tbtn--main svg {
+    width: clamp(18px, 1.9vw, 24px);
+    height: clamp(18px, 1.9vw, 24px);
+  }
+  /* The speaker sits at the bar's right end: a card centred on it ran past the bar (and the window on a
+     narrow one). It opens up and to the left instead, its arrow still pointing at the icon. */
+  .np.np--panel .vol__pop {
+    left: auto;
+    right: -6px;
+    transform: none;
+    animation-name: vol-pop-in-right;
+  }
+  .np.np--panel .vol__pop::after {
+    left: auto;
+    right: 22px;
+    margin-left: 0;
+  }
+}
+@keyframes vol-pop-in-right {
+  from { opacity: 0; translate: 0 4px; }
+  to { opacity: 1; translate: 0 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .np.np--panel .vol__pop { animation: none; }
+}

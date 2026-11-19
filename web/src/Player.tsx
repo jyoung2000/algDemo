@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
-import { SourceMark } from './SourceMark';
+import { OpenLinkCycle } from './OpenLinkCycle';
 import { RepeatGlyph, ShuffleGlyph } from './icons';
 import { api, type ArtistTarget, type Playback, type Track } from './api';
 import { ArtistNames } from './ArtistLinks';
@@ -9,6 +9,7 @@ import { PREVIEW_ROUTE } from './engine/shape';
 import { Art } from './Art';
 import './player-upcoming.css';
 import './player-inline.css';
+import './player-big.css';
 import { Volume } from './Volume';
 import { PlayerActions, type TrackActionProps } from './PlayerActions';
 import { Wheel } from './Wheel';
@@ -862,7 +863,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
         disabled={!hasSound || (mode === 'full' && !ytReady)}
         aria-label={mode === 'preview' ? 'Position in the preview' : 'Position in the song'}
         aria-valuetext={`${fmtDuration(cur) || '0:00'} of ${fmtDuration(total) || '0:00'}`}
-        style={{ ['--pct' as string]: `${total ? (cur / total) * 100 : 0}%` }}
+        style={{ ['--pct' as string]: `${total ? Math.min(100, Math.max(0, (cur / total) * 100)) : 0}%` }}
         onChange={(e) => seek(Number(e.target.value))}
       />
       <span className="prog__t">{fmtDuration(total || null)}</span>
@@ -931,18 +932,9 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   );
 
   // FOLDER-IMPORT-PLAY-001: an imported file has no service page to open; an "imported ↗" link was noise.
+  // PLAYER-ONE-SOURCE-001: one platform at a time, cycling through every one the song is on.
   const openLinks = playing && !t?.url?.startsWith('imported:') && (
-    <div className="np__open">
-      {/* Each link shows its service's mark and name with ↗ after it — the arrow reads as "opens
-          elsewhere" without a verb, where an 11px link glyph read as a stray "x". Two full "Open in …" pills did not fit the desktop
-          bar's right column, and a shared "Open in" caption read as an orphaned word. The full
-          label stays as the accessible name. */}
-      {(playing.playback.open.length ? playing.playback.open : t?.url ? [{ provider: t.provider, label: `Open in ${PROVIDER_LABEL[t.provider] ?? t.provider}`, url: t.url }] : []).map((o) => (
-        <a key={o.provider} className="openlink" href={o.url} target="_blank" rel="noreferrer noopener" aria-label={o.label}>
-          <SourceMark provider={o.provider} size={13} /> {o.label.replace(/^Open in\s+/i, '')}<span className="openlink__out" aria-hidden="true">↗</span>
-        </a>
-      ))}
-    </div>
+    <OpenLinkCycle links={playing.playback.open.length ? playing.playback.open : t?.url ? [{ provider: t.provider, label: `Open in ${PROVIDER_LABEL[t.provider] ?? t.provider}`, url: t.url }] : []} />
   );
 
   const syncPlayback = () => queueMicrotask(() => {

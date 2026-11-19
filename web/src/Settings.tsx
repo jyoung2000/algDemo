@@ -249,6 +249,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFo
           <div className="dial discovery-settings__range">
             <input id="similar-percent" type="range" min={SIMILAR_MIN} max={SIMILAR_MAX} step={1}
               value={settings?.similar_percent ?? SIMILAR_DEFAULT} disabled={!settings}
+              style={{ '--pct': `${(((settings?.similar_percent ?? SIMILAR_DEFAULT) - SIMILAR_MIN) / (SIMILAR_MAX - SIMILAR_MIN)) * 100}%` } as React.CSSProperties}
               onChange={(e) => onSettings({ similar_percent: Number(e.target.value) })} />
           </div>
           <p className="note">The “Find similar sound” button on any song in the now playing list adds only new songs whose analysed sound scores at least this much. It searches all seven full-song services, then compares available audio; songs without analysed audio never pass. The percentage is an audio-model match score, not a guarantee you’ll hear them as alike. Uses the discovery transfer allowance.</p>

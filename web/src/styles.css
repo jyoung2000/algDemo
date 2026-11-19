@@ -4262,3 +4262,52 @@ ul.radio-stations > li.radio-station > .skel-develop { display: grid; grid-templ
 .radio-station__tags > .genre { display: inline-block; flex: 0 1 auto; min-width: 0; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .radio-station__tags > .genre::before { display: inline-block; vertical-align: -1px; margin-right: 5px; }
 .radio-station__body > .radio-station__details { margin-top: 2px; }
+
+/* PLAYER-ONE-SOURCE-001 (owner, 2026-11-19): one platform label at a time, cycling. Mark, name and arrow sit
+   on one centred line, as on the search source strip; small dots show which of the song's platforms is up. */
+.np__open--cycle {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.np__open--cycle .openlink {
+  line-height: 1;
+  animation: openlink-in 0.25s ease;
+}
+.openlink .openlink__mark {
+  display: block;
+  flex: none;
+}
+.openlink .openlink__name {
+  line-height: 1;
+}
+.openlink__dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+.openlink__dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 18%);
+}
+.openlink__dots i.is-on {
+  /* A bar, not a dot: three equal dots read as a "more" menu. */
+  width: 10px;
+  border-radius: 2px;
+  background: var(--ink-2);
+}
+.openlink__dots i {
+  transition: width 0.25s ease, background-color 0.25s ease;
+}
+@keyframes openlink-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .np__open--cycle .openlink { animation: none; }
+}

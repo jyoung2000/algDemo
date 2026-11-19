@@ -37,6 +37,7 @@ import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, canP
 import { queueAudio } from './engine/queue-audio';
 import { CarCatalog } from './engine/car-catalog';
 import { BrandLogo } from './BrandLogo';
+import { GearGlyph } from './GearGlyph';
 import { moodTint, type MoodLead } from './brand-tint';
 
 type Tab = 'discover' | 'radio' | 'saved' | 'profile' | 'settings';
@@ -1159,7 +1160,7 @@ export function App() {
           ).map(([id, label, g]) => (
             <li key={id}>
               <button className={classNames('side__item', tab === id && 'is-on')} type="button" aria-label={label} aria-current={tab === id ? 'page' : undefined} onClick={() => { setPages([]); setTab(id); }}>
-                <Glyph name={g} size={15} />
+                {g === 'gear' ? <GearGlyph size={15} /> : <Glyph name={g} size={15} />}
                 <span>{label}</span>
                 {/* DOWNLOADS-IN-SETTINGS-001: the download list lives in Settings now; its running count shows here. */}
                 {id === 'settings' && dls.activeCount > 0 && <span className="count">{dls.activeCount}</span>}
