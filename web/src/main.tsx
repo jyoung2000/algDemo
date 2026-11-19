@@ -1,4 +1,5 @@
 import { StrictMode } from 'react';
+import { isDesktopShell } from './desktop-shell';
 import { createRoot } from 'react-dom/client';
 // The Airwave window kit (the same stylesheet the hub's admin GUI and the companion use), then the
 // demo's own layout.
@@ -15,7 +16,7 @@ const container = document.getElementById('root');
 if (!container) throw new Error('jPlay needs a #root element');
 
 // The Windows window is a desktop window: its labels stay visible at any width, not only on phones.
-if (navigator.userAgent.includes('AirwaveDiscovery/')) document.documentElement.classList.add('is-desktop-shell');
+if (isDesktopShell(navigator.userAgent)) document.documentElement.classList.add('is-desktop-shell');
 
 createRoot(container).render(
   <StrictMode>
