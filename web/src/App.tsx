@@ -20,7 +20,8 @@ import { listMixNote } from './list-mix-note';
 import { ProfileView } from './Profile';
 import { SavedView } from './SavedView';
 import { QueuePreparation } from './QueuePreparation';
-import { ListDownloadBar, ListDownloadButton, ListFolderButton } from './ListDownloadBar';
+import { ListDownloadButton, ListFolderButton, ListLoadedNote } from './ListDownloadBar';
+import './discover-tidy.css';
 import { useCardCache } from './useCardCache';
 import { useKeptKeys } from './useKeptKeys';
 import { useQueueGenres } from './useQueueGenres';
@@ -803,6 +804,8 @@ export function App() {
   // so using it here would count songs the listener cannot see in the bar's denominator.
   const queueTracks = useMemo(() => [...visibleSeeds, ...items.filter((x) => !hidden.has(x.track.key)).map((x) => x.track)],
     [visibleSeeds, items, hidden]);
+  // DISCOVER-TIDY-001: each song once, the same count as the loaded line above the queue.
+  const queueSongCount = useMemo(() => new Set(queueTracks.map((t) => t.key)).size, [queueTracks]);
   const keptKeys = useKeptKeys(cacheTracks);
   const cardCache = useCardCache(cacheTracks, keptKeys);
 
@@ -1364,9 +1367,16 @@ export function App() {
                 </label>
               </div>
               <div className="go__row">
-                <button className="push push--default push--big" type="button" disabled={!seeds.length || running || !loaded} aria-describedby="go-why" onClick={() => void run()}>
-                  {running ? 'Finding…' : 'Find my next favorite'}
-                </button>
+                {/* DISCOVER-TIDY-001 (owner): one row, Find my next favorite 75% and Customize discovery 25% as an icon. */}
+                <div className="go__pair">
+                  <button className="push push--default push--big" type="button" disabled={!seeds.length || running || !loaded} aria-describedby="go-why" onClick={() => void run()}>
+                    {running ? 'Finding…' : 'Find my next favorite'}
+                  </button>
+                  <button className="push push--big go__custom" type="button" disabled={!loaded} aria-haspopup="dialog" aria-expanded={customOpen}
+                    aria-label="Customize discovery" title="Customize discovery" onClick={() => setCustomOpen(true)}>
+                    <Glyph name="eq" size={20} />
+                  </button>
+                </div>
                 {running && (
                   <button className="push push--big" type="button" onClick={cancel}>
                     Stop
@@ -1391,14 +1401,6 @@ export function App() {
                     Show sample data
                   </button>
                 )}
-              </div>
-              {/* NEXT-FAV-CUSTOM-001: the same search with the listener's own genres, artists and sliders, beneath the
-                  one-tap run (which never inherits these choices). */}
-              <div className="go__more">
-                <button className="push go__custom" type="button" disabled={!loaded} aria-haspopup="dialog" aria-expanded={customOpen}
-                  onClick={() => setCustomOpen(true)}>
-                  <Glyph name="eq" size={14} /> Customize discovery
-                </button>
               </div>
             </section>
 
@@ -1435,11 +1437,6 @@ export function App() {
                   <Glyph name="info" size={14} /> {result!.sample!.label} Recorded {result!.sample!.recorded}. These rows are for looking at the interface; likes are not saved.
                 </p>
               )}
-              {result?.saved_at && !job && (
-                <p className="banner" role="note">
-                  <Glyph name="info" size={14} /> Your last now playing queue, from {new Date(result.saved_at * 1000).toLocaleString()}. Press “Find my next favorite” for a fresh one.
-                </p>
-              )}
               {similarStatus && <p className="state" role="status" aria-live="polite">{similarBusy && <span className="sdot sdot--busy" aria-hidden="true" />} {similarStatus}</p>}
               {runErr && (
                 <p className="state state--bad" role="alert">
@@ -1461,9 +1458,10 @@ export function App() {
               )}
               {result ? (
                 <>
+                  {!sample && <ListLoadedNote tracks={queueTracks} />}
                   <div className="queue__head">
                     <h2 id="queue-h">
-                      Now playing queue <span className="count">{visibleSeeds.length + items.length}</span>
+                      Now playing queue <span className="count">{queueSongCount}</span>
                     </h2>
                     <span className="queue__meta">
                       {running && result.phase === 'gathering' ? (
@@ -1518,7 +1516,6 @@ export function App() {
                         <span>Queue re-arranged for your mood{moodPulse.leading.length ? `: ${moodPulse.leading.join(' · ')}` : ''}</span>
                       </p>
                     )}
-                    <ListDownloadBar tracks={queueTracks} label="now playing queue" />
                     <Results
                       seeds={visibleSeeds}
                       onRemoveSeed={(k) => saveSeeds(seeds.filter((s) => s.key !== k))}
@@ -1557,6 +1554,7 @@ export function App() {
                 </div>
               ) : visibleSeeds.length ? (
                 <>
+                  <ListLoadedNote tracks={queueTracks} />
                   <div className="queue__head">
                     <h2 id="queue-h">
                       Now playing queue <span className="count">{visibleSeeds.length}</span>

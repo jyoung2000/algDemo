@@ -51,7 +51,7 @@ describe('world radio browse and favourites (RADIO-001)', () => {
   });
   it('keeps country and genre selections when the alphabet is changed or cleared', async () => {
     await mount();
-    await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Country filter"]')!.click());
+    await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Location filter"]')!.click());
     await act(async()=>[...host.querySelectorAll<HTMLButtonElement>('.radio-search__menu [role=option]')].find(b=>b.textContent?.includes('Canada'))!.click());await flush();
     await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Genre filter"]')!.click());
     await act(async()=>[...host.querySelectorAll<HTMLButtonElement>('.radio-search__menu [role=option]')].find(b=>b.textContent?.includes('Jazz'))!.click());await flush();
@@ -112,9 +112,9 @@ describe('world radio browse and favourites (RADIO-001)', () => {
     expect(host.querySelector('.radio-sections--refine')).toBeNull();
     const field = host.querySelector('.radio-search .search__field')!;
     const genreBtn = field.querySelector<HTMLButtonElement>('[aria-label="Genre filter"]')!;
-    const countryBtn = field.querySelector<HTMLButtonElement>('[aria-label="Country filter"]')!;
+    const countryBtn = field.querySelector<HTMLButtonElement>('[aria-label="Location filter"]')!;
     const langBtn = field.querySelector<HTMLButtonElement>('[aria-label="Language filter"]')!;
-    expect(genreBtn.textContent).toContain('Genre'); expect(countryBtn.textContent).toContain('Country'); expect(langBtn.textContent).toContain('Language');
+    expect(genreBtn.textContent).toContain('Genre'); expect(countryBtn.textContent).toContain('Location'); expect(langBtn.textContent).toContain('Language');
     await act(async () => genreBtn.click());
     const menu = host.querySelector('.radio-search__menu')!;
     const jazz = [...menu.querySelectorAll<HTMLButtonElement>('[role=option]')].find(b => b.textContent?.includes('Jazz'))!;

@@ -25,7 +25,7 @@ vi.mock('./engine/queue-audio', () => ({ queueAudio: {
   get look() { return shell.look ?? undefined; },
 } }));
 vi.mock('./QueuePreparation', () => ({ QueuePreparation: () => null }));
-vi.mock('./ListDownloadBar', () => ({ ListDownloadBar: () => null, ListDownloadButton: () => null, ListFolderButton: () => null }));
+vi.mock('./ListDownloadBar', () => ({ ListDownloadBar: () => null, ListDownloadButton: () => null, ListFolderButton: () => null, ListLoadedNote: () => null }));
 vi.mock('./api', async orig => {
   const real = await orig<typeof import('./api')>();
   return { ...real, api: { ...real.api,

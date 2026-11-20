@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import type { Track } from './api';
 import { downloadsAvailable } from './engine/downloads';
 import { queueAudio } from './engine/queue-audio';
@@ -11,9 +11,7 @@ export function QueuePreparation({ tracks, parallel, preload }: {
   parallel?: number;
   preload?: PreloadSetting;
 }) {
-  const [status, setStatus] = useState(() => queueAudio.snapshot());
   const enabled = downloadsAvailable();
-  useEffect(() => queueAudio.subscribe(() => setStatus(queueAudio.snapshot())), []);
   useEffect(() => {
     queueAudio.update(enabled ? tracks : []);
   }, [enabled, tracks]);
@@ -26,12 +24,7 @@ export function QueuePreparation({ tracks, parallel, preload }: {
     window.addEventListener('online', online);
     return () => { window.removeEventListener('online', online); queueAudio.update([]); };
   }, []);
-  if (!enabled || !status.total) return null;
-  return <p className="muted" data-testid="queue-preparation" role="status">
-    {status.ready} of {status.total} songs ready locally
-    {status.active > 0 ? ` · Preparing ${status.active}` : ''}
-    {status.queued > 0 && status.active === 0 && !status.blocked ? ` · ${status.queued} waiting` : ''}
-    {status.blocked ? ' · Cache full — increase queue storage in Settings to prepare the rest.' : ''}
-    {status.failed > 0 && !status.blocked ? ` · ${status.failed} unavailable; select a song to retry.` : ''}
-  </p>;
+  // DISCOVER-TIDY-001 (owner, 2026-11-19): the count shows once, as the small line above the Now playing queue
+  // (ListLoadedNote). This keeps preparing the songs and draws nothing above the player.
+  return null;
 }

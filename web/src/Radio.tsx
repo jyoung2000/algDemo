@@ -187,8 +187,8 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
         <span className="radio-search__filters">
           <button type="button" className="radio-search__filter" aria-label="Genre filter" aria-haspopup="listbox" aria-expanded={menu === 'genre'} data-set={tag ? '' : undefined} style={tag ? { ['--tone' as string]: genreTone(tag) } : undefined}
             onClick={() => setMenu(m => m === 'genre' ? '' : 'genre')}>{tag && <span className="radio-search__dot" aria-hidden="true" />}{tag ? (genreIdentity(tag)?.label ?? cap(tag)) : 'Genre'}<span className="radio-search__caret" aria-hidden="true">▾</span></button>
-          <button type="button" className="radio-search__filter" aria-label="Country filter" aria-haspopup="listbox" aria-expanded={menu === 'country'} data-set={country || chosen.length ? '' : undefined}
-            onClick={() => { setPlaceNote(''); setMenu(m => m === 'country' ? '' : 'country'); }}>{chosen.length ? `${chosen[0]!.label.split(',')[0]}${chosen.length > 1 ? ` +${chosen.length - 1}` : ''}` : country ? countryName(country) : 'Country'}<span className="radio-search__caret" aria-hidden="true">▾</span></button>
+          <button type="button" className="radio-search__filter" aria-label="Location filter" aria-haspopup="listbox" aria-expanded={menu === 'country'} data-set={country || chosen.length ? '' : undefined}
+            onClick={() => { setPlaceNote(''); setMenu(m => m === 'country' ? '' : 'country'); }}>{chosen.length ? `${chosen[0]!.label.split(',')[0]}${chosen.length > 1 ? ` +${chosen.length - 1}` : ''}` : country ? countryName(country) : 'Location'}<span className="radio-search__caret" aria-hidden="true">▾</span></button>
           <button type="button" className="radio-search__filter" aria-label="Language filter" aria-haspopup="listbox" aria-expanded={menu === 'language'} data-set={language ? '' : undefined}
             onClick={() => { setLangDraft(language); setMenu(m => m === 'language' ? '' : 'language'); }}>{language ? cap(language) : 'Language'}<span className="radio-search__caret" aria-hidden="true">▾</span></button>
         </span>
@@ -197,7 +197,7 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
           {GENRE_SECTIONS.map(x => <button type="button" role="option" key={x} aria-selected={tag === x} onClick={() => { setTag(x); setMenu(''); }}>
             <span className="radio-search__dot" aria-hidden="true" style={{ ['--tone' as string]: genreTone(x) }} />{genreIdentity(x)?.label ?? cap(x)}</button>)}
         </div>}
-        {menu === 'country' && <div className="radio-search__menu radio-search__menu--places" role="listbox" aria-label="Choose a country">
+        {menu === 'country' && <div className="radio-search__menu radio-search__menu--places" role="listbox" aria-label="Choose a location">
           <button type="button" role="option" aria-selected={!country && !chosen.length} onClick={() => { setCountry(''); if (chosen.length) setPlaces(places.map(p => ({ ...p, selected: false }))); setMenu(''); }}>Anywhere</button>
           {/* RADIO-PLACES-001: type a city, address or region, save it, and choose any number of saved places. */}
           <div className="radio-search__lang radio-places__add">

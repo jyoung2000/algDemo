@@ -1,0 +1,30 @@
+/* DISCOVER-TIDY-001 (owner, 2026-11-19): Find my next favorite and Customize discovery share one row, 75% and 25%
+   (3fr 1fr splits the space after the gap, so the two buttons are exactly 3:1); Customize is just its icon.
+   Stop and the status line wrap beneath the pair. */
+.go__pair {
+  display: grid;
+  grid-template-columns: 3fr 1fr;
+  gap: 12px;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.go__pair > .push {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+.go__pair > .go__custom {
+  justify-content: center;
+  padding: 0;
+  gap: 0;
+  /* custom-discovery.css gave the old text button 44px; here it matches Find's height on every platform. */
+  min-height: 0;
+}
+/* The queue's loaded count: one small grey line above the Now playing queue, instead of the download card. */
+.queue__loaded {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}

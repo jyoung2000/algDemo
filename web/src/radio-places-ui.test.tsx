@@ -30,7 +30,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 10)); });
 const mount = async () => { await act(async () => root.render(<Radio onTune={() => {}} />)); await flush(); };
-const openMenu = () => act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Country filter"]')!.click());
+const openMenu = () => act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Location filter"]')!.click());
 const typeInto = (el: HTMLInputElement, value: string) => act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, value); el.dispatchEvent(new Event('input', { bubbles: true })); });
 const savePlace = async (text: string) => {
   const input = host.querySelector<HTMLInputElement>('input[aria-label="Add a place"]')!;
@@ -49,7 +49,7 @@ describe('radio places', () => {
     await savePlace('Naperville');
     expect(f.geocode).toHaveBeenCalledWith('Naperville');
     expect(lastPlaces()).toEqual(['Naperville, Illinois']);
-    expect(host.querySelector('[aria-label="Country filter"]')?.textContent).toContain('Naperville');
+    expect(host.querySelector('[aria-label="Location filter"]')?.textContent).toContain('Naperville');
     const box = host.querySelector<HTMLInputElement>('.radio-places input[type=checkbox]')!;
     expect(box.checked).toBe(true);
   });
@@ -61,7 +61,7 @@ describe('radio places', () => {
     await savePlace('Naperville');
     await savePlace('Toronto');
     expect(lastPlaces()).toEqual(['Naperville, Illinois', 'Toronto, Ontario']);
-    expect(host.querySelector('[aria-label="Country filter"]')?.textContent).toMatch(/Naperville \+1/);
+    expect(host.querySelector('[aria-label="Location filter"]')?.textContent).toMatch(/Naperville \+1/);
     const boxes = () => [...host.querySelectorAll<HTMLInputElement>('.radio-places input[type=checkbox]')];
     await act(async () => boxes()[0]!.click()); await flush();
     expect(lastPlaces()).toEqual(['Toronto, Ontario']);

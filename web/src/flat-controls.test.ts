@@ -122,7 +122,8 @@ describe('one flat button, two weights (FLAT-BTN-001)', () => {
     const app = read('App.tsx');
     const row = app.slice(app.indexOf('className="go__row"'), app.indexOf('id="go-why"'));
     const buttons = [...row.matchAll(/<button className="([^"]*)"/g)].map((m) => m[1]);
-    expect(buttons).toEqual(['push push--default push--big', 'push push--big']);
+    // DISCOVER-TIDY-001: Find (75%) and the Customize icon (25%) side by side, then Stop.
+    expect(buttons).toEqual(['push push--default push--big', 'push push--big go__custom', 'push push--big']);
     expect(row).toMatch(/Find my next favorite/);
     expect(row).toMatch(/Stop/);
     // Same height, so the pair reads as one control group.

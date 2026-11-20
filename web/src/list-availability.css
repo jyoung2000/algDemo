@@ -1,5 +1,6 @@
 /* LIST-AVAILABILITY-001. Astra: inline desktop, stacked touch layout. Existing Aqua tokens. */
-.list-availability { margin: 10px 0; padding: 12px; border: 1px solid var(--well-edge); border-radius: 8px; background: var(--panel, white); color: var(--ink); min-width: 0; }
+/* DISCOVER-TIDY-001 (owner): no border around the ready-locally card. */
+.list-availability { margin: 10px 0; padding: 12px 0; border: 0; border-radius: 8px; background: var(--panel, white); color: var(--ink); min-width: 0; }
 .list-availability__head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .list-availability__count { flex: 1; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 /* LIST-METER-003: no border. The 1px well-edge outline read as a hard black box around the bar on

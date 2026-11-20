@@ -42,6 +42,16 @@ export function ListDownloadBar({ tracks, label }: { tracks: Track[]; label?: st
 }
 
 /**
+ * DISCOVER-TIDY-001 (owner, 2026-11-19): above the Now playing queue, one small grey line with how many of the
+ * queue's songs are loaded, instead of the download card. Same snapshot as the card and the header button.
+ */
+export function ListLoadedNote({ tracks }: { tracks: Track[] }) {
+  const status = useListStatus(tracks);
+  if (!downloadsAvailable() || !tracks.length || !status.total) return null;
+  return <p className="queue__loaded" role="status">{status.ready} of {status.total} songs loaded</p>;
+}
+
+/**
  * LIST-METER-003: the list's download action, as an icon button for the list header next to Clear
  * list - the same `iconbtn` and download glyph used for a single song, so one song and a whole list
  * are asked for the same way. The caption moved into the accessible name and the tooltip; no state

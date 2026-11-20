@@ -16,7 +16,7 @@ vi.mock('./engine/queue-audio', () => ({ queueAudio: {
   isReady: (t: Track) => shell.ready.has(t.key), readyUrl: (t: Track) => shell.ready.has(t.key) ? `/fixture/${t.key}` : null,
 } }));
 vi.mock('./QueuePreparation', () => ({ QueuePreparation: () => null }));
-vi.mock('./ListDownloadBar', () => ({ ListDownloadBar: () => null, ListDownloadButton: () => null, ListFolderButton: () => null }));
+vi.mock('./ListDownloadBar', () => ({ ListDownloadBar: () => null, ListDownloadButton: () => null, ListFolderButton: () => null, ListLoadedNote: () => null }));
 vi.mock('./api', async orig => {
   const real = await orig<typeof import('./api')>();
   return { ...real, api: { ...real.api,

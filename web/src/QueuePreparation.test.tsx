@@ -19,15 +19,15 @@ vi.mock('./engine/queue-audio', async () => {
   }) };
 });
 afterEach(() => { cleanup(); rig.states.clear(); rig.started.length = 0; });
-it('starts without pressing Play, reaches far rows, and displays actual readiness', async () => {
+it('starts without pressing Play and reaches far rows, drawing nothing above the player', async () => {
   const tracks = Array.from({ length: 8 }, (_, i) => ({ key: `s${i}`, title: `Song ${i}`, artist: 'Test' }) as Track);
-  render(<QueuePreparation tracks={tracks} />);
+  const { container } = render(<QueuePreparation tracks={tracks} />);
   await waitFor(() => expect(rig.started).toHaveLength(2));
-  expect(screen.getByRole('status').textContent).toContain('0 of 8 songs ready locally');
+  expect(container.textContent).toBe('');
   for (const t of tracks) {
     await waitFor(() => expect(rig.started).toContain(t.key));
     act(() => { rig.states.set(t.key, 'ready'); rig.changed(); });
   }
-  await waitFor(() => expect(screen.getByRole('status').textContent).toBe('8 of 8 songs ready locally'));
   expect(new Set(rig.started).size).toBe(8);
+  expect(container.textContent).toBe('');
 });
