@@ -16,23 +16,10 @@ class CarSettingsTest {
     assertEquals(rows, CarSettings.PRESETS)
   }
 
-  @Test fun theEqButtonStepsThroughTheQuickListAndWraps() {
-    var p = CarSettings.OFF
-    val seen = mutableListOf<String>()
-    repeat(CarSettings.QUICK_EQ.size) { p = CarSettings.nextEq(p); seen += p }
-    assertEquals(CarSettings.QUICK_EQ.drop(1) + CarSettings.OFF, seen)
-    assertEquals("flat", CarSettings.nextEq("jazz")) // a preset outside the quick list goes to the start of it
-    assertEquals("flat", CarSettings.nextEq("custom"))
-    assertEquals("EQ: Rock \u2013 tap for Pop", CarSettings.eqLabel("rock"))
-    assertEquals("EQ: Off \u2013 tap for Flat", CarSettings.eqLabel(CarSettings.OFF))
-  }
-
-  @Test fun theDiscoveryButtonStepsFamiliarToAdventurousAndWraps() {
-    assertEquals(0.7, CarSettings.nextLevel(0.5), 1e-9)
-    assertEquals(0.1, CarSettings.nextLevel(0.9), 1e-9)
-    assertEquals(0.3, CarSettings.nextLevel(0.25), 1e-9) // a phone slider position goes to the next stop up
-    assertEquals("Discovery: Balanced \u2013 tap for Mostly new", CarSettings.levelLabelButton(0.5))
+  @Test fun levelsReadFamiliarToAdventurous() {
+    assertEquals(listOf("Familiar", "Mostly familiar", "Balanced", "Mostly new", "Adventurous"), CarSettings.LEVELS.map(CarSettings::levelShort))
     assertEquals("A mix of familiar and new", CarSettings.levelLabel(0.5))
+    assertEquals("Off", CarSettings.presetName(CarSettings.OFF)); assertEquals("R&B", CarSettings.presetName("rb"))
   }
 
   @Test fun rowsNameWhatTheySetAndUnknownValuesAreRefused() {

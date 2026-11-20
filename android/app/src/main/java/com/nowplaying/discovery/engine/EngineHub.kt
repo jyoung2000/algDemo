@@ -111,8 +111,6 @@ object EngineHub {
     Log.i(TAG, "car settings eq=${c.eq} adventurous=${c.adventurous} mood=${c.mood}")
     resendCarSettings()
   }
-  fun carEqStep() = carSettings(CarSettings.Change(eq = CarSettings.nextEq(carEq())))
-  fun carLevelStep() = carSettings(CarSettings.Change(adventurous = CarSettings.nextLevel(carLevel())))
 
   private fun resendCarSettings() {
     val cmd = JSONObject().put("type", "carSettings")

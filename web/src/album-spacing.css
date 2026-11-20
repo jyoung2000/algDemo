@@ -1,0 +1,26 @@
+/* PAGE-SPACING-001 (owner, 2026-11-19): "ensure buttons on the artist and album page are properly spaced".
+   Both pages are `.card.album` (the artist page adds `.artist`). Measured before on Windows at 1164px: the artist
+   page's action row had 12px gaps (ARTIST-SPACING-001) but the album page's had 8px; song-row buttons were 6px
+   apart on both; the artist page's filter chips were 36x32 beside 44px buttons (search's are 42x38).
+   One rhythm now: 12px between buttons in a row, 16px around a row of controls, 8px between a song's buttons. */
+.album .album__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+}
+.album .track__actions {
+  gap: 8px;
+}
+.album .typefilter {
+  gap: 8px;
+}
+.album .typefilter__btn {
+  min-width: 42px;
+  min-height: 38px;
+}
+.album .typefilter__btn > svg {
+  width: 21px;
+  height: 21px;
+}

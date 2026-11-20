@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import './artist-spacing.css';
+import './album-spacing.css';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { SourceMark } from './SourceMark';
 import { RefreshGlyph } from './icons';

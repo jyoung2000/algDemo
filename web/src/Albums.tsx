@@ -10,6 +10,7 @@ import { TrackList } from './Search';
 import { SoundCard } from './SoundCard';
 import { listMixNote } from './list-mix-note';
 import { Develop, Skeleton, SkeletonList } from './Skeleton';
+import './album-spacing.css';
 
 export { AlbumShelf, albumSource } from './AlbumShelf';
 

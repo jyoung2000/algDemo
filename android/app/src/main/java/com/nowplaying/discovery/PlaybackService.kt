@@ -219,7 +219,6 @@ class PlaybackService : MediaLibraryService() {
           .setDisplayName(if (favourite) "Remove favourite station" else "Favourite station")
           .setSessionCommand(FAVOURITE_STATION).setSlots(CommandButton.SLOT_OVERFLOW).build(),
         volumeButton(),
-        eqButton(),
       )
     }
     val (starred, disliked) = CarFeedback.state(currentSongId())
@@ -240,31 +239,14 @@ class PlaybackService : MediaLibraryService() {
       repeatButton(),
       similarButton(),
       volumeButton(),
-      eqButton(),
-      discoveryButton(),
     )
   }
 
   /**
-   * CAR-SETTINGS-001 (owner 2026-11-19): "a button for settings to quickly change the algorithm and eq presets". A car
-   * button cannot open a list, so each press steps to the next choice; the full lists are in Playlists > Sound &
-   * discovery settings. Both sit in the menu with Volume.
+   * CAR-SETTINGS-001 (owner 2026-11-19): "a button for settings to quickly change the algorithm and eq presets",
+   * then "should be in a sub menu on android auto not in player controls": EQ and discovery live only in
+   * Playlists > Sound & discovery settings, so the player keeps Shuffle, Star and Dislike in view.
    */
-  private fun eqButton(): CommandButton =
-    CommandButton.Builder(CommandButton.ICON_UNDEFINED)
-      .setCustomIconResId(R.drawable.car_eq)
-      .setDisplayName(CarSettings.eqLabel(EngineHub.carEq()))
-      .setSessionCommand(EQ_STEP)
-      .setSlots(CommandButton.SLOT_OVERFLOW)
-      .build()
-  private fun discoveryButton(): CommandButton =
-    CommandButton.Builder(CommandButton.ICON_UNDEFINED)
-      .setCustomIconResId(R.drawable.car_discovery)
-      .setDisplayName(CarSettings.levelLabelButton(EngineHub.carLevel()))
-      .setSessionCommand(DISCOVERY_STEP)
-      .setSlots(CommandButton.SLOT_OVERFLOW)
-      .build()
-
   /* Playlists > Sound & discovery settings: every preset and level, each row naming the value it sets. */
   private fun settingsFolder(): MediaItem = asRow(folderItem(CarSettings.ROOT, "Sound & discovery settings", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED,
     CarSettings.summary(EngineHub.carEq(), EngineHub.carLevel(), EngineHub.carMood())))
@@ -756,7 +738,7 @@ class PlaybackService : MediaLibraryService() {
     override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo): MediaSession.ConnectionResult =
       MediaSession.ConnectionResult.AcceptedResultBuilder(session)
         .setAvailableSessionCommands(
-          MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon().add(STAR).add(DISLIKE).add(SHUFFLE).add(REPEAT).add(SIMILAR).add(VOLUME).add(EQ_STEP).add(DISCOVERY_STEP).add(STAR_TO_PLAYLIST).add(FAVOURITE_STATION).build(),
+          MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon().add(STAR).add(DISLIKE).add(SHUFFLE).add(REPEAT).add(SIMILAR).add(VOLUME).add(STAR_TO_PLAYLIST).add(FAVOURITE_STATION).build(),
         )
         .setMediaButtonPreferences(carButtons())
         .build()
@@ -783,7 +765,6 @@ class PlaybackService : MediaLibraryService() {
           }, MoreExecutors.directExecutor()), Exception::class.java, { SessionResult(SessionError.ERROR_UNKNOWN) }, MoreExecutors.directExecutor())
           ACTION_SHUFFLE -> player.shuffleModeEnabled = !player.shuffleModeEnabled
           ACTION_VOLUME -> EngineHub.carVolumeStep()
-          ACTION_EQ_STEP -> EngineHub.carEqStep()
           // CAR-RADIO-CONTROLS-001: the song on air, as the song player's star (which opens the picker).
           // A programme or an unmatched title is never starred: programmes never train taste.
           ACTION_STAR -> {
@@ -805,8 +786,6 @@ class PlaybackService : MediaLibraryService() {
         ACTION_SHUFFLE -> player.shuffleModeEnabled = !player.shuffleModeEnabled
         ACTION_REPEAT -> player.cycleSongRepeat()
         ACTION_VOLUME -> EngineHub.carVolumeStep()
-        ACTION_EQ_STEP -> EngineHub.carEqStep()
-        ACTION_DISCOVERY_STEP -> EngineHub.carLevelStep()
         ACTION_SIMILAR -> findSimilar(player.currentMediaItem?.mediaId ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE)))
         ACTION_STAR -> {
           val id = currentSongId() ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE))
@@ -1287,10 +1266,6 @@ class PlaybackService : MediaLibraryService() {
     val SIMILAR = SessionCommand(ACTION_SIMILAR, Bundle.EMPTY)
     const val ACTION_VOLUME = "com.nowplaying.discovery.VOLUME"
     val VOLUME = SessionCommand(ACTION_VOLUME, Bundle.EMPTY)
-    const val ACTION_EQ_STEP = "com.nowplaying.discovery.EQ_STEP"
-    val EQ_STEP = SessionCommand(ACTION_EQ_STEP, Bundle.EMPTY)
-    const val ACTION_DISCOVERY_STEP = "com.nowplaying.discovery.DISCOVERY_STEP"
-    val DISCOVERY_STEP = SessionCommand(ACTION_DISCOVERY_STEP, Bundle.EMPTY)
     /** CAR-STAR-PICKER-001: Android Auto cannot open a list from a player button, so the driver is told where the picker is. */
     const val DRIVER_MESSAGE_MS = 4000L
     const val PICK_HINT = "Starred \u2013 go back to choose a playlist"

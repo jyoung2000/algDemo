@@ -7,9 +7,9 @@ import java.net.URLEncoder
 
 /**
  * CAR-SETTINGS-001 (owner, 2026-11-19): "On android auto add a button for settings to quickly change the algorithm and
- * eq presets". Android Auto lets a player button do one thing per tap (it cannot open a list), so the player's menu has
- * two buttons that step through a short list each, and a "Sound & discovery settings" folder (top of Playlists) picks
- * any EQ preset or discovery level directly. The phone and the car always show the same choice. Pure policy here.
+ * eq presets", then "should be in a sub menu on android auto not in player controls": a "Sound & discovery
+ * settings" folder (top of Playlists) picks any EQ preset or discovery level directly; the player has no settings
+ * buttons. The phone and the car always show the same choice. Pure policy here.
  */
 object CarSettings {
   data class Preset(val id: String, val name: String, val gains: List<Double>)
@@ -39,8 +39,6 @@ object CarSettings {
     Preset("treble-reducer", "Treble reducer", listOf(0.0, 0.0, 0.0, 0.0, 0.0, -1.5, -3.0, -4.5, -6.0, -7.0)),
     Preset("vocal-booster", "Vocal booster", listOf(-2.0, -3.0, -3.0, 1.5, 4.0, 4.0, 3.0, 1.5, 0.0, -1.5)),
   )
-  /** What the player's EQ button steps through: off first, then the presets that suit a car most. */
-  val QUICK_EQ = listOf(OFF, "flat", "bass-booster", "hip-hop", "rock", "pop", "rb", "electronic", "vocal-booster", "loudness")
   const val OFF = "off"
 
   /** Familiar to Adventurous (App.tsx adventureLabel), five stops for the car. */
@@ -103,11 +101,5 @@ object CarSettings {
       .apply { if (!has("preampDb")) put("preampDb", 0); if (!has("limiter")) put("limiter", true) }
   }
 
-  /* --------------------------------------------------------------------------------- the buttons */
-  /** A preset outside the quick list (Jazz, Custom...) steps to the first preset, never straight to Off. */
-  fun nextEq(current: String): String { val i = QUICK_EQ.indexOf(current); return if (i < 0) QUICK_EQ[1] else QUICK_EQ[(i + 1) % QUICK_EQ.size] }
-  fun nextLevel(a: Double): Double = LEVELS.firstOrNull { it > a + 1e-6 } ?: LEVELS.first()
-  fun eqLabel(current: String) = "EQ: ${presetName(current)} \u2013 tap for ${presetName(nextEq(current))}"
-  fun levelLabelButton(a: Double) = "Discovery: ${levelShort(a)} \u2013 tap for ${levelShort(nextLevel(a))}"
   fun summary(eq: String, a: Double, mood: Boolean) = "EQ ${presetName(eq)} \u00b7 ${levelShort(a)}${if (mood) " \u00b7 Mood on" else ""}"
 }
