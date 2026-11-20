@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
   <uses-permission android:name="android.permission.INTERNET" />
+  <!-- ALLOWANCE-ARCH-001: to tell Wi-Fi from mobile data. The mobile data allowance applies on mobile data only. No prompt. -->
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
   <!-- Song identification from the search bar's Mic: asked for when Mic is tapped, never at start-up. -->
   <uses-permission android:name="android.permission.RECORD_AUDIO" />
   <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />

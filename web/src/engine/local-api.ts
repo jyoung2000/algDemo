@@ -58,6 +58,7 @@ import { classify, classifyAll } from './classify';
 import { makeTag } from './genres';
 import { inferFromArtist, inferFromSeed, inferFromSound, needsSub, recordArtistGenres, withoutNamesake, currentTags } from './infer';
 import { fillGenres, mainGenre, stylesFor, subLabels } from './genre-fill';
+import { Budget, type Lane } from './budget';
 import { BlockedUrl, BudgetExceeded, Cancelled, FetchError, Http, type HttpPort, Meter } from './net';
 import { dl, downloadsAvailable } from './downloads';
 import { localAudioUrl } from './local-audio';
@@ -265,6 +266,7 @@ async function readAtMost(res: Response, max: number): Promise<Uint8Array | null
 export class LocalApi {
   readonly store: Store;
   readonly http: Http;
+  private readonly budget: Budget;
   readonly dz: Deezer;
   readonly ytm: YouTubeMusic;
   readonly sc: SoundCloud;
@@ -298,6 +300,10 @@ export class LocalApi {
     this.store = deps.store;
     this.encoder = deps.encoder;
     this.http = new Http(deps.port);
+    // ALLOWANCE-ARCH-001: one budget for every lane; the shell says whether the connection is metered.
+    this.budget = new Budget(this.store, () => Number(this.settings()['daily_mb']) * 1e6);
+    this.http.onMetered = (m) => this.budget.network(m);
+    void this.http.metered();
     this.dz = new Deezer(this.http, this.store);
     this.ytm = new YouTubeMusic(this.http, this.store);
     this.sc = new SoundCloud(this.http, this.store);
@@ -346,7 +352,7 @@ export class LocalApi {
     // song it could have rescued was reported as having no source. 8 MB is the native bridge's own
     // per-request ceiling (MainActivity.kt maxBytes). The id is then cached for a day, so the cost
     // is paid once rather than per song.
-    return new Meter(8_000_000, 8_000_000, (c, n) => this.store.addTransfer(c, n));
+    return this.budget.meter('playback', 8_000_000);
   }
 
   /**
@@ -357,17 +363,41 @@ export class LocalApi {
    * look a few seconds per request; each request's share is far under this cap.
    */
   private featureMeter(): Meter {
-    const daily = Math.trunc(Number(this.settings()['daily_mb']) * 1e6);
-    const used = Object.values(this.store.transferToday()).reduce((a, b) => a + b, 0);
-    return new Meter(12_000_000, Math.max(0, daily - used), (c, n) => this.store.addTransfer(c, n));
+    return this.budget.meter('interactive', 12_000_000);
   }
 
+  /**
+   * ALLOWANCE-ARCH-001: what the listener asked for (a search, an artist or album page). Counted, never
+   * refused for the allowance; the cap bounds one request only.
+   */
   private searchMeter(): Meter {
-    const daily = Math.trunc(Number(this.settings()['daily_mb']) * 1e6);
-    const used = Object.values(this.store.transferToday()).reduce((a, b) => a + b, 0);
     // Per-search cap sized so one search can read SoundCloud's ~2.9 MB client-id bundle plus the other
-    // providers' answers. The daily allowance (daily_mb) is the real limit and is unchanged.
-    return new Meter(6_000_000, Math.max(0, daily - used), (c, n) => this.store.addTransfer(c, n));
+    // providers' answers.
+    return this.budget.meter('interactive', 6_000_000);
+  }
+
+  /** ALLOWANCE-ARCH-001: work nobody asked for by hand. The only lane the allowance limits, and only on mobile data. */
+  private backgroundMeter(): Meter {
+    return this.budget.meter('background', 6_000_000);
+  }
+
+  /** One discovery batch: the listener's own when they started it, background when listening topped the queue up. */
+  private jobMeter(settings: Dict, lane: Lane): Meter {
+    return this.budget.meter(lane, Math.trunc(Number(settings['request_mb'] ?? TRANSFER.perRequest / 1e6) * 1e6));
+  }
+
+  /** When paused background work can carry on by itself, for an answer that had to stop. */
+  private resumes(): { resumes_at?: number } {
+    const at = this.budget.state().resumes_at;
+    return at ? { resumes_at: at } : {};
+  }
+
+  private netAsked = 0;
+  /** Asks the shell whether the connection is metered, at most twice a minute; costs no network. */
+  private async syncNetwork(): Promise<void> {
+    if (unixNow() - this.netAsked < 30) return;
+    this.netAsked = unixNow();
+    await this.http.metered();
   }
 
   // ---------------------------------------------------------------------------------------
@@ -391,7 +421,7 @@ export class LocalApi {
       if (m === 'POST' && path === '/api/radio/analyse') return await this.radioAnalyse(body ?? {});
       if (m === 'POST' && path === '/api/radio/genres') {
         const t = body?.['track'] as Dict; if (!t?.['key'] || !t?.['title']) return fail(400, 'A track is required');
-        const found = await this.lookUpGenres(t, this.searchMeter());
+        const found = await this.lookUpGenres(t, this.backgroundMeter());
         const tags = found.tags.length ? found.tags : this.knownGenres()(t);
         const enriched = { ...found.track, tags };
         const characteristics = this.genreFiller([{ track: enriched }])(enriched, characteristicsOf(enriched, null));
@@ -401,7 +431,11 @@ export class LocalApi {
       if (m === 'POST' && path === '/api/complete-spotify') return ok(await this.completeSpotify(String(body?.['title'] ?? ''), String(body?.['artist'] ?? '')));
       if (path === '/api/seeds') return m === 'PUT' ? await this.putSeeds(body ?? {}) : ok(this.seedsView());
       if (path === '/api/settings') return m === 'PUT' ? await this.putSettings(body ?? {}) : ok(this.settings());
-      if (m === 'POST' && path === '/api/recommend') return this.recommend(body ?? {});
+      if (m === 'POST' && path === '/api/recommend') {
+        // ALLOWANCE-ARCH-001: a top-up decides on the connection as it is now (the phone may have joined Wi-Fi since).
+        if (body?.['trigger'] === 'listening') await this.syncNetwork();
+        return this.recommend(body ?? {});
+      }
       if (m === 'POST' && path === '/api/similar') return this.similar(body ?? {});
       if (m === 'POST' && path === '/api/discover/custom') return this.discoverCustom(body ?? {});
       const job = /^\/api\/jobs\/([A-Za-z0-9]+)$/.exec(path);
@@ -502,7 +536,8 @@ export class LocalApi {
     // ALLOWANCE-REFRESH-001: "Check again" also gives the day's download allowance back, before the
     // probes run, so the very next search, discovery or genre read has room. A plain read (the
     // Settings screen opening) never clears anything.
-    const refreshed = refresh ? { cleared_bytes: this.store.clearTransfer(), day: today() } : null;
+    // ALLOWANCE-ARCH-001: it also fills the background reserve at once.
+    const refreshed = refresh ? { cleared_bytes: this.store.clearTransfer(), restored_bytes: this.budget.refill(), day: today() } : null;
     if (refresh || !Object.keys(this.health).length || unixNow() - this.healthAt > 600) {
       this.healthRun ??= this.refreshHealth().finally(() => (this.healthRun = null));
       await this.healthRun;
@@ -1169,7 +1204,7 @@ export class LocalApi {
       let found: Dict | null = null;
       let ttl = 7 * 24 * 3600; // no confident match: not asked again for a week
       try {
-        found = await this.lookUpImported(next, this.searchMeter());
+        found = await this.lookUpImported(next, this.backgroundMeter());
         if (found) ttl = 30 * 24 * 3600;
       } catch (e) {
         if (e instanceof BudgetExceeded) return; // the day's allowance is spent: the next start carries on
@@ -1224,9 +1259,13 @@ export class LocalApi {
     // ALBUM-NAME-001: a row showing only its single's name is not settled until its album has been looked up.
     const settled = (x: Dict): boolean => LocalApi.placed(x) && !LocalApi.guessed(x) && !more((x['track'] as Dict | undefined) ?? {}) && !wantsAlbum((x['track'] as Dict | undefined) ?? {});
     if (!last || items.every(settled)) return ok({ items: [], left: 0 });
-    const limit = Math.max(1, Math.min(12, Math.trunc(Number(body['limit'])) || 6));
+    // ALLOWANCE-ARCH-001: background work. On mobile data it draws on the reserve: smaller batches when it runs
+    // low, and none while it is paused (the answer says when it resumes).
+    await this.syncNetwork();
+    const limit = this.budget.batch(Math.max(1, Math.min(12, Math.trunc(Number(body['limit'])) || 6)));
+    if (limit === 0) return ok({ items: [], left: items.filter((x) => !settled(x)).length, spent: true, ...this.resumes() });
     const known = this.knownGenres();
-    const meter = this.searchMeter();
+    const meter = this.backgroundMeter();
     const taste = this.taste();
     // What each row shows now, to tell afterwards which rows changed.
     const shown = (list: Dict[]): string[] => {
@@ -1346,7 +1385,7 @@ export class LocalApi {
       if (!track || after[i] === before[i]) return;
       out.push({ key: String(track['key'] ?? ''), tags: track['tags'] ?? [], characteristics: fill(track, (x['characteristics'] as Dict | undefined) ?? {}), ...(track['album_looked'] ? { album: track['album'] ?? null, album_id: track['album_id'] ?? null, album_looked: track['album_looked'], album_confirmed: Boolean(track['album_confirmed']) } : {}) });
     });
-    return ok({ items: out, left, ...(spent ? { spent: true } : {}) });
+    return ok({ items: out, left, ...(spent ? { spent: true, ...this.resumes() } : {}) });
   }
 
   /**
@@ -1515,7 +1554,7 @@ export class LocalApi {
     let moodLead: string[] | undefined;
     if (listening) {
       const guard = this.listeningGuard(body, settings);
-      if (guard.skip) return ok({ job: null, reason: guard.reason });
+      if (guard.skip) return ok({ job: null, reason: guard.reason, ...(guard.resumes_at ? { resumes_at: guard.resumes_at } : {}) });
       seeds = guard.seeds;
       moodLead = guard.mood;
     }
@@ -1545,7 +1584,7 @@ export class LocalApi {
 
   private async runCustom(job: Job, crit: CustomCriteria, exclude: Set<string>, settings: Dict): Promise<void> {
     const p = this.pipeline;
-    const meter = p.meter(settings); job.meter = meter;
+    const meter = this.jobMeter(settings, 'interactive'); job.meter = meter;
     const c: Ctx = { token: job.token, meter };
     const lastAtStart = this.store.get<Dict>('last_result');
     try {
@@ -1703,7 +1742,7 @@ export class LocalApi {
     const start = performance.now();
     const threshold = Number(settings['similar_percent']);
     const lastAtStart = this.store.get<Dict>('last_result');
-    const meter = p.meter(settings); job.meter = meter;
+    const meter = this.jobMeter(settings, 'interactive'); job.meter = meter;
     const c: Ctx = { token: job.token, meter };
     try {
       if (settings['audio'] === false) {
@@ -1797,7 +1836,7 @@ export class LocalApi {
    * came from the list counts, and only while the unplayed remainder is nearly gone; a skip, a
    * replay, a pause or a preview from search never starts a search. One listen starts one batch.
    */
-  private listeningGuard(body: Dict, settings: Dict): { skip: true; reason: string } | { skip: false; seeds: Dict[]; mood?: string[] } {
+  private listeningGuard(body: Dict, settings: Dict): { skip: true; reason: string; resumes_at?: number } | { skip: false; seeds: Dict[]; mood?: string[] } {
     const seeds = this.store.seeds() as Dict[];
     const eventId = String(body['event_id'] ?? '');
     const event = this.store.feedback().find((f) => (f as unknown as Dict)['event_id'] === eventId) as unknown as Dict | undefined;
@@ -1832,6 +1871,9 @@ export class LocalApi {
     if (!low && !want) return { skip: true, reason: 'The list does not need more songs yet.' };
     const active = this.currentJob ? this.jobs.get(this.currentJob) : null;
     if (active && !active.done) return { skip: true, reason: 'Discovery is already running.' };
+    // ALLOWANCE-ARCH-001: a top-up nobody asked for by hand waits for the reserve on mobile data, and says when it resumes.
+    const allowance = this.budget.state();
+    if (allowance.paused) return { skip: true, reason: 'Finding new songs is paused to save mobile data.', ...(allowance.resumes_at ? { resumes_at: allowance.resumes_at } : {}) };
     const handled = (this.store.get<string[]>('discovery_events') ?? []) as string[];
     if (handled.includes(eventId)) return { skip: true, reason: 'Already discovered for this listen.' };
     void this.store.put('discovery_events', [...handled.slice(-99), eventId]);
@@ -1931,7 +1973,7 @@ export class LocalApi {
     try {
       const cfg = { ...engineFromSettings(settings), queueSize: Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize) };
       const es = E.normaliseSettings({ fresh: Boolean(settings['fresh']), adventurous: settings['adventurous'] });
-      job.meter = p.meter(settings);
+      job.meter = this.jobMeter(settings, trigger === 'listening' ? 'background' : 'interactive');
       job.phase = 'profiling';
       job.progress = 'Looking up your starting songs';
       // PLAYLIST-QUEUE-001: a long list of starting songs (a saved list sent to the queue) is asked
@@ -2558,7 +2600,7 @@ export class LocalApi {
         this.genreQueue.delete(key);
         if (this.store.cacheGet(`genretry:${key}`)?.value) continue;
         try {
-          const { tags } = await this.lookUpGenres(t, this.searchMeter());
+          const { tags } = await this.lookUpGenres(t, this.backgroundMeter());
           if (tags.length) await this.store.put(SAVED_TAGS_KEY, { ...(this.store.get<Record<string, Tag[]>>(SAVED_TAGS_KEY) ?? {}), [key]: tags });
           await this.store.cachePut(`genretry:${key}`, 'metadata', true, 24 * 3600);
         } catch (e) {
@@ -2613,14 +2655,14 @@ export class LocalApi {
       const mark = unplaced ? `genretry:${key}` : artistAsk ? `substry:${key}` : `yeartry:${key}`;
       try {
         if (unplaced) {
-          const { tags } = await this.lookUpGenres(next, this.searchMeter());
+          const { tags } = await this.lookUpGenres(next, this.backgroundMeter());
           if (tags.length) await this.store.put(SAVED_TAGS_KEY, { ...(this.store.get<Record<string, Tag[]>>(SAVED_TAGS_KEY) ?? {}), [key]: tags });
         } else if (artistAsk) {
           // A main genre and no subgenre: what MusicBrainz's listeners call the artist (GENRE-ALL-001).
-          await this.askArtist(next, this.searchMeter());
+          await this.askArtist(next, this.backgroundMeter());
         } else {
           // Still nothing finer: the year the song came out (Deezer), so its era names the subgenre.
-          const dated = LocalApi.dated(next, await this.deezerFacts(next, { meter: this.searchMeter() }));
+          const dated = LocalApi.dated(next, await this.deezerFacts(next, { meter: this.backgroundMeter() }));
           const date = dated['release'] ? { release: dated['release'] } : typeof dated['year_hint'] === 'number' ? { year_hint: dated['year_hint'] } : null;
           if (date) await this.store.put(SAVED_DATES_KEY, { ...(this.store.get<Record<string, Dict>>(SAVED_DATES_KEY) ?? {}), [key]: date });
         }
@@ -3001,6 +3043,7 @@ export class LocalApi {
   // ---- status / reset / self-test --------------------------------------------------------
   private async status(): Promise<Dict> {
     const settings = this.settings();
+    await this.syncNetwork();
     let free = 0;
     let quota = 0;
     let usage = 0;
@@ -3027,6 +3070,7 @@ export class LocalApi {
     }
     return {
       storage: { areas: { cache, other: Math.max(0, usage - cache) }, queue_audio: queueAudio, app_data: usage, limits: { cache: 150_000_000 }, total: usage + (queueAudio?.bytes ?? 0), hard_cap: quota, target: quota, free_disk: free, not_counted: 'Songs you Download are copied to your music folder and are not counted here.' },
+      allowance: this.budget.state(),
       transfer_today: this.store.transferToday(), transfer_daily_cap: Math.trunc(Number(settings['daily_mb']) * 1e6), transfer_request_cap: Math.trunc(Number(settings['request_mb']) * 1e6),
       transfer_note: 'Network the page itself read today. Songs fetched by the built-in downloader do not pass through the page and are not counted here.',
       cache: { hits: this.store.cacheHits, misses: this.store.cacheMisses, bytes: cache, vectors: this.store.vectorCount() },
@@ -3063,8 +3107,7 @@ export class LocalApi {
   private async selftest(): Promise<LocalResponse> {
     if (!this.encoder) return fail(409, 'Audio model is not available on this device.');
     const job = new Job('selftest');
-    const daily = Math.trunc(Number(this.settings()['daily_mb']) * 1e6);
-    job.meter = new Meter(5_000_000, Math.max(0, daily - Object.values(this.store.transferToday()).reduce((a, b) => a + b, 0)), (c, n) => this.store.addTransfer(c, n));
+    job.meter = this.budget.meter('interactive', 5_000_000);
     const t0 = performance.now();
     try {
       const pairs: [string, Float64Array][] = [];

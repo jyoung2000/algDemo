@@ -19,7 +19,9 @@ declare global {
   }
 }
 
-const pending = new Map<number, (r: { status: number; headers: Record<string, string>; body: string; error?: string }) => void>();
+/** What the shell answers. `wire` and `metered` (ALLOWANCE-ARCH-001) come from newer shells only. */
+interface NativeAnswer { status: number; headers: Record<string, string>; body: string; error?: string; wire?: number; metered?: boolean | null }
+const pending = new Map<number, (r: NativeAnswer) => void>();
 let next = 1;
 
 /** Mirrors NativeClock.MAX_DELAY_MS / MAX_PENDING on the phone. */
@@ -118,12 +120,39 @@ export function nativeHttpPort(): HttpPort {
         pending.set(id, (r) => {
           disarm();
           if (r.error) return reject(new Error(r.error));
-          resolve({ status: r.status, headers: r.headers, body: b64(r.body) });
+          resolve({
+            status: r.status,
+            headers: r.headers,
+            body: b64(r.body),
+            ...(typeof r.wire === 'number' ? { wireBytes: r.wire } : {}),
+            ...(typeof r.metered === 'boolean' ? { metered: r.metered } : {}),
+          });
         });
         window.AirwaveNative!.request(id, JSON.stringify(req));
       });
     },
   };
+  // ALLOWANCE-ARCH-001: asks the shell whether the connection is metered. It answers from the system, with no
+  // network use; an older shell answers with an error, which reads as "cannot tell".
+  port.metered = () =>
+    new Promise<boolean | null>((resolve) => {
+      const id = next++;
+      const disarm = deadline(3_000, () => {
+        pending.delete(id);
+        resolve(null);
+      });
+      pending.set(id, (r) => {
+        disarm();
+        resolve(!r.error && typeof r.metered === 'boolean' ? r.metered : null);
+      });
+      try {
+        window.AirwaveNative!.request(id, JSON.stringify({ probe: 'network' }));
+      } catch {
+        disarm();
+        pending.delete(id);
+        resolve(null);
+      }
+    });
   if (clock) {
     port.delay = (ms, signal) =>
       new Promise<void>((resolve, reject) => {

@@ -107,12 +107,16 @@ describe('why a service was not read (ARTIST-SOURCES-001)', () => {
     expect(artist['sources']).toMatchObject({ deezer: { state: 'failed', why: 'offline' }, ytmusic: { state: 'failed', why: 'offline' } });
   }, 30_000);
 
-  it('says the allowance is used up when that is why they were not asked', async () => {
+  // ALLOWANCE-ARCH-001 (owner, 2026-11-20): an artist page the listener opened is asked for whatever the day has
+  // used; only background work waits for the allowance. (Before: both services were refused as 'allowance'.)
+  it('still asks the services when the day\u2019s allowance is used up', async () => {
     const { api, store } = await open([song()]);
     store.addTransfer('search', 50_000_000_000);
     const artist = ((await ask(api, 'jackiegalama')).body as Dict)['artist'] as Dict;
     expect(artist['local']).toBe(true);
-    expect(artist['sources']).toMatchObject({ deezer: { state: 'failed', why: 'allowance' }, ytmusic: { state: 'failed', why: 'allowance' } });
+    const sources = artist['sources'] as Record<string, { state: string; why?: string }>;
+    expect(sources['deezer']?.why).not.toBe('allowance');
+    expect(sources['ytmusic']?.why).not.toBe('allowance');
   }, 30_000);
 });
 

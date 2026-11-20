@@ -47,6 +47,14 @@ interface Props {
   downloads?: Downloads;
 }
 
+/** ALLOWANCE-ARCH-001: what today's reading was for, in the order shown. */
+const LANES: [string, string][] = [['interactive', 'you asked for'], ['playback', 'playing songs'], ['background', 'in the background'], ['other', 'earlier today']];
+
+/** Whole minutes until paused background work resumes; never less than one. */
+function resumeMinutes(at: number | null): number {
+  return Math.max(1, Math.round(((at ?? 0) - Date.now() / 1000) / 60));
+}
+
 /** Settings and a discreet status panel. Every badge here comes from a runtime check, never a constant. */
 export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFormulaSaved, sources, downloads }: Props) {
   /**
@@ -138,7 +146,8 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFo
         setHealth(h);
         setStatus(s);
         const freed = h.allowance_refreshed;
-        if (freed) setFreed(freed.cleared_bytes);
+        // ALLOWANCE-ARCH-001: what counts now is the background allowance given back.
+        if (freed) setFreed(freed.restored_bytes ?? freed.cleared_bytes);
         return api.status().then(setStatus, () => undefined);
       })
       .catch((e: Error) => setErr(e.message))
@@ -164,6 +173,7 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFo
   }, []);
 
   const tr = status?.transfer_today ?? {};
+  const allowance = status?.allowance ?? null;
   const trTotal = Object.values(tr).reduce((a, b) => a + (b || 0), 0);
   // The stored full songs, which only the installed shells have. This is the figure the "Queue audio
   // storage limit" slider governs, so it is the one the meter shows.
@@ -283,18 +293,33 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFo
             <span className="box" aria-hidden="true" />
             Compare how songs sound, using 30-second Deezer previews
           </label>
-          <span className="k">Daily download allowance</span>
-          <label className="numrow">
-            <NumberField
-              className="field field--num"
-              min={5}
-              max={2000}
-              step={5}
-              value={settings?.daily_mb ?? 100}
-              onValue={(n) => onSettings({ daily_mb: n })}
-            />{' '}
-            MB per day, for metadata, artwork checks and previews the app downloads itself
-          </label>
+          {/* ALLOWANCE-ARCH-001 (owner, 2026-11-20): the allowance does not apply on Wi-Fi, and never to searching,
+              playing or full-song downloads. It limits background work on mobile data only, and refills all day. */}
+          <span className="k">Mobile data allowance</span>
+          {/* One value cell: the settings grid pairs each label with exactly one item. */}
+          <div>
+            <label className="numrow">
+              <NumberField
+                className="field field--num"
+                min={5}
+                max={2000}
+                step={5}
+                value={settings?.daily_mb ?? 100}
+                onValue={(n) => onSettings({ daily_mb: n })}
+              />{' '}
+              MB a day on mobile data, for finding new songs and tags in the background. It refills through the day.
+            </label>
+            {allowance && (
+              <p className="note" role="status" aria-label="Mobile data allowance now">
+                {allowance.unmetered
+                  ? 'This connection is not metered (Wi-Fi or cable): nothing is limited.'
+                  : allowance.paused
+                    ? `On mobile data now: finding new songs is paused to save data and resumes by itself in about ${resumeMinutes(allowance.resumes_at)} min.`
+                    : `On mobile data now: ${fmtBytes(allowance.level)} of ${fmtBytes(allowance.capacity)} left for background work.`}{' '}
+                Searching, playing and downloading songs are never limited.
+              </p>
+            )}
+          </div>
           <span className="k">Discovery allowance</span>
           <label className="numrow">
             <NumberField
@@ -451,8 +476,8 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFo
         {freed !== null && (
           <p className="note" role="status">
             {freed > 0
-              ? `Allowance refreshed: ${fmtBytes(freed)} of today\u2019s downloads cleared, so searching and discovery have room again.`
-              : 'Allowance refreshed: today\u2019s allowance was not used up.'}
+              ? `Allowance refreshed: ${fmtBytes(freed)} given back for finding new songs on mobile data.`
+              : 'Allowance refreshed: it was already full.'}
           </p>
         )}
         {quietSources.length > 0 && (
@@ -580,10 +605,15 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFo
             ))}
             <div>
               <dt>downloaded today</dt>
-              <dd>
-                {fmtBytes(trTotal)} of {fmtBytes(status.transfer_daily_cap)}
-              </dd>
+              <dd>{allowance ? fmtBytes(trTotal) : `${fmtBytes(trTotal)} of ${fmtBytes(status.transfer_daily_cap)}`}</dd>
             </div>
+            {/* ALLOWANCE-ARCH-001: what today's reading was for. Only the last of these draws on the allowance. */}
+            {allowance && LANES.filter(([lane]) => (allowance.today[lane] ?? 0) > 0).map(([lane, label]) => (
+              <div key={`lane-${lane}`}>
+                <dt>· {label}</dt>
+                <dd>{fmtBytes(allowance.today[lane])}</dd>
+              </div>
+            ))}
             {Object.entries(tr).map(([k, v]) => (
               <div key={`t-${k}`}>
                 <dt>· {k}</dt>

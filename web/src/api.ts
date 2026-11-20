@@ -485,7 +485,24 @@ export interface Health {
   };
   checked_at?: number;
   /** ALLOWANCE-REFRESH-001: present when this read also cleared the day's download allowance. */
-  allowance_refreshed?: { cleared_bytes: number; day: string };
+  allowance_refreshed?: { cleared_bytes: number; day: string; /** ALLOWANCE-ARCH-001: bytes of background allowance given back. */ restored_bytes?: number };
+}
+
+/**
+ * ALLOWANCE-ARCH-001: only background work (queue top-ups, genre and album look-ups) draws on the allowance, and only
+ * on a metered connection. It refills through the day; what the listener asks for and playback are never limited.
+ */
+export interface Allowance {
+  capacity: number;
+  level: number;
+  refill_per_hour: number;
+  /** True off mobile data: nothing is limited. */
+  unmetered: boolean;
+  paused: boolean;
+  /** Unix seconds when paused background work resumes by itself. */
+  resumes_at: number | null;
+  /** Bytes read today by lane: interactive, playback, background (and `other` from older versions). */
+  today: Record<string, number>;
 }
 
 export interface Status {
@@ -502,6 +519,8 @@ export interface Status {
     free_disk: number;
     not_counted: string;
   };
+  /** ALLOWANCE-ARCH-001: the mobile data allowance for background work. Absent on an older engine. */
+  allowance?: Allowance;
   transfer_today: Record<string, number>;
   transfer_daily_cap: number;
   transfer_request_cap: number;
@@ -750,7 +769,7 @@ export const api = {
   sample: () => call<RecResult>('/api/sample'),
   last: () => call<RecResult>('/api/last'),
   /** GENRE-LOAD-001: look up the genres of a few of the queue's rows that have none; `left` says how many remain. */
-  queueGenres: () => call<{ items: { key: string; tags: Track['tags']; characteristics: Characteristics }[]; left: number; spent?: boolean }>('/api/queue/genres', { method: 'POST', body: json({}) }),
+  queueGenres: () => call<{ items: { key: string; tags: Track['tags']; characteristics: Characteristics }[]; left: number; spent?: boolean; /** ALLOWANCE-ARCH-001: when paused look-ups resume by themselves (unix seconds). */ resumes_at?: number }>('/api/queue/genres', { method: 'POST', body: json({}) }),
   rerank: (exclude: string[]) => call<RerankResult>('/api/rerank', { method: 'POST', body: json({ exclude }) }),
   /** MOOD-QUEUE-001: the order the movable songs still to come should play in for the listening mood. */
   mood: (body: { upcoming: { track: Track; characteristics?: Characteristics | null }[]; score?: { track: Track; characteristics?: Characteristics | null }[]; shown?: string[]; current?: { track: Track; characteristics?: Characteristics | null }; signal?: { track: Track; kind: 'like' | 'dislike' | 'similar' | 'complete' | 'skip' } }) =>

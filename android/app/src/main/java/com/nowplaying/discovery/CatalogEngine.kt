@@ -39,6 +39,7 @@ import java.util.concurrent.Executors
  */
 @UnstableApi
 class CatalogEngine(private val context: Context) {
+  init { NativeHttp.attach(context) } // ALLOWANCE-ARCH-001: the car's catalogue page learns about the connection too
   private val main = Handler(Looper.getMainLooper())
   private val pool = Executors.newFixedThreadPool(4)
   private var clock: NativeClock? = null

@@ -28,7 +28,7 @@ module.exports = {
   productName: 'jPlay',
   directories: { output: 'release', app: __dirname },
   electronVersion: '44.1.1',
-  files: ['main.cjs', 'preload.cjs', 'bridge.cjs', 'hosts.cjs', 'downloads.cjs', 'streams.cjs', 'hls.cjs', 'radio.cjs', 'folder-import.cjs', 'brand-folders.cjs', 'package.json', '../launcher/jplay.ico'],
+  files: ['main.cjs', 'preload.cjs', 'bridge.cjs', 'metered.cjs', 'hosts.cjs', 'downloads.cjs', 'streams.cjs', 'hls.cjs', 'radio.cjs', 'folder-import.cjs', 'brand-folders.cjs', 'package.json', '../launcher/jplay.ico'],
   asar: true,
   extraResources: [
     { from: '../web/dist', to: 'web', filter: ['**/*'] },

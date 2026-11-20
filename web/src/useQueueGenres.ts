@@ -52,6 +52,9 @@ export function mergeGenres(result: RecResult, rows: readonly GenreAnswer[]): Re
   return changed ? { ...result, items } : result;
 }
 
+const RESUME_MIN_MS = 30_000;
+const RESUME_MAX_MS = 30 * 60_000;
+
 export function useQueueGenres(result: RecResult | null, running: boolean, setResult: Dispatch<SetStateAction<RecResult | null>>): void {
   // The rows still to place, as one string: asking again is tied to that set changing.
   const wanted = (result?.items ?? []).filter((x) => !rowPlaced(x)).map((x) => x.track.key).join('\n');
@@ -59,6 +62,9 @@ export function useQueueGenres(result: RecResult | null, running: boolean, setRe
   const busy = useRef(false);
   /** The set the engine last said it could do no more for; not asked about again until it changes. */
   const settled = useRef('');
+  /** ALLOWANCE-ARCH-001: the timer that asks again once paused look-ups can resume. */
+  const resume = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(resume.current), []);
 
   useEffect(() => {
     if (!wanted || running || busy.current || settled.current === wanted) return;
@@ -74,6 +80,16 @@ export function useQueueGenres(result: RecResult | null, running: boolean, setRe
         if (r?.left > 0 && !r.spent) return setAgain((n) => n + 1);
         // Nothing more can be asked: the rows still unplaced wait for the queue to change.
         settled.current = wanted.split('\n').filter((k) => !rows.some((x) => x.key === k)).join('\n');
+        // ALLOWANCE-ARCH-001: paused to save mobile data. The engine says when the allowance has refilled enough;
+        // ask again then, by itself (never sooner than half a minute, never later than half an hour).
+        if (r?.spent && typeof r.resumes_at === 'number') {
+          const wait = Math.min(RESUME_MAX_MS, Math.max(RESUME_MIN_MS, r.resumes_at * 1000 - Date.now()));
+          clearTimeout(resume.current);
+          resume.current = setTimeout(() => {
+            settled.current = '';
+            setAgain((n) => n + 1);
+          }, wait);
+        }
       },
       () => {
         busy.current = false;

@@ -17,15 +17,18 @@ const open = async (port: { request: (...a: unknown[]) => Promise<never> }) => {
 type Sources = Record<string, { state: string; detail?: string }>;
 const search = async (api: LocalApi, q: string) => ((await api.handle('GET', `/api/search?q=${encodeURIComponent(q)}`)).body as { sources: Sources }).sources;
 
-it('reports every source as budget once the day\u2019s allowance is spent, and asks none of them', async () => {
+// ALLOWANCE-ARCH-001 (owner, 2026-11-20): a search the listener typed is never refused for the allowance; only
+// background work waits for it. (Before: every source was reported as `budget` and none was asked.)
+it('still asks every source once the day\u2019s allowance is spent', async () => {
   let asked = 0;
-  const { api, store } = await open({ request: async () => { asked++; throw new Error('should not be asked'); } });
+  const { api, store } = await open({ request: async () => { asked++; throw new Error('offline'); } });
   await api.handle('PUT', '/api/settings', { daily_mb: 5 });
   store.addTransfer('metadata', 6_000_000);
+  await store.put('allowance_reserve', { level: 0, at: Date.now() / 1000, capacity: 5_000_000, metered: true });
   const sources = await search(api, 'ken carson');
   expect(Object.keys(sources).length).toBeGreaterThan(0);
-  for (const [name, s] of Object.entries(sources)) expect(s.state, name).toBe('budget');
-  expect(asked).toBe(0);
+  for (const [name, s] of Object.entries(sources)) expect(s.state, name).not.toBe('budget');
+  expect(asked).toBeGreaterThan(0);
 });
 
 it('keeps an ordinary network failure a failure while allowance is left', async () => {

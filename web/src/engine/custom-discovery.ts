@@ -294,12 +294,14 @@ export function customOutcome(added: number, asked: number, sources: Record<stri
   const states = Object.values(sources).map((s) => s.state);
   const ok = states.includes('ok');
   const budget = states.includes('budget');
-  if (added === 0 && !ok && budget) return 'The daily transfer allowance is used up, so no service could be searched. Raise it in Settings (Daily allowance) or try again tomorrow.';
+  // ALLOWANCE-ARCH-001: a discovery the listener starts is never refused for the mobile data allowance; `budget`
+  // here is this one discovery reaching its own size limit (Settings, "Discovery allowance").
+  if (added === 0 && !ok && budget) return 'This discovery reached its size limit before any service answered. Raise "Discovery allowance" in Settings and try again.';
   if (added === 0 && !ok && states.length) return 'No service answered. Check the connection and try again.';
   if (added === 0) return 'No matching songs found. Try fewer genre restrictions or more artist sources.';
   if (added >= asked) return '';
   const parts = [`Only ${added} matching ${added === 1 ? 'song was' : 'songs were'} available.`];
-  if (budget) parts.push('Some services were skipped: the daily transfer allowance is used up.');
+  if (budget) parts.push('Some services were skipped: this discovery reached its size limit (Settings, "Discovery allowance").');
   if (missed.length) parts.push(`Could not read: ${missed.slice(0, 4).join(', ')}${missed.length > 4 ? '\u2026' : ''}.`);
   return parts.join(' ');
 }

@@ -136,14 +136,14 @@ describe('a whole run', () => {
 
 describe('what the listener is told', () => {
   it('never says "no matching songs" when the services could not be searched', () => {
-    expect(customOutcome(0, 10, { a: { state: 'budget' }, b: { state: 'budget' } }, [])).toBe("The daily transfer allowance is used up, so no service could be searched. Raise it in Settings (Daily allowance) or try again tomorrow.");
+    expect(customOutcome(0, 10, { a: { state: 'budget' }, b: { state: 'budget' } }, [])).toBe('This discovery reached its size limit before any service answered. Raise "Discovery allowance" in Settings and try again.');
     expect(customOutcome(0, 10, { a: { state: 'failed' } }, [])).toBe('No service answered. Check the connection and try again.');
     expect(customOutcome(0, 10, { a: { state: 'ok' } }, [])).toBe('No matching songs found. Try fewer genre restrictions or more artist sources.');
   });
   it('a short result says how many, and which part could not be read', () => {
     expect(customOutcome(10, 10, { a: { state: 'ok' } }, [])).toBe('');
     expect(customOutcome(4, 10, { a: { state: 'ok' } }, [])).toBe('Only 4 matching songs were available.');
-    expect(customOutcome(4, 10, { a: { state: 'ok' }, b: { state: 'budget' } }, [])).toBe('Only 4 matching songs were available. Some services were skipped: the daily transfer allowance is used up.');
+    expect(customOutcome(4, 10, { a: { state: 'ok' }, b: { state: 'budget' } }, [])).toBe('Only 4 matching songs were available. Some services were skipped: this discovery reached its size limit (Settings, "Discovery allowance").');
     expect(customOutcome(1, 10, { a: { state: 'ok' } }, ['Yeat'])).toBe('Only 1 matching song was available. Could not read: Yeat.');
   });
 });

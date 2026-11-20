@@ -125,6 +125,7 @@ class MainActivity : Activity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    NativeHttp.attach(this) // ALLOWANCE-ARCH-001: answers say whether the connection is metered
     BrandFolders.moveOnce(this)
     root = FrameLayout(this).apply { setBackgroundColor(Color.parseColor("#f7f6f3")) }
     setContentView(root)

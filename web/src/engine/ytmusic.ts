@@ -50,6 +50,14 @@ const GRID_PARTS = `&prettyPrint=false&fields=${encodeURIComponent(
 const SONG_PAGE_PARTS = `&prettyPrint=false&fields=${encodeURIComponent(
   `contents.tabbedSearchResultsRenderer.tabs.tabRenderer.content.sectionListRenderer.contents.musicShelfRenderer(${SONG_ROW_PARTS}),continuationContents.musicShelfContinuation(${SONG_ROW_PARTS})`,
 )}`;
+/**
+ * ALLOWANCE-ARCH-001: what a row of the watch panel (a song, its radio) is read from, and the tab that names its
+ * "Related" page. Measured 2026-11-20: 1,804,619 bytes as the panel comes, 81,725 like this, the same 50 rows.
+ */
+const WATCH_ROW_PARTS = 'videoId,title,longBylineText,lengthText,thumbnail,navigationEndpoint.watchEndpoint,unplayableText';
+const WATCH_PARTS = `&prettyPrint=false&fields=${encodeURIComponent(
+  `contents.singleColumnMusicWatchNextResultsRenderer.tabbedRenderer.watchNextTabbedResultsRenderer.tabs.tabRenderer(unselectable,endpoint.browseEndpoint,content.musicQueueRenderer.content.playlistPanelRenderer.contents(playlistPanelVideoRenderer(${WATCH_ROW_PARTS}),playlistPanelVideoWrapperRenderer.primaryRenderer.playlistPanelVideoRenderer(${WATCH_ROW_PARTS})))`,
+)}`;
 const LIST_BYTES = 12_000_000;
 
 export interface Artist {
@@ -341,14 +349,30 @@ export class YouTubeMusic {
     };
     if (c.meter) o.meter = c.meter;
     if (c.token) o.token = c.token;
-    return this.http.getJson<Json>(`${API}${endpoint}?alt=json${query}`, o);
+    // ALLOWANCE-ARCH-001: compact JSON always. The indented form is 3.5 times the size and says nothing more
+    // (measured: a songs search 683,896 bytes indented, 196,423 compact).
+    const q = query.includes('prettyPrint=') ? query : `&prettyPrint=false${query}`;
+    return this.http.getJson<Json>(`${API}${endpoint}?alt=json${q}`, o);
+  }
+
+  /**
+   * ALLOWANCE-ARCH-001: asks for only the parts that are read. If that short form itself is refused the
+   * whole page is asked for once; a spent allowance, a cancel or "slow down" is not answered by asking for more.
+   */
+  private async lean(endpoint: string, body: Json, c: Ctx, parts: string): Promise<Json> {
+    try {
+      return await this.post(endpoint, body, c, MAX_BYTES, parts);
+    } catch (e) {
+      if (e instanceof BudgetExceeded || e instanceof Cancelled || /HTTP 403\b/.test(String((e as Error)?.message ?? ''))) throw e;
+      return this.post(endpoint, body, c);
+    }
   }
 
   private watch(videoId: string, limit: number, c: Ctx, radio = false) {
     const body: Json = { enablePersistentPlaylistPanel: true, isAudioOnly: true, tunerSettingValue: 'AUTOMIX_SETTING_NORMAL', videoId, playlistId: `RDAMVM${videoId}` };
     if (radio) body['params'] = 'wAEB';
     else body['watchEndpointMusicSupportedConfigs'] = { watchEndpointMusicConfig: { hasPersistentPlaylistPanel: true, musicVideoType: 'MUSIC_VIDEO_TYPE_ATV' } };
-    return this.post('next', body, c).then(parseWatch).then((w) => ({ ...w, tracks: w.tracks.slice(0, Math.max(1, limit)) }));
+    return this.lean('next', body, c, WATCH_PARTS).then(parseWatch).then((w) => ({ ...w, tracks: w.tracks.slice(0, Math.max(1, limit)) }));
   }
 
   toTrack(x: YtItem, kind?: string): Track {
@@ -436,7 +460,7 @@ export class YouTubeMusic {
 
   search(q: string, limit = 15, c: Ctx = {}): Promise<Track[]> {
     return cached(c.refresh ? undefined : this.store, `yt:search:${fold(q)}:${limit}`, 'search', 15 * 60, async () => {
-      const r = await this.post('search', { query: q, params: SONGS_FILTER }, c);
+      const r = await this.lean('search', { query: q, params: SONGS_FILTER }, c, SONG_PAGE_PARTS);
       return parseSearchSongs(r).slice(0, limit).map((x) => this.toTrack(x, 'song'));
     });
   }
@@ -448,7 +472,7 @@ export class YouTubeMusic {
    */
   searchVideos(q: string, limit = 15, c: Ctx = {}): Promise<Track[]> {
     return cached(c.refresh ? undefined : this.store, `yt:videos:${fold(q)}:${limit}`, 'search', 15 * 60, async () => {
-      const r = await this.post('search', { query: q, params: VIDEOS_FILTER }, c);
+      const r = await this.lean('search', { query: q, params: VIDEOS_FILTER }, c, SONG_PAGE_PARTS);
       return parseSearchSongs(r).slice(0, limit).map((x) => this.toTrack(x));
     });
   }

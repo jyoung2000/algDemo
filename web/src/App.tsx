@@ -1228,6 +1228,10 @@ export function App() {
   useQueueGenres(result, running, setResult);
   // ALLOWANCE-SEEN-001: every source the last discovery asked was refused for the day's allowance.
   const allowanceSpent = Object.values(result?.sources ?? {}).some((s) => s.state === 'budget');
+  /** ALLOWANCE-ARCH-001: fill the background allowance at once (as "Check again" does) and look again. */
+  const continueNow = () => {
+    void api.health(true).catch(() => undefined).then(() => run(true));
+  };
   const sample = Boolean(result?.sample);
   const adventurous = settings?.adventurous ?? 0.5;
   const fresh = settings?.fresh ?? false;
@@ -1509,16 +1513,17 @@ export function App() {
                   <Glyph name="warning" size={14} /> {runErr}
                 </p>
               )}
-              {/* ALLOWANCE-SEEN-001: a day's allowance that is used up stops discovery, genre reading
-                  and album colour. Say so where the new music would have been, not only in Settings. */}
+              {/* ALLOWANCE-SEEN-001 + ALLOWANCE-ARCH-001 (owner, 2026-11-20): only background work waits for the
+                  mobile data allowance, which refills by itself and does not apply on Wi-Fi. Say so where the new
+                  music would have been, and offer to carry on at once. */}
               {allowanceSpent && !running && (
-                <div className="budget-note" role="note" aria-label="Discovery allowance used up">
+                <div className="budget-note" role="note" aria-label="Finding new songs is paused">
                   <p className="state">
-                    <Glyph name="info" size={14} /> Today’s download allowance is all used up, so no new music could be
-                    found and genres were not read. It resets tomorrow.
+                    <Glyph name="info" size={14} /> Some sources were skipped to save mobile data. Finding new songs
+                    carries on by itself as the allowance refills, and is never limited on Wi-Fi.
                   </p>
-                  <button className="push" type="button" onClick={() => setTab('settings')} aria-label="Raise the allowance in Settings">
-                    Raise the allowance in Settings
+                  <button className="push" type="button" onClick={continueNow} aria-label="Continue finding new songs now">
+                    Continue now
                   </button>
                 </div>
               )}

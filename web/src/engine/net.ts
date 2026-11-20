@@ -57,11 +57,17 @@ export interface HttpResponse {
   status: number;
   headers: Record<string, string>;
   body: Uint8Array;
+  /** ALLOWANCE-ARCH-001: bytes the network carried for this answer (before unpacking), when the shell knows. */
+  wireBytes?: number;
+  /** ALLOWANCE-ARCH-001: whether the connection is metered (mobile data), when the shell knows. */
+  metered?: boolean | null;
 }
 
 /** The transport. Implementations must not follow redirects themselves: Http re-checks every hop. */
 export interface HttpPort {
   request(req: HttpRequest, signal?: AbortSignal): Promise<HttpResponse>;
+  /** ALLOWANCE-ARCH-001. Optional: is the connection metered right now? null when the shell cannot tell. No network use. */
+  metered?(): Promise<boolean | null>;
   /**
    * NATIVE-CLOCK-001. Optional: wait at least `ms` on the shell's own clock. A hidden Android WebView
    * suspends its DOM timers, so pacing and backoff use this when present. It must reject a wait it
@@ -205,7 +211,21 @@ export interface GetOptions {
 class Retryable extends Error {}
 
 export class Http {
+  /** ALLOWANCE-ARCH-001: told what each answer says about the connection (metered or not). */
+  onMetered?: (metered: boolean) => void;
+
   constructor(private readonly port: HttpPort, private readonly pacer: HostPacer = PACER) {}
+
+  /** Asks the shell about the connection without using it; null when it cannot say. */
+  async metered(): Promise<boolean | null> {
+    try {
+      const m = (await this.port.metered?.()) ?? null;
+      if (m !== null) this.onMetered?.(m);
+      return m;
+    } catch {
+      return null;
+    }
+  }
 
   async get(url: string, opt: GetOptions): Promise<{ response: HttpResponse; finalUrl: string }> {
     const retries = opt.retries ?? 2;
@@ -279,12 +299,19 @@ export class Http {
       if (declared && /^\d+$/.test(declared) && Number(declared) > cap) {
         throw new BudgetExceeded(`${host} declared ${declared} bytes, over the ${cap}-byte cap`);
       }
-      // The transport has already buffered the body; the cap is enforced on what actually arrived.
-      if (response.body.byteLength > cap) {
-        opt.meter?.add(opt.category ?? 'metadata', response.body.byteLength);
-        throw new BudgetExceeded(`${host} sent more than the ${cap}-byte cap; aborted`);
+      if (typeof response.metered === 'boolean') this.onMetered?.(response.metered);
+      // ALLOWANCE-ARCH-001: the allowance is charged what the network carried; the unpacked answer (7 to 17
+      // times larger, measured) is bounded by the request's own size limit only. A shell that reports no
+      // wire size is charged the answer itself, as before.
+      const size = response.body.byteLength;
+      const w = response.wireBytes;
+      const wire = typeof w === 'number' && Number.isInteger(w) && w >= 0 ? w : size;
+      // The transport has already buffered the body; the caps are enforced on what actually arrived.
+      if (size > opt.maxBytes || wire > cap) {
+        opt.meter?.add(opt.category ?? 'metadata', wire);
+        throw new BudgetExceeded(`${host} sent more than the ${wire > cap ? cap : opt.maxBytes}-byte cap; aborted`);
       }
-      opt.meter?.add(opt.category ?? 'metadata', response.body.byteLength);
+      opt.meter?.add(opt.category ?? 'metadata', wire);
       return { response, finalUrl: current };
     }
     throw new FetchError('too many redirects');

@@ -95,18 +95,27 @@ describe('a discovery stopped by the day\u2019s allowance says so (ALLOWANCE-SEE
   const spentResult = { items: [], count: 0, asked: 4, phase: 'final', saved_at: 1_700_000_000,
     sources: { deezer: { state: 'budget', ms: 3 }, ytmusic: { state: 'budget', ms: 2 } }, transfer: {} } as unknown as RecResult;
 
-  it('names the allowance and offers Settings', async () => {
+  // ALLOWANCE-ARCH-001 (owner, 2026-11-20): only background work waits for the allowance now, it refills by itself
+  // and does not apply on Wi-Fi. The note says that, and offers to carry on at once instead of "raise it in Settings".
+  it('says finding new songs is paused, that it resumes by itself, and offers to continue now', async () => {
     vi.mocked(api.last).mockResolvedValue(spentResult);
+    vi.mocked(api.health).mockResolvedValue({ providers: {}, audio: {} } as never);
     render(<App />);
-    const note = await screen.findByRole('note', { name: 'Discovery allowance used up' });
-    expect(note.textContent).toMatch(/allowance/i);
-    expect(screen.getByRole('button', { name: 'Raise the allowance in Settings' })).toBeTruthy();
+    const note = await screen.findByRole('note', { name: 'Finding new songs is paused' });
+    expect(note.textContent).toMatch(/to save mobile data/i);
+    expect(note.textContent).toMatch(/by itself/i);
+    expect(note.textContent).toMatch(/never limited on Wi-Fi/i);
+    expect(note.textContent).not.toMatch(/tomorrow|used up/i);
+    expect(screen.queryByRole('button', { name: 'Raise the allowance in Settings' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue finding new songs now' }));
+    await waitFor(() => expect(api.health).toHaveBeenCalledWith(true));
+    await waitFor(() => expect(api.recommend).toHaveBeenCalled());
   });
 
   it('stays quiet when the sources answered', async () => {
     vi.mocked(api.last).mockResolvedValue({ ...spentResult, sources: { deezer: { state: 'ok', count: 2, ms: 3 } } } as unknown as RecResult);
     render(<App />);
     await screen.findByRole('searchbox');
-    expect(screen.queryByRole('note', { name: 'Discovery allowance used up' })).toBeNull();
+    expect(screen.queryByRole('note', { name: 'Finding new songs is paused' })).toBeNull();
   });
 });
