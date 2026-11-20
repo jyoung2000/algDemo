@@ -307,6 +307,37 @@ export function broadcastTimeline(b: Broadcast | null, track: { duration?: numbe
   return { over, elapsed, duration, durationSource: publishedDuration ? 'broadcaster' : catalogueDuration ? 'catalogue' : null, clockSource: elapsed === null ? null : measured ? 'audio' as const : 'broadcaster' as const, behind, max, value, rewindable: Math.max(0, (snap?.position ?? 0) - (snap?.oldest ?? 0)) };
 }
 /**
+ * RADIO-ICY-CLOCK-001: where a song begins in the audio heard, from the native ring's in-band title changes (ring
+ * seconds). The feed can run ahead of the audio (Power 92: 37.5 s), so the change must come after the feed named the
+ * song (`markerAt`, ring seconds, 10 s of slack) and within five minutes of it. Null when none fits.
+ */
+export function icySongStart(marks: readonly { at: number; title: string }[] | undefined, b: Broadcast | null, markerAt: number): number | null {
+  if (!marks?.length || !b || b.kind !== 'song' || !b.title) return null;
+  const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const title = norm(b.title), artist = b.artist ? norm(b.artist).split(' ')[0] ?? '' : '';
+  if (!title) return null;
+  const hit = marks.filter((m) => Number.isFinite(m.at) && m.at >= markerAt - 10 && m.at <= markerAt + 300)
+    .find((m) => { const t = norm(m.title); return t.includes(title) && (!artist || t.includes(artist)); });
+  return hit ? Math.round(hit.at * 100) / 100 : null;
+}
+/**
+ * CAR-RADIO-CLOCK-002 (owner, 2026-11-20): the clock Android Auto is given, by the phone's own rules
+ * ([broadcastTimeline]). `pinnedStart` is the published start already pinned to the ring clock for this item.
+ * - A start measured from the audio wins and is never "over".
+ * - RADIO-SONG-OVER-001: a published start more than a minute past the song's whole catalogue length (no
+ *   broadcaster length) means the feed is still naming a song that has ended: `over`, and no clock.
+ * - No known start: no clock at all. A length alone would make the car draw a bar counting from zero.
+ */
+export function carRadioClock(b: Broadcast | null, track: { duration?: number | null } | null, identified: boolean, snap: { received: number; position: number } | null, now = Date.now(), measuredStart?: number | null, pinnedStart?: number | null): { start: number | null; duration: number | null; over: boolean } {
+  const measured = !!snap && typeof measuredStart === 'number' && Number.isFinite(measuredStart);
+  const own = radioItemClock(b, track, identified, snap, now, measuredStart);
+  const start = measured ? own.start : typeof pinnedStart === 'number' && Number.isFinite(pinnedStart) ? pinnedStart : own.start;
+  if (start === null || !snap) return { start: null, duration: null, over: false };
+  const published = typeof b?.duration === 'number' && Number.isFinite(b.duration) && b.duration > 0;
+  const over = !measured && !published && own.duration !== null && snap.position - start > own.duration + 60;
+  return over ? { start: null, duration: null, over: true } : { start, duration: own.duration, over: false };
+}
+/**
  * CAR-RADIO-CONTROLS-001: the on-air item's clock for Android Auto, on the ring's sample clock: where
  * the item began (seconds; the car shows position minus this) and its length, with the same sources
  * and precedence as [broadcastTimeline]: a start measured from the audio, else a published start;

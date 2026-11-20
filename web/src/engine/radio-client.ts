@@ -1,6 +1,6 @@
 import { api, type Characteristics, type Track } from '../api';
 import { parseTitle } from './identity';
-import { RadioDirectory, parseBroadcast, freshBroadcast, heardCredit, pickShuffleIndex, radioItemClock, songStartFromFingerprint, type Broadcast, type RadioStation } from './radio';
+import { RadioDirectory, parseBroadcast, freshBroadcast, heardCredit, pickShuffleIndex, radioItemClock, carRadioClock, icySongStart, songStartFromFingerprint, type Broadcast, type RadioStation } from './radio';
 import { publisherBroadcast, icecastBroadcast } from './radio-feeds';
 import { geocodePlace, type RadioPlace } from './radio-places';
 import { normaliseRadioArtist, radioArtistKey, radioSongFits } from './radio-artist';
@@ -8,7 +8,7 @@ import { ListenMeter } from '../util';
 import { radioOutput } from '../audio-engine';
 import { songFromTrack, type NativeSong } from './media-native';
 
-export interface RadioSnapshot { id: string; stationId: string; station?: RadioStation; paused: boolean; position: number; received: number; oldest: number; heard: number; dropped: boolean; state: string; error: string | null; native: boolean; pcm?: string }
+export interface RadioSnapshot { id: string; stationId: string; station?: RadioStation; paused: boolean; position: number; received: number; oldest: number; heard: number; dropped: boolean; state: string; error: string | null; native: boolean; pcm?: string; /** RADIO-ICY-CLOCK-001: in-band title changes on the ring clock (native rings). */ icy?: { at: number; title: string }[] }
 /** RADIO-FIRST-START-001: the first start after an install waits while the phone unpacks its bundled decoder. */
 export const radioNativeTimeout = (op: unknown): number => (op === 'start' ? 60000 : op === 'metadata' || op === 'request' ? 20000 : 15000);
 export async function radioNative<T = RadioSnapshot>(q: Record<string, unknown>): Promise<T> {
@@ -179,12 +179,14 @@ class RadioSession {
     const m = [...this.markers].reverse().find(x => x.at <= snap.position + 0.5) || this.markers[0]; if (!m) return;
     if (this.currentMarker !== m) { void this.credit(true); this.itemHeard = 0; this.lastItem = m.broadcast.title; this.currentMarker = m;
  (m.meter ??= new ListenMeter()).seeked(snap.position); }
+    // RADIO-ICY-CLOCK-001: a song that began while listening starts where its title changed in the audio (a fingerprint still wins).
+    if (m.startAt == null) { const at = icySongStart(snap.icy, m.broadcast, m.at); if (at !== null) m.startAt = at; }
     if (snap.native) {
       // CAR-RADIO-CONTROLS-001: the car's star, playlist pick and elapsed/length follow what the phone shows.
       // A published start drifts with network bursts if recomputed, so it is pinned once per item (as the phone's bufferOffset is).
       if (m.carStart === undefined && snap.received > 0 && m.broadcast.startedAt) m.carStart = radioItemClock(m.broadcast, null, false, snap).start;
-      const clock = radioItemClock(m.broadcast, m.track, m.identified, snap, Date.now(), m.startAt ?? null);
-      const update = radioNowPlaying(snap.id, m, this.value.station, { start: m.startAt != null ? clock.start : m.carStart ?? null, duration: clock.duration });
+      // CAR-RADIO-CLOCK-002: the phone's rules: no clock when the start is unknown, "waiting" once the song is over.
+      const update = radioNowPlaying(snap.id, m, this.value.station, carRadioClock(m.broadcast, m.track, m.identified, snap, Date.now(), m.startAt ?? null, m.carStart ?? null));
       const key = JSON.stringify(update);
       if (this.lastNativeMetadata !== key) { this.lastNativeMetadata = key; void radioNative(update).catch(() => { if (this.lastNativeMetadata === key) this.lastNativeMetadata = ''; }); }
     }
@@ -308,7 +310,13 @@ export const radioSession = new RadioSession();
  * unmatched titles never get a star (programmes never train taste). `start` is where the item began
  * on the ring clock and `duration` its length, both seconds or null when not known.
  */
-export function radioNowPlaying(id: string, m: { broadcast: Broadcast; track: Track | null; identified: boolean }, station: RadioStation | null, clock: { start: number | null; duration: number | null }) {
+export function radioNowPlaying(id: string, m: { broadcast: Broadcast; track: Track | null; identified: boolean }, station: RadioStation | null, clock: { start: number | null; duration: number | null; over?: boolean }) {
+  // CAR-RADIO-CLOCK-002: the feed still names a song that has ended (talk or ads after it). Say so, as the phone does.
+  if (clock.over) {
+    const last = m.track?.title || m.broadcast.title, by = m.track?.artists?.join(', ') || m.broadcast.artist;
+    return { op: 'nowplaying' as const, id, title: 'Waiting for the next song', artist: last ? `Last song: ${last}${by ? ` – ${by}` : ''}` : station?.name || '',
+      artwork: station?.image || m.broadcast.artwork || '', song: null, track: null, start: null, duration: null };
+  }
   const named = m.identified && m.track && m.track.provider !== 'radio' ? m.track : null;
   let track: Track | null = named;
   try { if (named && JSON.stringify(named).length > 16_000) track = null; } catch { track = null; }

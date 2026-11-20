@@ -421,7 +421,8 @@ class EnginePlayer(
       .setPlayWhenReady(playWhenReady, Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
       .setPlaylist(playlist)
       .setCurrentMediaItemIndex(queue.index.coerceAtLeast(0))
-      .setContentPositionMs(if (playing) PositionSupplier.getExtrapolating(positionMs, 1f) else PositionSupplier.getConstant(positionMs))
+      // CAR-RADIO-CLOCK-002: live radio with no known song start has no clock; a running count from zero would be invented.
+      .setContentPositionMs(if (playing && !(radioLive && radioStartMs == null)) PositionSupplier.getExtrapolating(positionMs, 1f) else PositionSupplier.getConstant(positionMs))
       .setShuffleModeEnabled(if (radioLive) com.nowplaying.discovery.RadioNative.shuffle else queue.shuffle)
       .setRepeatMode(
         when (queue.repeat) {

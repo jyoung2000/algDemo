@@ -21,9 +21,10 @@ export function TasteSpinner({ playing, songs, size = 14 }: { playing: boolean; 
   }, [songs]);
   return (
     <svg className={`taste-spin${playing ? ' is-on' : ''}${playing && fast ? ' is-fast' : ''}`} width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-      {/* the upper half of a circle, with the arrowhead at its right end pointing down the way it turns */}
-      <path className="taste-spin__arc" d="M2.5 8a5.5 5.5 0 0 1 11 0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      <path className="taste-spin__head" d="M10.6 6.9 13.5 9.6 15.6 6.3Z" fill="currentColor" />
+      {/* TASTE-SPIN-002: the whole upper half of a circle (9 o'clock to 3 o'clock about the icon's centre); the arrowhead
+          hangs below its right end, pointing down the way it turns, and covers none of the arc. */}
+      <path className="taste-spin__arc" d="M2.5 8 A5.5 5.5 0 0 1 13.5 8" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="butt" />
+      <path className="taste-spin__head" d="M11 8 16 8 13.5 11.6Z" fill="currentColor" />
     </svg>
   );
 }

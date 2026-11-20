@@ -1,4 +1,4 @@
-/* MARQUEE-001: cut-off row text glides to its end and back. Only `transform` animates. */
+/* MARQUEE-001 / MARQUEE-LOOP-001: cut-off row text loops all the way round. Only `transform` animates. */
 .mq {
   display: block;
   min-width: 0;
@@ -19,17 +19,25 @@
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
 }
-.mq.is-moving .mq__inner {
-  will-change: transform;
-  animation: mq-glide var(--mq-time, 12s) ease-in-out infinite;
+/* MARQUEE-LOOP-001: the hidden copy that follows the text round the loop. */
+.mq__echo {
+  display: inline-block;
+  white-space: nowrap;
+  padding-left: var(--mq-gap, 32px);
+  transform: translateX(0);
 }
-/* 0-20% wait on the first letter, glide, 50-65% wait at the end, glide back. */
-@keyframes mq-glide {
+.mq.is-moving .mq__inner,
+.mq.is-moving .mq__echo {
+  will-change: transform;
+  animation: mq-loop var(--mq-time, 12s) linear infinite;
+}
+/* 0-20% rest on the first letter, then all the way through until the copy stands where the text began. */
+@keyframes mq-loop {
   0%, 20% { transform: translateX(0); }
-  50%, 65% { transform: translateX(var(--mq-shift, 0)); }
-  100% { transform: translateX(0); }
+  100% { transform: translateX(var(--mq-loop, 0)); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .mq.is-moving .mq__inner { animation: none; }
+  .mq.is-moving .mq__inner, .mq.is-moving .mq__echo { animation: none; }
+  .mq__echo { display: none; }
   .mq.is-long, .mq.is-moving { -webkit-mask-image: none; mask-image: none; text-overflow: ellipsis; }
 }

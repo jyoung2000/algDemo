@@ -20,7 +20,7 @@ describe('the tag strip', () => {
     expect(strip.getAttribute('aria-label')).toBe('Song details');
     expect(strip.querySelectorAll(':scope > .mq > .mq__inner > .genre')).toHaveLength(5);
     const css = src('tag-strip.css');
-    expect(css).toMatch(/\.tag-strip \.mq__inner \{[^}]*display: inline-flex;[^}]*flex-wrap: nowrap;/);
+    expect(css).toMatch(/\.tag-strip \.mq__inner(?:,\s*\.tag-strip \.mq__echo)? \{[^}]*display: inline-flex;[^}]*flex-wrap: nowrap;/);
     expect(css).toMatch(/max-width: min\(100%, var\(--tag-cap, 100%\)\)/);
   });
   it('is as wide as the first two tags; a third or more glides into view', () => {

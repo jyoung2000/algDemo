@@ -8,13 +8,15 @@ body .tag-strip {
 .tag-strip .mq {
   flex: 0 1 auto;
 }
-.tag-strip .mq__inner {
+.tag-strip .mq__inner,
+.tag-strip .mq__echo {
   display: inline-flex;
   align-items: center;
   flex-wrap: nowrap;
   gap: 8px;
   vertical-align: top;
 }
-.tag-strip .mq__inner > * {
+.tag-strip .mq__inner > *,
+.tag-strip .mq__echo > * {
   flex: none;
 }
