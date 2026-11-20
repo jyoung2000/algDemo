@@ -52,6 +52,38 @@ describe('the taste map Y axis', () => {
   });
 });
 
+// TASTE-MAP-AXIS-003 (owner, 2026-11-20): "ensure the taste map x and y axis look clean and the text is properly
+// parallel to the X and Y side of the taste map". The X title sat above the map's top-left corner; it now runs
+// along the bottom edge, centred under the field, as the Y title runs up the left edge centred beside it. Each
+// tempo label is centred on the exact height it names, with a short tick mark against the field.
+describe('both axis titles run along their own side of the map (TASTE-MAP-AXIS-003)', () => {
+  it('the X title "Genre" sits under the genre names, in the field\'s column; nothing floats above the map', () => {
+    const { container } = render(<TastePicker trail={trail} />);
+    const plot = container.querySelector('.tpick__plot')!;
+    const x = plot.querySelector(':scope > .tpick__fams + .tpick__xtitle')!;
+    expect(x).not.toBeNull();
+    expect(x.textContent).toBe('Genre');
+    expect(x.getAttribute('aria-hidden')).toBe('true');
+    expect(container.querySelector('.tpick__axes')).toBeNull();
+  });
+  it('each tempo label is placed at the exact height it names, top to bottom', () => {
+    const { container } = render(<TastePicker trail={trail} />);
+    const tops = [...container.querySelectorAll<HTMLElement>('.tpick__ytick')].map((t) => t.style.top);
+    expect(tops).toEqual([0, 1, 2, 3, 4, 5, 6, 7].map((i) => `${(i / 7) * 100}%`));
+  });
+  it('titles are styled alike and centred on their side; labels centre on their line with a tick mark', () => {
+    const css = src('taste-map-axis.css');
+    const x = rule(css, '\n.tpick__xtitle');
+    expect(x).toMatch(/grid-column:\s*2/);
+    expect(x).toMatch(/text-align:\s*center/);
+    expect(rule(css, '.tpick__ytitle, .tpick__xtitle')).toMatch(/font-size:\s*10px;[\s\S]*text-transform:\s*uppercase/);
+    const t = rule(css, '.tpick__ytick');
+    expect(t).toMatch(/position:\s*absolute/);
+    expect(t).toMatch(/transform:\s*translateY\(-50%\)/);
+    expect(rule(css, '.tpick__ytick::after')).toMatch(/width:\s*4px/);
+  });
+});
+
 describe('tapping a cover on the taste map', () => {
   it('opens a song card next to the cover and does not move the cursor', () => {
     const { container } = render(<TastePicker trail={trail} />);

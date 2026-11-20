@@ -78,10 +78,13 @@ object RadioCatalog {
     fun text(key: String, fallback: String = "") = o.optString(key, fallback).takeUnless { it == "null" }.orEmpty().trim().take(500)
     val id = text("id").ifBlank { text("stationuuid") }
     val name = text("name")
-    val url = text("url_resolved").ifBlank { text("url") }
+    // RADIO-ROBUST-001: a playlist link is read fresh each time; the resolved address behind it can be an expired
+    // one-time session (WGN 720) or a retired server.
+    val playlist = Regex("\\.(m3u8?|pls)(\\?|$)|/playlist/", RegexOption.IGNORE_CASE).containsMatchIn(text("url"))
+    val url = if (playlist && publicUrl(text("url"))) text("url") else text("url_resolved").ifBlank { text("url") }
     if (id.isBlank() || name.isBlank() || !publicUrl(url)) return null
     val data = JSONObject().put("id", id).put("name", name).put("url", url)
-    for ((key, source) in listOf("homepage" to "homepage", "image" to "favicon", "country" to "country", "countryCode" to "countrycode", "region" to "state", "language" to "language", "codec" to "codec", "call" to "call")) {
+    for ((key, source) in listOf("homepage" to "homepage", "image" to "favicon", "country" to "country", "countryCode" to "countrycode", "region" to "state", "language" to "language", "codec" to "codec", "call" to "call", "iheartId" to "iheartId")) {
       val value = text(key).ifBlank { text(source) }
       data.put(key, if (key in listOf("homepage", "image") && !publicUrl(value)) "" else value)
     }
@@ -209,7 +212,15 @@ object RadioCatalog {
     favourites(ctx, null)
     val favourites = sorted(favouriteRows.filter { query.isNotBlank() && RadioNames.matchesQuery(it.name, query) })
     val remembered = sorted(remembered().filter { query.isNotBlank() && RadioNames.matchesQuery(it.name, query) && favouriteRows.none { f -> f.id == it.id } })
-    val found = try { directory.stations(query, offset) } catch (e: Exception) { if (favourites.isEmpty() && remembered.isEmpty()) throw e else emptyList() }
+    // CAR-RADIO-IHEART-001: iHeart's own station search too (V103 and Power 92 are not in Radio Browser).
+    // Asked alongside Radio Browser, not after it; its matches are listed first.
+    val places = if (query.isBlank() || offset > 0) emptyList() else carFilters(ctx).places.mapNotNull { id -> savedPlaces(ctx).firstOrNull { it.id == id } }.ifEmpty { savedPlaces(ctx) }.filter { it.countryCode.equals("US", true) } // iHeart is a US directory
+    val askNear = if (places.isEmpty()) null else java.util.concurrent.CompletableFuture.supplyAsync { RadioIheart.searchNear(query, places) { RadioNative.fetchText(it) } }
+    val ask = if (query.isBlank() || offset > 0) null else java.util.concurrent.CompletableFuture.supplyAsync { RadioIheart.search(query) { RadioNative.fetchText(it) } }
+    val rb = try { Result.success(directory.stations(query, offset)) } catch (e: Exception) { Result.failure(e) }
+    val local = runCatching { askNear?.get(10, TimeUnit.SECONDS) }.getOrNull().orEmpty()
+    val iheart = (local + runCatching { ask?.get(10, TimeUnit.SECONDS) }.getOrNull().orEmpty()).distinctBy { it.id }
+    val found = RadioIheart.iheartFirst(RadioIheart.merge(rb.getOrElse { e -> if (favourites.isEmpty() && remembered.isEmpty() && iheart.isEmpty()) throw e else emptyList() }, iheart), local.map { it.id }.toSet())
     rememberNamedQuery(query, found)
     // Reuse real learned call-sign/frequency aliases across broad numeric searches.
     val fresh = found.associateBy { it.id }

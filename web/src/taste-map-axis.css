@@ -2,8 +2,10 @@
 .tpick__plot {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  column-gap: 6px;
+  column-gap: 2px;
   row-gap: 6px;
+  /* half a label above the top tick and below the bottom one, so the centred end labels never clip */
+  padding-block: 6px 0;
   min-width: 0;
 }
 .tpick__plot > .tpick__fams {
@@ -17,23 +19,48 @@
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
-/* On its side, reading bottom to top, as a chart's Y axis does. */
-.tpick__ytitle {
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  text-align: center;
+/* TASTE-MAP-AXIS-003: the two titles look alike and each runs along its own side, centred on it: the Y title on its
+   side reading bottom to top up the left edge, the X title flat under the genre names along the bottom edge. */
+.tpick__ytitle, .tpick__xtitle {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.03em;
   text-transform: uppercase;
   white-space: nowrap;
+  color: var(--ink-2);
+  line-height: 1;
 }
+.tpick__ytitle {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  text-align: center;
+  padding-left: 2px;
+}
+.tpick__xtitle {
+  grid-column: 2;
+  text-align: center;
+  padding-top: 2px;
+}
+/* Each tempo label is centred on the exact height it names, with a 4px tick mark against the field. */
 .tpick__yticks {
+  position: relative;
+  min-width: calc(2.2em + 8px);
+}
+.tpick__ytick {
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
   display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: flex-end;
-  min-width: 2.2em;
+  align-items: center;
+  gap: 4px;
+  line-height: 1;
+}
+.tpick__ytick::after {
+  content: '';
+  width: 4px;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.6;
 }
 .tpick__area {
   position: relative;

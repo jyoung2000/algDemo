@@ -3013,13 +3013,6 @@ html {
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
-.tpick__axes {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  color: var(--ink-2);
-  font-variant-numeric: tabular-nums;
-}
 .tpick__field {
   position: relative;
   width: 100%;

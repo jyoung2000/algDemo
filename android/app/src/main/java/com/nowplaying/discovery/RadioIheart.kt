@@ -13,6 +13,9 @@ internal object RadioIheart {
   private val SPANISH = Regex("\\b(spanish|mexican|tejano|regional mexicano|latin|tropical|reggaeton|bachata|salsa|cumbia)\\b")
 
   fun nearUrl(lat: Double, lon: Double) = "$API/v2/content/liveStations?limit=200&lat=${"%.4f".format(Locale.ROOT, lat)}&lng=${"%.4f".format(Locale.ROOT, lon)}"
+  fun searchUrl(q: String) = "$API/v3/search/all?keywords=" + java.net.URLEncoder.encode(q.trim().take(80), "UTF-8").replace("+", "%20") +
+    "&bundle=false&station=true&artist=false&track=false&playlist=false&podcast=false&keyword=true&countryCode=US&startIndex=0&maxRows=12"
+  fun idsUrl(ids: List<String>) = "$API/v2/content/liveStations?limit=12&id=" + ids.take(12).joinToString(",")
   fun byIdUrl(id: String): String? = Regex("^ihr-(\\d{1,9})$").find(id)?.groupValues?.get(1)?.let { "$API/v2/content/liveStations?limit=1&id=$it" }
 
   private fun web(v: String): String { val t = v.trim(); if (t.isBlank()) return ""; val u = if (Regex("^https?://", RegexOption.IGNORE_CASE).containsMatchIn(t)) t else "https://$t"; return if (RadioCatalog.publicUrl(u)) u else "" }
@@ -66,15 +69,48 @@ internal object RadioIheart {
   private fun host(u: String) = runCatching { java.net.URI(u).host.orEmpty().lowercase(Locale.ROOT).removePrefix("www.") }.getOrDefault("")
   private fun calls(name: String) = Regex("(?:^|[^A-Z])([WK][A-Z]{2,3})(?=$|[^A-Z])").findAll(name.uppercase(Locale.ROOT)).map { it.groupValues[1] }.toSet()
 
-  /** One row per station: a Radio Browser row wins (starred ids keep working) and borrows a missing logo. */
+  /** CAR-RADIO-IHEART-001: iHeart stations matching a typed name, call letters or dial number (V103, WKSC, 102.7).
+   *  A failure or no match is an empty list: Radio Browser still answers the search. */
+  fun search(query: String, fetch: (String) -> String): List<RadioCatalog.Station> = runCatching {
+    if (query.isBlank()) return emptyList()
+    val st = JSONObject(fetch(searchUrl(query))).optJSONObject("results")?.optJSONArray("stations") ?: return emptyList()
+    val ids = (0 until st.length()).mapNotNull { st.optJSONObject(it)?.optLong("id", -1)?.takeIf { n -> n > 0 }?.toString() }.distinct().take(12)
+    if (ids.isEmpty()) return emptyList()
+    parse(fetch(idsUrl(ids))).filter { s ->
+      val j = s.json(); val call = j.optString("call")
+      RadioNames.matchesQuery(s.name, query) || (call.isNotBlank() && RadioNames.matchesQuery(call, query))
+    }
+  }.getOrDefault(emptyList())
+
+  /** Stations iHeart knows (its own rows and merged directory rows) first, each group keeping its order: in a car
+   *  search they are the local commercial stations a driver means by "power" or "kiss". */
+  fun iheartFirst(rows: List<RadioCatalog.Station>, local: Set<String> = emptySet()): List<RadioCatalog.Station> =
+    rows.sortedBy {
+      val ih = it.json().optString("iheartId").let { n -> if (n.isBlank()) "" else "ihr-$n" }
+      if (it.id in local || ih in local) 0 else if (it.id.startsWith("ihr-") || ih.isNotEmpty()) 1 else 2
+    }
+
+  /** Stations near the car's places (at most two asked) whose name or call letters match the query. */
+  fun searchNear(query: String, places: List<CarRadioFilters.Place>, fetch: (String) -> String): List<RadioCatalog.Station> =
+    if (query.isBlank()) emptyList() else places.take(2).flatMap { p ->
+      runCatching { near(fetch(nearUrl(p.lat, p.lon)), p) }.getOrDefault(emptyList()).filter { s ->
+        val call = s.json().optString("call")
+        RadioNames.matchesQuery(s.name, query) || (call.isNotBlank() && RadioNames.matchesQuery(call, query))
+      }
+    }.distinctBy { it.id }
+
+  /** One row per station: a Radio Browser row wins (starred ids keep working), borrows a missing logo and plays
+   *  iHeart's stream with iHeart's id (CAR-RADIO-IHEART-001): the volunteer directory's link can go stale (WXRT). */
   fun merge(directory: List<RadioCatalog.Station>, iheart: List<RadioCatalog.Station>): List<RadioCatalog.Station> {
     val out = directory.toMutableList()
     for (s in iheart) {
       val j = s.json(); val call = j.optString("call"); val home = host(j.optString("homepage"))
       val at = out.indexOfFirst { x -> x.id == s.id || (!x.id.startsWith("ihr-") && ((call.isNotBlank() && call in calls(x.name)) || (home.isNotBlank() && host(x.json().optString("homepage")) == home))) }
       if (at < 0) { out += s; continue }
-      val old = out[at].json()
-      if (old.optString("image").isBlank() && j.optString("image").isNotBlank()) out[at] = RadioCatalog.normalize(old.put("image", j.getString("image"))) ?: out[at]
+      if (out[at].id == s.id) continue
+      val old = out[at].json().put("url", s.url).put("iheartId", s.id.removePrefix("ihr-"))
+      if (old.optString("image").isBlank() && j.optString("image").isNotBlank()) old.put("image", j.getString("image"))
+      out[at] = RadioCatalog.normalize(old) ?: out[at]
     }
     return out
   }

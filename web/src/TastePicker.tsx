@@ -297,9 +297,6 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
         <button type="button" onClick={() => { cancelAuto(); updateView(FULL_VIEW); }}>Show all</button>
         <button type="button" disabled={!points.length} onClick={fit}>My taste</button>
       </div>
-      <div className="tpick__axes">
-        <span>Genre → · {Math.round(view.x * 360)}–{Math.round((view.x + view.size) * 360)}°</span>
-      </div>
       {/* TASTE-MAP-AXIS-001: a tempo legend up the side, as the genre legend runs along the bottom. */}
       <div className="tpick__plot">
       <div className="tpick__yaxis" aria-hidden="true">
@@ -307,7 +304,8 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
         <span className="tpick__yticks">
           {/* TASTE-MAP-AXIS-002 (owner): as many tempos as genre columns along the bottom, top to bottom. */}
           {MAP_FAMILIES.map((f, i) => (
-            <span key={f.name} className="tpick__ytick">{Math.round(pointAt(view, 0, 1 - i / (MAP_FAMILIES.length - 1)).bpm)}</span>
+            // TASTE-MAP-AXIS-003: each label is centred on the exact height it names.
+            <span key={f.name} className="tpick__ytick" style={{ top: `${(i / (MAP_FAMILIES.length - 1)) * 100}%` }}>{Math.round(pointAt(view, 0, 1 - i / (MAP_FAMILIES.length - 1)).bpm)}</span>
           ))}
         </span>
       </div>
@@ -385,6 +383,8 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
           );
         })}
       </div>
+      {/* TASTE-MAP-AXIS-003 (owner): the X title runs along the bottom edge, as the Y title runs up the side. */}
+      <span className="tpick__xtitle" aria-hidden="true">Genre</span>
       </div>
 
       <section className="tpick__card" aria-live="polite">

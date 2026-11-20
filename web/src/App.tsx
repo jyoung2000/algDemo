@@ -136,7 +136,12 @@ export function App() {
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [playing, setPlaying] = useState<Playing | null>(null);
   const radioStation = useSyncExternalStore(radioSession.subscribe, () => radioSession.get().station);
-  useEffect(() => { void radioSession.restore(); }, []);
+  // CAR-RADIO-ADOPT-001: a station the car starts while this page is open in the background is adopted too.
+  useEffect(() => {
+    void radioSession.restore();
+    const t = setInterval(() => void radioSession.restore(), 5000);
+    return () => clearInterval(t);
+  }, []);
   const tune = (s: RadioStation) => {
     startTokenRef.current++;
     engineSend({ op: 'pause' });
