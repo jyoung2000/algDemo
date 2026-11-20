@@ -69,7 +69,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 const advance = (ms: number) => act(() => { vi.advanceTimersByTime(ms); });
-const field = () => screen.getByRole('img', { name: /Taste maker field/ }) as HTMLDivElement;
+const field = () => screen.getByRole('application', { name: /Taste maker field/ }) as HTMLDivElement;
 const backgroundZoom = () => Number.parseFloat(field().style.backgroundSize) / 100;
 const dotInside = () => {
   const dot = field().querySelector<HTMLElement>('.tpick__dot')!;

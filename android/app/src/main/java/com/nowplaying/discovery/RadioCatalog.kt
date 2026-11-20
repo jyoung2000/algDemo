@@ -66,7 +66,7 @@ object RadioCatalog {
     return Futures.withTimeout(out, 20, TimeUnit.SECONDS, deadlines)
   }
 
-  private fun publicUrl(raw: String): Boolean = runCatching {
+  internal fun publicUrl(raw: String): Boolean = runCatching {
     val u = URI(raw)
     val h = u.host?.lowercase(Locale.ROOT) ?: return false
     u.scheme in listOf("http", "https") && u.userInfo == null && raw.length <= 4096 &&
@@ -81,7 +81,7 @@ object RadioCatalog {
     val url = text("url_resolved").ifBlank { text("url") }
     if (id.isBlank() || name.isBlank() || !publicUrl(url)) return null
     val data = JSONObject().put("id", id).put("name", name).put("url", url)
-    for ((key, source) in listOf("homepage" to "homepage", "image" to "favicon", "country" to "country", "countryCode" to "countrycode", "region" to "state", "language" to "language", "codec" to "codec")) {
+    for ((key, source) in listOf("homepage" to "homepage", "image" to "favicon", "country" to "country", "countryCode" to "countrycode", "region" to "state", "language" to "language", "codec" to "codec", "call" to "call")) {
       val value = text(key).ifBlank { text(source) }
       data.put(key, if (key in listOf("homepage", "image") && !publicUrl(value)) "" else value)
     }
@@ -266,7 +266,12 @@ object RadioCatalog {
       if (raw.length() >= FILTER_PAGE) full = true
       rows(raw, FILTER_PAGE)
     }
-    val result = CarRadioFilters.interleave(lists) { it.id }
+    var result = CarRadioFilters.interleave(lists) { it.id }
+    // RADIO-ALL-STATIONS-001: every station iHeart lists around a chosen US area (V103, Power 92), on the first page.
+    if (offset == 0) for (p in chosen.take(CarRadioFilters.CAR_PLACES_ASKED).filter { it.kind == "area" && it.countryCode == "US" }) {
+      val extra = runCatching { RadioIheart.near(RadioNative.fetchText(RadioIheart.nearUrl(p.lat, p.lon)), p) }.getOrDefault(emptyList())
+      result = RadioIheart.merge(result, extra.filter { RadioIheart.fits(it, f) })
+    }
     rememberStations(JSONArray(result.map { it.json() }))
     StationPage(result, if (full && offset + FILTER_PAGE <= 1_000_000) offset + FILTER_PAGE else null)
   }
@@ -366,5 +371,8 @@ internal class RadioDirectory(private val fetch: (String) -> String) {
       if (query.isBlank()) "" else "&name=" + URLEncoder.encode(RadioNames.source(query), "UTF-8"))
     return if (alias == null) found else found.filter { RadioNames.matchesQuery(it.name, query) }
   }
-  fun byId(id: String): RadioCatalog.Station? = read("/json/stations/byuuid/" + URLEncoder.encode(id, "UTF-8")).firstOrNull { it.id == id }
+  fun byId(id: String): RadioCatalog.Station? {
+    RadioIheart.byIdUrl(id)?.let { url -> return RadioIheart.parse(fetch(url)).firstOrNull { it.id == id } }
+    return read("/json/stations/byuuid/" + URLEncoder.encode(id, "UTF-8")).firstOrNull { it.id == id }
+  }
 }

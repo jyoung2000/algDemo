@@ -25,7 +25,7 @@ const rule = (css: string, sel: string) => { const i = css.indexOf(sel + ' {'); 
 afterEach(cleanup);
 
 describe('Discover: one row of discovery buttons, a quiet loaded count', () => {
-  it('Find my next favorite takes 75% and an icon-only Customize button 25%, side by side', () => {
+  it('Find my next favorite takes 90% and an icon-only Customize button 10%, side by side (DISCOVER-TIDY-002)', () => {
     const app = src('App.tsx');
     const pair = app.slice(app.indexOf('className="go__pair"'), app.indexOf('id="go-why"'));
     expect(pair).toMatch(/Find my next favorite/);
@@ -34,9 +34,21 @@ describe('Discover: one row of discovery buttons, a quiet loaded count', () => {
     expect(custom.slice(0, custom.indexOf('</button>'))).not.toMatch(/>\s*Customize discovery\s*</);
     expect(app).not.toMatch(/className="go__more"/);
     const css = src('discover-tidy.css');
-    expect(rule(css, '.go__pair')).toMatch(/grid-template-columns:\s*3fr 1fr/);
+    expect(rule(css, '.go__pair')).toMatch(/grid-template-columns:\s*9fr 1fr/);
     // the same height as Find (the older .go__custom rule forced 44px beside a 36px Find on Windows)
     expect(rule(css, '.go__pair > .go__custom')).toMatch(/min-height:\s*0/);
+  });
+
+  it('no “Add at least one starting song first” label; Find works without starting songs once custom discovery is set', () => {
+    const app = src('App.tsx');
+    expect(app).not.toMatch(/Add at least one starting song first/);
+    const find = app.slice(app.indexOf('className="go__pair"'));
+    const btn = find.slice(0, find.indexOf('</button>'));
+    expect(btn).toMatch(/disabled=\{\(!seeds\.length && !customSet\) \|\| running \|\| !loaded\}/);
+    expect(btn).toMatch(/onClick=\{findNext\}/);
+    // with no starting songs, Find runs the saved custom discovery choices
+    expect(app).toMatch(/const findNext = \(\) => \{ if \(!seeds\.length && customSet\) void runCustom\(readCustom\(customDefaults\)\); else void run\(\); \};/);
+    expect(app).toMatch(/const customSet = hasCustomChoices\(readCustom\(customDefaults\)\)/);
   });
 
   it('the “Your last now playing queue” note is gone', () => {

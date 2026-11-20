@@ -85,6 +85,8 @@ interface Props {
   onPickUpNext: (key: string) => void;
   /** ARTIST-PAGE-001: the full-size player's artist line opens the artist's page. */
   onOpenArtist?: ((t: ArtistTarget) => void) | undefined;
+  /** TASTE-SPIN-001: play/pause for the taste line's spinner. */
+  onPausedChange?: (paused: boolean) => void;
 }
 
 
@@ -144,7 +146,7 @@ type Mode = 'full' | 'local' | 'preview' | 'embed' | 'none';
  * A song with no YouTube Music version falls back to its 30-second Deezer preview in an <audio>
  * element. SoundCloud songs play in SoundCloud's widget, whose progress and volume Airwave cannot reach.
  */
-export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, repeat, cacheGb = 1, actions, onShuffle, onRepeat, onRepeatConsumed, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext, onOpenArtist }: Props) {
+export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, repeat, cacheGb = 1, actions, onShuffle, onRepeat, onRepeatConsumed, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext, onOpenArtist, onPausedChange }: Props) {
   // Two decks, because a crossfade needs both songs audible at once: the outgoing song keeps
   // playing on its own element while the incoming one starts on the other. Both elements live for
   // the player's lifetime — a MediaElementAudioSourceNode can be made only once per element.
@@ -166,6 +168,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   useEffect(() => localLibrary.subscribe(() => setLibraryTick((n) => n + 1)), []);
   const meter = useRef(new ListenMeter());
   const [paused, setPaused] = useState(true);
+  useEffect(() => { onPausedChange?.(paused); }, [paused]);
   const [cur, setCur] = useState(0);
   // PLAYER-TRUTH-001: the song still sounding while a chosen one opens (Android engine), and the last
   // song the engine confirmed it was sounding for this page.

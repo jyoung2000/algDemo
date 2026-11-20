@@ -7,8 +7,9 @@ import type { RadioStation } from './engine/radio';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { api, type Characteristics, type PlaylistMix, newEventId, type FeedbackKind, type JobStatus, type Playback, type PlaylistSummary, type RecItem, type RecResult, type SavedItem, type Settings, type TasteSummary, type Track } from './api';
 import { Art } from './Art';
-import { CustomDiscovery, type CustomStatus } from './CustomDiscovery';
-import type { CustomCriteria } from './engine/custom-discovery';
+import { CustomDiscovery, readCustom, type CustomStatus } from './CustomDiscovery';
+import { hasCustomChoices, type CustomCriteria } from './engine/custom-discovery';
+import { TasteSpinner } from './TasteSpinner';
 import { Player, type ListenTelemetry, type Playing } from './Player';
 import { Results, rowId, type FeedbackFlags } from './Results';
 import { useDownloads } from './Downloads';
@@ -806,6 +807,8 @@ export function App() {
     [visibleSeeds, items, hidden]);
   // DISCOVER-TIDY-001: each song once, the same count as the loaded line above the queue.
   const queueSongCount = useMemo(() => new Set(queueTracks.map((t) => t.key)).size, [queueTracks]);
+  // TASTE-SPIN-001: the taste line's arrow turns while a song plays.
+  const [songPlaying, setSongPlaying] = useState(false);
   const keptKeys = useKeptKeys(cacheTracks);
   const cardCache = useCardCache(cacheTracks, keptKeys);
 
@@ -1170,6 +1173,10 @@ export function App() {
   const adventurous = settings?.adventurous ?? 0.5;
   const fresh = settings?.fresh ?? false;
   const queueSize = settings?.queue_size ?? 20;
+  // DISCOVER-TIDY-002 (owner): with custom discovery chosen, Find needs no starting song; it runs those choices.
+  const customDefaults = { count: queueSize, adventurous };
+  const customSet = hasCustomChoices(readCustom(customDefaults));
+  const findNext = () => { if (!seeds.length && customSet) void runCustom(readCustom(customDefaults)); else void run(); };
   const tasteLine = describeTaste(taste);
 
   const transferNote = result && !sample ? Object.values(result.transfer ?? {}).reduce((a, b) => a + (b || 0), 0) : 0;
@@ -1369,7 +1376,7 @@ export function App() {
               <div className="go__row">
                 {/* DISCOVER-TIDY-001 (owner): one row, Find my next favorite 75% and Customize discovery 25% as an icon. */}
                 <div className="go__pair">
-                  <button className="push push--default push--big" type="button" disabled={!seeds.length || running || !loaded} aria-describedby="go-why" onClick={() => void run()}>
+                  <button className="push push--default push--big" type="button" disabled={(!seeds.length && !customSet) || running || !loaded} aria-describedby="go-why" onClick={findNext}>
                     {running ? 'Finding…' : 'Find my next favorite'}
                   </button>
                   <button className="push push--big go__custom" type="button" disabled={!loaded} aria-haspopup="dialog" aria-expanded={customOpen}
@@ -1383,7 +1390,7 @@ export function App() {
                   </button>
                 )}
                 <span id="go-why" className="go__why" aria-live="polite">
-                  {customStatus.text && (customStatus.running || !customOpen) ? customStatus.text : !seeds.length ? 'Add at least one starting song first.' : running ? job?.progress : ''}
+                  {customStatus.text && (customStatus.running || !customOpen) ? customStatus.text : running ? job?.progress : ''}
                 </span>
                 {customStatus.running && !customOpen && (
                   <button className="push push--big" type="button" onClick={stopCustom}>Stop</button>
@@ -1391,7 +1398,7 @@ export function App() {
                 <CustomDiscovery
                   open={customOpen}
                   onClose={() => setCustomOpen(false)}
-                  defaults={{ count: queueSize, adventurous }}
+                  defaults={customDefaults}
                   status={customStatus}
                   onRun={(c) => void runCustom(c)}
                   onStop={stopCustom}
@@ -1498,7 +1505,7 @@ export function App() {
                   </div>
                   {tasteLine && (
                     <p className="note note--taste" role="status" aria-live="polite">
-                      <Glyph name="info" size={12} /> {tasteLine}
+                      <TasteSpinner playing={songPlaying} songs={queueSongCount} /> {tasteLine}
                     </p>
                   )}
                   {(result.count - (result.items ?? []).filter(x => expired.has(x.track.key)).length) < result.asked && !sample && (
@@ -1680,6 +1687,7 @@ export function App() {
           preload={{ target: settings?.preload_target ?? 'all', count: settings?.preload_count ?? 20 }} />}
         {radioStation ? <RadioPlayer docked={docked} onOpenArtist={openArtist} onPlaySong={playFromRadio} onDownloadSong={dls.on ? dls.downloadTrack : undefined} /> : <Player
           onOpenArtist={openArtist}
+          onPausedChange={(p) => setSongPlaying(!p)}
           playing={playing}
           upNext={upNext}
           docked={docked}

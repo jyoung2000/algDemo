@@ -110,6 +110,9 @@ export function normaliseCriteria(raw: Loose | null | undefined): CustomCriteria
   };
 }
 
+/** DISCOVER-TIDY-002: custom discovery is chosen once a genre or an artist is picked; then Find needs no starting song. */
+export const hasCustomChoices = (c: CustomCriteria): boolean => c.genres.length > 0 || c.artists.length > 0;
+
 /* ------------------------------------------------------------------------------------------- genres */
 
 export interface GenreAsk { kind: 'artist' | 'words'; term: string; genre: string }

@@ -120,7 +120,7 @@ describe('call-sign and frequency aliases (RADIO-ALPHA-002)', () => {
     expect((await d.page({letter:'W',query:'wgci',country:'US',tag:'hip hop'})).stations.map(s=>s.name)).toEqual(['107.5 WGCI']);
     expect((await d.page({letter:'1',query:'107'})).stations.map(s=>s.name)).toEqual(['107.5 WGCI']);
     expect((await d.page({query:'107.5 WGCI'})).stations.map(s=>s.name)).toEqual(['107.5 WGCI']);
-    expect(seen.at(-1)!.searchParams.get('name')).toBe('WGCI');
+    expect(seen.filter(u=>!u.hostname.endsWith('iheart.com')).at(-1)!.searchParams.get('name')).toBe('WGCI');
     expect(seen[0]!.searchParams.get('countrycode')).toBe('US');expect(seen[0]!.searchParams.get('tag')).toBe('hip hop');
   });
 });

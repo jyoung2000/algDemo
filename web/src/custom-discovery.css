@@ -122,6 +122,8 @@
   flex: 1 1 auto;
   min-width: 80px;
   appearance: none;
+  /* CDISC-FILL-001: content-box sizing, so the 6px bar the fill paints in exists (border-box made it 0px tall). */
+  box-sizing: content-box;
   height: 6px;
   padding: 19px 0;
   background-clip: content-box;

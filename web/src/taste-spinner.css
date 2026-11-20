@@ -1,0 +1,26 @@
+/* TASTE-SPIN-001: the grey half-circle arrow on the taste line. */
+.taste-spin {
+  color: var(--ink-3);
+  flex: none;
+  vertical-align: -2px;
+  transform-origin: 50% 50%;
+  animation-name: taste-spin;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  animation-play-state: paused;
+  animation-duration: 2.4s;
+}
+.taste-spin.is-on {
+  animation-play-state: running;
+  animation-duration: 2.4s;
+}
+/* Songs were just added: a little quicker for a few seconds. */
+.taste-spin.is-on.is-fast {
+  animation-duration: 1.5s;
+}
+@keyframes taste-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .taste-spin.is-on { animation: none; }
+}

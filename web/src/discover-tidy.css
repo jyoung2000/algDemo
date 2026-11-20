@@ -3,7 +3,7 @@
    Stop and the status line wrap beneath the pair. */
 .go__pair {
   display: grid;
-  grid-template-columns: 3fr 1fr;
+  grid-template-columns: 9fr 1fr; /* DISCOVER-TIDY-002 (owner): Find 90%, the Customize icon 10% */
   gap: 12px;
   flex: 1 1 100%;
   min-width: 0;

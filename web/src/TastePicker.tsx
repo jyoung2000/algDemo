@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { placePop, type PopPlace } from './taste-pop';
 import { CATALOG } from './engine/taste-catalog';
 import {
   BAND,
@@ -20,6 +21,7 @@ import { genreInk, genreSwatch } from './genre-color';
 import { familyColor, subColorOf } from './engine/genre-palette';
 import { FAMILIES } from './engine/genre-table';
 import './taste-picker-zoom.css';
+import './taste-map-axis.css';
 
 const pct = (x: number) => `${Math.round(x)}%`;
 /** Cover-art marker at 1x zoom. The ringed current song is a third larger. */
@@ -52,6 +54,12 @@ export interface TrailPoint {
   art?: string | null;
   /** Song title, written under the marker on hover and in the tooltip. */
   title?: string;
+  /** TASTE-MAP-POP-001: what the song card shows when the cover is tapped. */
+  artist?: string | null;
+  genres?: string[];
+  kind?: string;
+  when?: string;
+  radio?: boolean;
 }
 
 /**
@@ -67,6 +75,18 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
   const [bpm, setBpm] = useState(focus?.bpm ?? 126);
   const field = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<TasteViewport>(FULL_VIEW);
+  // TASTE-MAP-POP-001: the cover whose song card is open.
+  const [openStep, setOpenStep] = useState<number | null>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const [popAt, setPopAt] = useState<(PopPlace & { left: number; top: number }) | null>(null);
+  useEffect(() => {
+    if (openStep === null) return;
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') setOpenStep(null); };
+    const onDown = (e: globalThis.PointerEvent) => { const t = e.target as Element | null; if (!t?.closest?.('.tpick__pop, .tpick__step')) setOpenStep(null); };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onDown);
+    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('pointerdown', onDown); };
+  }, [openStep]);
   const currentView = useRef(view);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const frame = useRef<number | undefined>(undefined);
@@ -130,6 +150,15 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  // Measured placement: beside the cover when it fits, else above or below it, always on screen.
+  useLayoutEffect(() => {
+    const pop = popRef.current, area = pop?.parentElement;
+    const cover = field.current?.querySelector('.tpick__step[aria-expanded="true"]');
+    if (openStep === null || !pop || !area || !cover) { setPopAt(null); return; }
+    const a = area.getBoundingClientRect();
+    const p = placePop(cover.getBoundingClientRect(), { w: 250, h: pop.offsetHeight }, { w: document.documentElement.clientWidth || window.innerWidth, h: window.innerHeight });
+    setPopAt({ ...p, left: p.x - a.left, top: p.y - a.top });
+  }, [openStep, view.x, view.y, view.size, box.w, box.h]);
   const trailKey = JSON.stringify((trail ?? []).map((p) => [p.hue, p.bpm]));
   const trailPos = useMemo(() => {
     const t = trail ?? [];
@@ -270,12 +299,22 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
       </div>
       <div className="tpick__axes">
         <span>Genre → · {Math.round(view.x * 360)}–{Math.round((view.x + view.size) * 360)}°</span>
-        <span>{Math.round(pointAt(view, 0, 1).bpm)} BPM</span>
       </div>
+      {/* TASTE-MAP-AXIS-001: a tempo legend up the side, as the genre legend runs along the bottom. */}
+      <div className="tpick__plot">
+      <div className="tpick__yaxis" aria-hidden="true">
+        <span className="tpick__ytitle">Tempo (BPM)</span>
+        <span className="tpick__yticks">
+          <span className="tpick__ytick">{Math.round(pointAt(view, 0, 1).bpm)}</span>
+          <span className="tpick__ytick">{Math.round(pointAt(view, 0, 0.5).bpm)}</span>
+          <span className="tpick__ytick">{Math.round(pointAt(view, 0, 0).bpm)}</span>
+        </span>
+      </div>
+      <div className="tpick__area">
       <div
         ref={field}
         className="tpick__field"
-        role="img"
+        role="application"
         tabIndex={0}
         aria-label={`Taste maker field. Visible genre spectrum ${Math.round(view.x * 360)} to ${Math.round((view.x + view.size) * 360)} degrees; bottom to top is ${Math.round(pointAt(view, 0, 0).bpm)} to ${Math.round(pointAt(view, 0, 1).bpm)} BPM. Selected ${sub.name}, ${Math.round(bpm)} BPM. Drag, tap, or use the arrow keys.`}
         onPointerDown={onDown}
@@ -286,24 +325,45 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
         style={{ ['--tp-h' as string]: BAND, ['--tp-marker' as string]: `${markerPx(1 / view.size, box.w)}px`, ...viewportBackground(view) }}
       >
         {trail?.map((p, i) => (
-          <span
+          <button
+            type="button"
             key={`trail-${i}`}
             className={i === trail.length - 1 ? 'tpick__step tpick__step--now' : 'tpick__step'}
             title={`${i + 1}. ${p.label}`}
+            aria-label={`${i + 1}. ${p.title ?? p.label}${p.artist ? ` by ${p.artist}` : ''}. Show song details`}
+            aria-expanded={openStep === i}
             style={{ left: `${(trailPos[i] ?? projectPoint(view, p)).left}%`, bottom: `${(trailPos[i] ?? projectPoint(view, p)).bottom}%` }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            onClick={() => setOpenStep((o) => (o === i ? null : i))}
           >
             {p.art ? <img src={p.art} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /> : null}
             <i aria-hidden="true">{i + 1}</i>
-          </span>
+          </button>
         ))}
         {/* The field plots cover art only. The listener's genres are NOT drawn as dots: with
             nothing on the field to name them they read as random marks. They still drive the
             viewport fit through `points`, so the field is framed on the listener's taste. */}
         <span className="tpick__dot" style={{ ...pos(hue, bpm), background: `hsl(${hue} 90% 66%)` }} />
       </div>
-      <div className="tpick__axes">
-        <span />
-        <span>{Math.round(pointAt(view, 0, 0).bpm)} BPM</span>
+      {openStep !== null && trail?.[openStep] && (() => {
+        const p = trail[openStep]!;
+        const at = trailPos[openStep] ?? projectPoint(view, p);
+        const title = p.title ?? p.label;
+        return (
+          <div ref={popRef} className="tpick__pop" role="dialog" aria-label={title} data-side={popAt?.side}
+            style={popAt ? { left: popAt.left, top: popAt.top, width: popAt.w } : { left: `${at.left}%`, bottom: `${at.bottom}%`, visibility: 'hidden' }}>
+            {p.art ? <img className="tpick__pop-art" src={p.art} alt="" referrerPolicy="no-referrer" /> : null}
+            <div className="tpick__pop-text">
+              <strong>{title}</strong>
+              {p.artist ? <span>{p.artist}</span> : null}
+              <span className="tpick__pop-meta">{Math.round(p.bpm)} BPM{p.genres?.length ? ` · ${p.genres.join(', ')}` : ''}</span>
+              {p.kind || p.when ? <span className="tpick__pop-meta">{[p.kind, p.when, p.radio ? 'radio' : ''].filter(Boolean).join(' · ')}</span> : null}
+            </div>
+            <button type="button" className="tpick__pop-x" aria-label="Close song details" onClick={() => setOpenStep(null)}>×</button>
+          </div>
+        );
+      })()}
       </div>
       <div className="tpick__fams" aria-hidden="true">
         {MAP_FAMILIES.map((f, i) => {
@@ -323,6 +383,7 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
             </span>
           );
         })}
+      </div>
       </div>
 
       <section className="tpick__card" aria-live="polite">

@@ -9,8 +9,10 @@ import { radioOutput } from '../audio-engine';
 import { songFromTrack, type NativeSong } from './media-native';
 
 export interface RadioSnapshot { id: string; stationId: string; station?: RadioStation; paused: boolean; position: number; received: number; oldest: number; heard: number; dropped: boolean; state: string; error: string | null; native: boolean; pcm?: string }
+/** RADIO-FIRST-START-001: the first start after an install waits while the phone unpacks its bundled decoder. */
+export const radioNativeTimeout = (op: unknown): number => (op === 'start' ? 60000 : op === 'metadata' || op === 'request' ? 20000 : 15000);
 export async function radioNative<T = RadioSnapshot>(q: Record<string, unknown>): Promise<T> {
-  const c = new AbortController(), timeout = setTimeout(() => c.abort(), q.op === 'metadata' || q.op === 'request' ? 20000 : 15000);
+  const c = new AbortController(), timeout = setTimeout(() => c.abort(), radioNativeTimeout(q.op));
   try { const r = await fetch('/radio-native?q=' + encodeURIComponent(JSON.stringify(q)), { cache: 'no-store', signal: c.signal }); const v = await r.json() as T & { error?: string }; if (!r.ok || v.error && !('state' in v)) throw Error(v.error || 'Radio request failed'); return v; } finally { clearTimeout(timeout); }
 }
 export const radioDirectory = new RadioDirectory(async u => (await radioNative<{ text: string }>({ op: 'request', url: u })).text);

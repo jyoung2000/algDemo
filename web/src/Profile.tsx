@@ -56,6 +56,9 @@ const TIMING_LABEL: Record<string, string> = {
   total_ms: 'Finished',
 };
 
+/** TASTE-MAP-POP-001: how one song was played, for its card on the taste map. */
+const PLAYED_AS: Record<string, string> = { complete: 'Played in full', qualified: 'Played in part', replay: 'Replayed', skip: 'Skipped', like: 'Liked', save: 'Saved', dislike: 'Disliked', hide: 'Hidden' };
+
 function fmtListen(sec: number): string {
   if (sec < 60) return `${sec} s`;
   const m = Math.round(sec / 60);
@@ -177,7 +180,7 @@ export function ProfileView() {
   const notPlaced: string[] = [];
   for (const s of playedOldestFirst) {
     const at = placeSong(s.genre_names, s.bpm);
-    if (at) trail.push({ hue: at.hue, bpm: at.bpm, label: `${s.title} (${Math.round(at.bpm)} BPM)`, art: s.artwork, title: s.title });
+    if (at) trail.push({ hue: at.hue, bpm: at.bpm, label: `${s.title} (${Math.round(at.bpm)} BPM)`, art: s.artwork, title: s.title, artist: s.artist, genres: s.genres, kind: PLAYED_AS[s.kind] ?? KIND_LABEL[s.kind] ?? s.kind, when: fmtWhen(s.ts), radio: s.radio });
     else notPlaced.push(s.title);
   }
   const aMax = Math.max(0.01, ...p.artists.map((a) => Math.abs(a.score)));

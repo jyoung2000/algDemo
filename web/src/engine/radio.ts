@@ -1,5 +1,6 @@
 import { splitOnAir } from './radio-icy';
-import type { RadioPlace } from './radio-places';
+import { stationInPlace, type RadioPlace } from './radio-places';
+import { iheartFits, iheartIdsUrl, iheartNearUrl, iheartSearchUrl, mergeStations, parseIheartSearch, parseIheartStations, type IheartStation } from './radio-iheart';
 // RADIO-001. A station is a broadcast, not a song. Only broadcaster metadata or audio recognition
 // may identify its current item. Directory genre labels never become song or preference evidence.
 export interface RadioStation { id: string; name: string; url: string; homepage: string; image: string; country: string; countryCode: string; region: string; language: string; tags: string[]; codec: string; bitrate: number; latitude: number | null; longitude: number | null }
@@ -89,10 +90,29 @@ export class RadioDirectory {
   constructor(private request: RadioRequest) {}
   async read(path: string): Promise<unknown> { let last: unknown; for (const host of DIRECTORY_SERVERS) { try { return JSON.parse(await this.request(host + path)); } catch (e) { last = e; } } throw last; }
   async search(opts: RadioSearch = {}): Promise<RadioStation[]> { return (await this.page(opts)).stations; }
+  /** RADIO-ALL-STATIONS-001: iHeart answers, never fatal; the list stands on Radio Browser when iHeart is down. */
+  private async iheart(url: string): Promise<string> { try { return await this.request(url); } catch { return ''; } }
+  private async iheartNear(p: RadioPlace): Promise<IheartStation[]> {
+    const all = parseIheartStations(await this.iheart(iheartNearUrl(p.lat, p.lon)));
+    const markets = new Map<string, number>();
+    for (const s of all) markets.set(s.region, (markets.get(s.region) || 0) + 1);
+    // iHeart answers with the local market(s); a lone station from a far market is dropped.
+    return all.filter((s) => (markets.get(s.region) || 0) >= all.length / 10 || stationInPlace(s, p));
+  }
+  private async iheartSearch(query: string): Promise<IheartStation[]> {
+    const ids = parseIheartSearch(await this.iheart(iheartSearchUrl(query)));
+    return ids.length ? parseIheartStations(await this.iheart(iheartIdsUrl(ids))) : [];
+  }
   /** Prefix filtering is local because Radio Browser's name parameter is a substring search.
    * Scan bounded candidate batches and return a RAW cursor, including when no match was found yet. */
   async page(opts: RadioSearch = {}): Promise<{ stations: RadioStation[]; nextOffset: number | null }> {
     if (opts.places?.length) return this.placesPage(opts, opts.places);
+    const typed = opts.query?.trim() || '';
+    if (!typed || (opts.offset || 0) > 0 || (opts.country && opts.country.toUpperCase() !== 'US')) return this.directoryPage(opts);
+    const [found, extra] = await Promise.all([this.directoryPage(opts), this.iheartSearch(typed)]);
+    return { stations: mergeStations(found.stations, extra.filter((s) => iheartFits(s, opts))), nextOffset: found.nextOffset };
+  }
+  private async directoryPage(opts: RadioSearch): Promise<{ stations: RadioStation[]; nextOffset: number | null }> {
     const letter = opts.letter || '';
     if (letter && !/^[A-Z0-9#]$/.test(letter)) throw new Error('Invalid station initial');
     let offset = Math.max(0, Math.floor(opts.offset || 0));
@@ -150,17 +170,32 @@ export class RadioDirectory {
       if (opts.tag) { q.set('tag', opts.tag); q.set('tagExact', 'true'); }
       return q;
     };
-    const asks: URLSearchParams[] = [];
+    const asks: URLSearchParams[] = [], keep = new Map<number, RadioPlace>();
+    const inArea = (s: RadioStation, p: RadioPlace) => {
+      if (stationInPlace(s, p)) return true;
+      const hasGeo = typeof s.latitude === 'number' && typeof s.longitude === 'number' && !(s.latitude === 0 && s.longitude === 0);
+      const words = ` ${[s.name, s.tags.join(' '), s.homepage].join(' ').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ')} `;
+      return !hasGeo && !!p.city && words.includes(` ${p.city.toLowerCase()} `);
+    };
     for (const p of places.slice(0, 8)) {
       if (p.kind === 'country') { const q = base(); q.set('countrycode', p.countryCode); asks.push(q); continue; }
       if (p.kind === 'region') { const q = base(); q.set('state', p.region); if (p.countryCode) q.set('countrycode', p.countryCode); asks.push(q); continue; }
       const near = base(); near.set('geo_lat', p.lat.toFixed(5)); near.set('geo_long', p.lon.toFixed(5)); near.set('geo_distance', String(Math.round(p.radiusKm * 1000))); asks.push(near);
       if (p.city) { const named = base(); named.set('state', p.city); if (p.countryCode) named.set('countrycode', p.countryCode); asks.push(named); }
+      // RADIO-ALL-STATIONS-001: most stations file their state, not their city, and have no coordinates.
+      if (p.region && p.region !== p.city) { const state = base(); state.set('state', p.region); if (p.countryCode) state.set('countrycode', p.countryCode); keep.set(asks.length, p); asks.push(state); }
     }
-    const lists = await Promise.all(asks.map(async (q) => {
-      const data = await this.read(`/json/stations/search?${q}`).catch(() => []);
-      return Array.isArray(data) ? data : [];
-    }));
+    const nearby = offset === 0 ? places.slice(0, 8).filter((p) => p.kind === 'area' && p.countryCode === 'US') : [];
+    let full = false;
+    const [lists, iheart] = await Promise.all([
+      Promise.all(asks.map(async (q, i) => {
+        const data = await this.read(`/json/stations/search?${q}`).catch(() => []);
+        const area = keep.get(i);
+        if (Array.isArray(data) && data.length === limit) full = true;
+        return (Array.isArray(data) ? data : []).filter((row) => { if (!area) return true; const s = normalizeStation(row); return !!s && inArea(s, area); });
+      })),
+      Promise.all(nearby.map((p) => this.iheartNear(p))),
+    ]);
     const out: RadioStation[] = [], seen = new Set<string>();
     for (let i = 0; lists.some((l) => i < l.length); i++) {
       for (const l of lists) {
@@ -169,7 +204,8 @@ export class RadioDirectory {
         seen.add(station.id); out.push(station);
       }
     }
-    return { stations: out, nextOffset: lists.some((l) => l.length === limit) ? offset + limit : null };
+    const extra = iheart.flat().filter((s) => iheartFits(s, opts));
+    return { stations: extra.length ? mergeStations(out, extra) : out, nextOffset: full ? offset + limit : null };
   }
 
   async countries(): Promise<{ name: string; code: string; count: number }[]> { const v = await this.read('/json/countrycodes'); return Array.isArray(v) ? v.filter(x => /^[A-Z]{2}$/.test(String(x.iso_3166_1 || x.name))).map(x => ({ name: txt(x.name), code: txt(x.iso_3166_1 || x.name), count: Number(x.stationcount) || 0 })).sort((a, b) => a.name.localeCompare(b.name)) : []; }
