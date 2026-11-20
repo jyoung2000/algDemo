@@ -119,6 +119,12 @@
 .vol.is-boosted .vol__pop .vol__bar {
   accent-color: #e8890c;
   background: linear-gradient(to right, #0071e3 var(--at, 50%), #e8890c var(--at, 50%) var(--pct, 0%), rgb(0 0 0 / 14%) var(--pct, 0%));
+  /* VOL-THICKNESS-001: the shorthand above resets the clip, which painted the whole padded hit area (22-28px)
+     instead of the thin channel. Keep the paint inside the channel, as below 100%. */
+  background-clip: content-box;
+  background-origin: content-box;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
 }
 .vol.is-boosted .vol__pop .vol__n { color: #b4610a; font-weight: 600; }
 .vol.vol--pop .vol__btn { position: relative; }
