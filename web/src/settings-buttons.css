@@ -26,3 +26,21 @@
   align-items: center;
   gap: 8px;
 }
+
+/* HISTORY-PICK-001: the listening history picker, an app button with the chosen file's name beside it. */
+.history-pick {
+  /* the content column of the .pref grid (the label column cut the file name off); the only column on a phone */
+  grid-column: -2 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.history-pick__name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink-3);
+  font-size: 13px;
+}

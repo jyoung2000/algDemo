@@ -22,16 +22,21 @@ const trail: TrailPoint[] = [
 ];
 
 describe('the taste map Y axis', () => {
-  it('has a tempo legend beside the field, written on its side, with the top, middle and bottom tempos', () => {
+  it('has a tempo legend beside the field, written on its side, with as many tempos as genre columns (TASTE-MAP-AXIS-002)', () => {
     const { container } = render(<TastePicker trail={trail} />);
     const y = container.querySelector('.tpick__yaxis')!;
     expect(y).not.toBeNull();
     expect(y.getAttribute('aria-hidden')).toBe('true');
     expect(y.querySelector('.tpick__ytitle')!.textContent).toBe('Tempo (BPM)');
     const ticks = [...y.querySelectorAll('.tpick__ytick')].map((t) => t.textContent);
-    expect(ticks).toHaveLength(3);
+    // the owner: "as many numbers as genres in the x axis" — eight families, eight tempos, top to bottom
+    expect(ticks).toHaveLength(container.querySelectorAll('.tpick__fams > span').length);
+    expect(ticks).toHaveLength(8);
     ticks.forEach((t) => expect(t).toMatch(/^\d+$/));
-    expect(Number(ticks[0])).toBeGreaterThan(Number(ticks[2]));
+    const n = ticks.map(Number);
+    n.slice(1).forEach((v, i) => expect(v).toBeLessThan(n[i]!));
+    expect(n[0]).toBe(220);
+    expect(n[7]).toBe(40);
     // the Y legend sits beside the field only; the genre legend sits under the field in the same column
     const plot = container.querySelector('.tpick__plot')!;
     expect(plot.querySelector(':scope > .tpick__yaxis + .tpick__area > .tpick__field')).not.toBeNull();

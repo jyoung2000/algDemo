@@ -149,7 +149,6 @@ export function CustomDiscovery({ open, onClose, defaults, status, onRun, onStop
   if (!open) return null;
   const running = status.running;
   const eraPct = Math.round(crit.era * 100);
-  const eraFill = { ['--from' as string]: `${50 + Math.min(0, eraPct) / 2}%`, ['--to' as string]: `${50 + Math.max(0, eraPct) / 2}%` };
   return (
     <div className="cdisc-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="cdisc" role="dialog" aria-modal="true" aria-labelledby={heading} ref={box}>
@@ -316,8 +315,9 @@ export function CustomDiscovery({ open, onClose, defaults, status, onRun, onStop
                 <div className="cdisc__slider-head"><span>Release era</span><output>{eraLabel(crit.era)}</output>
                   {crit.era !== 0 && <button type="button" className="push cdisc__any" onClick={() => set({ era: 0 })}>Any era</button>}</div>
                 <div className="cdisc__track"><span>Older</span>
+                  {/* CDISC-FILL-002 (owner): the full blue bar behind the thumb, filled from the left like the others. */}
                   <input className="cdisc__era" type="range" min={-100} max={100} step={1} value={eraPct} aria-label="Release era" aria-valuetext={eraLabel(crit.era)}
-                    style={eraFill} onChange={(e) => { const v = Number(e.target.value); set({ era: Math.abs(v) <= 4 ? 0 : v / 100 }); }} />
+                    style={{ ['--pct' as string]: `${(eraPct + 100) / 2}%` }} onChange={(e) => { const v = Number(e.target.value); set({ era: Math.abs(v) <= 4 ? 0 : v / 100 }); }} />
                   <span>Newer</span></div>
                 <p className="cdisc__help">A release-date preference, not a strict year filter.</p>
               </div>

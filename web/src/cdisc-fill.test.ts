@@ -17,4 +17,11 @@ describe('custom discovery sliders show the blue fill', () => {
     expect(r).toMatch(/background-clip:\s*content-box/);
     expect(r).toMatch(/#0071e3 var\(--pct/);
   });
+
+  it('the release era slider fills from the left to the thumb like the others (owner: "the full blue bar behind the player head")', () => {
+    expect(css).not.toMatch(/\.cdisc__track input\.cdisc__era \{/);
+    const src = readFileSync(resolve(process.cwd(), 'src', 'CustomDiscovery.tsx'), 'utf8');
+    expect(src).not.toMatch(/eraFill/);
+    expect(src).toMatch(/style=\{\{ \['--pct' as string\]: `\$\{\(eraPct \+ 100\) \/ 2\}%` \}\}/);
+  });
 });

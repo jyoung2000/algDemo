@@ -305,9 +305,10 @@ export function TastePicker({ placed, trail, focus }: { placed?: { hue: number; 
       <div className="tpick__yaxis" aria-hidden="true">
         <span className="tpick__ytitle">Tempo (BPM)</span>
         <span className="tpick__yticks">
-          <span className="tpick__ytick">{Math.round(pointAt(view, 0, 1).bpm)}</span>
-          <span className="tpick__ytick">{Math.round(pointAt(view, 0, 0.5).bpm)}</span>
-          <span className="tpick__ytick">{Math.round(pointAt(view, 0, 0).bpm)}</span>
+          {/* TASTE-MAP-AXIS-002 (owner): as many tempos as genre columns along the bottom, top to bottom. */}
+          {MAP_FAMILIES.map((f, i) => (
+            <span key={f.name} className="tpick__ytick">{Math.round(pointAt(view, 0, 1 - i / (MAP_FAMILIES.length - 1)).bpm)}</span>
+          ))}
         </span>
       </div>
       <div className="tpick__area">

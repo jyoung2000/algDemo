@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './settings-buttons.css';
 import { SourceMark } from './SourceMark';
 import { RefreshGlyph } from './icons';
@@ -70,6 +70,9 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFo
   const [confirmTaste, setConfirmTaste] = useState(false);
   const [modelBusy, setModelBusy] = useState<'install' | 'test' | null>(null);
   const [history, setHistory] = useState<ImportSummary | null>(null);
+  // HISTORY-PICK-001: an app button opens the hidden file input; the chosen file's name sits beside it.
+  const historyInput = useRef<HTMLInputElement>(null);
+  const [historyName, setHistoryName] = useState('');
   const [historyBusy, setHistoryBusy] = useState(false);
   const [historyMessage, setHistoryMessage] = useState('');
   const loadHistory = async (file: File | undefined) => {
@@ -326,12 +329,23 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFo
             month. This file is read on your device; no account connection or cloud upload. A
             submitted ListenBrainz play is not treated as a finished track.
           </p>
+          <div className="history-pick">
+            <button className="push" type="button" aria-label="Choose history file" disabled={historyBusy} onClick={() => historyInput.current?.click()}>
+              Choose file…
+            </button>
+            <span className="history-pick__name" title={historyName || undefined}>{historyName || 'No file chosen'}</span>
+          </div>
           <input
-            aria-label="Choose history file"
+            ref={historyInput}
+            className="sr"
             type="file"
+            tabIndex={-1}
+            aria-hidden="true"
             accept=".json,.jsonl,application/json"
             onChange={(e) => {
-              void loadHistory(e.target.files?.[0]);
+              const f = e.target.files?.[0];
+              setHistoryName(f?.name ?? '');
+              void loadHistory(f);
               e.target.value = '';
             }}
           />
