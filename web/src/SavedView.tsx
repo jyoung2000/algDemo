@@ -1,6 +1,7 @@
-import { classifyStation } from './engine/radio-genres';
+import { radioTagBubbles, songTagBubbles } from './engine/display-tags';
+import { radioSession } from './engine/radio-client';
 import type { RadioStation } from './engine/radio';
-import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 
 import { api, type AlbumSummary, type ArtistTarget, type Characteristics, type PlaylistMix, type PlaylistSummary, type SavedItem, type Track } from './api';
@@ -17,7 +18,7 @@ import { SoundCard } from './SoundCard';
 import { listMixNote } from './list-mix-note';
 import { PLAYLIST_NAME_MAX } from './engine/playlists';
 import type { CardCache } from './engine/queue-controls';
-import { classNames, genreBubbles } from './util';
+import { classNames } from './util';
 import { GenreBubbleView } from './Results';
 import { TagStrip } from './TagStrip';
 import { RowPlayButton, playOnDoubleClick } from './RowPlay';
@@ -179,6 +180,11 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
   // What the chosen view shows. A list holds keys, so its songs come from the saved rows where
   // possible and from the engine's own copy of the track otherwise.
   const byKey = new Map((saved ?? []).map((s) => [s.track.key, s.track]));
+  // TAGS-SAME-001: a programme bookmark of the station playing shows what the radio player shows.
+  const liveStationId = useSyncExternalStore(radioSession.subscribe, () => radioSession.get().station?.id ?? null);
+  const liveIdentified = useSyncExternalStore(radioSession.subscribe, () => radioSession.get().identified);
+  const liveCharacteristics = useSyncExternalStore(radioSession.subscribe, () => radioSession.get().characteristics ?? null);
+  const liveRadio = { station: liveStationId ? { id: liveStationId } : null, identified: liveIdentified, characteristics: liveCharacteristics };
   const rows: { track: Track; played?: boolean; characteristics?: Characteristics }[] =
     current === null
       // TAGS-ALWAYS-001: the engine sends every saved song's genres worked out (as a Discover row).
@@ -422,8 +428,8 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
             // RADIO-GENRES-001: a programme bookmark shows what its station broadcasts (a format, not a song genre).
             const station = (track as Track & { radio_station?: RadioStation }).radio_station;
             const bubbles = track.kind === 'radio-programme' && station
-              ? classifyStation({ tags: station.tags ?? [], name: station.name, language: station.language, countryCode: station.countryCode })
-              : genreBubbles(characteristics);
+              ? radioTagBubbles(station, liveRadio.station?.id === station.id ? liveRadio : undefined)
+              : songTagBubbles(characteristics, track.tags);
             return (
             <li key={track.key} className="track" data-dl={cache?.state} onDoubleClick={playOnDoubleClick(() => onPreview(track, current?.id))}
               style={cache ? ({ '--dl': `${cache.progress}%` } as CSSProperties) : undefined}>

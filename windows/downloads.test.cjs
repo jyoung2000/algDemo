@@ -502,3 +502,30 @@ test('cache-clear on an empty cache is a no-op, not an error', async (t) => {
   assert.equal(dl.handle({ op: 'health' }).cache_bytes, 0);
   dl.shutdown();
 });
+
+/**
+ * REMOVE-FOREVER-001 — removing a song from the queue removes the app's own downloaded copy of it. Only that song's
+ * evictable cache copy goes; other songs and copies kept in the Music folder (the owner's files) stay.
+ */
+test('evict deletes one song from the cache and nothing else', async (t) => {
+  const { dl, dir } = fixture(t);
+  const saves = path.join(dir, 'saved');
+  const a = url('aaaaaaaaaaa'), b = url('bbbbbbbbbbb'), c = url('ccccccccccc');
+  dl.handle({ op: 'cache-config', limitGb: 0.25, protected: [] });
+  for (const u of [a, b, c]) {
+    const { job } = dl.handle({ op: 'start', url: u, tool: 'yt-dlp', format: 'original', label: 'S', cache: true });
+    assert.equal((await done(dl, job.id)).state, 'done');
+  }
+  dl.handle({ op: 'keep', url: c });
+  const keptBefore = fs.readdirSync(saves).length;
+  const before = dl.handle({ op: 'health' }).cache_bytes;
+  assert.deepEqual(dl.handle({ op: 'evict', url: a }), { removed: true });
+  assert.equal(dl.handle({ op: 'local', url: a }).file, null, 'the removed song is gone');
+  assert.ok(dl.handle({ op: 'local', url: b }).file, 'another song stays');
+  assert.ok(dl.handle({ op: 'health' }).cache_bytes < before);
+  assert.deepEqual(dl.handle({ op: 'evict', url: a }), { removed: false }, 'twice is harmless');
+  assert.deepEqual(dl.handle({ op: 'evict', url: c }), { removed: true }, 'its cache copy goes');
+  assert.ok(dl.handle({ op: 'local', url: c }).file, 'but a copy kept in the Music folder is the owner\'s and stays');
+  assert.equal(fs.readdirSync(saves).length, keptBefore);
+  dl.shutdown();
+});

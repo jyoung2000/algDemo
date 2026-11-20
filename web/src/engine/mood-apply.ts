@@ -21,6 +21,23 @@ export function placeMood(items: RecItem[], order: string[]): RecItem[] {
   return out.map((x, i) => (x.rank === i + 1 ? x : { ...x, rank: i + 1 }));
 }
 
+/**
+ * QUEUE-NEXT-001: the song the player will play next (a shuffle or mood pick, or the next song that is ready) sits
+ * directly after the song playing, so the queue says what the player will do. Ranks follow the new order. Returns
+ * the same array when it already agrees, or when there is nothing to move (no song playing in the list, no next song,
+ * or the next song is above the song playing, as in a repeat round).
+ */
+export function pinNext(items: RecItem[], playingKey: string | null, nextKey: string | null): RecItem[] {
+  if (!playingKey || !nextKey || playingKey === nextKey) return items;
+  const at = items.findIndex((x) => x.track.key === playingKey);
+  const from = items.findIndex((x) => x.track.key === nextKey);
+  if (at < 0 || from <= at || from === at + 1) return items;
+  const out = [...items];
+  const [moved] = out.splice(from, 1);
+  out.splice(at + 1, 0, moved!);
+  return out.map((x, i) => (x.rank === i + 1 ? x : { ...x, rank: i + 1 }));
+}
+
 /** The visible rows' places before a re-arrangement, so the move can be animated (FLIP). */
 export function captureRows(root: ParentNode | null | undefined): Map<string, number> {
   const out = new Map<string, number>();

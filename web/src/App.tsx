@@ -28,7 +28,8 @@ import { useKeptKeys } from './useKeptKeys';
 import { useQueueGenres } from './useQueueGenres';
 import { savedTracks, playbackRows, preparationTracks, contextRows, addTargetOf, addedRow, insertAfter, SEARCH_CONTEXT } from './engine/queue-context';
 import { runCarSimilar } from './engine/car-similar';
-import { captureRows, moodMovable, placeMood, playMoodMove } from './engine/mood-apply';
+import { captureRows, moodMovable, pinNext, placeMood, playMoodMove } from './engine/mood-apply';
+import { arrangeShuffle, restoreOrder } from './engine/shuffle-order';
 import { phoneWait } from './engine/native-http';
 import { PHONE_LIST, decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pickCarContext, pushMediaLibrary, pushMediaState, pushMediaTracks, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { engineAvailable, engineSend, listenFromEvent, markEngineEvent, subscribeEngineState } from './engine/native-engine';
@@ -183,6 +184,14 @@ export function App() {
   // MOOD-QUEUE-001: the listening mood's last order of the songs still to come, and its animation.
   const moodSeq = useRef(0);
   const moodOrderRef = useRef<string[]>([]);
+  /** QUEUE-NEXT-001: the song the player will play next, for the mood's re-arrangement to keep in place. */
+  const nextKeyRef = useRef<string | null>(null);
+  // SHUFFLE-ORDER-001: the shuffled order of the songs to come, the round it belongs to, and the list's own order.
+  const shuffleOrderRef = useRef<string[]>([]);
+  const [shuffleEpoch, setShuffleEpoch] = useState(0);
+  const shuffleEpochDone = useRef(-1);
+  const unshuffledRef = useRef<string[] | null>(null);
+  const discoverShuffleRef = useRef(false);
   const moodPreferRef = useRef<Map<string, number> | null>(null);
   // ALBUM-NO-X-001 (owner, 2026-11-19): "When listening to an album get rid of the X button." Set while the
   // songs playing come from an album (its page or a saved album); the player then has no Dislike.
@@ -541,7 +550,7 @@ export function App() {
     // Playing from the queue leaves any saved list behind, so the queue's own rule applies again.
     if (!o?.keepList) { playingListRef.current = null; enterPlayingContext(null); setAlbumPlaying(false); }
     playedRef.current.add(it.track.key);
-    if (o?.newRound) heardRef.current = new Set();
+    if (o?.newRound) { heardRef.current = new Set(); setShuffleEpoch((n) => n + 1); }
     heardRef.current.add(it.track.key);
     if (!o?.back) historyRef.current = [...historyRef.current.slice(-199), it.track.key];
     setPlaying({ track: it.track, playback: it.playback });
@@ -640,6 +649,7 @@ export function App() {
   const moodListScope = moodOn && playingContext !== null && playingContext !== SEARCH_CONTEXT && shuffle;
   /** A re-rank answer keeps the songs the mood had placed where they were until the mood answers again. */
   const keepMood = (xs: RecItem[]): RecItem[] => {
+    if (discoverShuffleRef.current) return arrangeShuffle(xs, { playingKey, heard: heardRef.current, order: shuffleOrderRef.current, reshuffle: false, rand: Math.random, hidden }).items;
     if (!moodQueueScope || !moodOrderRef.current.length) return xs;
     const movable = new Set(moodMovable(xs, { currentKey: playingKey, played: playedRef.current, hidden }).map((x) => x.track.key));
     return placeMood(xs, moodOrderRef.current.filter((k) => movable.has(k)));
@@ -663,11 +673,11 @@ export function App() {
           setMoodLead({ leading: plan.leading ?? [], confidence: plan.confidence ?? 0 });
           moodPreferRef.current = new Map(plan.order.map((k, i) => [k, i] as const));
           if (plan.fit) setMoodFitState({ fit: new Map(Object.entries(plan.fit)), confidence: plan.confidence ?? 0 });
-          if (!moodQueueScope) return;
+          if (!moodQueueScope || discoverShuffleRef.current) return;
           moodOrderRef.current = plan.order;
           if (!plan.changed) return;
           moodBefore.current = captureRows(document);
-          setResult((prev) => (prev && !prev.sample ? { ...prev, items: placeMood(prev.items, plan.order) } : prev));
+          setResult((prev) => (prev && !prev.sample ? { ...prev, items: pinNext(placeMood(prev.items, plan.order), playingKey, nextKeyRef.current) } : prev));
           setMoodPulse((p) => ({ tick: (p?.tick ?? 0) + 1, leading: plan.leading, moved: plan.moved, at: Date.now() }));
         }, () => undefined);
     }, 600);
@@ -697,7 +707,10 @@ export function App() {
   const stepReady = playingContext === SEARCH_CONTEXT && !shuffle ? undefined : ready;
   // MOOD-QUEUE-001: with shuffle on, the next song is picked from the few that fit the mood best.
   const moodShuffle = moodOn && shuffle && moodFitState ? { fit: moodFitState.fit, confidence: moodFitState.confidence, adventurous: settings?.adventurous ?? 0.5 } : null;
-  const queueOpts = { shuffle, repeat, heard: heardRef.current, ready: stepReady, mood: moodShuffle, prefer: moodOn && shuffle && !moodShuffle ? moodPreferRef.current ?? undefined : undefined };
+  // SHUFFLE-ORDER-001: in the Discover queue the shuffled order is in the list itself, and playback walks it.
+  const discoverShuffle = shuffle && playingContext === null && !result?.sample;
+  discoverShuffleRef.current = discoverShuffle;
+  const queueOpts = { shuffle, repeat, heard: heardRef.current, ready: stepReady, inOrder: discoverShuffle, mood: discoverShuffle ? null : moodShuffle, prefer: !discoverShuffle && moodOn && shuffle && !moodShuffle ? moodPreferRef.current ?? undefined : undefined };
   const nextStep = stepQueue(activeItems, inQueue ? playingKey : null, 1, hidden, queueOpts);
   const back = shuffle ? historyBack(historyRef.current, playingKey, stepReady ? activeItems.filter(x => stepReady(x.track)) : activeItems, hidden) : null;
   const prevStep = shuffle ? (back ? { item: back.item, wrapped: false } : null) : inQueue ? stepQueue(activeItems, playingKey, -1, hidden, queueOpts) : null;
@@ -718,6 +731,7 @@ export function App() {
       writeFlag(SHUFFLE_KEY, on ? 'on' : 'off');
       // Toggling shuffle is not permission to replay songs while unheard ones remain.
       if (playingKey) heardRef.current.add(playingKey);
+      if (on) setShuffleEpoch((n) => n + 1);
       return on;
     });
   const cycleRepeat = () =>
@@ -729,6 +743,40 @@ export function App() {
   // The first entry is the song that WILL play next — the player cues, downloads and blends into
   // it (SHUFFLE-NEXT-001). Shuffled, that is the committed pick; the rest are the songs still to come.
   const nextKey = nextStep && !nextStep.wrapped ? nextStep.item.track.key : null;
+  nextKeyRef.current = nextKey;
+  // QUEUE-NEXT-001 (owner, 2026-11-20): the Discover queue shows the song the player will play next directly after
+  // the song playing (a shuffle or mood pick, or the next song that is ready), so the two never disagree.
+  useEffect(() => {
+    if (playingContext !== null || discoverShuffle) return;
+    setResult((prev) => {
+      if (!prev || prev.sample) return prev;
+      const pinned = pinNext(prev.items, playingKey, nextKey);
+      return pinned === prev.items ? prev : { ...prev, items: pinned };
+    });
+  }, [nextKey, playingKey, result?.items, playingContext]);
+  // SHUFFLE-ORDER-001 (owner, 2026-11-20): with shuffle on, the Discover queue shows the real play order: songs heard
+  // this round, the song playing, then the songs to come in the shuffled order playback will walk. Shuffle off puts
+  // the list back in its own order.
+  useEffect(() => {
+    if (!result || result.sample) return;
+    if (!discoverShuffle) {
+      if (unshuffledRef.current) {
+        const back = restoreOrder(result.items, unshuffledRef.current);
+        unshuffledRef.current = null; shuffleOrderRef.current = []; shuffleEpochDone.current = -1;
+        setResult((prev) => (prev && prev.items === result.items ? { ...prev, items: back } : prev));
+      }
+      return;
+    }
+    if (!unshuffledRef.current) unshuffledRef.current = result.items.map((x) => x.track.key);
+    const reshuffle = shuffleEpochDone.current !== shuffleEpoch;
+    shuffleEpochDone.current = shuffleEpoch;
+    const fit = moodOn && moodFitState ? { fit: moodFitState.fit, confidence: moodFitState.confidence, adventurous: settings?.adventurous ?? 0.5 } : null;
+    const r = arrangeShuffle(result.items, { playingKey, heard: heardRef.current, order: shuffleOrderRef.current, reshuffle, rand: Math.random, mood: fit, hidden,
+      ready: (x) => canPlayHere(x.playback) && (!stepReady || stepReady(x.track)) });
+    shuffleOrderRef.current = r.order;
+    if (r.items !== result.items) setResult((prev) => (prev && prev.items === result.items ? { ...prev, items: r.items } : prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discoverShuffle, result?.items, playingKey, shuffleEpoch, readySignature, hidden]);
   /**
    * QUEUE-ADD-001: the search row's add button puts a song into what the listener is listening to: the
    * saved list being played from, the saved list in the queue (whose songs are starting songs, so the
@@ -1020,7 +1068,8 @@ export function App() {
       .then(() => {
         // Listening is the other way to discover. The engine decides whether the list is actually
         // running low and answers job:null otherwise, so a finished song usually costs nothing.
-        if (sample || !result || kind !== 'complete') return;
+        // QUEUE-KEEP-DISCOVER-001: a skipped song counts too, so skipping through the queue still keeps it growing.
+        if (sample || !result || (kind !== 'complete' && kind !== 'skip')) return;
         return api
           // When the song was started from a saved list, the engine applies that list's stricter
           // rule instead of the queue's: nothing new until everything in the list has been played.
@@ -1114,6 +1163,11 @@ export function App() {
       // REMOVE-QUIET-001 (owner, 2026-11-19): "get rid of the message when removing a song" — the row going
       // away is the answer; no notice follows it.
       if (kind === 'hide') setHidden((h) => new Set(h).add(k));
+      if (kind === 'hide' || kind === 'dislike') {
+        // REMOVE-FOREVER-001: the app's own downloaded copy goes too (a copy kept in the Music folder stays).
+        const cachedAt = downloadsAvailable() ? queueAudio.sourceHint(track) : null;
+        if (cachedAt) void dl.evict(cachedAt).catch(() => undefined);
+      }
       if (result?.sample) return;
       const seq = ++rerankSeq.current;
       // MOOD-QUEUE-001: a star or a dislike re-plans the songs to come for the mood.

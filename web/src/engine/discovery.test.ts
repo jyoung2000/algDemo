@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { appendDiscovery, needsListeningDiscovery, newDiscoveryTracks } from './discovery';
+import { appendDiscovery, LISTENING_LOW_WATER, needsListeningDiscovery, newDiscoveryTracks } from './discovery';
 
 const track = (key: string) => ({ key, title: key, artists: [key], duration: 180 });
 const item = (key: string) => ({ track: track(key), rank: 1 });
@@ -31,13 +33,23 @@ describe('DISCOVERY-001: one maximum for each search or listening batch', () => 
     expect(appendDiscovery([item('old')], [item('a')], 60)).toHaveLength(2);
     expect(appendDiscovery([item('old')], [], 5)).toEqual([item('old')]);
   });
-  it('only tops up after list completion and at the low-water mark', () => {
-    expect(needsListeningDiscovery(true, 'complete', true, 3)).toBe(true);
-    expect(needsListeningDiscovery(true, 'complete', true, 0)).toBe(true);
-    expect(needsListeningDiscovery(true, 'complete', true, 4)).toBe(false);
-    expect(needsListeningDiscovery(false, 'complete', true, 0)).toBe(false);
-    expect(needsListeningDiscovery(true, 'complete', false, 0)).toBe(false);
-    for (const kind of ['skip', 'replay', 'pause', 'seek', 'like'])
+  // QUEUE-KEEP-DISCOVER-001 (owner, 2026-11-20): "ensure the discover now playing queue keeps finding new songs".
+  // A skip is listening too (skipping through a queue used to never top it up), and topping up starts at five songs
+  // left so a discovery run (30-60 s) finishes before the queue runs dry.
+  it('tops up after a finished or skipped song once five or fewer songs are left', () => {
+    expect(LISTENING_LOW_WATER).toBe(5);
+    for (const kind of ['complete', 'skip']) {
+      expect(needsListeningDiscovery(true, kind, true, 5)).toBe(true);
+      expect(needsListeningDiscovery(true, kind, true, 0)).toBe(true);
+      expect(needsListeningDiscovery(true, kind, true, 6)).toBe(false);
+      expect(needsListeningDiscovery(false, kind, true, 0)).toBe(false);
+      expect(needsListeningDiscovery(true, kind, false, 0)).toBe(false);
+    }
+    for (const kind of ['replay', 'pause', 'seek', 'like'])
       expect(needsListeningDiscovery(true, kind, true, 0)).toBe(false);
+  });
+  it('the page asks after a skip as well as after a finished song', () => {
+    const app = readFileSync(resolve(process.cwd(), 'src', 'App.tsx'), 'utf8');
+    expect(app).toMatch(/if \(sample \|\| !result \|\| \(kind !== 'complete' && kind !== 'skip'\)\) return;/);
   });
 });

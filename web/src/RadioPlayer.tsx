@@ -7,10 +7,9 @@ import { Volume } from './Volume';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { ShuffleGlyph } from './icons';
 import { engineSend } from './engine/native-engine';
-import { genreBubbles } from './util';
 import { GenreBubbleView } from './Results';
 import { TagStrip } from './TagStrip';
-import { classifyStation } from './engine/radio-genres';
+import { radioTagBubbles } from './engine/display-tags';
 import { radioArtistTarget, type RadioArtistTarget } from './engine/radio-artist';
 import './radio.css';
 
@@ -77,7 +76,7 @@ export function RadioPlayer({ docked = false, onOpenArtist, onPlaySong, onDownlo
           : name}</span>; });
       })()} · {s.name}</span><small>{stationLocation(s)}{r.broadcast?.state === 'stale' ? ' · last published metadata' : timeline.over ? ' · this song has ended; waiting for the station\'s next title' : ''}</small>
       {/* RADIO-GENRES-001: an identified song shows its own genres; a programme or unidentified song shows what the station plays. */}
-      <TagStrip className="radio-player__tags" label="Genres">{(r.identified && r.characteristics ? genreBubbles(r.characteristics) : classifyStation({ tags: s.tags, name: s.name, language: s.language, countryCode: s.countryCode })).map((g, i) => <GenreBubbleView key={i} bubble={g} />)}</TagStrip>
+      <TagStrip className="radio-player__tags" label="Genres">{radioTagBubbles(s, r).map((g, i) => <GenreBubbleView key={i} bubble={g} />)}</TagStrip>
     </div></div>
     <div className="radio-player__timeline">
 

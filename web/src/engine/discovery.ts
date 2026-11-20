@@ -4,7 +4,8 @@ import { matchRecordings } from './identity';
 type Track = Record<string, any>;
 type Item = { track: Track; rank?: number; [key: string]: any };
 
-export const LISTENING_LOW_WATER = 3;
+/** QUEUE-KEEP-DISCOVER-001: top up at five songs left, so a run (30-60 s) finishes before the queue runs dry. */
+export const LISTENING_LOW_WATER = 5;
 
 export function newDiscoveryTracks<T extends Track>(candidates: T[], existing: Track[]): T[] {
   const seen = [...existing];
@@ -39,5 +40,6 @@ export function needsListeningDiscovery(
   inList: boolean,
   remaining: number,
 ): boolean {
-  return enabled && kind === 'complete' && inList && remaining <= LISTENING_LOW_WATER;
+  // QUEUE-KEEP-DISCOVER-001: a skip is listening too; skipping through a queue must not leave it to run dry.
+  return enabled && (kind === 'complete' || kind === 'skip') && inList && remaining <= LISTENING_LOW_WATER;
 }

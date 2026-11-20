@@ -81,6 +81,8 @@ ul.radio-stations > li.radio-station:not(:has(> .skel-develop)) {
   row-gap: 0;
 }
 ul.radio-stations > li.radio-station { padding: 14px 0; }
+/* RADIO-ROW-STRIPE-001: the playing row's blue stripe (3 px inset) needs its cover moved clear; this beats the line above. */
+ul.radio-stations > li.radio-station.is-on { padding-left: 12px; }
 ul.radio-stations .radio-station__art {
   width: var(--row-cover);
   height: var(--row-cover);

@@ -6,7 +6,8 @@ import type { Track } from './api';
 import { genreIdentity } from './engine/genre-identity';
 import { GenreBubbleView } from './Results';
 import { TagStrip } from './TagStrip';
-import { classifyStation, type StationFacts, type StationGenre } from './engine/radio-genres';
+import { type StationFacts, type StationGenre } from './engine/radio-genres';
+import { radioTagBubbles } from './engine/display-tags';
 import { SkeletonList, Develop } from './Skeleton';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { RadioRefreshGlyph } from './RadioGlyphs';
@@ -31,9 +32,8 @@ export type StationBubble = StationGenre;
  * as an estimate; with nothing at all, a plain "Genre not listed" rather than an invented genre.
  */
 export function stationGenreBubbles(tags: string[], name: string, more: Partial<Omit<StationFacts, 'tags' | 'name'>> = {}): StationBubble[] {
-  return classifyStation({ tags, name, ...more });
+  return radioTagBubbles({ tags, name, ...more }) as StationBubble[];
 }
-const NO_GENRES: readonly string[] = [];
 const GENRE_SECTIONS = ['jazz', 'classical', 'rock', 'pop', 'hip hop', 'r&b', 'electronic', 'house', 'techno', 'ambient', 'metal', 'country', 'latin', 'reggae', 'soul', 'blues', 'folk', 'news', 'talk', 'world'] as const;
 const LANGUAGE_CHOICES = ['english', 'spanish', 'french', 'german', 'italian', 'portuguese', 'dutch', 'arabic', 'hindi', 'japanese', 'korean', 'chinese'] as const;
 const genreTone = (word: string) => genreIdentity(word)?.color ?? topicTone(word);
@@ -42,7 +42,10 @@ const RADIO_LIVE_MAX_AGE = 15000;
 function readStars(): RadioStation[] { try { return JSON.parse(localStorage.getItem('airwave:radio-stations') || '[]') as RadioStation[]; } catch { return []; } }
 export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioStation) => void; onOpenArtist?: (t: RadioArtistTarget) => void; onPlaySong?: (t: Track) => void }) {
   const activeStation = useSyncExternalStore(radioSession.subscribe, () => radioSession.get().station);
-  const nowGenres = useSyncExternalStore(radioSession.subscribe, () => radioSession.get().characteristics?.genres ?? NO_GENRES);
+  // TAGS-SAME-001: the playing station's row uses the same live state as the radio player.
+  const liveIdentified = useSyncExternalStore(radioSession.subscribe, () => radioSession.get().identified);
+  const liveCharacteristics = useSyncExternalStore(radioSession.subscribe, () => radioSession.get().characteristics ?? null);
+  const live = { identified: liveIdentified, characteristics: liveCharacteristics };
   const [stations, setStations] = useState<RadioStation[]>([]), [countries, setCountries] = useState<{ name: string; code: string; count: number }[]>([]);
   const [letter, setLetter] = useState(''), [numericMode, setNumericMode] = useState(false);
   const indexRef = useRef<HTMLDivElement | null>(null);
@@ -241,7 +244,7 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
     {error && <p role="alert" className="notice">{error} <button type="button" className="linkbtn" onClick={() => void load(lastRequested.current)}>Try again</button></p>}
     <div aria-busy={busy}>{busy && !shown.length ? <SkeletonList rows={6} label="Loading stations around the world…" art={ROW_COVER} /> : null}
       {!busy && !shown.length && !error && <p role="status">{saved ? stars.length ? 'No starred stations match these filters.' : 'Star a station to keep it here.' : hasMore ? 'No matches in this batch. More stations continues looking.' : 'No stations match these filters. Try another country, language or station name.'}</p>}
-      <ul className="radio-stations" aria-label="Radio stations">{shown.map(s => { const b = info[s.id] ? freshBroadcast(info[s.id]!) : null, active = activeStation?.id === s.id; const tags = stationGenreBubbles(s.tags, s.name, { language: s.language, countryCode: s.countryCode, ...(active && nowGenres.length ? { nowPlaying: nowGenres } : {}) }), starred = stars.some(x => x.id === s.id), artist = b?.artist ? radioArtistTarget(b.artist, match[s.id], b) : null; const play = () => { radioSession.setStations(shown); onTune(s); }; return <li key={s.id} data-station-id={s.id} className={`radio-station${active ? ' is-on' : ''}`} onDoubleClick={e => { if (!(e.target instanceof Element) || e.target.closest('button, a, input, select, textarea, label, [role=button]')) return; window.getSelection?.()?.removeAllRanges(); play(); }}><Develop>
+      <ul className="radio-stations" aria-label="Radio stations">{shown.map(s => { const b = info[s.id] ? freshBroadcast(info[s.id]!) : null, active = activeStation?.id === s.id; const tags = radioTagBubbles(s, active ? live : undefined), starred = stars.some(x => x.id === s.id), artist = b?.artist ? radioArtistTarget(b.artist, match[s.id], b) : null; const play = () => { radioSession.setStations(shown); onTune(s); }; return <li key={s.id} data-station-id={s.id} className={`radio-station${active ? ' is-on' : ''}`} onDoubleClick={e => { if (!(e.target instanceof Element) || e.target.closest('button, a, input, select, textarea, label, [role=button]')) return; window.getSelection?.()?.removeAllRanges(); play(); }}><Develop>
         <div className="radio-station__art">{(() => { const art = rowArt(s); return art ? <img src={art} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setBadArt(was => ({ ...was, [art]: true }))} /> : <span aria-hidden="true">◉</span>; })()}</div>
         <div className="radio-station__body">
           {/* ROW-UNIFY-001 (owner, 2026-11-19): the station row reads like every song row: the cover, then the

@@ -128,13 +128,15 @@ for (const surface of surfaces) describe(surface, () => {
     precedes(title, artists);
   });
 
-  it('keeps a known same-title single album clickable instead of suppressing it', async () => {
+  // ALBUM-NAME-001 (owner, 2026-11-20): it stays clickable, but reads "Single" rather than the song's own name as an album.
+  it('keeps a known same-title single clickable, labelled Single instead of the song title', async () => {
     const single = { ...song, album: 'Singapore', kind: 'single' };
     const f = fixture(surface, single);
     await draw(f.element);
     const { text, title, artists } = rowParts();
     const album = text.querySelector<HTMLButtonElement>('button.song-credits__album');
-    expect(album?.textContent).toBe('Singapore');
+    expect(album?.textContent).toBe('Single');
+    expect(album?.getAttribute('aria-label')).toBe('Open the single Singapore');
     precedes(title, album!);
     precedes(album!, artists);
     await act(async () => album!.click());

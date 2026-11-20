@@ -68,6 +68,7 @@ import { Albums } from './albums';
 import { ArtistNotOpened, Artists, partitionFeatures, type ArtistSource } from './artists';
 import { ArtistExtrasReader } from './artist-extras';
 import { albumKeyOf } from './album-key';
+import { ALBUM_LOOKUP_VERSION, albumFromMusicBrainz, realAlbumFrom, wantsAlbum } from './album-name';
 import { SoundCloud } from './soundcloud';
 import { Bandcamp } from './bandcamp';
 import { Audius } from './audius';
@@ -1220,7 +1221,8 @@ export class LocalApi {
     const last = this.store.get<Dict>('last_result');
     const items = ((last?.['items'] ?? []) as Dict[]).slice();
     const more = (t: Dict): boolean => this.wantsArtist(t) || this.wantsYear(t);
-    const settled = (x: Dict): boolean => LocalApi.placed(x) && !LocalApi.guessed(x) && !more((x['track'] as Dict | undefined) ?? {});
+    // ALBUM-NAME-001: a row showing only its single's name is not settled until its album has been looked up.
+    const settled = (x: Dict): boolean => LocalApi.placed(x) && !LocalApi.guessed(x) && !more((x['track'] as Dict | undefined) ?? {}) && !wantsAlbum((x['track'] as Dict | undefined) ?? {});
     if (!last || items.every(settled)) return ok({ items: [], left: 0 });
     const limit = Math.max(1, Math.min(12, Math.trunc(Number(body['limit'])) || 6));
     const known = this.knownGenres();
@@ -1231,7 +1233,8 @@ export class LocalApi {
       const fill = this.genreFiller(list);
       return list.map((x) => {
         const c = x['track'] ? fill(x['track'] as Dict, {}) : {};
-        return JSON.stringify([(x['track'] as Dict | undefined)?.['tags'] ?? [], c['styles'], c['fill'], c['main_off'] ?? null, c['genre_pending'] ?? false]);
+        const t = (x['track'] as Dict | undefined) ?? {};
+        return JSON.stringify([t['tags'] ?? [], c['styles'], c['fill'], c['main_off'] ?? null, c['genre_pending'] ?? false, t['album'] ?? null, t['album_looked'] ?? false]);
       });
     };
     const before = shown(items);
@@ -1290,6 +1293,36 @@ export class LocalApi {
             }
           }
         }
+        // ALBUM-NAME-001: the service answered with the song's single; find the album the song is on.
+        if (!waiting && wantsAlbum(dated)) {
+          if (!mayAsk()) waiting = true;
+          else {
+            const artist = artistName(track);
+            const title = String(track['title'] ?? '');
+            let found: { album: string; album_id: string | null; confirmed?: boolean } | null = null;
+            const bare = title.replace(/\s*[([](?:feat|ft|with)\b[^)\]]*[)\]]/gi, '');
+            try {
+              // Deezer first: its answer opens the album page. (Its artist:/track: form answers nothing here.)
+              const cands = await this.dz.search(`${artist} ${bare}`, 15, { meter });
+              found = realAlbumFrom(dated, cands as never);
+            } catch (e) {
+              if (e instanceof BudgetExceeded) throw e;
+            }
+            // Deezer often lists only the single; MusicBrainz lists every release the recording is on.
+            if (!found) {
+              try {
+                const q = `recording:"${bare.replace(/"/g, ' ')}" AND artist:"${artist.replace(/"/g, ' ')}"`;
+                const body = await cached(this.store, `mb:rec:${fold(artist)}:${fold(bare)}`, 'metadata', 30 * 24 * 3600, () =>
+                  this.http.getJson<Dict>(`https://musicbrainz.org/ws/2/recording?query=${encodeURIComponent(q)}&fmt=json&limit=10`, { maxBytes: 400_000, meter, category: 'metadata', headers: { 'user-agent': MUSICBRAINZ_UA, accept: 'application/json' } }));
+                const mb = albumFromMusicBrainz(body, dated);
+                if (mb) found = { album: mb.album, album_id: null, ...(mb.titleTrack ? { confirmed: true } : {}) };
+              } catch (e) {
+                if (e instanceof BudgetExceeded) throw e;
+              }
+            }
+            dated = { ...dated, album_looked: ALBUM_LOOKUP_VERSION, ...(found ? { album: found.album, album_confirmed: true, ...(found.album_id ? { album_id: found.album_id } : {}) } : {}) };
+          }
+        }
       } catch (e) {
         // The allowance is used up: say what is left rather than guess, and ask no more this time.
         if (!(e instanceof BudgetExceeded)) throw e;
@@ -1311,7 +1344,7 @@ export class LocalApi {
     items.forEach((x, i) => {
       const track = x['track'] as Dict | undefined;
       if (!track || after[i] === before[i]) return;
-      out.push({ key: String(track['key'] ?? ''), tags: track['tags'] ?? [], characteristics: fill(track, (x['characteristics'] as Dict | undefined) ?? {}) });
+      out.push({ key: String(track['key'] ?? ''), tags: track['tags'] ?? [], characteristics: fill(track, (x['characteristics'] as Dict | undefined) ?? {}), ...(track['album_looked'] ? { album: track['album'] ?? null, album_id: track['album_id'] ?? null, album_looked: track['album_looked'], album_confirmed: Boolean(track['album_confirmed']) } : {}) });
     });
     return ok({ items: out, left, ...(spent ? { spent: true } : {}) });
   }
@@ -2319,7 +2352,9 @@ export class LocalApi {
     // The phone page and the service page can both follow one station. Once the full listen is
     // stored, a late thirty-second note for the same listen is the same listen, not a second one.
     if (onRadio && kind === 'qualified' && this.store.hasFeedback(`${eventId}:full`.slice(0, 80))) return ok({ recorded: false, duplicate: true });
-    if (kind === 'like') this.store.removeFeedback(key, ['dislike']);
+    // REMOVE-FOREVER-001: a like or a star (save) takes back an earlier removal, so the song may come back.
+    if (kind === 'like') this.store.removeFeedback(key, ['dislike', 'hide']);
+    if (kind === 'save') this.store.removeFeedback(key, ['hide']);
     if (kind === 'dislike') this.store.removeFeedback(key, ['like']);
     const artist = (t['artists'] as string[] | undefined)?.[0]?.toLowerCase() ?? '';
     // v2 telemetry: optional, validated, stored alongside the event (old callers simply omit it).
@@ -2348,6 +2383,13 @@ export class LocalApi {
     }
     const stored = t['album'] ? cleanTrack(t) : cleanTrack(withAlbumOf(t, this.knownTracks().get(String(key))));
     const added = await this.store.addFeedback(eventId, key, kind, artist, stored, listened === null ? null : Number(listened), heardAt, hasMeta ? meta : undefined);
+    // REMOVE-FOREVER-001: a removed song leaves the saved queue too, so it is not there after a restart.
+    if (kind === 'hide' || kind === 'dislike') {
+      const last = this.store.get<Dict>('last_result');
+      const items = (last?.['items'] ?? []) as Dict[];
+      const rest = items.filter((x) => String((x['track'] as Dict | undefined)?.['key']) !== String(key));
+      if (last && rest.length !== items.length) await this.store.put('last_result', { ...last, items: rest.map((x, i) => ({ ...x, rank: i + 1 })), count: rest.length });
+    }
     return ok({ recorded: added, duplicate: !added });
   }
 

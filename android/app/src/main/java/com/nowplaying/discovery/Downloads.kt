@@ -161,6 +161,22 @@ object Downloads {
     JSONObject().put("removed", removed).put("bytes", cacheBytes(context))
   }
 
+  /**
+   * REMOVE-FOREVER-001: a song removed from the queue loses the app's own cached copy. A copy kept in the Music
+   * folder belongs to the owner and is not touched (it is not in this cache).
+   */
+  fun evict(context: Context, url: String): JSONObject = synchronized(libraryLock) {
+    val file = cacheFile(context, url)
+    if (file == null) {
+      JSONObject().put("removed", false)
+    } else {
+      if (file.exists() && !file.delete()) throw IOException("Could not remove cached audio.")
+      if (!cachePrefs(context).edit().remove(url).commit()) throw IOException("Could not update cache index.")
+      cacheNames(context).edit().remove(url).commit()
+      JSONObject().put("removed", true)
+    }
+  }
+
   private fun configureCache(context: Context, req: JSONObject): JSONObject = synchronized(libraryLock) {
     val gb = req.optDouble("limitGb", Double.NaN)
     require(gb.isFinite() && gb in 0.25..20.0) { "limitGb must be between 0.25 and 20." }
@@ -389,6 +405,7 @@ object Downloads {
     "start" -> JSONObject().put("job", view(start(context, req.optString("url"), req.optString("tool"), req.optString("format"), req.optString("label"), req.optBoolean("cache", false), req.optBoolean("background", false))))
     "cache-config" -> configureCache(context, req)
     "cache-clear" -> clearCache(context)
+    "evict" -> evict(context, req.optString("url"))
     "keep" -> keep(context, req.optString("url"))
     "jobs" -> JSONObject().put("jobs", JSONArray().also { a -> order.mapNotNull { jobs[it] }.forEach { a.put(view(it)) } })
     "cancel" -> JSONObject().put("ok", cancel(req.optString("id")))

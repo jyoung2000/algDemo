@@ -62,7 +62,8 @@ it('opens albums and same-title singles from album text beneath the search song 
     const text = row.querySelector('.track__text')!;
     const album = text.querySelector<HTMLButtonElement>('button.song-credits__album');
     expect(album).toBeTruthy();
-    expect(album!.textContent).toBe(track.album);
+    // ALBUM-NAME-001: a same-title single reads "Single"; an album its name.
+    expect(album!.textContent).toBe(track === single ? 'Single' : track.album);
     expect(album!.classList.contains('iconbtn')).toBe(false);
     expect(album!.querySelector('svg')).toBeNull();
     expect(row.querySelector('.track__actions [aria-label^="Open the album"]')).toBeNull();
@@ -144,7 +145,8 @@ it('opens albums from text credits in queue and saved rows, including singles', 
   open.mockReset();
   await draw(<SavedView saved={[{ track: onAlbum, ts: 1 }, { track: single, ts: 2 }] as never} lists={[]} onLists={() => {}} onPreview={() => {}} onRemoveSaved={() => {}} onOpenAlbum={open} />);
   const savedAlbums = [...host.querySelectorAll<HTMLButtonElement>('.track__text button.song-credits__album')];
-  expect(savedAlbums.map((b) => b.textContent)).toEqual(['A Great Chaos', 'Rock N Roll']);
+  // ALBUM-NAME-001: the same-title single reads "Single" (and still opens it).
+  expect(savedAlbums.map((b) => b.textContent)).toEqual(['A Great Chaos', 'Single']);
   for (const b of savedAlbums) await act(async () => b.click());
   expect(open.mock.calls).toEqual([[onAlbum], [single]]);
 });

@@ -94,6 +94,8 @@ export interface Scored {
   weightsUsed: Record<string, number>;
   tier: string;
   exposurePenalty: number;
+  /** REMOVE-FOREVER-001: pushed down for being like a song the listener removed. */
+  removedNear?: boolean;
   reasons: Reason[];
   uncertainty: string[];
   formulaError?: string;
@@ -189,6 +191,8 @@ export interface FeedbackView {
   artist: Record<string, number>;
   excluded: Set<string>;
   hidden: Set<string>;
+  /** REMOVE-FOREVER-001: songs the listener removed (and has not liked since), for the similarity check. */
+  removed?: RemovedSong[];
   likedArtists: Set<string>;
   events: number;
   /** ALBUM-TASTE-001 (v2 only): album key -> affinity, and the album's name for the reasons. */
@@ -216,6 +220,43 @@ export function withSavedAlbums(fb: FeedbackView, saved: readonly { key: string;
   return { ...fb, album, albumNames };
 }
 
+export interface RemovedSong { key: string; artist: string; tags: G.Tag[] }
+
+function removalsOf(hides: Map<string, FeedbackEvent>): { hidden: Set<string>; removed: RemovedSong[] } {
+  const removed = [...hides.values()].map((e) => {
+    const tags = (e.track as { tags?: unknown } | null | undefined)?.tags;
+    return { key: e.key, artist: (e.artist ?? '').toLowerCase(), tags: Array.isArray(tags) ? (tags as G.Tag[]).filter((g) => g && typeof g.name === 'string') : [] };
+  });
+  return { hidden: new Set(hides.keys()), removed };
+}
+
+/** A song this close to one the listener removed (0..1) is pushed all the way down by REMOVED_PENALTY. */
+export const REMOVED_NEAR = 0.5;
+export const REMOVED_PENALTY = 0.6;
+/** The same artist as a removed song counts as this close. */
+export const REMOVED_SAME_ARTIST = 0.9;
+
+/**
+ * REMOVE-FOREVER-001: how much of its score a candidate keeps (0.4..1) given the songs the listener removed. Closeness
+ * is the measured sound when both songs have it, else the genres; the same artist counts as REMOVED_SAME_ARTIST.
+ */
+export function removedPenalty(c: Pick<Track, 'key' | 'artists' | 'tags'>, removed: readonly RemovedSong[], vectors: Map<string, Float64Array>): number {
+  if (!removed.length) return 1;
+  const artists = new Set((c.artists ?? []).map((a) => a.toLowerCase()));
+  const vc = vectors.get(c.key);
+  let near = 0;
+  for (const r of removed) {
+    if (r.key === c.key) return 1 - REMOVED_PENALTY;
+    let s = r.artist && artists.has(r.artist) ? REMOVED_SAME_ARTIST : 0;
+    const vr = vectors.get(r.key);
+    if (vc && vr) s = Math.max(s, Math.max(0, dot(vc, vr)));
+    else if (r.tags.length && c.tags?.length) s = Math.max(s, G.similarity(r.tags, c.tags) ?? 0);
+    near = Math.max(near, s);
+  }
+  const k = Math.max(0, Math.min(1, (near - REMOVED_NEAR) / (1 - REMOVED_NEAR)));
+  return 1 - REMOVED_PENALTY * k;
+}
+
 export function decay(ts: number, nowTs: number, halfLifeDays: number): number {
   const age = Math.max(0, (nowTs - ts) / 86400.0);
   return Math.pow(0.5, age / halfLifeDays);
@@ -228,7 +269,7 @@ export function buildFeedback(events: FeedbackEvent[], nowTs: number, cfg: Engin
   const artist: Record<string, number> = {};
   const skippedByArtist = new Map<string, Set<string>>();
   const latest = new Map<string, [number, string]>();
-  const hidden = new Set<string>();
+  const hides = new Map<string, FeedbackEvent>();
   const sorted = [...events].sort((x, y) => x.ts - y.ts || (x.event_id < y.event_id ? -1 : x.event_id > y.event_id ? 1 : 0));
   for (const e of sorted) {
     if ((e.track as (typeof e.track & { kind?: string }))?.kind === 'radio-programme') continue;
@@ -238,7 +279,9 @@ export function buildFeedback(events: FeedbackEvent[], nowTs: number, cfg: Engin
     track[e.key] = (track[e.key] ?? 0) + w;
     const a = e.artist ?? '';
     if (e.kind === 'like' || e.kind === 'dislike' || e.kind === 'hide') latest.set(e.key, [e.ts, e.kind]);
-    if (e.kind === 'hide' && nowTs - e.ts < 30 * 86400) hidden.add(e.key);
+    // REMOVE-FOREVER-001: a removal (or a dislike, the Discover X) lasts until the listener likes or stars the song.
+    if (e.kind === 'hide' || e.kind === 'dislike') hides.set(e.key, e);
+    else if (e.kind === 'like' || e.kind === 'save') hides.delete(e.key);
     if (!a) continue;
     if (e.kind === 'skip') {
       if (!skippedByArtist.has(a)) skippedByArtist.set(a, new Set());
@@ -254,7 +297,8 @@ export function buildFeedback(events: FeedbackEvent[], nowTs: number, cfg: Engin
   const excluded = new Set<string>();
   for (const [k, [, kind]] of latest) if (kind === 'dislike') excluded.add(k);
   const liked = new Set(Object.keys(artist).filter((a) => artist[a]! > 1.0));
-  return { track, artist, excluded, hidden, likedArtists: liked, events: seen.size };
+  const { hidden, removed } = removalsOf(hides);
+  return { track, artist, excluded, hidden, removed, likedArtists: liked, events: seen.size };
 }
 
 /**
@@ -278,7 +322,7 @@ export function buildFeedback2(events: FeedbackEvent[], nowTs: number, cfg: Engi
   const artistNeg: Record<string, number> = {};
   const skippedByArtist = new Map<string, Set<string>>();
   const latest = new Map<string, [number, string]>();
-  const hidden = new Set<string>();
+  const hides = new Map<string, FeedbackEvent>();
   const perDay = new Map<string, number>(); // `${key}|${day}` -> behavioral events already counted
   const skipStreak = new Map<string, { n: number; ts: number }>(); // consecutive skips with no positive in between
   const albumPos = new Map<string, Map<string, number>>(); // album -> key -> best positive weight
@@ -317,7 +361,9 @@ export function buildFeedback2(events: FeedbackEvent[], nowTs: number, cfg: Engi
     track[e.key] = (track[e.key] ?? 0) + w;
     const a = e.artist ?? '';
     if (e.kind === 'like' || e.kind === 'dislike' || e.kind === 'hide') latest.set(e.key, [e.ts, e.kind]);
-    if (e.kind === 'hide' && nowTs - e.ts < 30 * 86400) hidden.add(e.key);
+    // REMOVE-FOREVER-001: a removal (or a dislike, the Discover X) lasts until the listener likes or stars the song.
+    if (e.kind === 'hide' || e.kind === 'dislike') hides.set(e.key, e);
+    else if (e.kind === 'like' || e.kind === 'save') hides.delete(e.key);
     const ak = e.track ? albumKeyOf(e.track) : null;
     if (ak) {
       albumNames[ak] ??= cleanAlbumTitle(String(e.track!.album));
@@ -375,7 +421,8 @@ export function buildFeedback2(events: FeedbackEvent[], nowTs: number, cfg: Engi
   }
   for (const k of Object.keys(album)) if (!album[k]) delete album[k];
   for (const k of Object.keys(albumNames)) if (!(k in album)) delete albumNames[k];
-  return { track, artist, excluded: excluded2, hidden, likedArtists: liked2, events: seen.size, album, albumNames };
+  const { hidden, removed } = removalsOf(hides);
+  return { track, artist, excluded: excluded2, hidden, removed, likedArtists: liked2, events: seen.size, album, albumNames };
 }
 
 /** The album part of a song's feedback, with the album's name; null when the listener has none for it. */
@@ -658,7 +705,12 @@ export function scoreAll(candidates: Track[], ctx: Context): Scored[] {
   for (const c of candidates) {
     if (seedKeys.has(c.key) || ctx.feedback.excluded.has(c.key) || ctx.feedback.hidden.has(c.key)) continue;
     if (c.unavailable) continue;
-    out.push(scoreOne(c, ctx));
+    const s = scoreOne(c, ctx);
+    // REMOVE-FOREVER-001 (v2): songs like one the listener removed sink; the parity path is unchanged.
+    const removed = ctx.rankV2 ? ctx.feedback.removed ?? [] : [];
+    const keep = removed.length ? removedPenalty(c, removed, ctx.vectors) : 1;
+    if (keep < 1) { s.final *= keep; s.removedNear = true; }
+    out.push(s);
   }
   out.sort((x, y) => y.final - x.final || (x.track.key < y.track.key ? -1 : x.track.key > y.track.key ? 1 : 0));
   assignTiers(out, ctx);
@@ -668,6 +720,7 @@ export function scoreAll(candidates: Track[], ctx: Context): Scored[] {
       if (s.formulaError) uncertainty.push(`Custom formula could not score this song; built-in score used: ${s.formulaError}`);
       else reasons.unshift({ factor: 'formula', text: 'Ranked with your custom discovery formula. Built-in factor weights are reference values.', weight: 1 });
     }
+    if (s.removedNear) uncertainty.push('Lowered: close to a song you removed.');
     s.reasons = reasons;
     s.uncertainty = uncertainty;
   }

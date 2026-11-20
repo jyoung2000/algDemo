@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { api, type Characteristics, type RecItem, type RecResult, type Track } from './api';
+import { wantsAlbum } from './engine/album-name';
 
 /**
  * GENRE-LOAD-001 — owner: "ensure genre & sub genre tags load on both apps".
@@ -13,6 +14,11 @@ export interface GenreAnswer {
   key: string;
   tags: Track['tags'];
   characteristics: Characteristics;
+  /** ALBUM-NAME-001: the album the song is on, when its row only had its single. */
+  album?: string | null;
+  album_id?: string | null;
+  album_looked?: boolean | number;
+  album_confirmed?: boolean;
 }
 
 /**
@@ -20,6 +26,8 @@ export interface GenreAnswer {
  * only by a guess of ours ("pop, lent by the starting song") still shows it, and is still asked about.
  */
 export function rowPlaced(item: RecItem): boolean {
+  // ALBUM-NAME-001: a row still showing only its single's name waits for its album to be looked up.
+  if (wantsAlbum(item.track as never)) return false;
   const c = item.characteristics;
   if (!c || !((c.genres ?? []).length || c.family)) return false;
   // GENRE-ALL-001: the engine says a lookup can still name this row's subgenre.
@@ -38,7 +46,8 @@ export function mergeGenres(result: RecResult, rows: readonly GenreAnswer[]): Re
     changed = true;
     // The engine's answer is the row's whole state: a "can still be improved" mark it no longer sends is gone.
     const { genre_pending: _was, ...kept } = (item.characteristics ?? {}) as Characteristics;
-    return { ...item, track: { ...item.track, tags: got.tags }, characteristics: { ...kept, ...got.characteristics } };
+    const album = got.album_looked ? { album_looked: got.album_looked, ...(got.album ? { album: got.album, album_id: got.album_id ?? undefined } : {}), ...(got.album_confirmed ? { album_confirmed: true } : {}) } : {};
+    return { ...item, track: { ...item.track, tags: got.tags, ...album }, characteristics: { ...kept, ...got.characteristics } };
   });
   return changed ? { ...result, items } : result;
 }

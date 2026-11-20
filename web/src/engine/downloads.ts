@@ -167,6 +167,8 @@ export const dl = {
   keep: (url: string) => call<{ ok?: boolean; job?: DlJob | null; alreadyKept?: boolean; file?: DlFile | null; saved_to?: string | null }>({ op: 'keep', url }),
   /** RESET-APP-001: empty the evictable audio cache. Kept copies in the Music folder are untouched. */
   cacheClear: () => call<{ removed: number; bytes: number }>({ op: 'cache-clear' }, 120_000),
+  /** REMOVE-FOREVER-001: drop one song's cached copy (a copy kept in the Music folder stays). */
+  evict: (url: string) => call<{ removed: boolean }>({ op: 'evict', url }),
   cacheConfig: (limitGb: number, protectedUrls: string[], wanted?: string[], parallel?: number) => call<{ bytes: number; limitBytes: number }>({ op: 'cache-config', limitGb, protected: protectedUrls, ...(wanted ? { wanted } : {}), ...(parallel ? { parallel } : {}) }),
   chooseFolder: () => call<{ saves_to: string }>({ op: 'choose-folder' }, 120_000),
   jobs: () => call<{ jobs: DlJob[] }>({ op: 'jobs' }),

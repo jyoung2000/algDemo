@@ -19,6 +19,8 @@ const result = { items: [bad, good], count: 2, asked: 2, phase: 'final', sources
 afterEach(cleanup);
 beforeEach(() => {
   vi.clearAllMocks();
+  // The warning before removing has its own tests (confirm-remove.test.tsx); these cover what the dislike does.
+  localStorage.setItem('airwave:confirm-remove', 'off');
   vi.mocked(api.last).mockResolvedValue(result);
   vi.mocked(api.feedback).mockResolvedValue({ recorded: true } as never);
   vi.mocked(api.rerank).mockResolvedValue({ ...result, items: [good], taste: { events: 1, positives: 0, negatives: 1, likes: [], avoids: [{ name: 'rage', label: 'Rage', score: -1.5, skips: 1 }], genres: [{ name: 'rage', label: 'Rage', score: -1.5, plays: 0, skips: 1 }] } } as never);

@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { Marquee } from './Marquee';
+import { Marquee, TAG_MARQUEE_SPEED } from './Marquee';
 import './tag-strip.css';
 
 /** Width that shows the first two tags whole; null when there are two or fewer (they fit as they are). */
@@ -30,7 +30,7 @@ export function TagStrip({ children, className, label = 'Song details', title }:
   return (
     <span ref={box} className={`${className ? `${className} ` : ''}tag-strip`} aria-label={label} title={title}
       style={cap ? ({ '--tag-cap': `${cap}px` } as CSSProperties) : undefined}>
-      <Marquee>{children}</Marquee>
+      <Marquee speed={TAG_MARQUEE_SPEED}>{children}</Marquee>
     </span>
   );
 }

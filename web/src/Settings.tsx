@@ -13,6 +13,7 @@ import { RankingFormulaSettings } from './RankingFormulaSettings';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, classNames, fmtBytes } from './util';
 import './discovery-settings.css';
 import { SIMILAR_DEFAULT, SIMILAR_MAX, SIMILAR_MIN } from './engine/similar-sound';
+import { NumberField } from './NumberField';
 
 const CAPS: [string, string][] = [
   ['search', 'Search'],
@@ -284,27 +285,25 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFo
           </label>
           <span className="k">Daily download allowance</span>
           <label className="numrow">
-            <input
+            <NumberField
               className="field field--num"
-              type="number"
               min={5}
               max={2000}
               step={5}
               value={settings?.daily_mb ?? 100}
-              onChange={(e) => onSettings({ daily_mb: Number(e.target.value) })}
+              onValue={(n) => onSettings({ daily_mb: n })}
             />{' '}
             MB per day, for metadata, artwork checks and previews the app downloads itself
           </label>
           <span className="k">Discovery allowance</span>
           <label className="numrow">
-            <input
+            <NumberField
               className="field field--num"
-              type="number"
               min={2}
               max={200}
               step={1}
               value={settings?.request_mb ?? 20}
-              onChange={(e) => onSettings({ request_mb: Number(e.target.value) })}
+              onValue={(n) => onSettings({ request_mb: n })}
             />{' '}
             MB for each discovery batch
           </label>

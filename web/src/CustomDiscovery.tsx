@@ -76,15 +76,21 @@ export function CustomDiscovery({ open, onClose, defaults, status, onRun, onStop
   // Saved as it changes, across restarts.
   useEffect(() => { try { window.localStorage.setItem(CUSTOM_KEY, JSON.stringify(crit)); } catch { /* private mode */ } }, [crit]);
 
-  // Focus moves in on open and back to the button that opened it on close; Tab stays inside.
+  // CUSTOM-INPUTS-001: the latest search text and close action, read by the key handler without re-running the
+  // focus effect (re-running it on every letter took focus out of the field and closed the phone keyboard).
+  const aqRef = useRef(aq);
+  aqRef.current = aq;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  // Focus moves in on open and back to the button that opened it on close — only then; Tab stays inside.
   useEffect(() => {
     if (!open) return;
     opener.current = document.activeElement;
     box.current?.querySelector<HTMLElement>('.cdisc__close')?.focus();
     const key = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (found.list.length && aq) { setAq(''); setFound({ state: 'idle', list: [] }); return; }
-        onClose();
+        if (aqRef.current) { setAq(''); setFound({ state: 'idle', list: [] }); return; }
+        onCloseRef.current();
       }
       if (e.key !== 'Tab' || !box.current) return;
       const f = [...box.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex="0"]')];
@@ -94,7 +100,7 @@ export function CustomDiscovery({ open, onClose, defaults, status, onRun, onStop
     };
     document.addEventListener('keydown', key);
     return () => { document.removeEventListener('keydown', key); (opener.current as HTMLElement | null)?.focus?.(); };
-  }, [open, onClose, found.list.length, aq]);
+  }, [open]);
 
   // Artist search: two letters, 300 ms after typing stops.
   useEffect(() => {

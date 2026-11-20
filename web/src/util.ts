@@ -173,7 +173,7 @@ export function stepQueue(
   fromKey: string | null,
   dir: 1 | -1,
   hidden: Set<string>,
-  o: { shuffle: boolean; repeat: RepeatMode; heard: ReadonlySet<string>; rand?: () => number; ready?: (track: Track) => boolean; prefer?: ReadonlyMap<string, number>; mood?: ShuffleMood | null },
+  o: { shuffle: boolean; repeat: RepeatMode; heard: ReadonlySet<string>; rand?: () => number; ready?: (track: Track) => boolean; prefer?: ReadonlyMap<string, number>; mood?: ShuffleMood | null; inOrder?: boolean },
 ): QueueStep | null {
   const playable = items.filter((x) => !hidden.has(x.track.key) && canPlayHere(x.playback));
   /**
@@ -192,6 +192,8 @@ export function stepQueue(
   // `prefer` (the mood plan's order, top three) is the older rule, kept for callers without fits.
   const best = (from: RecItem[]) => (o.prefer ? [...from].sort((a, b) => (o.prefer!.get(a.track.key) ?? 1e9) - (o.prefer!.get(b.track.key) ?? 1e9)).slice(0, 3) : from);
   const pick = (all: RecItem[]) => {
+    // SHUFFLE-ORDER-001: the queue already holds the shuffled order; play the first song it shows.
+    if (o.inOrder) return all[0]!;
     if (o.mood && o.mood.confidence > 0) return moodShufflePick(all, (x) => x.track.key, o.mood.fit, { adventurous: o.mood.adventurous, confidence: o.mood.confidence, rand });
     const from = best(all);
     return from[Math.min(from.length - 1, Math.floor(rand() * from.length))]!;
@@ -199,7 +201,8 @@ export function stepQueue(
   if (o.shuffle && dir === 1) {
     const fresh = choosable.filter((x) => x.track.key !== fromKey && !o.heard.has(x.track.key));
     if (fresh.length) {
-      const kept = shuffleNext && shuffleNext.from === fromKey && shuffleNext.heard === o.heard && !shuffleNext.wrapped ? fresh.find((x) => x.track.key === shuffleNext!.key) : undefined;
+      // SHUFFLE-ORDER-001: in queue order the list IS the decision; a pick remembered from before must not override it.
+      const kept = !o.inOrder && shuffleNext && shuffleNext.from === fromKey && shuffleNext.heard === o.heard && !shuffleNext.wrapped ? fresh.find((x) => x.track.key === shuffleNext!.key) : undefined;
       const item = kept ?? pick(fresh);
       shuffleNext = { from: fromKey, key: item.track.key, heard: o.heard, wrapped: false };
       return { item, wrapped: false };
@@ -208,7 +211,7 @@ export function stepQueue(
     const others = choosable.filter((x) => x.track.key !== fromKey);
     if (!others.length && !choosable.length) return null;
     const pool = others.length ? others : choosable;
-    const kept = shuffleNext && shuffleNext.from === fromKey && shuffleNext.heard === o.heard && shuffleNext.wrapped ? pool.find(x => x.track.key === shuffleNext!.key) : undefined;
+    const kept = !o.inOrder && shuffleNext && shuffleNext.from === fromKey && shuffleNext.heard === o.heard && shuffleNext.wrapped ? pool.find(x => x.track.key === shuffleNext!.key) : undefined;
     const item = kept ?? pick(pool);
     shuffleNext = { from: fromKey, key: item.track.key, heard: o.heard, wrapped: true };
     return { item, wrapped: true };

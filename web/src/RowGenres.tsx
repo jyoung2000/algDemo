@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, type Characteristics, type Track } from './api';
-import { genreBubbles } from './util';
+import { songTagBubbles } from './engine/display-tags';
 import { GenreBubbleView } from './Results';
 import { TagStrip } from './TagStrip';
 
@@ -67,7 +67,7 @@ export function RowGenres({ track }: { track: Track }) {
     ask(track, (v) => { if (live) setC(v); });
     return () => { live = false; };
   }, [track.key, own]);
-  const bubbles = genreBubbles(c);
+  const bubbles = songTagBubbles(c, track.tags);
   if (!bubbles.length) return null;
   return (
     <TagStrip className="rec__facts list-strip__facts">

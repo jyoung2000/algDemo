@@ -64,10 +64,19 @@ describe('listening discovery', () => {
     expect((low.body as { job: string | null }).job).toBeTruthy();
   });
 
-  it('does not discover for a skip, a replay, or a song played outside the list', async () => {
+  // QUEUE-KEEP-DISCOVER-001 (owner, 2026-11-20): a skip from the queue now tops it up like a finished song.
+  it('discovers after a skip from the queue too', async () => {
     const { api, store } = await open();
     await store.put('last_result', { items: listed(2) });
-    for (const kind of ['skip', 'replay']) {
+    await api.handle('POST', '/api/feedback', { kind: 'skip', event_id: 'e-skip', track: { ...seed, key: 'k0' }, listened: 5, origin: 'queue' });
+    const r = await api.handle('POST', '/api/recommend', { trigger: 'listening', event_id: 'e-skip', exclude: ['k0'] });
+    expect((r.body as { job: string | null }).job).toEqual(expect.any(String));
+  });
+
+  it('does not discover for a replay, or a song played outside the list', async () => {
+    const { api, store } = await open();
+    await store.put('last_result', { items: listed(2) });
+    for (const kind of ['replay']) {
       const id = `e-${kind}`;
       await api.handle('POST', '/api/feedback', {
         kind,

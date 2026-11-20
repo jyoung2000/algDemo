@@ -49,6 +49,9 @@ describe('the now playing queue row', () => {
     const row = screen.getByText('Alpha').closest('li')!;
     const b = within(row).getByRole('button', { name: 'Dislike Alpha and remove it from the queue' });
     fireEvent.click(b);
+    // REMOVE-CONFIRM-001: it asks first; nothing is sent until Remove.
+    expect(onFeedback).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     expect(onFeedback).toHaveBeenCalledWith(expect.objectContaining({ track: expect.objectContaining({ key: 'a' }) }), 'dislike');
   });
 

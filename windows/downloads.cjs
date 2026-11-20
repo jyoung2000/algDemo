@@ -555,6 +555,17 @@ ${r.stderr || ''}`) || 'spotDL found nothing for that search.');
         });
       case 'cancel':
         return { ok: cancel(String(req.id)) };
+      case 'evict': {
+        // REMOVE-FOREVER-001: a song removed from the queue loses the app's own cached copy. A copy kept in the
+        // Music folder belongs to the owner and is not touched.
+        const url = String(req.url || '');
+        const entry = cached.get(url);
+        if (!entry) return { removed: false };
+        try { fs.unlinkSync(path.join(cacheDir, entry.name)); } catch (e) { if (e && e.code !== 'ENOENT') throw e; }
+        cached.delete(url);
+        persistCache();
+        return { removed: true };
+      }
       case 'forget': {
         cancel(String(req.id));
         return { ok: jobs.delete(String(req.id)) };

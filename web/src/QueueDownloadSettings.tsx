@@ -3,6 +3,7 @@ import type { Settings } from './api';
 import { dl, downloadsAvailable } from './engine/downloads';
 import { parallelRange } from './engine/queue-controls';
 import { shellPlatform } from './engine/shell';
+import { NumberField } from './NumberField';
 
 /**
  * QUEUE-CTRL-001: how much the app downloads ahead, how fast, and where kept music lands.
@@ -78,9 +79,9 @@ export function QueueDownloadSettings({ settings, onSettings }: {
       {target === 'count' && (
         <div className="discovery-settings__heading">
           <label htmlFor="preload-count">Songs to preload</label>
-          <input id="preload-count" className="num" type="number" min={1} max={500} step={1} value={count}
+          <NumberField id="preload-count" className="num" min={1} max={500} step={1} value={count}
             aria-describedby="preload-help"
-            onChange={(e) => onSettings({ preload_count: Number(e.target.value) })} />
+            onValue={(n) => onSettings({ preload_count: n })} />
         </div>
       )}
       <p className="note" id="preload-help">

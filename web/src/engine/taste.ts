@@ -26,7 +26,8 @@ export const TASTE_EVENT_WEIGHTS: Record<string, number> = {
   save: 1.2,
   skip: -1.0,
   dislike: -1.5,
-  hide: -0.8,
+  // REMOVE-FOREVER-001: removing a song says as much as disliking it, and (below) it does not fade.
+  hide: -1.5,
 };
 
 /** Taste follows recent listening: an event counts half after two weeks. */
@@ -83,7 +84,7 @@ export function buildTaste(rows: TasteRow[], nowTs: number): TasteProfile {
     const base = TASTE_EVENT_WEIGHTS[r.kind];
     if (base === undefined) continue;
     events++;
-    const w = base * decay(r.ts, nowTs);
+    const w = base * (r.kind === 'hide' || r.kind === 'dislike' ? 1 : decay(r.ts, nowTs));
     if (base > 0) pos++;
     else neg++;
     // One song's genres share its weight, so a song with five tags does not count five times.

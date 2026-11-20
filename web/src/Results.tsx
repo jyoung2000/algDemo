@@ -14,7 +14,9 @@ import { SaveMenu } from './SaveMenu';
 import { SongStar, inPlaylist } from './SongStar';
 import { SongCredits } from './SongCredits';
 import { SwipeLi } from './useSwipeRemove';
-import { PROVIDER_LABEL, TIER_LABEL, bubbleNote, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, genreBubbles, playbackOfTrack, toneLabel, type GenreBubble } from './util';
+import { PROVIDER_LABEL, TIER_LABEL, bubbleNote, canPlayHere, classNames, describeCharacteristics, fmtDuration, fmtRelease, playbackOfTrack, toneLabel, type GenreBubble } from './util';
+import { songTagBubbles } from './engine/display-tags';
+import { ConfirmRemove, confirmRemoveWanted } from './ConfirmRemove';
 
 /**
  * One genre bubble (TAGS-CANON-001: the Taste Picker's colour for its own genre). GENRE-ALL-001: it
@@ -86,6 +88,7 @@ interface Props {
 export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload, onSimilar, similarBusy, cacheOf, lists, onLists, onOpenAlbum, onOpenArtist }: Props) {
   /** Which row's save menu is showing, by song key. Only one opens at a time. */
   const [saving, setSaving] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<{ title: string; run: () => void } | null>(null);
 
   /**
    * SEED-DUPE-001: a song that is both a starting song and in the queue below is one song, so it
@@ -106,6 +109,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
   };
 
   return (
+    <>
     <ol className="recs" aria-label="Now playing queue">
       {seedRows.map((s) => {
         const strong = (s.emphasis ?? 1) > 1;
@@ -115,7 +119,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         const sf = flags[s.key] ?? {};
         const seedItem = (items.find((x) => x.track.key === s.key) ?? { track: s, rank: 0, reasons: [], playback: playbackOfTrack(s), characteristics: s.characteristics ?? {} }) as RecItem;
         // GENRE-ALL-001: the engine sends a starting song's genres worked out; an older answer has only its tags.
-        const seedBubbles = genreBubbles(s.characteristics ?? ({ genres: (s.tags ?? []).map((g) => g.label || g.name) } as Characteristics));
+        const seedBubbles = songTagBubbles(s.characteristics, s.tags);
         return (
           <SwipeLi key={`seed:${s.key}`} onRemove={() => onRemoveSeed(s.key)} onSwipeLeft={onLists ? () => setSaving(s.key) : undefined} className={classNames('rec', 'rec--seed', strong && 'is-strong', playingKey === s.key && 'is-playing')} onDoubleClick={seedPlayable ? playOnDoubleClick(() => onPlayTrack(s)) : undefined}>
             <span className="rec__rank" aria-hidden="true">
@@ -212,7 +216,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         const playable = canPlayHere(it.playback);
         const facts = describeCharacteristics(it.characteristics);
         // One coloured bubble per genre or subgenre, no separators. The Taste Picker colour sits on the family/subgenre bubble.
-        const bubbles = genreBubbles(it.characteristics);
+        const bubbles = songTagBubbles(it.characteristics, t.tags);
         const toneFact = toneLabel(it.characteristics);
         const cache = cacheOf?.(t.key) ?? null;
         // SEED-DUPE-001: this queue row is also the starting song, so it says so and carries its controls.
@@ -342,8 +346,10 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                 aria-pressed={Boolean(f.dislike)}
                 onClick={() => {
                   if (f.dislike) { onFeedback(it, 'undislike'); return; }
-                  if (seed) onRemoveSeed(seed.key);
-                  onFeedback(it, 'dislike');
+                  const remove = () => { if (seed) onRemoveSeed(seed.key); onFeedback(it, 'dislike'); };
+                  // REMOVE-CONFIRM-001: removing is for good, so the X asks first (unless told not to).
+                  if (confirmRemoveWanted()) setConfirming({ title: t.title, run: remove });
+                  else remove();
                 }}
                 aria-label={f.dislike ? `Undo dislike of ${t.title}` : `Dislike ${t.title} and remove it from the queue`}
                 title={f.dislike ? 'Disliked' : 'Not for me — remove from the queue'}
@@ -396,6 +402,10 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         );
       })}
     </ol>
+    {confirming && (
+      <ConfirmRemove title={confirming.title} onCancel={() => setConfirming(null)} onConfirm={() => { const run = confirming.run; setConfirming(null); run(); }} />
+    )}
+    </>
   );
 }
 
