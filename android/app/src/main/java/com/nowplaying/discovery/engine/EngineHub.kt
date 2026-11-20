@@ -247,6 +247,12 @@ object EngineHub {
     }
   }
 
+  /**
+   * QUEUE-HEARD-001: songs the service page's listening top-up found while no phone page is open, for the end of the
+   * queue (EnginePlayer.appendFound ignores this while a page is open and drops songs already queued). Main thread.
+   */
+  fun appendFound(songs: List<MediaHub.Song>): Int = player?.appendFound(songs) ?: 0
+
   /** A song the page sent. Its file is trusted only through an allowed download link, and only when ready. */
   private fun songFrom(o: JSONObject?): MediaHub.Song? {
     if (o == null) return null

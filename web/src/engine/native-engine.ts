@@ -34,6 +34,8 @@ export interface EngineEvent {
   /** False when the song ended and nothing followed (the end of the list, or waiting for the page). */
   advanced: boolean;
   from: { id: string; heardMs: number; durationMs: number };
+  /** QUEUE-HEARD-001: when it happened (ms since 1970); newer engines only. Makes the listen id the same on every page. */
+  at?: number;
 }
 
 export interface EngineState {

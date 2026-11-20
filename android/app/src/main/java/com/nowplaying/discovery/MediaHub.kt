@@ -695,6 +695,9 @@ object MediaHub {
     )
   }
 
+  /** QUEUE-HEARD-001: songs a page sent for the queue, parsed like a reply's (bounded, no repeats). */
+  fun songsOf(a: JSONArray): List<Song> = parseSongs(a).distinctBy { it.id }.take(60)
+
   private fun parseSongs(a: JSONArray): List<Song> {
     val out = ArrayList<Song>(a.length())
     for (i in 0 until a.length()) {

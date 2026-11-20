@@ -1,0 +1,84 @@
+/* SIMILAR-NOTICE-001: Find similar's result over any page, where the toast sits; a toast shown with it goes above. */
+.similar-notice {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 41;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  max-width: min(92vw, 520px);
+  min-height: 56px;
+  margin: 0;
+  padding: 8px 8px 8px 14px;
+  border-radius: 12px;
+  background: rgba(30, 30, 30, 0.92);
+  color: #fff;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+/* Phone layout: the tab bar sits at the bottom even with nothing playing (measured: the card covered it by 32 px). */
+.app--docked .similar-notice {
+  bottom: calc(var(--tab-h) + 16px);
+}
+.app--docked .similar-notice ~ .toast {
+  bottom: calc(var(--tab-h) + 88px);
+}
+.app--docked.has-dock .similar-notice {
+  bottom: calc(var(--tab-h) + var(--dock-h) + 16px);
+}
+@media (min-width: 900px) {
+  .app.has-strip .similar-notice {
+    bottom: calc(var(--strip-h, 120px) + 16px);
+  }
+  .app.has-strip .similar-notice ~ .toast {
+    bottom: calc(var(--strip-h, 120px) + 88px);
+  }
+}
+.similar-notice ~ .toast {
+  bottom: 96px;
+}
+.app--docked.has-dock .similar-notice ~ .toast {
+  bottom: calc(var(--tab-h) + var(--dock-h) + 88px);
+}
+.similar-notice__count {
+  flex: none;
+  min-width: 40px;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: #8fd19e;
+  text-align: center;
+}
+.similar-notice__dot,
+.similar-notice__icon {
+  flex: none;
+  display: inline-flex;
+}
+.similar-notice__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.similar-notice__head {
+  font-size: 14px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.similar-notice__sub {
+  font-size: 12px;
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.78);
+  overflow-wrap: anywhere;
+}
+.similar-notice__show {
+  flex: none;
+}
+.similar-notice__close {
+  flex: none;
+  color: #fff;
+}

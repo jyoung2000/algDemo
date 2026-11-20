@@ -1855,7 +1855,10 @@ export class LocalApi {
       }
     }
     const items = (this.store.get<Dict>('last_result')?.['items'] ?? []) as { track: Dict }[];
-    const played = new Set<string>((Array.isArray(body['exclude']) ? body['exclude'] : []).map(String));
+    // QUEUE-HEARD-001 (owner, 2026-11-20): every song already heard counts, not only those the page played since it
+    // last opened (`exclude`). Songs finished or skipped in earlier sessions, or by the phone's engine while the
+    // page was closed, are on record; without them a queue heard over several days never looked low.
+    const played = new Set<string>([...(Array.isArray(body['exclude']) ? body['exclude'] : []).map(String), ...this.heardKeys()]);
     played.add(String(event['key']));
     // Played FROM the list, not merely present in it: a preview started from the search box carries
     // origin 'search' and must not spend anything on providers.
@@ -2717,6 +2720,11 @@ export class LocalApi {
   }
 
   /** Every song the listener has actually finished, which is what gates a list's own discovery. */
+  /** QUEUE-HEARD-001: songs the listener has heard at least once: finished or skipped, in any session. */
+  private heardKeys(): Set<string> {
+    return new Set(this.store.feedback().filter((r) => r.kind === 'complete' || r.kind === 'skip').map((r) => r.key));
+  }
+
   private playedKeys(): Set<string> {
     return new Set(this.store.feedback().filter((r) => r.kind === 'complete').map((r) => r.key));
   }

@@ -33,6 +33,8 @@ import { arrangeShuffle, restoreOrder } from './engine/shuffle-order';
 import { phoneWait } from './engine/native-http';
 import { PHONE_LIST, decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pickCarContext, pushMediaLibrary, pushMediaState, pushMediaTracks, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { engineAvailable, engineSend, listenFromEvent, markEngineEvent, subscribeEngineState } from './engine/native-engine';
+import { engineInstance } from './engine/service-listening';
+import { similarDetail, SimilarNotice, type SimilarNote } from './SimilarNotice';
 import { applyCarSettings, discoveryForEngine } from './engine/car-settings';
 import { SettingsView } from './Settings';
 import { markSavedSettingsApplied, setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
@@ -128,6 +130,30 @@ export function App() {
   const [similarStatus, setSimilarStatus] = useState('');
   const setSimilarStatusState = setSimilarStatus;
   const similarRef = useRef(false);
+  /** SIMILAR-NOTICE-001: the Find similar card over every page, and the first song it added (for Show). */
+  const [similarNote, setSimilarNote] = useState<SimilarNote | null>(null);
+  const similarFirstNew = useRef<string | null>(null);
+  const similarNoteTimer = useRef<number | undefined>(undefined);
+  const showSimilarNote = (n: SimilarNote | null) => {
+    window.clearTimeout(similarNoteTimer.current);
+    setSimilarNote(n);
+    // A result stays long enough to read and act on; a search in progress stays until it ends.
+    if (n && n.phase !== 'busy') similarNoteTimer.current = window.setTimeout(() => setSimilarNote((x) => (x === n ? null : x)), 9000);
+  };
+  /** What a finished sound match says on the card, and which of its songs is new. */
+  const noteSimilarResult = (title: string, out: { added: number; reached?: number; below?: number; unmeasured?: number; minimum: number; reason?: string; queue?: RecResult } | null, before: Set<string>) => {
+    if (out && out.added > 0) {
+      similarFirstNew.current = out.queue?.items.find((x) => !before.has(x.track.key))?.track.key ?? null;
+      showSimilarNote({ phase: 'done', title, added: out.added, detail: similarDetail(out) });
+    } else {
+      showSimilarNote({ phase: 'none', title, detail: out?.reason || `No new songs reached ${out?.minimum ?? 70}% sound match. The list is unchanged.` });
+    }
+  };
+  const showSimilarSongs = () => {
+    setTab('discover');
+    if (similarFirstNew.current) setFocusKey(similarFirstNew.current);
+    showSimilarNote(null);
+  };
   // NEXT-FAV-CUSTOM-001: Customize discovery.
   const [customOpen, setCustomOpen] = useState(false);
   const [customStatus, setCustomStatus] = useState<CustomStatus>({ running: false, text: '' });
@@ -399,6 +425,8 @@ export function App() {
     let said = '';
     const setSimilarStatus = (m: string) => { said = m; setSimilarStatusState(m); };
     similarRef.current = true; setSimilarBusy(true); setSimilarStatus(`Looking for songs that sound like “${track.title}” on all services…`);
+    showSimilarNote({ phase: 'busy', title: track.title, progress: 'Looking on every service…' });
+    const before = new Set((result?.items ?? []).map((x) => x.track.key));
     try {
       if (jobRef.current && !job?.done) void api.cancelJob(jobRef.current).catch(() => undefined);
       // Stop the old progressive result from replacing this queue after the new request starts.
@@ -414,12 +442,17 @@ export function App() {
             setResult(out.queue);
             setSimilarStatus(similarSummary(out, track.title));
           } else setSimilarStatus(out.reason || `No new songs reached ${out.minimum}% sound match. The list is unchanged.`);
+          noteSimilarResult(track.title, out.queue ? out : { ...out, added: 0 }, before);
           break;
         }
         setSimilarStatus(status.progress || 'Comparing the sound…');
+        showSimilarNote({ phase: 'busy', title: track.title, progress: status.progress || 'Comparing the sound…' });
         await new Promise((r) => setTimeout(r, POLL_MS));
       }
-    } catch (e) { setSimilarStatus(`Could not find similar songs: ${(e as Error).message}`); }
+    } catch (e) {
+      setSimilarStatus(`Could not find similar songs: ${(e as Error).message}`);
+      showSimilarNote({ phase: 'error', title: track.title, detail: (e as Error).message });
+    }
     finally { similarRef.current = false; setSimilarBusy(false); nudgeMood(); }
     return said;
   };
@@ -982,6 +1015,10 @@ export function App() {
           setSimilarStatus(out.added
             ? `Added ${out.added} new song${out.added === 1 ? '' : 's'} with at least ${out.minimum}% sound match, from the car.`
             : out.reason || `No new songs reached ${out.minimum}% sound match. The list is unchanged.`);
+          // SIMILAR-NOTICE-001: the phone shows the car's result too (the car shows its own message).
+          const title = trackById(id)?.title ?? (playing?.track.key === id ? playing.track.title : 'this song');
+          if (out.added) { similarFirstNew.current = null; showSimilarNote({ phase: 'done', title, added: out.added, detail: `at least ${out.minimum}% sound match, from the car` }); }
+          else showSimilarNote({ phase: 'none', title, detail: out.reason || `No new songs reached ${out.minimum}% sound match. The list is unchanged.` });
           return out;
         } catch (e) {
           setSimilarStatus(`Could not find similar songs: ${(e as Error).message}`);
@@ -1094,7 +1131,8 @@ export function App() {
         const track = listen ? trackById(ev.from.id) : undefined;
         if (listen && track) {
           onListen(listen.kind, track, listen.listened, {
-            instance: `engine-${ev.seq}-${Date.now().toString(36)}`,
+            // QUEUE-HEARD-001: the same listen id the service page used if it already recorded this event.
+            instance: engineInstance(ev),
             medium: 'full',
             duration: listen.duration,
             coverage: listen.coverage,
@@ -1334,6 +1372,7 @@ export function App() {
             <Glyph name="offline" size={14} /> The jPlay service is not answering on this computer. Start it with <code>pnpm discovery</code> and reload.
           </p>
         )}
+        {similarNote && <SimilarNotice note={similarNote} onShow={similarFirstNew.current ? showSimilarSongs : undefined} onClose={() => showSimilarNote(null)} />}
         {notice && (
           <p className="toast" role="status">
             {notice}
@@ -1690,8 +1729,8 @@ export function App() {
             onOpenAlbum={(t) => openAlbum({ track: t })}
             onOpenAlbumId={(id) => openAlbum({ id })}
             onOpenArtist={openArtist}
-            // ROW-UNIFY-001: Find similar on a saved song adds to the Discover queue; the outcome is shown here.
-            onSimilar={(t) => void findSimilar(t).then((m) => { if (m) flash(m); })}
+            // ROW-UNIFY-001: Find similar on a saved song adds to the Discover queue; the outcome shows on the card.
+            onSimilar={(t) => void findSimilar(t)}
             similarBusy={similarBusy}
           />
           </div>
@@ -1777,12 +1816,8 @@ export function App() {
             onDownload: async () => (playing ? dls.downloadTrack(playing.track) : false),
             // DOWNLOADS-IN-SETTINGS-001: the download list lives in the Settings Downloads section.
             onDownloads: () => setTab('settings'),
-            // PLAYER-SIMILAR-001: the song playing, from any tab; the queue's status line is on Discover,
-            // so elsewhere the outcome is also shown as a short notice.
-            onSimilar: playing ? () => {
-              const track = playing.track;
-              void findSimilar(track).then((m) => { if (m && tabRef.current !== 'discover') flash(m); });
-            } : undefined,
+            // PLAYER-SIMILAR-001: the song playing, from any tab; SIMILAR-NOTICE-001 shows the outcome on the card.
+            onSimilar: playing ? () => { void findSimilar(playing.track); } : undefined,
             similarBusy,
           }}
           onShuffle={toggleShuffle}

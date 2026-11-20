@@ -15,7 +15,8 @@ import { openIdbBackend } from './engine/idb';
 import { LocalApi } from './engine/local-api';
 import { runCarSimilar } from './engine/car-similar';
 import { runCarMood } from './engine/car-mood';
-import { pushSourceUpdates, setMediaHandlers, songFromTrack } from './engine/media-native';
+import { pushQueueTopUp, pushSourceUpdates, setMediaHandlers, songFromTrack } from './engine/media-native';
+import { ServiceListening } from './engine/service-listening';
 import { applyCarSettings } from './engine/car-settings';
 import { engineSend } from './engine/native-engine';
 import { defaultHttpPort, phoneWait } from './engine/native-http';
@@ -104,7 +105,20 @@ async function startService(n: FullBridge): Promise<void> {
     const actor = new ServiceActor({ local, queue, cars, reply: (id, json) => n.apiReply(id, json) });
     const w = window as unknown as ServiceWindow;
     w.__awServiceApi = (json) => { void actor.onRequest(json); };
-    w.__awServiceState = (json) => cars.onState(json);
+    const carSong = (t: Track) => { const ready = queue.isReady(t); return songFromTrack(t, ready, ready ? queue.readyUrl(t) : null); };
+    // QUEUE-HEARD-001: with the phone app closed, songs the engine finishes are recorded and the Discover queue is
+    // topped up here, as the phone page does when it is open.
+    const listening = new ServiceListening({
+      findTrack: async (key) => (await api.last().catch(() => null))?.items.find((it) => it.track.key === key)?.track ?? null,
+      feedback: (kind, t, extra) => api.feedback(kind, t, extra),
+      recommend: (o) => api.recommend(o),
+      job: (id) => api.job(id),
+      last: () => api.last().catch(() => null),
+      song: carSong,
+      append: pushQueueTopUp,
+      wait: phoneWait,
+    });
+    w.__awServiceState = (json) => { cars.onState(json); listening.onState(json); };
     let similarBusy = false;
     const carTrackFor = async (key: string) => (await api.last().catch(() => null))?.items.find((it) => it.track.key === key)?.track
       ?? catalog.find(key) ?? library.tracks.find((t) => t.key === key) ?? null;
@@ -119,7 +133,7 @@ async function startService(n: FullBridge): Promise<void> {
           return await runCarSimilar(id, {
             findTrack: carTrackFor,
             similar: api.similar, job: api.job, wait: phoneWait,
-            song: (t) => { const ready = queue.isReady(t); return songFromTrack(t, ready, ready ? queue.readyUrl(t) : null); },
+            song: carSong,
           });
         } finally { similarBusy = false; }
       },

@@ -402,11 +402,16 @@ class PlaybackService : MediaLibraryService() {
     if (similarBusy) return
     similarBusy = true
     refreshCarButtons()
+    tellDriver(CarSimilarText.looking(MediaHub.findSong(id)?.title))
     Futures.addCallback(MediaHub.findSimilar(id), object : FutureCallback<MediaHub.SimilarAnswer> {
       override fun onSuccess(a: MediaHub.SimilarAnswer) {
         mainHandler.post {
           similarBusy = false
-          if (a.songs.isNotEmpty()) { player.appendFound(a.songs); moodNudge(id, "similar") }
+          if (a.songs.isNotEmpty()) {
+            player.appendFound(a.songs); moodNudge(id, "similar")
+            // SIMILAR-NOTICE-001: say how many new songs joined the queue.
+            tellDriver(CarSimilarText.added(if (a.added > 0) a.added else a.songs.size, a.minimum))
+          }
           else tellDriver(a.reason.ifBlank { "No new songs reached ${a.minimum}% sound match. The list is unchanged." })
           refreshCarButtons()
         }

@@ -239,6 +239,20 @@ export function pushSourceUpdates(updates: { id: string; key: string; ready: boo
   }
 }
 
+/**
+ * QUEUE-HEARD-001: songs a listening top-up found while the phone app was closed, for the end of the engine's queue
+ * (EnginePlayer.appendFound, through CatalogEngine.media). The native side drops any it already has.
+ */
+export function pushQueueTopUp(songs: NativeSong[]): void {
+  const n = nativeMedia();
+  if (typeof n?.media !== 'function' || !songs.length) return;
+  try {
+    n.media(JSON.stringify({ queueTopUp: songs.slice(0, 60) }));
+  } catch {
+    /* as send(): drop rather than crash */
+  }
+}
+
 /** What the native side was last given for each track key (bounded), so only new or changed Tracks are sent. */
 const rememberedTracks = new Map<string, string>();
 const TRACK_CHUNK = 100;

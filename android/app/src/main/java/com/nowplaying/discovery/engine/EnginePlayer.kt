@@ -983,6 +983,8 @@ class EnginePlayer(
   private fun log(cause: String, heard: AudioEngine.Heard, advanced: Boolean = true) {
     val entry = JSONObject()
       .put("seq", ++seq)
+      // QUEUE-HEARD-001: when, so the phone page and the service page give this listen the same id.
+      .put("at", System.currentTimeMillis())
       .put("cause", cause)
       .put("advanced", advanced)
       .put(
@@ -1020,6 +1022,8 @@ class EnginePlayer(
       .put("soundingMs", snap.positionFrames * 1000 / SAMPLE_RATE)
       .put("soundingDurMs", if (snap.durationFrames > 0) snap.durationFrames * 1000 / SAMPLE_RATE else -1)
       .put("at", SystemClock.elapsedRealtime())
+      // QUEUE-HEARD-001: with no phone page open the service page records listens and tops the queue up.
+      .put("pageLive", pageLive)
       .apply { if (event != null) put("event", event) }
   }
 
