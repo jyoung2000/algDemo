@@ -31,7 +31,7 @@ async function openPublic(raw, headers = {}, hops = 0) {
   });
 }
 class PcmRing {
-  constructor(seconds = KEEP) { this.cap = Math.round(seconds * RATE); this.bytes = Buffer.alloc(this.cap * FRAME); this.end = 0; this.at = 0; this.heard = 0; this.dropped = false; this.held = false; }
+  constructor(seconds = KEEP) { this.cap = Math.round(seconds * RATE); this.bytes = Buffer.alloc(this.cap * FRAME); this.end = 0; this.at = 0; this.heard = 0; this.dropped = false; this.held = false; this.catchUpUntil = 0; }
   get start() { return Math.max(0, this.end - this.cap); }
   write(b) {
     const n = Math.floor(b.length / FRAME); if (!n) return;
@@ -43,7 +43,15 @@ class PcmRing {
   // RADIO-LIVE-EDGE-001: servers send a burst of recent audio on connect (Power 92 ~32 s, V103 ~20 s). Until the listener
   // pauses or rewinds, and only in the opening 10 s heard, playback stays 2 s before the newest audio.
   hold() { this.held = true; }
-  take(n) { if (!this.held && this.heard < CATCH_UP_HEARD && this.end - this.at > LIVE_CUSHION + RATE) this.at = this.end - LIVE_CUSHION; this.at = Math.max(this.start, this.at); n = Math.min(n, this.end - this.at); const b = this.slice(this.at, n); this.at += n; this.heard += n; return b; }
+  // RADIO-ROBUST-001: playback that ran dry (a network stall, not the listener's pause) rejoins live when audio returns,
+  // instead of playing the stream's backlog 20 s late.
+  take(n) {
+    // like the opening, the first 5 s heard after a stall keep catching up: the backlog lands over about a second
+    if (!this.held && (this.heard < CATCH_UP_HEARD || this.heard < this.catchUpUntil) && this.end - this.at > LIVE_CUSHION + RATE) this.at = this.end - LIVE_CUSHION;
+    this.at = Math.max(this.start, this.at); const want = n; n = Math.min(n, this.end - this.at);
+    if (n < want && this.heard > 0) this.catchUpUntil = this.heard + n + RATE * 5; // ran dry (the engine then waits for audio)
+    const b = this.slice(this.at, n); this.at += n; this.heard += n; return b;
+  }
   slice(at, n) { at = Math.max(this.start, Math.min(this.end, at)); n = Math.min(n, this.end - at); const b = Buffer.alloc(n * FRAME), tail = at % this.cap, first = Math.min(n, this.cap - tail); this.bytes.copy(b, 0, tail * FRAME, (tail + first) * FRAME); if (first < n) this.bytes.copy(b, first * FRAME, 0, (n - first) * FRAME); return b; }
   // A recording is always described as an excerpt, never a complete programme.
   wav(from, to) {
@@ -84,6 +92,23 @@ async function probe(url) {
     r.on('end', finish);
   });
 }
+/** RADIO-ROBUST-001: a stream that was playing and drops reconnects, up to 5 times in a row (1, 2, 4, 8, 8 s apart); the
+ *  count starts again after 2 s more audio. A station that never played tries once more, then reports its real reason. */
+function reconnectStep(everPlayed, secondsSinceConnect, tries) {
+  if (!everPlayed) return tries === 0 ? { tries: 1, wait: 1000 } : null;
+  const t = secondsSinceConnect >= 2 ? 0 : tries;
+  return t < 5 ? { tries: t + 1, wait: Math.min(8000, 1000 * 2 ** t) } : null;
+}
+/** RADIO-ROBUST-001: every stream address in a .pls/.m3u playlist, in order, once each. */
+function playlistEntries(text) { return [...new Set(String(text).split(/\r?\n/).map(x => x.trim().replace(/^File\d+=/, '')).filter(x => /^https?:\/\//.test(x)))]; }
+/** Plays the first address that gives audio; one failing before any audio gives way to the next (backup servers). A
+ *  stream that played and then failed is not swapped. With every address failing, the first reason is reported. */
+async function firstThatPlays(urls, frames, open) {
+  if (!urls.length) throw Error('No stream in station playlist');
+  let first = null;
+  for (const u of urls.slice(0, 4)) { const mark = frames(); try { return await open(u); } catch (e) { if (frames() > mark) throw e; first ||= e; } }
+  throw first;
+}
 function createRadio({ toolsDir, saveRecording }) {
   let session = null; const meta = new Map(), pending = new Map();
   let favourites = []; try { if (arguments[0].favouritesPath) favourites = JSON.parse(fs.readFileSync(arguments[0].favouritesPath, 'utf8')); } catch {}
@@ -96,7 +121,7 @@ function createRadio({ toolsDir, saveRecording }) {
     if (/mpegurl|scpls/.test(type) || /\.(m3u8?|pls)(\?|$)/i.test(r.radioUrl)) {
       const bytes = []; let size = 0; for await (const c of r) { size += c.length; if (size > 1000000) { r.destroy(); throw Error('Station playlist too large'); } bytes.push(c); }
       const text = Buffer.concat(bytes).toString('utf8');
-      if (!/#EXTM3U/.test(text) || !/#EXT-X-/.test(text)) { const next = text.split(/\r?\n/).map(x => x.replace(/^File\d+=/, '').trim()).find(x => /^https?:\/\//.test(x)); if (!next) throw Error('No stream in station playlist'); return pump(s, next, depth + 1); }
+      if (!/#EXTM3U/.test(text) || !/#EXT-X-/.test(text)) return firstThatPlays(playlistEntries(text), () => s.ring.end, u => pump(s, u, depth + 1));
       if (/#EXT-X-STREAM-INF/.test(text)) { const rows = text.split(/\r?\n/); const i = rows.findIndex(x => /^#EXT-X-STREAM-INF/.test(x)); return pump(s, new URL(rows[i + 1], r.radioUrl).href, depth + 1); }
       // TS/AAC HLS. Encrypted broadcasts are not decrypted; fMP4 initialization is read once.
       if (/#EXT-X-KEY:.*METHOD=(?!NONE)/.test(text)) throw Error('Encrypted station broadcasts are not supported');
@@ -128,8 +153,20 @@ function createRadio({ toolsDir, saveRecording }) {
       s.proc = spawn(ff, ['-hide_banner', '-loglevel', 'error', '-protocol_whitelist', 'pipe', '-i', 'pipe:0', '-vn', '-ac', '2', '-ar', String(RATE), '-f', 's16le', 'pipe:1'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
       let leftover = Buffer.alloc(0); s.proc.stdout.on('data', c => { const b = Buffer.concat([leftover, c]); const n = b.length - b.length % FRAME; s.ring.write(b.subarray(0, n)); leftover = b.subarray(n); });
       s.proc.stderr.on('data', c => { s.lastError = c.toString().slice(-500); });
-      s.proc.stdin.on('error', () => {}); s.proc.on('error', e => { s.error = e.message; }); s.proc.on('exit', code => { if (!s.stopped) s.error ||= s.lastError || `Radio decoder stopped (${code})`; });
-      void (async () => { let u = String(cmd.url); while (!s.stopped && u) { const next = await pump(s, u); u = typeof next === 'string' ? next : ''; } })().catch(e => { if (!s.stopped) { s.error = e.message; s.proc.kill(); } });
+      s.proc.stdin.on('error', () => {}); s.proc.on('error', e => { s.error ||= e.message; }); s.proc.on('exit', code => { if (!s.stopped) s.error ||= s.lastError || `Radio decoder stopped (${code})`; });
+      void (async () => {
+        let tries = 0;
+        for (;;) {
+          const mark = s.ring.end;
+          try { let u = String(cmd.url); while (!s.stopped && u) { const next = await pump(s, u); u = typeof next === 'string' ? next : ''; } return; }
+          catch (e) {
+            if (s.stopped) return;
+            const step = reconnectStep(s.ring.end > 0, (s.ring.end - mark) / RATE, tries);
+            if (!step) throw e;
+            tries = step.tries; await new Promise(ok => setTimeout(ok, step.wait));
+          }
+        }
+      })().catch(e => { if (!s.stopped) { s.error ||= e.message; s.proc.kill(); } });
       return snapshot(s);
     }
     const s = session; if (!s || cmd.id && cmd.id !== s.id) throw Error('Radio session has ended');
@@ -151,4 +188,4 @@ function createRadio({ toolsDir, saveRecording }) {
   }
   return { handle, shutdown: stop };
 }
-module.exports = { publicAddress, openPublic, titleFromIcy, latestIcyTitle, PcmRing, createRadio };
+module.exports = { publicAddress, openPublic, titleFromIcy, latestIcyTitle, reconnectStep, playlistEntries, firstThatPlays, PcmRing, createRadio };

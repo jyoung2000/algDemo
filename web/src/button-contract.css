@@ -176,3 +176,35 @@ a.push {
   flex: none;
   display: block;
 }
+
+/* CONTROL-SIZES-001 (owner, 2026-11-20): one set of control sizes, measured across every tab. Windows: 36px buttons, 16px icons. Phones (or any touch screen): 44px touch targets. */
+:is(.rec__actions, .song-actions, .track__actions) :is(.iconbtn > svg, .iconbtn > .song-star > svg) {
+  width: 16px;
+  height: 16px;
+}
+.queue__actions > .iconbtn {
+  width: 36px;
+  height: 36px;
+}
+.queue__actions > .iconbtn > svg {
+  width: 16px;
+  height: 16px;
+}
+body .card__head > .push {
+  height: 36px;
+  min-height: 36px;
+}
+body .seg__btn {
+  height: 30px;
+}
+@media (max-width: 899px), (pointer: coarse) {
+  body .card__head > .push,
+  body .seg__btn,
+  .queue__actions > .iconbtn {
+    height: var(--btn-touch, 44px);
+    min-height: var(--btn-touch, 44px);
+  }
+  .queue__actions > .iconbtn {
+    width: var(--btn-touch, 44px);
+  }
+}

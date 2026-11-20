@@ -124,6 +124,8 @@ export function splitOnAir(value: string): { artist: string | null; title: strin
   const text = value.trim();
   // WGN transmits this literal cue during ad breaks; a cue is not a track or a programme.
   if (/^(?:[-–—]\s*)?(?:advertisement|commercial break|ad break)$/i.test(text)) return null;
+  // RADIO-ROBUST-001: Audacy (amperwave) ad markers: "ad|main - Commercial Break - <banner link>".
+  if (/^ad\|[a-z]+\b/i.test(text) || /^(?:commercial break|ad break)\s*[-–—]/i.test(text)) return null;
   // A block of dashes or a lone separator is a station between songs, not a song.
   if (!/[\p{L}\p{N}]/u.test(text)) return null;
   const tagged = splitTagged(text);

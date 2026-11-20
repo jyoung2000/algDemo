@@ -15,8 +15,9 @@ const feed = JSON.stringify([{ TALB: '', TIT2: 'WTF GOIN (feat. 21 Savage)', TPE
 describe('Futuri (cdnstream1) now-playing feed', () => {
   it('reads the song on air and its start time from the station mount', async () => {
     const asked: string[] = [];
-    const b = await publisherBroadcast(power92, async (u) => { asked.push(u); return feed; }, now);
-    expect(asked).toEqual(['https://yp.cdnstream1.com/metadata/pptsa5hdbog/cjo5jxmng7u/current.json']);
+    const b = await publisherBroadcast(power92, async (u) => { asked.push(u); return u.includes('iheart.com') ? '' : feed; }, now);
+    // iHeart's feed is asked first (RADIO-IHEART-META-001); it names nothing for Power 92, so the station's own feed answers
+    expect(asked).toEqual(['https://us.api.iheart.com/api/v3/live-meta/stream/12904/currentTrackMeta?defaultMetadata=true', 'https://yp.cdnstream1.com/metadata/pptsa5hdbog/cjo5jxmng7u/current.json']);
     expect(b).toMatchObject({ artist: 'Belly Gang Kushington', state: 'current', kind: 'song', source: 'Futuri official feed', startedAt: 1795143628360, artwork: 'https://img.example.com/a.jpg' });
     expect(b!.title).toMatch(/^WTF GOIN/);
   });

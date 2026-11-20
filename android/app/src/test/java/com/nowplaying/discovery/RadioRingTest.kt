@@ -89,4 +89,41 @@ class RadioRingTest {
     val c = RadioRing(48000 * 120); repeat(10) { c.write(sec, sec.size); c.read(dst, 0, 48000) }
     repeat(20) { c.write(sec, sec.size) }; val before = c.positionFrames; c.read(dst, 0, 100); assertEquals(before + 100, c.positionFrames)
   }
+
+  /** RADIO-ROBUST-001: after a network stall the stream resumes with its backlog; the listener rejoins live, not 20 s late. */
+  @Test fun afterAStallPlaybackRejoinsLive() {
+    val sec = 48000; val r = RadioRing(sec * 60); val buf = Array(2) { FloatArray(sec * 30) }
+    repeat(12) { r.write(ByteArray(sec * 4), sec * 4); r.read(buf, 0, sec) }        // 12 s heard: the opening catch-up is over
+    assertEquals(0, r.read(buf, 0, sec))                                       // network stall: nothing to play
+    r.write(ByteArray(sec * 4 * 22), sec * 4 * 22)                                 // the backlog arrives
+    r.read(buf, 0, 480)
+    assertEquals(2.0, (r.end - r.positionFrames).toDouble() / sec, 0.02)
+  }
+
+  @Test fun aStallWhileTheListenerIsBehindOnPurposeKeepsTheirPlace() {
+    val sec = 48000; val r = RadioRing(sec * 60); val buf = Array(2) { FloatArray(sec * 30) }
+    repeat(12) { r.write(ByteArray(sec * 4), sec * 4); r.read(buf, 0, sec) }
+    r.hold(); r.read(buf, 0, sec)
+    r.write(ByteArray(sec * 4 * 22), sec * 4 * 22); r.read(buf, 0, 480)
+    assertEquals(22.0, (r.end - r.positionFrames).toDouble() / sec, 0.05)
+  }
+
+  /** The engine stops pulling while the ring is low (buffering), so the stall shows as one short read, not an empty one. */
+  @Test fun aShortReadBeforeBufferingAlsoCountsAsAStall() {
+    val sec = 48000; val r = RadioRing(sec * 60); val buf = Array(2) { FloatArray(sec * 30) }
+    repeat(12) { r.write(ByteArray(sec * 4), sec * 4); r.read(buf, 0, sec) }
+    r.write(ByteArray(sec * 2), sec * 2); assertEquals(sec / 2, r.read(buf, 0, sec)) // half a second left, then buffering
+    r.write(ByteArray(sec * 4 * 22), sec * 4 * 22); r.read(buf, 0, 480)
+    assertEquals(2.0, (r.end - r.positionFrames).toDouble() / sec, 0.02)
+  }
+
+  /** Measured on the phone: the backlog lands over about a second, so the first jump happens before all of it arrived. */
+  @Test fun aBacklogArrivingInPartsStillEndsAtLive() {
+    val sec = 48000; val r = RadioRing(sec * 60); val buf = Array(2) { FloatArray(sec * 30) }
+    repeat(12) { r.write(ByteArray(sec * 4), sec * 4); r.read(buf, 0, sec) }
+    r.read(buf, 0, sec)                                                   // stalled
+    r.write(ByteArray(sec * 4 * 4), sec * 4 * 4); r.read(buf, 0, 480)       // first 4 s of the backlog
+    r.write(ByteArray(sec * 4 * 18), sec * 4 * 18); r.read(buf, 0, 480)     // the other 18 s
+    assertEquals(2.0, (r.end - r.positionFrames).toDouble() / sec, 0.02)
+  }
 }

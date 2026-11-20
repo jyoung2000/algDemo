@@ -230,3 +230,13 @@
 .radio-player__transport .radio-player__live.is-on { color:#a22020; }
 button.radio-live { border:0; background:transparent; padding:0; cursor:pointer; text-align:left; font-family:inherit; }
 button.radio-live--behind { color:#8a5a00; text-decoration:underline; text-underline-offset:2px; }
+
+/* RADIO-SHEET-INSET-001 (owner: "on the radio icon the cover is colliding with the side"): the phone player keeps its
+   cover 24px from the screen edge like the Windows player, 16px only where the controls would not fit otherwise.
+   Stop is a full 44px touch target with a 16px icon like the other controls; titles keep clear of it. */
+@media (max-width: 899px) {
+  .rail .radio-player, .np.radio-player { padding-inline: clamp(16px, calc((100vw - 312px) / 2), 24px); }
+  .radio-player__close { top: 2px; right: 2px; width: 44px; height: 44px; }
+  .radio-player__close > svg { width: 16px; height: 16px; }
+  .radio-player__identity { padding-right: 28px; } /* titles never run under Stop */
+}

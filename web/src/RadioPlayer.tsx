@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { api, type PlaylistSummary } from './api';
 import { favouriteStations, saveFavouriteStations, radioSession } from './engine/radio-client';
-import { stationLocation, broadcastTimeline, radioClock as clock } from './engine/radio';
+import { GapWindow, radioErrorText, stationLocation, broadcastTimeline, radioClock as clock } from './engine/radio';
 import { Art } from './Art';
 import { Volume } from './Volume';
 import { Glyph } from '@now-playing/aqua-ui/icons';
@@ -20,6 +20,8 @@ export function RadioPlayer({ docked = false, onOpenArtist, onPlaySong, onDownlo
   const r = useSyncExternalStore(radioSession.subscribe, radioSession.get); const [menu, setMenu] = useState(false), [lists, setLists] = useState<PlaylistSummary[]>([]), [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [volume, setVolume] = useState(1), [stationStar, setStationStar] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const lastVolume = useRef(1);
+  const gaps = useRef(new GapWindow());
+  useEffect(() => { gaps.current.reset(); }, [r.station?.id, r.timeshifted]);
   const changeVolume = (next: number) => {
     const v = Math.max(0, Math.min(1, next));
     if (v > 0) lastVolume.current = v;
@@ -45,7 +47,7 @@ export function RadioPlayer({ docked = false, onOpenArtist, onPlaySong, onDownlo
   // A wall-clock estimate of the live edge ran ahead of a stream that arrives in bursts, so it read BEHIND LIVE with
   // nothing paused or rewound. Now only the listener's own pause or rewind puts them behind, and only while the
   // audio they hear is more than BEHIND_LIVE_S older than the newest audio received.
-  const gap = snap ? Math.max(0, snap.received - snap.position) : 0;
+  const gap = snap ? gaps.current.add(Date.now(), Math.max(0, snap.received - snap.position)) : 0;
   const behindLive = !!snap && !snap.paused && !!r.timeshifted && gap > BEHIND_LIVE_S;
   const atLive = !!snap && !snap.paused && !behindLive;
   const goLive = () => void radioSession.goLive().catch(e => setMessage(String(e.message)));
@@ -120,7 +122,7 @@ export function RadioPlayer({ docked = false, onOpenArtist, onPlaySong, onDownlo
         finally { setDownloading(false); }
       }}><Glyph name="download" size={18} /></button></div>
     </div>
-    <div className="radio-player__status" role="status">{r.error ? <>{r.error} <button type="button" className="linkbtn" onClick={() => void radioSession.start(s)}>Reconnect</button></> : message}{snap?.dropped && <span> · Older paused audio has left the retained buffer.</span>}</div>
+    <div className="radio-player__status" role="status">{r.error ? <>{radioErrorText(r.error)} <button type="button" className="linkbtn" onClick={() => void radioSession.start(s)}>Reconnect</button></> : message}{snap?.dropped && <span> · Older paused audio has left the retained buffer.</span>}</div>
     {menu && <div className="radio-playlists">{creatingList && <form className="radio-playlists__create" aria-label="Create a radio playlist" onSubmit={e => { e.preventDefault(); void newList(); }}><label>Playlist name<input aria-label="New playlist name" value={newListName} maxLength={80} required autoFocus onInput={e => setNewListName(e.currentTarget.value)} onChange={() => {}} /></label><button type="submit" className="btn" disabled={busy || !newListName.trim()}>Create playlist</button><button type="button" className="btn" onClick={() => setCreatingList(false)}>Cancel new playlist</button></form>}<strong>Add {t?.kind === 'radio-programme' ? 'live programme bookmark' : 'song'} to playlist</strong>{lists.map(l => <button type="button" className="btn" disabled={busy} key={l.id} onClick={() => void playlist(l.id)}>{l.name}</button>)}<button type="button" className="btn" disabled={busy} onClick={() => setCreatingList(true)}>New playlist</button><button type="button" className="btn" onClick={() => setMenu(false)}>Cancel</button></div>}
   </aside>;
 }

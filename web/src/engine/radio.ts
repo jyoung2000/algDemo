@@ -3,7 +3,9 @@ import { stationInPlace, type RadioPlace } from './radio-places';
 import { iheartFits, iheartIdsUrl, iheartNearUrl, iheartSearchUrl, mergeStations, parseIheartSearch, parseIheartStations, type IheartStation } from './radio-iheart';
 // RADIO-001. A station is a broadcast, not a song. Only broadcaster metadata or audio recognition
 // may identify its current item. Directory genre labels never become song or preference evidence.
-export interface RadioStation { id: string; name: string; url: string; homepage: string; image: string; country: string; countryCode: string; region: string; language: string; tags: string[]; codec: string; bitrate: number; latitude: number | null; longitude: number | null }
+export interface RadioStation { id: string; name: string; url: string; homepage: string; image: string; country: string; countryCode: string; region: string; language: string; tags: string[]; codec: string; bitrate: number; latitude: number | null; longitude: number | null;
+  /** RADIO-IHEART-META-001: the iHeart station this directory row was merged with (its stream and song feed). */
+  iheartId?: string }
 export interface Broadcast { state: 'current' | 'stale' | 'unavailable' | 'failed'; kind: 'song' | 'programme'; title: string; artist: string | null; source: string; checkedAt: number; detail?: string; startedAt?: number | null; duration?: number | null; validUntil?: number | null; artwork?: string | null }
 export const DIRECTORY_SERVERS = ['https://de1.api.radio-browser.info', 'https://nl1.api.radio-browser.info', 'https://at1.api.radio-browser.info'];
 export function publicUrl(raw: string): boolean {
@@ -11,9 +13,33 @@ export function publicUrl(raw: string): boolean {
 }
 const txt = (v: unknown) => String(v ?? '').trim().slice(0, 500);
 export function normalizeStation(o: Record<string, unknown>): RadioStation | null {
-  const url = txt(o.url_resolved || o.url), id = txt(o.stationuuid), name = txt(o.name);
+  // RADIO-ROBUST-001: a playlist link (.m3u/.pls/.m3u8 or /playlist/) is read fresh by the player each time; the
+  // directory's resolved address behind it can be a one-time session that has expired (WGN 720).
+  const playlist = /\.(m3u8?|pls)(\?|$)|\/playlist\//i.test(txt(o.url));
+  const url = txt(playlist ? o.url : o.url_resolved || o.url), id = txt(o.stationuuid), name = txt(o.name);
   if (!id || !name || !publicUrl(url)) return null;
   return { id, name, url, homepage: publicUrl(txt(o.homepage)) ? txt(o.homepage) : '', image: publicUrl(txt(o.favicon)) ? txt(o.favicon) : '', country: txt(o.country), countryCode: txt(o.countrycode), region: txt(o.state), language: txt(o.language), tags: txt(o.tags).split(',').map(x => x.trim()).filter(Boolean).slice(0, 10), codec: txt(o.codec), bitrate: Number(o.bitrate) || 0, latitude: o.geo_lat == null ? null : Number(o.geo_lat), longitude: o.geo_long == null ? null : Number(o.geo_long) };
+}
+/** RADIO-ROBUST-001: how far behind the newest audio the listener is, as the largest gap seen in the last 3 s. Stations
+ *  that send audio in bursts (Power 92) make the raw gap swing by a second or two between bursts. */
+export class GapWindow {
+  private samples: { at: number; gap: number }[] = [];
+  add(at: number, gap: number): number {
+    this.samples = this.samples.filter((s) => at - s.at < 3000 && s.at <= at);
+    this.samples.push({ at, gap });
+    return Math.max(...this.samples.map((s) => s.gap));
+  }
+  reset() { this.samples = []; }
+}
+/** RADIO-ROBUST-001: why a station cannot play, in plain words (the shells report low-level network errors). */
+export function radioErrorText(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const http = /HTTP (\d{3})/.exec(raw);
+  if (http) return `This station's stream is offline right now (HTTP ${http[1]}). Try another station.`;
+  if (/timed out|timeout|failed to connect|read interrupted|unable to resolve host|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|unreachable|connection reset/i.test(raw)) return 'The station did not answer. Try again, or pick another station.';
+  if (/Station disconnected|stream ended/i.test(raw)) return 'The station stopped sending audio. Reconnect to try again.';
+  if (/decoder stopped|decoder missing|could not decode/i.test(raw)) return 'This station\'s audio could not be played. Try another station.';
+  return raw;
 }
 export const stationLocation = (s: RadioStation) => [...new Set([s.region, s.country].filter(Boolean))].join(', ') || 'Location not supplied';
 export function parseBroadcast(raw: string | null, source: string, checkedAt = Date.now()): Broadcast {

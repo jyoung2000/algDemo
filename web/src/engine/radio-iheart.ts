@@ -90,13 +90,16 @@ function same(a: RadioStation, b: IheartStation): boolean {
   return !!ha && ha === hb;
 }
 
-/** One row per station. A Radio Browser row wins (so starred ids keep working) and borrows a missing logo. */
+/** One row per station. A Radio Browser row wins (so starred ids keep working), borrows a missing logo and plays iHeart's stream. */
 export function mergeStations(directory: RadioStation[], iheart: IheartStation[]): RadioStation[] {
   const out = directory.slice();
   for (const s of iheart) {
     const at = out.findIndex((x) => x.id === s.id || (!x.id.startsWith('ihr-') && same(x, s)));
     if (at < 0) { out.push(s); continue; }
-    if (!out[at]!.image && s.image) out[at] = { ...out[at]!, image: s.image };
+    // RADIO-IHEART-META-001: iHeart's stream is the one the broadcaster keeps working for iHeart's app; the volunteer
+    // directory's link can go stale (WXRT). The row keeps its id (starred stations), name and tags.
+    if (out[at]!.id === s.id) continue;
+    out[at] = { ...out[at]!, url: s.url, iheartId: s.id.replace(/^ihr-/, ''), image: out[at]!.image || s.image };
   }
   return out;
 }

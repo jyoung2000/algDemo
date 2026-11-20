@@ -74,6 +74,11 @@ describe('iHeart station records', () => {
     expect(out.map((s) => s.id)).toEqual(['rb-kiss', 'ihr-865', 'ihr-6342', 'ihr-1']);
     expect(out[0]!.image).toBe(KISS.logo);
   });
+  it('the merged row plays iHeart\'s stream and reads iHeart\'s song feed: the volunteer link can go stale (WXRT) (RADIO-IHEART-META-001)', () => {
+    const rbKiss = { id: 'rb-kiss', name: '103.5 KISS FM WKSC Chicago', url: 'https://prod-1-2-3-4.example.net/dead.m3u8', homepage: '', image: 'https://rb/logo.png', country: '', countryCode: 'US', region: 'Illinois', language: 'english', tags: ['pop'], codec: '', bitrate: 0, latitude: null, longitude: null } as RadioStation;
+    const [m] = mergeStations([rbKiss], parseIheartStations(NEAR));
+    expect(m).toMatchObject({ id: 'rb-kiss', name: '103.5 KISS FM WKSC Chicago', tags: ['pop'], image: 'https://rb/logo.png', url: 'https://stream.revma.ihrhls.com/zc865', iheartId: '849' });
+  });
 });
 
 describe('the directory with places', () => {

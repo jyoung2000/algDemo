@@ -31,8 +31,12 @@ class RadioRing(private val capacity: Int = 48000 * 600, private val file: File?
   @Volatile var dropped = false; private set
   /** RADIO-LIVE-EDGE-001: set once the listener pauses or rewinds; from then on playback is never moved for them. */
   @Volatile var held = false; private set
+  @Volatile private var catchUpUntil = 0L
+  val starved: Boolean get() = heard < catchUpUntil
   @Synchronized fun hold() { held = true }
   @Volatile var failed: Throwable? = null
+  /** RADIO-ROBUST-001: the first error is the real reason; a decoder stopping because of it must not replace it. */
+  @Synchronized fun fail(e: Throwable) { if (failed == null) failed = e }
   @Volatile var closed = false
   val oldest: Long get() = (end - capacity).coerceAtLeast(0)
   override val durationFrames = PcmSource.UNKNOWN
@@ -57,9 +61,12 @@ class RadioRing(private val capacity: Int = 48000 * 600, private val file: File?
     if (closed) return 0
     // RADIO-LIVE-EDGE-001: a connect burst of old audio is skipped; until a pause or rewind, and only in the opening
     // 10 s heard, playback stays 2 s before the newest audio.
-    if (!held && heard < 48000L * 10 && end - at > LIVE_CUSHION_FRAMES + 48000) at = end - LIVE_CUSHION_FRAMES
+    // RADIO-ROBUST-001: playback that ran dry (a network stall, not the listener's pause) rejoins live when audio returns.
+    // Like the opening, the first 5 s heard after a stall keep catching up: the backlog lands over about a second.
+    if (!held && (heard < 48000L * 10 || heard < catchUpUntil) && end - at > LIVE_CUSHION_FRAMES + 48000) at = end - LIVE_CUSHION_FRAMES
     at = at.coerceAtLeast(oldest)
     val n = min(frames.toLong(), end - at).toInt()
+    if (n < frames && heard > 0) catchUpUntil = heard + n + 48000L * 5 // ran dry; the engine then stops pulling until audio returns
     val pcm = copyFrames(at, n)
     for (i in 0 until n) {
       val p = i * 4
