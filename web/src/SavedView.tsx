@@ -19,6 +19,7 @@ import { PLAYLIST_NAME_MAX } from './engine/playlists';
 import type { CardCache } from './engine/queue-controls';
 import { classNames, genreBubbles } from './util';
 import { GenreBubbleView } from './Results';
+import { TagStrip } from './TagStrip';
 import { RowPlayButton, playOnDoubleClick } from './RowPlay';
 import { Marquee } from './Marquee';
 import { ROW_COVER } from './row-cover';
@@ -437,9 +438,9 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
                 <Marquee className="track__title" title={track.title}>{track.title}</Marquee>
                 <SongCredits track={track} onOpenAlbum={onOpenAlbum} onOpenArtist={onOpenArtist} />
                 {bubbles.length > 0 && (
-                  <span className="rec__facts list-strip__facts" aria-label="Song details">
+                  <TagStrip className="rec__facts list-strip__facts">
                     {bubbles.map((g) => <GenreBubbleView key={g.label} bubble={g} />)}
-                  </span>
+                  </TagStrip>
                 )}
               </div>
               {current && (

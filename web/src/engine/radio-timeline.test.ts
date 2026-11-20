@@ -21,6 +21,13 @@ describe('published radio item clocks, independent of buffer clocks', () => {
     const t = broadcastTimeline({ ...b(), kind: 'song', duration: null }, { duration: 100 }, snap, NOW);
     expect(t.elapsed).toBe(120); expect(t.duration).toBe(100); expect(t.max).toBeGreaterThanOrEqual(120);
   });
+  it('a published start long past the song\'s whole length means the song is over, not 5:59 of 3:05 (RADIO-SONG-OVER-001)', () => {
+    // Power 92's feed kept "WTF GOIN" (3:05) as current through the ad break that followed it.
+    const over = broadcastTimeline({ ...b(), kind: 'song', duration: null, startedAt: NOW - 369000 }, { duration: 185 }, snap, NOW);
+    expect(over.elapsed).toBeNull(); expect(over.over).toBe(true); expect(over.value).toBe(0);
+    const edit = broadcastTimeline({ ...b(), kind: 'song', duration: null }, { duration: 100 }, snap, NOW); // 20 s longer edit
+    expect(edit.over).toBe(false);
+  });
   it('uses published duration in preference to catalogue duration', () => {
     const t = broadcastTimeline({ ...b(), kind: 'song' }, { duration: 100 }, snap, NOW);
     expect(t.duration).toBe(3600); expect(t.durationSource).toBe('broadcaster');

@@ -9,7 +9,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
-const RATE = 48000, FRAME = 4, KEEP = 600, LIVE_CUSHION = RATE * 2;
+const RATE = 48000, FRAME = 4, KEEP = 600, LIVE_CUSHION = RATE * 2, CATCH_UP_HEARD = RATE * 10;
 function publicAddress(ip) {
   if (net.isIP(ip) !== 4) return false; // use public IPv4; no mapped/ambiguous IPv6 routes
   const p = ip.split('.').map(Number);
@@ -31,7 +31,7 @@ async function openPublic(raw, headers = {}, hops = 0) {
   });
 }
 class PcmRing {
-  constructor(seconds = KEEP) { this.cap = Math.round(seconds * RATE); this.bytes = Buffer.alloc(this.cap * FRAME); this.end = 0; this.at = 0; this.heard = 0; this.dropped = false; }
+  constructor(seconds = KEEP) { this.cap = Math.round(seconds * RATE); this.bytes = Buffer.alloc(this.cap * FRAME); this.end = 0; this.at = 0; this.heard = 0; this.dropped = false; this.held = false; }
   get start() { return Math.max(0, this.end - this.cap); }
   write(b) {
     const n = Math.floor(b.length / FRAME); if (!n) return;
@@ -40,7 +40,10 @@ class PcmRing {
     b.copy(this.bytes, tail * FRAME, 0, first * FRAME); if (first < n) b.copy(this.bytes, 0, first * FRAME, n * FRAME);
     this.end += n; if (this.at < this.start) { this.at = this.start; this.dropped = true; }
   }
-  take(n) { this.at = Math.max(this.start, this.at); n = Math.min(n, this.end - this.at); const b = this.slice(this.at, n); this.at += n; this.heard += n; return b; }
+  // RADIO-LIVE-EDGE-001: servers send a burst of recent audio on connect (Power 92 ~32 s, V103 ~20 s). Until the listener
+  // pauses or rewinds, and only in the opening 10 s heard, playback stays 2 s before the newest audio.
+  hold() { this.held = true; }
+  take(n) { if (!this.held && this.heard < CATCH_UP_HEARD && this.end - this.at > LIVE_CUSHION + RATE) this.at = this.end - LIVE_CUSHION; this.at = Math.max(this.start, this.at); n = Math.min(n, this.end - this.at); const b = this.slice(this.at, n); this.at += n; this.heard += n; return b; }
   slice(at, n) { at = Math.max(this.start, Math.min(this.end, at)); n = Math.min(n, this.end - at); const b = Buffer.alloc(n * FRAME), tail = at % this.cap, first = Math.min(n, this.cap - tail); this.bytes.copy(b, 0, tail * FRAME, (tail + first) * FRAME); if (first < n) this.bytes.copy(b, first * FRAME, 0, (n - first) * FRAME); return b; }
   // A recording is always described as an excerpt, never a complete programme.
   wav(from, to) {
@@ -53,9 +56,15 @@ class PcmRing {
     h.writeUInt16LE(FRAME, 32); h.writeUInt16LE(16, 34); h.write('data', 36); h.writeUInt32LE(pcm.length, 40);
     return Buffer.concat([h, pcm]);
   }
-  rewind(seconds) { this.at = Math.max(this.start, this.at - Math.floor(Math.max(0, Math.min(KEEP, seconds)) * RATE)); }
+  rewind(seconds) { this.held = true; this.at = Math.max(this.start, this.at - Math.floor(Math.max(0, Math.min(KEEP, seconds)) * RATE)); }
   // RADIO-GO-LIVE-001: jump to just before the newest audio received; never backwards, never past what arrived.
   live(cushion = LIVE_CUSHION) { this.at = Math.min(this.end, Math.max(this.at, this.start, this.end - cushion)); }
+}
+/** RADIO-LIVE-EDGE-001: every ICY block in a stretch of stream bytes, newest non-empty title last wins. */
+function latestIcyTitle(bytes, interval) {
+  let i = interval, title = null;
+  while (i < bytes.length) { const size = bytes[i] * 16; if (i + 1 + size > bytes.length) break; if (size) { const t = titleFromIcy(bytes.subarray(i + 1, i + 1 + size).toString('utf8')); if (t) title = t; } i += 1 + size + interval; }
+  return title;
 }
 function titleFromIcy(text) { return /StreamTitle='([\s\S]*?)';/i.exec(text)?.[1]?.replace(/\u0000/g, '').trim() || null; }
 async function probe(url) {
@@ -64,11 +73,15 @@ async function probe(url) {
   if (!(interval > 0 && interval <= 262144)) { r.destroy(); return { title: null, checkedAt: Date.now(), state: 'unavailable', detail: 'Broadcaster publishes no ICY now-playing information' }; }
   return new Promise(resolve => {
     let b = Buffer.alloc(0), settled = false;
-    const done = v => { if (settled) return; settled = true; clearTimeout(timer); r.destroy(); resolve(v); };
+    const done = v => { if (settled) return; settled = true; clearTimeout(timer); clearTimeout(burst); r.destroy(); resolve(v); };
     const timer = setTimeout(() => done({ title: null, checkedAt: Date.now(), state: 'unavailable', detail: 'Metadata did not arrive in time' }), 8000);
-    r.on('data', c => { b = Buffer.concat([b, c]); if (b.length <= interval) return; const size = b[interval] * 16; if (b.length < interval + 1 + size) return; const title = titleFromIcy(b.subarray(interval + 1, interval + 1 + size).toString('utf8')); done({ title, checkedAt: Date.now(), state: title ? 'current' : 'unavailable', detail: title ? 'Broadcaster ICY' : 'No current item supplied by broadcaster' }); });
+    // The first ICY block on a fresh connection sits inside the connect burst (~30 s old); read the burst through
+    // and keep its newest title, which is at the live edge.
+    const finish = () => { const title = latestIcyTitle(b, interval); done({ title, checkedAt: Date.now(), state: title ? 'current' : 'unavailable', detail: title ? 'Broadcaster ICY' : 'No current item supplied by broadcaster' }); };
+    const burst = setTimeout(finish, 2500);
+    r.on('data', c => { b = Buffer.concat([b, c]); if (b.length > 2000000) { clearTimeout(burst); finish(); } });
     r.on('error', e => done({ title: null, checkedAt: Date.now(), state: 'failed', detail: e.message }));
-    r.on('end', () => done({ title: null, checkedAt: Date.now(), state: 'unavailable', detail: 'Metadata stream ended' }));
+    r.on('end', finish);
   });
 }
 function createRadio({ toolsDir, saveRecording }) {
@@ -127,7 +140,7 @@ function createRadio({ toolsDir, saveRecording }) {
       const saved = await saveRecording(wave, String(cmd.title || 'Live radio'));
       return { ...saved, seconds: (wave.length - 44) / (RATE * FRAME), partial: true };
     }
-    if (op === 'pause') s.paused = Boolean(cmd.paused);
+    if (op === 'pause') { s.paused = Boolean(cmd.paused); if (s.paused) s.ring.hold(); }
     // RADIO-UI-005: shuffle is session state the page and any remote controller agree on.
     if (op === 'shuffle') s.shuffle = Boolean(cmd.on);
     if (op === 'rewind') s.ring.rewind(Number(cmd.seconds) || 15);
@@ -138,4 +151,4 @@ function createRadio({ toolsDir, saveRecording }) {
   }
   return { handle, shutdown: stop };
 }
-module.exports = { publicAddress, openPublic, titleFromIcy, PcmRing, createRadio };
+module.exports = { publicAddress, openPublic, titleFromIcy, latestIcyTitle, PcmRing, createRadio };

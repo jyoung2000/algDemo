@@ -5,6 +5,7 @@ import { readPlaces, savePlaces, stationInPlace, PLACES_MAX, type RadioPlace } f
 import type { Track } from './api';
 import { genreIdentity } from './engine/genre-identity';
 import { GenreBubbleView } from './Results';
+import { TagStrip } from './TagStrip';
 import { classifyStation, type StationFacts, type StationGenre } from './engine/radio-genres';
 import { SkeletonList, Develop } from './Skeleton';
 import { Glyph } from '@now-playing/aqua-ui/icons';
@@ -252,7 +253,7 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
             {b.artist && (onOpenArtist && artist ? <button type="button" className="artistlink radio-now__link" aria-label={`Open the artist ${artist.name}`} onClick={() => onOpenArtist(artist)}>{b.artist}</button> : b.artist)}{b.artist ? ' — ' : ''}
             {onPlaySong && match[s.id] ? <button type="button" className="artistlink radio-now__link" aria-label={`Play the song ${b.title}`} onClick={() => onPlaySong(match[s.id]!)}>{b.title}</button> : b.title}
           </> : b ? 'Programme information unavailable' : 'Checking broadcaster…'}</Marquee></span></div>
-          {tags.length > 0 && <div className="radio-station__tags" title={tags.map(g => g.label).join(', ')}>{tags.map((g, i) => <GenreBubbleView key={i} bubble={g} />)}</div>}</div>
+          {tags.length > 0 && <TagStrip className="radio-station__tags" label="Station genres" title={tags.map(g => g.label).join(', ')}>{tags.map((g, i) => <GenreBubbleView key={i} bubble={g} />)}</TagStrip>}</div>
           <div className="radio-station__actions song-actions">
             <PlayDisc className={`radio-station__play${active ? ' is-on' : ''}`} ready playing={active} label={`Play ${s.name}`} title={active ? 'This station is playing' : 'Play this station live'} onPlay={play} />
             <button type="button" className="iconbtn radio-station__star" aria-pressed={starred} aria-label={`Star station ${s.name}`} title={starred ? 'Starred station' : 'Star this station'} onClick={() => void toggle(s)}><Glyph name={starred ? 'star-filled' : 'star'} size={16} /></button>

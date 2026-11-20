@@ -58,6 +58,7 @@ class RadioRingTest {
     val second = ByteArray(48000 * 4) { 5 }
     repeat(10) { r.write(second, second.size) }
     val dst = arrayOf(FloatArray(48000), FloatArray(48000))
+    r.hold() // after a pause: no automatic catch-up, so the listener is 9 s behind
     assertEquals(48000, r.read(dst, 0, 48000))
     assertEquals(48000L * 8, r.toLive()); assertEquals(48000L * 8, r.positionFrames)
     assertEquals(48000L * 8, r.toLive())
@@ -65,5 +66,27 @@ class RadioRingTest {
     assertEquals(48000L * 10, r.toLive())
     val fresh = RadioRing(48000 * 20); fresh.write(second, second.size)
     assertEquals(0L, fresh.toLive())
+  }
+
+  /** RADIO-LIVE-EDGE-001 (owner, 2026-11-19): "behind the actual live radio even though it says live". Servers send a
+   *  burst of recent audio on connect (Power 92 ~32 s, V103 ~20 s); playback started at its oldest frame. */
+  @Test fun aConnectBurstStartsTwoSecondsBeforeTheNewestAudio() {
+    val r = RadioRing(48000 * 120)
+    val burst = ByteArray(48000 * 4 * 30) { 1 }
+    r.write(burst, burst.size)
+    r.seekTo(0) // the engine's load() does this; it is not a rewind
+    val dst = arrayOf(FloatArray(1200), FloatArray(1200))
+    assertEquals(1200, r.read(dst, 0, 1200))
+    assertEquals(48000L * 28 + 1200, r.positionFrames)
+  }
+  @Test fun catchingUpStopsAfterPauseRewindOrTheOpeningTenSeconds() {
+    val sec = ByteArray(48000 * 4) { 1 }
+    val dst = arrayOf(FloatArray(48000), FloatArray(48000))
+    val a = RadioRing(48000 * 120); repeat(30) { a.write(sec, sec.size) }; a.read(dst, 0, 100); a.hold()
+    repeat(20) { a.write(sec, sec.size) }; val at = a.positionFrames; a.read(dst, 0, 100); assertEquals(at + 100, a.positionFrames)
+    val b = RadioRing(48000 * 120); repeat(30) { b.write(sec, sec.size) }; b.read(dst, 0, 100); b.seekTo(b.positionFrames - 48000 * 15)
+    val back = b.positionFrames; b.read(dst, 0, 100); assertEquals(back + 100, b.positionFrames)
+    val c = RadioRing(48000 * 120); repeat(10) { c.write(sec, sec.size); c.read(dst, 0, 48000) }
+    repeat(20) { c.write(sec, sec.size) }; val before = c.positionFrames; c.read(dst, 0, 100); assertEquals(before + 100, c.positionFrames)
   }
 }

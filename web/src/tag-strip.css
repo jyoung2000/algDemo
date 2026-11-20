@@ -1,0 +1,20 @@
+/* TAG-STRIP-001: genre tags on one line, as wide as two tags; the rest glide into view (Marquee). */
+body .tag-strip {
+  display: flex;
+  flex-wrap: nowrap;
+  min-width: 0;
+  max-width: min(100%, var(--tag-cap, 100%));
+}
+.tag-strip .mq {
+  flex: 0 1 auto;
+}
+.tag-strip .mq__inner {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  vertical-align: top;
+}
+.tag-strip .mq__inner > * {
+  flex: none;
+}

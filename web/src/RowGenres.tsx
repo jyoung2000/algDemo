@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, type Characteristics, type Track } from './api';
 import { genreBubbles } from './util';
 import { GenreBubbleView } from './Results';
+import { TagStrip } from './TagStrip';
 
 /**
  * TAGS-ALWAYS-001 (owner, 2026-11-19: "all music should be tagged"): the genre bubbles of a song shown
@@ -69,8 +70,8 @@ export function RowGenres({ track }: { track: Track }) {
   const bubbles = genreBubbles(c);
   if (!bubbles.length) return null;
   return (
-    <span className="rec__facts list-strip__facts" aria-label="Song details">
+    <TagStrip className="rec__facts list-strip__facts">
       {bubbles.map((g) => <GenreBubbleView key={g.label} bubble={g} />)}
-    </span>
+    </TagStrip>
   );
 }

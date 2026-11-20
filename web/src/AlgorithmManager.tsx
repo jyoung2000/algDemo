@@ -213,7 +213,9 @@ export function AlgorithmManager({ state, place = 'profile', onChanged, onSaved 
         <select id={`${id}-select`} className="field algo__select" value={active.id} disabled={idle} onChange={(e) => select(e.target.value)}>
           {all.map((a) => <option key={a.id} value={a.id}>{a.builtIn ? `${a.name} (built-in)` : a.name}</option>)}
         </select>
-        <div className="algo__buttons">
+        {/* ALGO-ACTIONS-LABEL-001 (owner): one title above the buttons saying what they act on. */}
+        <span id={`${id}-manage`} className="algo__label algo__manage-label">Selected algorithm’s settings: create, reset, import or export</span>
+        <div className="algo__buttons" role="group" aria-labelledby={`${id}-manage`}>
           <button type="button" className="push" disabled={idle} aria-expanded={panel === 'create'} onClick={() => { setNewName(uniqueName(`${active.name} copy`, users)); open('create'); }}>Create</button>
           <button type="button" className="push" disabled={idle} aria-expanded={panel === 'reset'} onClick={resetClick}>Reset</button>
           <button type="button" className="push" disabled={idle} aria-expanded={panel === 'import'} onClick={() => open('import')}>Import</button>

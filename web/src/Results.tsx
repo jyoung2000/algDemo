@@ -2,6 +2,7 @@ import { useState, type CSSProperties } from 'react';
 import { Glyph, type GlyphName } from '@now-playing/aqua-ui/icons';
 import { SimilarGlyph } from './icons';
 import { Marquee } from './Marquee';
+import { TagStrip } from './TagStrip';
 import { ROW_COVER } from './row-cover';
 import './song-row.css';
 import type { ArtistTarget, Characteristics, FeedbackKind, PlaylistSummary, RecItem, Track } from './api';
@@ -143,9 +144,9 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               <span className="rec__why1">Starting song{strong ? ' · counts double' : ''}</span>
               {/* GENRE-LOAD-001: a starting song shows its genres like every other row. */}
               {seedBubbles.length > 0 && (
-                <span className="rec__facts" aria-label="Song details">
+                <TagStrip className="rec__facts">
                   {seedBubbles.map((g) => <GenreBubbleView key={g.label} bubble={g} />)}
-                </span>
+                </TagStrip>
               )}
             </div>
             <span className="rec__tier" />
@@ -296,7 +297,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               )}
               <span className="rec__why1">{it.reasons[0]?.text ?? 'Found from your starting songs.'}</span>
               {(bubbles.length > 0 || facts.length > 0) && (
-                <span className="rec__facts" aria-label="Song details">
+                <TagStrip className="rec__facts">
                   {/* TAGS-CANON-001: each bubble in the Taste Picker's colour for its own genre. */}
                   {bubbles.map((g) => <GenreBubbleView key={g.label} bubble={g} />)}
                   {facts.map((f) => (
@@ -304,7 +305,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
                       {f}
                     </span>
                   ))}
-                </span>
+                </TagStrip>
               )}
             </div>
             <span className="rec__tier" title={`Evidence: ${it.evidence}`}>

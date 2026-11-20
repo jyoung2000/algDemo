@@ -44,3 +44,25 @@
   color: var(--ink-3);
   font-size: 13px;
 }
+
+/* PREF-CHECK-INLINE-001 (owner): a setting's name sits on the first line of its checkbox, not centred on a long description. */
+.pref > .k:has(+ .chk) {
+  align-self: start;
+}
+
+/* PREF-CHECK-INLINE-001 on a phone: one column puts the name above its checkbox row, so the box moves up onto the
+   name's line, before the name; the description stays below at full width. */
+@media (max-width: 899px) {
+  .settings .pref > .k:has(+ .chk) {
+    padding-left: 26px;
+  }
+  .settings .pref > .k + .chk > .box {
+    position: absolute;
+    left: 0;
+    top: -23px; /* -21 less the box's own 2px top margin */
+  }
+  .settings .pref > .k + .chk > input {
+    top: -24px;
+    left: -3px;
+  }
+}

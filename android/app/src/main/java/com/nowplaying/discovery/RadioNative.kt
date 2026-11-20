@@ -162,7 +162,7 @@ object RadioNative {
             .put("seconds", seconds).put("partial", true)
         } finally { temp.delete() }
       }
-      "pause" -> { s.paused = cmd.optBoolean("paused"); EngineHub.fromPage("{\"op\":\"${if (s.paused) "pause" else "play"}\"}") }
+      "pause" -> { s.paused = cmd.optBoolean("paused"); if (s.paused) s.ring.hold(); EngineHub.fromPage("{\"op\":\"${if (s.paused) "pause" else "play"}\"}") }
       // RADIO-SHUFFLE-001: set the station-shuffle flag; the state object below reports it.
       "shuffle" -> { shuffle = cmd.optBoolean("on"); EngineHub.fromPage(JSONObject().put("op", "radio-shuffle").put("id", s.id).toString()) }
       // RADIO-GO-LIVE-001: the engine seeks its radio source to just before the newest audio (RadioRing.toLive).

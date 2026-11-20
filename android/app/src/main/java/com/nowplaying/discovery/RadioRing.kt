@@ -29,6 +29,9 @@ class RadioRing(private val capacity: Int = 48000 * 600, private val file: File?
   @Volatile var at = 0L; private set
   @Volatile var heard = 0L; private set
   @Volatile var dropped = false; private set
+  /** RADIO-LIVE-EDGE-001: set once the listener pauses or rewinds; from then on playback is never moved for them. */
+  @Volatile var held = false; private set
+  @Synchronized fun hold() { held = true }
   @Volatile var failed: Throwable? = null
   @Volatile var closed = false
   val oldest: Long get() = (end - capacity).coerceAtLeast(0)
@@ -52,6 +55,9 @@ class RadioRing(private val capacity: Int = 48000 * 600, private val file: File?
   }
   @Synchronized override fun read(dst: Array<FloatArray>, offset: Int, frames: Int): Int {
     if (closed) return 0
+    // RADIO-LIVE-EDGE-001: a connect burst of old audio is skipped; until a pause or rewind, and only in the opening
+    // 10 s heard, playback stays 2 s before the newest audio.
+    if (!held && heard < 48000L * 10 && end - at > LIVE_CUSHION_FRAMES + 48000) at = end - LIVE_CUSHION_FRAMES
     at = at.coerceAtLeast(oldest)
     val n = min(frames.toLong(), end - at).toInt()
     val pcm = copyFrames(at, n)
@@ -63,7 +69,7 @@ class RadioRing(private val capacity: Int = 48000 * 600, private val file: File?
     at += n; heard += n
     return n
   }
-  @Synchronized override fun seekTo(frame: Long) { if (closed) return; at = frame.coerceIn(oldest, at.coerceAtLeast(oldest)) }
+  @Synchronized override fun seekTo(frame: Long) { if (closed) return; if (frame < at) held = true /* a rewind; the engine's seekTo(0) on load is not */; at = frame.coerceIn(oldest, at.coerceAtLeast(oldest)) }
   /** RADIO-GO-LIVE-001 (owner, 2026-11-19): "a button to go to live". Jump to [cushion] frames before the newest audio
    *  received (never backwards, never past what has arrived), so playback carries on without an immediate stall. */
   @Synchronized fun toLive(cushion: Long = LIVE_CUSHION_FRAMES): Long { if (closed) return at; at = maxOf(at, (end - cushion).coerceAtLeast(oldest)).coerceAtMost(end); return at }

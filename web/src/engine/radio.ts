@@ -270,12 +270,15 @@ export function broadcastTimeline(b: Broadcast | null, track: { duration?: numbe
   // the wrong edition, nor present its length as the station's actual edit.
   // RADIO-CLOCK-002: a measured clock belongs to the recording the fingerprint named, so that recording's length is
   // where it ends; the session measures again from there. A broadcaster's clock keeps running past a catalogue length.
-  const elapsed = rawElapsed === null ? null : publishedDuration ? Math.min(rawElapsed, publishedDuration) : measured && duration ? Math.min(rawElapsed, duration) : rawElapsed;
+  // RADIO-SONG-OVER-001: a published start more than a minute past the song's whole length means the song is over (a
+  // feed can keep naming it through the ad break after it); no clock, rather than "5:59 of 3:05".
+  const over = !measured && !publishedDuration && rawElapsed !== null && !!catalogueDuration && rawElapsed > catalogueDuration + 60;
+  const elapsed = rawElapsed === null || over ? null : publishedDuration ? Math.min(rawElapsed, publishedDuration) : measured && duration ? Math.min(rawElapsed, duration) : rawElapsed;
   // With no item clock the bar is EMPTY: the playhead's place in the retained buffer sat near the end
   // and read as "this song is almost over". Rewinding stays on the rewind button.
   const max = elapsed !== null ? publishedDuration ?? Math.max(1, duration ?? 0, measured ? elapsed : elapsed + behind) : 1;
   const value = elapsed !== null ? elapsed : 0;
-  return { elapsed, duration, durationSource: publishedDuration ? 'broadcaster' : catalogueDuration ? 'catalogue' : null, clockSource: elapsed === null ? null : measured ? 'audio' as const : 'broadcaster' as const, behind, max, value, rewindable: Math.max(0, (snap?.position ?? 0) - (snap?.oldest ?? 0)) };
+  return { over, elapsed, duration, durationSource: publishedDuration ? 'broadcaster' : catalogueDuration ? 'catalogue' : null, clockSource: elapsed === null ? null : measured ? 'audio' as const : 'broadcaster' as const, behind, max, value, rewindable: Math.max(0, (snap?.position ?? 0) - (snap?.oldest ?? 0)) };
 }
 /**
  * CAR-RADIO-CONTROLS-001: the on-air item's clock for Android Auto, on the ring's sample clock: where

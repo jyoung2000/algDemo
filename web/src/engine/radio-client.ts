@@ -106,7 +106,7 @@ class RadioSession {
     this.identifyAfter = Infinity; this.overrunAfter = 0;
     this.put({ station: snap.station, snapshot: snap, track: null, broadcast: null, identified: false, characteristics: null, identifying: false, error: snap.error, analysis: 'Reading current radio programme', songStart: null });
     void favouriteStations().then(v => { if (!this.stationList.length) this.stationList = v; });
-    void this.refreshMetadata(gen); this.metaTimer = setInterval(() => void this.refreshMetadata(gen), 20000); void this.poll(gen);
+    void this.refreshMetadata(gen); this.metaTimer = setInterval(() => void this.refreshMetadata(gen), 10000); void this.poll(gen);
   }
   private lastNativeMetadata = '';
   /** RADIO-CLOCK-001: fingerprint again once this much of the ring has arrived (a new song's own audio fills a window). */
@@ -154,7 +154,7 @@ class RadioSession {
       const snap = await radioNative({ op: 'start', stationId: s.id, name: s.name, title: s.name, url: s.url, station: s, stations: this.stationList });
       if (gen !== this.generation) return;
       this.put({ snapshot: snap }); if (snap.native) { this.graph?.dispose(); this.graph = null; }
-      void this.refreshMetadata(gen); this.metaTimer = setInterval(() => void this.refreshMetadata(gen), 20000); void this.poll(gen);
+      void this.refreshMetadata(gen); this.metaTimer = setInterval(() => void this.refreshMetadata(gen), 10000); void this.poll(gen);
     } catch (e) { if (gen === this.generation) this.put({ error: e instanceof Error ? e.message : 'Radio could not start' }); }
   }
   private clear() { if (this.timer) clearTimeout(this.timer); if (this.metaTimer) clearInterval(this.metaTimer); this.timer = null; this.metaTimer = null; this.flushAudio(); this.graph?.dispose(); this.graph = null; }
@@ -250,9 +250,13 @@ class RadioSession {
     void api.feedback(kind, track, { event_id: kind === 'complete' ? `${noted}:full` : noted, ...(kind === 'complete' ? { supersedes: noted } : {}), listened: coverage, coverage, duration: track.duration, medium: 'radio', origin: 'radio', confidence: 0.7 }).catch(() => {});
   }
   private async refreshMetadata(gen: number) {
-    const s = this.value.station; if (!s || gen !== this.generation) return; const b = await stationMetadata(s); if (gen !== this.generation) return;
+    // RADIO-FEED-FUTURI-001: asked every 10 s so a new song shows within seconds of starting on air.
+    const s = this.value.station; if (!s || gen !== this.generation) return; const b = await stationMetadata(s, false, 9000); if (gen !== this.generation) return;
     const last = this.markers[this.markers.length - 1];
     if (last?.broadcast.title === b.title && last.broadcast.artist === b.artist) { last.broadcast = b; this.selectItem(); return; }
+    // RADIO-NO-BACKTRACK-001 (owner): a title this session already moved past (a newer title or the fingerprint named the
+    // next song) comes from a source running behind the air. It is not a new song; never step back to it.
+    if (this.markers.slice(0, -1).some((m) => m.broadcast.title === b.title && m.broadcast.artist === b.artist)) return;
     const marker: Marker = { at: last ? this.value.snapshot?.received || 0 : 0, broadcast: b, track: null, identified: false, heardAt: 0 }; this.markers.push(marker); this.selectItem();
     // RADIO-CLOCK-001: the title changed while listening. Its clock is measured once 13 s of the new item have been played
     // (a 12 s fingerprint window that no longer holds the end of the previous song).

@@ -28,7 +28,7 @@ const BUTTON = '.algo__toolbar > .algo__buttons .push';
 
 describe('the algorithm toolbar actions stay on one line (ALGO-INLINE-001)', () => {
   it('has exactly the four permanent actions in the toolbar row, in order', () => {
-    const row = /<div className="algo__toolbar">[\s\S]*?<div className="algo__buttons">([\s\S]*?)<\/div>/.exec(tsx)![1]!;
+    const row = /<div className="algo__toolbar">[\s\S]*?<div className="algo__buttons"[^>]*>([\s\S]*?)<\/div>/.exec(tsx)![1]!;
     expect([...row.matchAll(/>([A-Za-z]+)<\/button>/g)].map((m) => m[1])).toEqual(['Create', 'Reset', 'Import', 'Export']);
   });
 

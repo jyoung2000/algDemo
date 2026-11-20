@@ -30,6 +30,15 @@ export async function publisherBroadcast(s: RadioStation, get: GetText, now = Da
     const programme = await readIheartProgrammeDetails(s.url, async url => { if (!IHEART_HOSTS.includes(new URL(url).hostname)) throw Error('Untrusted schedule host'); return j(url); }, now);
     return programme ? { ...parseBroadcast(programme.title, 'iHeart official schedule', now), ...programme, kind: 'programme', artist: null } : null;
   }
+  // RADIO-FEED-FUTURI-001: Futuri/StreamOn DAS streams (Power 92) send the ICY title only at connect; the station's own
+  // player reads this feed, which names the song on air and when it began.
+  if (/^ais-[a-z0-9-]+\.cdnstream1\.com$/.test(host) && (m = /^\/([a-z0-9]{4,40})\/([a-z0-9]{4,40})(?:\/|$)/i.exec(u.pathname))) {
+    const x = (await j(`https://yp.cdnstream1.com/metadata/${m[1]}/${m[2]}/current.json`))?.[0];
+    const seen = Math.max(Number(x?.last_seen) || 0, Number(x?.played_on) || 0) * 1000;
+    if (!x?.TIT2 || now - seen > 15 * 60000) return null;
+    const art = typeof x.WXXX_album_art === 'string' && publicUrl(x.WXXX_album_art) ? x.WXXX_album_art : null;
+    return { ...parseBroadcast(x.TPE1 ? `${x.TPE1} - ${x.TIT2}` : x.TIT2, 'Futuri official feed', now), startedAt: Number(x.played_on) > 0 ? Math.round(Number(x.played_on) * 1000) : null, artwork: art };
+  }
   if (host === 'stream.live.vc.bbcmedia.co.uk' && BBC.has(u.pathname.slice(1))) {
     const id = u.pathname.slice(1), x = await j(`https://ess.api.bbci.co.uk/schedules?serviceId=${id}`); if (x.service?.id !== id || !Array.isArray(x.items)) return null;
     const item = x.items.find((r: { service?: { id?: string }; published_time?: { start?: string; end?: string } }) => r.service?.id === id && Date.parse(r.published_time?.start || '') <= now && Date.parse(r.published_time?.end || '') > now);
