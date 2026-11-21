@@ -63,6 +63,9 @@
 .radio-station__art img { width:100%; height:100%; object-fit:contain; }
 .radio-station__body { min-width:0; }
 .radio-station h2 { display:flex; align-items:center; gap:4px; margin:0 0 4px; font-size:16px; line-height:1.3; overflow-wrap:anywhere; }
+.radio-playing-note { margin:0 0 8px; font-size:13px; color:var(--muted,#565b60); }
+/* RADIO-PLAYING-NOW-001: a station found playing the searched artist or song now. */
+.radio-station--playing .radio-now__label { color:var(--accent,#2d6cdf); }
 .radio-location { font-size:12px; color:var(--muted,#565b60); margin-bottom:8px; }
 .radio-now { display:flex; gap:8px; font-size:13px; line-height:1.4; overflow-wrap:anywhere; }
 .radio-now__label { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted,#565b60); flex-shrink:0; margin-top:1px; }

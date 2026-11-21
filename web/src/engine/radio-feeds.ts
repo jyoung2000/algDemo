@@ -2,6 +2,7 @@
 // readCurrentProgramme. Only an exact broadcaster hostname/stream mount selects an adapter.
 import { parseBroadcast, freshBroadcast, publicUrl, type Broadcast, type RadioStation } from './radio';
 import { IHEART_HOSTS, readIheartProgrammeDetails } from './radio-schedule';
+import { parseTuneinNow, tuneinGuide, tuneinNowUrl } from './radio-tunein';
 type GetText = (url: string) => Promise<string>;
 const BBC = new Set(['bbc_radio_one', 'bbc_radio_two', 'bbc_radio_three', 'bbc_radio_fourfm', 'bbc_radio_fourlw', 'bbc_radio_five_live', 'bbc_6music', 'bbc_1xtra', 'bbc_radio_four_extra', 'bbc_asian_network', 'bbc_world_service']);
 export function tritonCue(text: string, now = Date.now()): Broadcast | null {
@@ -29,6 +30,10 @@ export async function publisherBroadcast(s: RadioStation, get: GetText, now = Da
   // iHeart's song feed, asked by its iHeart id; with no answer, the host's own feed below is tried.
   const ihr = s.iheartId && /^\d{1,7}$/.test(s.iheartId) ? s.iheartId : /^ihr-(\d{1,7})$/.exec(s.id)?.[1];
   if (ihr && !/(^|\.)revma\.ihrhls\.com$/.test(host)) { try { const b = await iheartTrack(ihr, get, now); if (b) return b; } catch { /* the host's feed is tried next */ } }
+  // RADIO-PLAYING-NOW-001: a station found through TuneIn plays through TuneIn's address, so its song comes from TuneIn's
+  // now-playing feed. An ad has no track and gives nothing: ICY is asked next and nothing is invented.
+  const ti = tuneinGuide(s.id);
+  if (ti) { try { return parseTuneinNow(await get(tuneinNowUrl(ti)), now); } catch { return null; } }
   if (/(^|\.)somafm\.com$/.test(host) && (m = /^\/([a-z0-9]+)-/i.exec(u.pathname))) {
     const x = (await j(`https://somafm.com/songs/${m[1]}.json`)).songs?.[0]; if (!x?.title) return null;
     return { ...parseBroadcast(x.artist ? `${x.artist} - ${x.title}` : x.title, 'SomaFM official feed', now), startedAt: Number(x.date) > 0 ? Number(x.date) * 1000 : null };

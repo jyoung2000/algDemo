@@ -13,6 +13,8 @@ import { Glyph } from '@now-playing/aqua-ui/icons';
 import { RadioRefreshGlyph } from './RadioGlyphs';
 import { radioArtistTarget, type RadioArtistTarget } from './engine/radio-artist';
 import { Marquee } from './Marquee';
+import { radioPlayingNow } from './engine/radio-playing-client';
+import { playingMatches, type PlayingStation } from './engine/radio-tunein';
 import { PlayDisc } from './RowPlay';
 import { ROW_COVER } from './row-cover';
 import './radio.css';
@@ -79,9 +81,19 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
   const [badArt, setBadArt] = useState<Record<string, true>>({});
   const [refreshing, setRefreshing] = useState(false); const generation = useRef(0), lastRequested = useRef(0); const poller = useRef<MetadataPoller | null>(null);
   const retrier = useRef<BackgroundRetry | null>(null); const infoRef = useRef(info); const shownRef = useRef<RadioStation[]>([]);
+  // RADIO-PLAYING-NOW-001 (owner, 2026-11-20): "search by artist name or song name the radio tab to find any station
+  // playing that artist or song currently". The stations whose song on air names the search are listed first, and
+  // only while it is still on air: a row whose live answer moves on to another song leaves the group.
+  const [playing, setPlaying] = useState<{ query: string; rows: PlayingStation[] } | null>(null);
+  const onAir = playing && !saved && playing.query === query ? playing.rows.filter(r => {
+    const b = info[r.station.id] ? freshBroadcast(info[r.station.id]!) : null;
+    return !b || b.state !== 'current' || b.kind !== 'song' || !b.artist || playingMatches({ artist: b.artist, title: b.title }, query);
+  }).map(r => r.station) : [];
+  const onAirIds = new Set(onAir.map(s => s.id));
   const matchingStars = stars.filter(s => stationMatchesInitial(s.name, letter) && stationMatchesQuery(s.name, query) && (chosen.length ? chosen.some(p => stationInPlace(s, p)) : !country || s.countryCode === country) && (!language || s.language.toLowerCase().includes(language.toLowerCase())) && (!tag || s.tags.includes(tag)));
-  const shown = (saved ? matchingStars : [...new Map([...matchingStars, ...stations].map(s => [s.id, s])).values()]).filter(s => stationMatchesInitial(s.name, letter) && stationMatchesQuery(s.name, query));
-  if (letter) shown.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base', numeric: true }));
+  const listed = (saved ? matchingStars : [...new Map([...matchingStars, ...stations].map(s => [s.id, s])).values()]).filter(s => stationMatchesInitial(s.name, letter) && stationMatchesQuery(s.name, query));
+  if (letter) listed.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base', numeric: true }));
+  const shown = onAir.length ? [...onAir, ...listed.filter(s => !onAirIds.has(s.id))] : listed;
   useEffect(() => { let live = true; const read = () => { void favouriteStations().then(v => { if (live) setStars(v); }); }; read(); window.addEventListener('airwave-radio-favourites', read); return () => { live = false; window.removeEventListener('airwave-radio-favourites', read); }; }, []);
   useEffect(() => { let gone = false; void radioDirectory.countries().then(v => { if (!gone) setCountries(v.sort((a, b) => countryName(a.code).localeCompare(countryName(b.code)))); }).catch(() => {}); return () => { gone = true; }; }, []);
   const load = async (offset: number) => {
@@ -101,6 +113,18 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
     return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', key); };
   }, [menu]);
   useEffect(() => { if (!saved) void load(0); return () => { generation.current++; }; }, [query, country, language, tag, letter, saved, chosenKey]);
+  // Asked as the search settles and again every minute while it stays, so the list follows what is on air.
+  useEffect(() => {
+    setPlaying(null); if (saved || !query) return;
+    let gone = false;
+    const ask = () => void radioPlayingNow.search(query).then(rows => {
+      if (gone) return;
+      setInfo(was => { const next = { ...was }; for (const r of rows) next[r.station.id] = r.broadcast; return next; });
+      setPlaying({ query, rows });
+    }).catch(() => { if (!gone) setPlaying({ query, rows: [] }); });
+    ask(); const timer = setInterval(ask, 60000);
+    return () => { gone = true; clearInterval(timer); };
+  }, [query, saved]);
   const ids = shown.map(s => s.id).join('|');
   /** RADIO-LIVE-001: the rows on screen (with a margin), as the browser reports them; null until it has. */
   const onScreen = useRef<Set<string> | null>(null);
@@ -179,10 +203,10 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
   return <section className="card radio-page" aria-labelledby="radio-h">
     <header className="radio-page__header"><div><div className="eyebrow">LIVE AROUND THE WORLD</div><h1 id="radio-h">Radio</h1><p>Find a place. Hear what’s happening there.</p></div><button className="btn" type="button" disabled={busy} onClick={() => { if (!saved) void load(0); void poller.current?.tick(); refreshArt(); }}>Refresh stations</button></header>
     <form className={`search__form radio-search${draft ? ' has-text' : ''}`} role="search" onSubmit={e => { e.preventDefault(); setQuery(draft.trim()); }}>
-      <label className="sr" htmlFor="radio-q">Search radio stations worldwide</label>
+      <label className="sr" htmlFor="radio-q">Search radio stations worldwide, or the artist or song on air now</label>
       <span className="search__field">
         <span className="search__icon" aria-hidden="true">{busy || refreshing ? <RadioRefreshGlyph size={16} /> : <Glyph name="search" size={16} />}</span>
-        <input id="radio-q" className="field" type="search" inputMode="search" enterKeyHint="search" autoComplete="off" spellCheck={false} placeholder="Search stations worldwide" value={draft}
+        <input id="radio-q" className="field" type="search" inputMode="search" enterKeyHint="search" autoComplete="off" spellCheck={false} placeholder="Search stations, artists or songs" value={draft}
           onChange={e => { const value = e.target.value; setDraft(value); if (value.trim()) { setLetter(''); setNumericMode(/^\d/.test(value.trim())); } }}
           onKeyDown={e => { if (e.key === 'Escape' && draft) { e.preventDefault(); setDraft(''); } }} />
         {draft && <button className="search__clear" type="button" aria-label="Clear station search" onClick={() => { setDraft(''); document.getElementById('radio-q')?.focus(); }}>
@@ -244,7 +268,8 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
     {error && <p role="alert" className="notice">{error} <button type="button" className="linkbtn" onClick={() => void load(lastRequested.current)}>Try again</button></p>}
     <div aria-busy={busy}>{busy && !shown.length ? <SkeletonList rows={6} label="Loading stations around the world…" art={ROW_COVER} /> : null}
       {!busy && !shown.length && !error && <p role="status">{saved ? stars.length ? 'No starred stations match these filters.' : 'Star a station to keep it here.' : hasMore ? 'No matches in this batch. More stations continues looking.' : 'No stations match these filters. Try another country, language or station name.'}</p>}
-      <ul className="radio-stations" aria-label="Radio stations">{shown.map(s => { const b = info[s.id] ? freshBroadcast(info[s.id]!) : null, active = activeStation?.id === s.id; const tags = radioTagBubbles(s, active ? live : undefined), starred = stars.some(x => x.id === s.id), artist = b?.artist ? radioArtistTarget(b.artist, match[s.id], b) : null; const play = () => { radioSession.setStations(shown); onTune(s); }; return <li key={s.id} data-station-id={s.id} className={`radio-station${active ? ' is-on' : ''}`} onDoubleClick={e => { if (!(e.target instanceof Element) || e.target.closest('button, a, input, select, textarea, label, [role=button]')) return; window.getSelection?.()?.removeAllRanges(); play(); }}><Develop>
+      {playing && !saved && playing.query === query && <p className="radio-playing-note" role="status">{onAir.length ? `${onAir.length} station${onAir.length === 1 ? ' is' : 's are'} playing “${query}” right now` : `No station is playing “${query}” right now`}</p>}
+      <ul className="radio-stations" aria-label="Radio stations">{shown.map(s => { const b = info[s.id] ? freshBroadcast(info[s.id]!) : null, active = activeStation?.id === s.id; const tags = radioTagBubbles(s, active ? live : undefined), starred = stars.some(x => x.id === s.id), artist = b?.artist ? radioArtistTarget(b.artist, match[s.id], b) : null; const play = () => { radioSession.setStations(shown); onTune(s); }; return <li key={s.id} data-station-id={s.id} className={`radio-station${active ? ' is-on' : ''}${onAirIds.has(s.id) ? ' radio-station--playing' : ''}`} onDoubleClick={e => { if (!(e.target instanceof Element) || e.target.closest('button, a, input, select, textarea, label, [role=button]')) return; window.getSelection?.()?.removeAllRanges(); play(); }}><Develop>
         <div className="radio-station__art">{(() => { const art = rowArt(s); return art ? <img src={art} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setBadArt(was => ({ ...was, [art]: true }))} /> : <span aria-hidden="true">◉</span>; })()}</div>
         <div className="radio-station__body">
           {/* ROW-UNIFY-001 (owner, 2026-11-19): the station row reads like every song row: the cover, then the
@@ -268,6 +293,6 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
         </Develop></li>; })}</ul>
     </div>
     {!saved && hasMore && <button type="button" className="btn radio-more" disabled={busy} onClick={() => void load(nextOffset ?? 0)}>{busy ? 'Loading more…' : 'More stations'}</button>}
-    <footer className="radio-note">Directory: Radio Browser. Listening starts from now; only the last ten minutes retained during this session can be rewound. Station availability and metadata are controlled by broadcasters.</footer>
+    <footer className="radio-note">Directory: Radio Browser and iHeart; songs on air now: TuneIn. Listening starts from now; only the last ten minutes retained during this session can be rewound. Station availability and metadata are controlled by broadcasters.</footer>
   </section>;
 }
