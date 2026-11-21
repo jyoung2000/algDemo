@@ -149,6 +149,7 @@ class AudioEngine(
     deck.given = source
     deck.heard = 0
     source.seekTo(startFrame)
+    liveShort = true // a new song is buffering until it first sounds
     endedReported = null
     output.flush()
     playing = play
@@ -299,6 +300,7 @@ class AudioEngine(
     val live = decks.getValue(active)
     val spare = decks.getValue(other)
     val liveRead = fill(live)
+    liveShort = liveRead < QUANTUM && live.source?.ended != true
     live.heard += liveRead
     silence(spare) // HARD INVARIANT: a prepared source is never read alongside the live source.
     // MixBus.process reads its inputs AND writes its output at the same offset, and the deck buffers
@@ -399,6 +401,8 @@ class AudioEngine(
     if (resetGain) { fadeUntil = 0.0; bus.cut(active) }
   }
 
+  /** The live song's last read came up short: nothing (or not enough) was decoded to play. */
+  private var liveShort = true
   private fun publish() {
     val live = decks.getValue(active)
     val src = live.source
@@ -406,7 +410,9 @@ class AudioEngine(
     snapshot = Snapshot(
       key = live.key,
       playing = playing,
-      buffering = playing && src != null && !src.ready && !src.ended,
+      // CAR-RESUME-001: buffering is audio that actually ran short, not less than 250 ms decoded ahead (that
+      // flipped the car between its spinner and PLAYING many times a minute on a song that was playing).
+      buffering = playing && src != null && !src.ended && liveShort,
       positionFrames = max(0L, (src?.positionFrames ?: 0L) - pending),
       durationFrames = src?.durationFrames ?: PcmSource.UNKNOWN,
       blendingInto = if (bus.currentTime < fadeUntil) live.key else null,

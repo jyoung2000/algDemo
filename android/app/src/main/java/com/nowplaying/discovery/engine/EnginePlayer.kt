@@ -466,6 +466,11 @@ class EnginePlayer(
 
   private val pageLive: Boolean get() = page?.live == true
 
+  /** CAR-RESUME-001: the songs a car resume handed over, found here before the library has loaded. */
+  private val resumed = HashMap<String, MediaHub.Song>()
+  fun offerResumed(entries: List<Pair<String, MediaHub.Song>>) { resumed.clear(); for ((m, s) in entries) resumed[m] = s }
+  private fun find(id: String): MediaHub.Song? = lookup(id) ?: resumed[id]
+
   override fun handleSetMediaItems(mediaItems: MutableList<MediaItem>, startIndex: Int, startPositionMs: Long): ListenableFuture<*> {
     val start = if (startIndex == C.INDEX_UNSET) 0 else startIndex.coerceIn(0, (mediaItems.size - 1).coerceAtLeast(0))
     val chosen = mediaItems.getOrNull(start)?.mediaId
@@ -480,7 +485,7 @@ class EnginePlayer(
       page?.command(JSONObject().put("type", "playId").put("id", chosen))
       return Futures.immediateVoidFuture()
     }
-    val entries = mediaItems.mapNotNull { item -> lookup(item.mediaId)?.let { Entry(it, item.mediaId) } }
+    val entries = mediaItems.mapNotNull { item -> find(item.mediaId)?.let { Entry(it, item.mediaId) } }
     queue.set(entries, entries.indexOfFirst { it.mediaId == chosen }.coerceAtLeast(0))
     nativeChange()
     loadCurrent(if (startPositionMs == C.TIME_UNSET) 0 else startPositionMs, chosen = true)
@@ -488,7 +493,7 @@ class EnginePlayer(
   }
 
   override fun handleAddMediaItems(index: Int, mediaItems: MutableList<MediaItem>): ListenableFuture<*> {
-    val add = mediaItems.mapNotNull { item -> lookup(item.mediaId)?.let { Entry(it, item.mediaId) } }
+    val add = mediaItems.mapNotNull { item -> find(item.mediaId)?.let { Entry(it, item.mediaId) } }
     if (add.isEmpty()) return Futures.immediateVoidFuture()
     val keep = queue.current?.mediaId
     val next = queue.items.toMutableList().apply { addAll(index.coerceIn(0, size), add) }

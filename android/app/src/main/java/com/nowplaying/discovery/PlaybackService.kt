@@ -1028,6 +1028,25 @@ class PlaybackService : MediaLibraryService() {
       return result
     }
 
+    /**
+     * CAR-RESUME-001: Android Auto asks to play when the car connects, and a car or Bluetooth head unit
+     * sends Play. With nothing loaded yet Media3 asks here; unanswered, the play was dropped and a Play
+     * button that started this service killed the app 10 s later (no foreground notification). The
+     * answer is the queue last played, at its song and place.
+     */
+    override fun onPlaybackResumption(
+      mediaSession: MediaSession,
+      controller: MediaSession.ControllerInfo,
+      isForPlayback: Boolean,
+    ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+      NativeLibraryState.init(this@PlaybackService)
+      val plan = CarResume.plan(NativeLibraryState.nativeState(), MediaHub.state.queue, Downloads::urlAllowed)
+        ?: return Futures.immediateFailedFuture(UnsupportedOperationException("Nothing has been played yet."))
+      player.offerResumed(plan.entries)
+      android.util.Log.i("AirwaveCar", "resuming ${plan.entries.size} songs at ${plan.index} (${if (isForPlayback) "play" else "show"} for ${controller.packageName})")
+      return Futures.immediateFuture(MediaSession.MediaItemsWithStartPosition(plan.entries.map { (m, s) -> songItem(s, m) }.toMutableList(), plan.index, plan.positionMs))
+    }
+
     /** A tap in the car, or a voice request ("play X"), arrives here as bare ids or a search query;
      *  resolve each to a real song so the player can forward the right id to the page. */
     override fun onAddMediaItems(

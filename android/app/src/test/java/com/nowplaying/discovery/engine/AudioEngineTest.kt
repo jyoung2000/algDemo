@@ -346,4 +346,34 @@ class AudioEngineTest {
     eng.renderQuanta(375)
     assertEquals(listOf("ended:a"), ev.log); assertEquals(0L, b.positionFrames)
   }
+
+  /**
+   * CAR-RESUME-001 (measured on the DHU): Android Auto showed the spinner on a song that was playing, its
+   * session flipping between BUFFERING and PLAYING many times a minute, because "buffering" meant less
+   * than 250 ms decoded ahead. Buffering is now a song whose audio actually ran short.
+   */
+  @Test fun aSongWithLittleDecodedAheadIsPlayingNotBuffering() {
+    val (e, _, _) = engine()
+    val tone = Tone(440.0, 10.0)
+    val thin = object : PcmSource by tone { override val ready = false } // always under the 250 ms mark, never short
+    e.load("a", thin)
+    e.renderQuanta(4)
+    assertFalse(e.snapshot.buffering)
+  }
+
+  @Test fun aSongWhoseAudioRanShortIsBufferingUntilItIsBack() {
+    val (e, _, _) = engine()
+    val tone = Tone(440.0, 10.0)
+    var dry = true
+    val src = object : PcmSource by tone {
+      override val ready get() = !dry
+      override fun read(dst: Array<FloatArray>, offset: Int, frames: Int): Int = if (dry) 0 else tone.read(dst, offset, frames)
+    }
+    e.load("a", src)
+    e.renderQuanta(4)
+    assertTrue(e.snapshot.buffering)
+    dry = false
+    e.renderQuanta(4)
+    assertFalse(e.snapshot.buffering)
+  }
 }
