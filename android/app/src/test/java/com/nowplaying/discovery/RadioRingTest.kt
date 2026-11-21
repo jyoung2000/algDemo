@@ -60,9 +60,9 @@ class RadioRingTest {
     val dst = arrayOf(FloatArray(48000), FloatArray(48000))
     r.hold() // after a pause: no automatic catch-up, so the listener is 9 s behind
     assertEquals(48000, r.read(dst, 0, 48000))
-    assertEquals(48000L * 8, r.toLive()); assertEquals(48000L * 8, r.positionFrames)
-    assertEquals(48000L * 8, r.toLive())
-    repeat(2) { r.read(dst, 0, 48000) }
+    assertEquals(48000L * 5, r.toLive()); assertEquals(48000L * 5, r.positionFrames) // 5 s before the newest (RADIO-SMOOTH-001)
+    assertEquals(48000L * 5, r.toLive())
+    repeat(5) { r.read(dst, 0, 48000) }
     assertEquals(48000L * 10, r.toLive())
     val fresh = RadioRing(48000 * 20); fresh.write(second, second.size)
     assertEquals(0L, fresh.toLive())
@@ -70,14 +70,14 @@ class RadioRingTest {
 
   /** RADIO-LIVE-EDGE-001 (owner, 2026-11-19): "behind the actual live radio even though it says live". Servers send a
    *  burst of recent audio on connect (Power 92 ~32 s, V103 ~20 s); playback started at its oldest frame. */
-  @Test fun aConnectBurstStartsTwoSecondsBeforeTheNewestAudio() {
+  @Test fun aConnectBurstStartsFiveSecondsBeforeTheNewestAudio() {
     val r = RadioRing(48000 * 120)
     val burst = ByteArray(48000 * 4 * 30) { 1 }
     r.write(burst, burst.size)
     r.seekTo(0) // the engine's load() does this; it is not a rewind
     val dst = arrayOf(FloatArray(1200), FloatArray(1200))
     assertEquals(1200, r.read(dst, 0, 1200))
-    assertEquals(48000L * 28 + 1200, r.positionFrames)
+    assertEquals(48000L * 25 + 1200, r.positionFrames)
   }
   @Test fun catchingUpStopsAfterPauseRewindOrTheOpeningTenSeconds() {
     val sec = ByteArray(48000 * 4) { 1 }
@@ -97,7 +97,7 @@ class RadioRingTest {
     assertEquals(0, r.read(buf, 0, sec))                                       // network stall: nothing to play
     r.write(ByteArray(sec * 4 * 22), sec * 4 * 22)                                 // the backlog arrives
     r.read(buf, 0, 480)
-    assertEquals(2.0, (r.end - r.positionFrames).toDouble() / sec, 0.02)
+    assertEquals(5.0, (r.end - r.positionFrames).toDouble() / sec, 0.02)
   }
 
   @Test fun aStallWhileTheListenerIsBehindOnPurposeKeepsTheirPlace() {
@@ -114,7 +114,7 @@ class RadioRingTest {
     repeat(12) { r.write(ByteArray(sec * 4), sec * 4); r.read(buf, 0, sec) }
     r.write(ByteArray(sec * 2), sec * 2); assertEquals(sec / 2, r.read(buf, 0, sec)) // half a second left, then buffering
     r.write(ByteArray(sec * 4 * 22), sec * 4 * 22); r.read(buf, 0, 480)
-    assertEquals(2.0, (r.end - r.positionFrames).toDouble() / sec, 0.02)
+    assertEquals(5.0, (r.end - r.positionFrames).toDouble() / sec, 0.02)
   }
 
   /** Measured on the phone: the backlog lands over about a second, so the first jump happens before all of it arrived. */
@@ -124,6 +124,55 @@ class RadioRingTest {
     r.read(buf, 0, sec)                                                   // stalled
     r.write(ByteArray(sec * 4 * 4), sec * 4 * 4); r.read(buf, 0, 480)       // first 4 s of the backlog
     r.write(ByteArray(sec * 4 * 18), sec * 4 * 18); r.read(buf, 0, 480)     // the other 18 s
-    assertEquals(2.0, (r.end - r.positionFrames).toDouble() / sec, 0.02)
+    assertEquals(5.0, (r.end - r.positionFrames).toDouble() / sec, 0.02)
+  }
+
+  /** RADIO-SMOOTH-001 (owner, 2026-11-20): "the radio sometimes plays back really choppy". Measured: Power 92 delivers
+   *  in bursts with gaps up to 3.9 s; 2 s kept before the newest audio ran dry nine times in 45 s, then skipped ahead.
+   *  Replay it: 4 s of audio at once every 4 s, read in 100 ms steps as the engine does. */
+  @Test fun aStationSendingFourSecondBurstsPlaysWithoutAGap() {
+    val r = RadioRing(48000 * 120); val step = 4800; val buf = Array(2) { FloatArray(step) }; var dry = 0; var skipped = 0
+    r.write(ByteArray(48000 * 4 * 8), 48000 * 4 * 8)
+    for (tick in 0 until 600) {
+      if (tick % 40 == 0) r.write(ByteArray(48000 * 4 * 4), 48000 * 4 * 4)
+      val before = r.positionFrames; val got = if (r.ready) r.read(buf, 0, step) else 0
+      if (r.heard > 48000L * 10) { if (got < step) dry++; if (r.positionFrames - before > got) skipped++ }
+    }
+    assertEquals(0, dry); assertEquals(0, skipped)
+  }
+
+  /** RADIO-SMOOTH-001: the audio thread shares the ring's lock with the decoder and the fingerprint sampler. Reading
+   *  the 10-minute disk file under it (12 s for every fingerprint) stalled playback on a busy phone, so the newest 30 s
+   *  are also kept in memory and only an older rewind reads the disk. */
+  @Test fun playbackAndFingerprintSamplesNearLiveNeverReadTheDisk() {
+    val file = java.io.File.createTempFile("radio-tail-test", ".pcm", java.io.File(System.getenv("TMPDIR") ?: System.getProperty("java.io.tmpdir")!!))
+    val sec = 48000; val r = RadioRing(sec * 120, file); val buf = Array(2) { FloatArray(sec) }
+    for (i in 0 until 60) { val b = ByteArray(sec * 4) { (i + 1).toByte() }; r.write(b, b.size) }
+    assertEquals(sec, r.read(buf, 0, sec)); r.hold()                   // joins 5 s before live: second 56
+    assertEquals(12 * sec / 3 * 2, r.sample().size)
+    assertEquals(0, r.diskReads)
+    assertEquals(((56 shl 8) or 56).toShort().toFloat() / 32768f, buf[0][0], 0f) // the 56th second, from memory
+    r.seekTo(sec * 5L); assertEquals(sec, r.read(buf, 0, sec))         // a long rewind is read back from the disk
+    assertTrue(r.diskReads > 0)
+    assertEquals(((6 shl 8) or 6).toShort().toFloat() / 32768f, buf[0][0], 0f)
+    r.close()
+  }
+
+  @Test fun theFirstSoundWaitsForASecondSoItDoesNotStartAndStop() {
+    val r = RadioRing(48000 * 60); val buf = Array(2) { FloatArray(4800) }
+    r.write(ByteArray(48000 * 2), 48000 * 2)                              // half a second arrived
+    assertFalse(r.ready); assertEquals(0, r.read(buf, 0, 4800))
+    r.write(ByteArray(48000 * 2), 48000 * 2)                              // 1 s
+    assertTrue(r.ready); assertEquals(4800, r.read(buf, 0, 4800))
+  }
+
+  @Test fun afterRunningDryPlaybackWaitsForASecondAndAHalf() {
+    val sec = 48000; val r = RadioRing(sec * 60); val buf = Array(2) { FloatArray(sec) }
+    repeat(12) { r.write(ByteArray(sec * 4), sec * 4); r.read(buf, 0, sec) }
+    assertEquals(0, r.read(buf, 0, sec))                                  // network stall
+    r.write(ByteArray(sec * 2), sec * 2)                                  // half a second back
+    assertFalse(r.ready); assertEquals(0, r.read(buf, 0, 4800))
+    r.write(ByteArray(sec * 4), sec * 4)                                  // 1.5 s back
+    assertTrue(r.ready); assertEquals(4800, r.read(buf, 0, 4800))
   }
 }

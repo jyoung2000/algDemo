@@ -29,14 +29,39 @@ class RadioIcyTest {
   @Test fun titleBlocksAreTakenOutOfTheAudioAndEachTitleChangeIsPlacedAtItsAudioByte() {
     val raw = stream(byteArrayOf(1, 2, 3, 4) to "Mario - Let Me Love You", byteArrayOf(5, 6, 7, 8) to null,
       byteArrayOf(9, 10, 11, 12) to "Mario - Let Me Love You", byteArrayOf(13, 14, 15, 16) to "Young Thug - Best Friend")
-    val audio = ByteArrayOutputStream(); val titles = mutableListOf<Pair<String, Long>>()
-    val d = RadioIcy.Demux(4) { t, at -> titles += t to at }
+    val audio = ByteArrayOutputStream(); val titles = mutableListOf<Pair<String, Long>>(); val first = mutableListOf<String>()
+    val d = RadioIcy.Demux(4) { t, at, isFirst -> if (isFirst) first += t else titles += t to at }
     // fed in awkward pieces, as a network read delivers them
     val sizes = listOf(3, 1, 7, 2, 30, 5); var i = 0; var j = 0; while (i < raw.size) { val k = minOf(sizes[j++ % sizes.size], raw.size - i); d.feed(raw.copyOfRange(i, i + k), k) { b, off, len -> audio.write(b, off, len) }; i += k }
     assertArrayEquals((1..16).map { it.toByte() }.toByteArray(), audio.toByteArray())
     // the title on air at connect is not a song start: only a change is
     assertEquals(listOf("Young Thug - Best Friend" to 16L), titles)
+    assertEquals(listOf("Mario - Let Me Love You"), first) // reported too, but marked as already playing (RADIO-TITLE-INBAND-001)
     assertEquals(16L, d.audioBytes)
+  }
+
+  /** RADIO-TITLE-INBAND-001 (owner, 2026-11-20): "the radio tab is not updating the song on the player fast enough, it lags
+   *  almost a full minute behind". Measured over 12 minutes: V103's iHeart feed named each song 27-28 s after its title
+   *  changed in the stream, Power 92's Futuri feed 30-31 s before, 103.5 KISS's iHeart feed about 3 minutes before. The
+   *  stream's own titles are the only ones in step with the audio. iHeart's streams send no icy-br, so the bitrate is
+   *  worked out from the audio received (V103 measured 47.8-48.0 kbit/s: 48). */
+  @Test fun titlesAreOnTheRingClockEvenWhenTheStationSendsNoBitrate() {
+    val m = RadioIcy.Marks(ringFramesAtConnect = 10L * 48000, kbps = null)
+    m.add("Usher - text=\"U Don't Have To Call\"", 16000, first = true)
+    m.add("Womack And Womack - text=\"Baby I'm Scared Of You\"", 400_000, first = false)
+    // 10 s on the ring since the connection: too soon to know the bitrate; the title already playing is placed at once
+    assertEquals(listOf(RadioIcy.Mark(10.0, "Usher - text=\"U Don't Have To Call\"", true)), m.resolved(ringEnd = 20L * 48000, audioBytes = 60_000))
+    // 30 s on the ring and 179,250 bytes: 47.8 kbit/s, a 48 kbit/s stream; 400,000 bytes is 66.67 s of audio
+    val r = m.resolved(ringEnd = 40L * 48000, audioBytes = 179_250)
+    assertEquals(2, r.size); assertEquals(10.0 + 400_000 / 6000.0, r[1].at, 1e-6); assertEquals(false, r[1].first)
+    // a stated bitrate is used as it is
+    val k = RadioIcy.Marks(0, 64); k.add("A - B", 8000, false)
+    assertEquals(1.0, k.resolved(48000, 8000).single().at, 1e-9)
+  }
+
+  @Test fun anEstimatedBitrateIsTheNearestStandardOne() {
+    assertEquals(48, RadioIcy.standardKbps(47.8)); assertEquals(64, RadioIcy.standardKbps(66.5)); assertEquals(128, RadioIcy.standardKbps(129.1))
+    assertEquals(null, RadioIcy.standardKbps(3.0))
   }
 
   @Test fun anAudioByteIsASecondOnTheRingFromTheStationsBitrate() {

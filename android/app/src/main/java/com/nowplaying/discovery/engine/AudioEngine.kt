@@ -250,6 +250,10 @@ class AudioEngine(
   }
 
   private fun loop() {
+    // RADIO-SMOOTH-001: the screen's render thread runs at -10; at Java MAX_PRIORITY (-8) this thread lost the CPU to it
+    // and the output ran dry. Android's own audio threads use URGENT_AUDIO.
+    runCatching { android.os.Process.setThreadPriority(AUDIO_THREAD_PRIORITY) }
+      .recoverCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO) }
     while (!closed) {
       drain()
       if (!playing) {
@@ -413,6 +417,8 @@ class AudioEngine(
 
   companion object {
     const val QUANTUM = 128
+    /** android.os.Process.THREAD_PRIORITY_URGENT_AUDIO. */
+    const val AUDIO_THREAD_PRIORITY = -19
     /** Quanta rendered per output write: 1024 frames, about 21 ms. */
     const val CHUNK_QUANTA = 8
     const val RATE = 48000.0

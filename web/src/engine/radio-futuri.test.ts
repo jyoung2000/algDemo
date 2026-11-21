@@ -26,10 +26,10 @@ describe('Futuri (cdnstream1) now-playing feed', () => {
     const old = JSON.stringify([{ TIT2: 'Echo', TPE1: 'R.Kelly', played_on: (now - 40 * 60000) / 1000, last_seen: (now - 30 * 60000) / 1000 }]);
     expect(await publisherBroadcast(power92, async () => old, now)).toBeNull();
   });
-  it('the player asks for what is playing every 10 s, not 20 s', () => {
+  it('the player asks for what is playing every 5 s (RADIO-TITLE-INBAND-001; it was 10 s, and 20 s before that)', () => {
     const src = readFileSync(resolve(process.cwd(), 'src', 'engine', 'radio-client.ts'), 'utf8');
-    expect(src).not.toMatch(/refreshMetadata\(gen\), 20000\)/);
-    expect(src.match(/setInterval\(\(\) => void this\.refreshMetadata\(gen\), 10000\)/g)).toHaveLength(2);
-    expect(src).toMatch(/const b = await stationMetadata\(s, false, 9000\)/);
+    expect(src).toMatch(/export const RADIO_META_EVERY_MS = 5000;/);
+    expect(src.match(/setInterval\(\(\) => void this\.refreshMetadata\(gen\), RADIO_META_EVERY_MS\)/g)).toHaveLength(2);
+    expect(src).toMatch(/const b = await stationMetadata\(s, false, RADIO_META_EVERY_MS - 500\)/);
   });
 });

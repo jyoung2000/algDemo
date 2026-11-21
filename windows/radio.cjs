@@ -9,7 +9,9 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
-const RATE = 48000, FRAME = 4, KEEP = 600, LIVE_CUSHION = RATE * 2, CATCH_UP_HEARD = RATE * 10;
+// RADIO-SMOOTH-001: 5 s kept before the newest audio rides out stations that deliver in bursts (Power 92: gaps up to
+// 3.9 s measured); after running dry, play resumes only once 1.5 s is back, not in scraps.
+const RATE = 48000, FRAME = 4, KEEP = 600, LIVE_CUSHION = RATE * 5, CATCH_UP_HEARD = RATE * 10, REFILL = RATE * 1.5, START = RATE;
 function publicAddress(ip) {
   if (net.isIP(ip) !== 4) return false; // use public IPv4; no mapped/ambiguous IPv6 routes
   const p = ip.split('.').map(Number);
@@ -31,7 +33,7 @@ async function openPublic(raw, headers = {}, hops = 0) {
   });
 }
 class PcmRing {
-  constructor(seconds = KEEP) { this.cap = Math.round(seconds * RATE); this.bytes = Buffer.alloc(this.cap * FRAME); this.end = 0; this.at = 0; this.heard = 0; this.dropped = false; this.held = false; this.catchUpUntil = 0; }
+  constructor(seconds = KEEP) { this.cap = Math.round(seconds * RATE); this.bytes = Buffer.alloc(this.cap * FRAME); this.end = 0; this.at = 0; this.heard = 0; this.dropped = false; this.held = false; this.catchUpUntil = 0; this.refilling = false; this.started = false; }
   get start() { return Math.max(0, this.end - this.cap); }
   write(b) {
     const n = Math.floor(b.length / FRAME); if (!n) return;
@@ -41,15 +43,17 @@ class PcmRing {
     this.end += n; if (this.at < this.start) { this.at = this.start; this.dropped = true; }
   }
   // RADIO-LIVE-EDGE-001: servers send a burst of recent audio on connect (Power 92 ~32 s, V103 ~20 s). Until the listener
-  // pauses or rewinds, and only in the opening 10 s heard, playback stays 2 s before the newest audio.
+  // pauses or rewinds, and only in the opening 10 s heard, playback stays 5 s before the newest audio (RADIO-SMOOTH-001).
   hold() { this.held = true; }
   // RADIO-ROBUST-001: playback that ran dry (a network stall, not the listener's pause) rejoins live when audio returns,
   // instead of playing the stream's backlog 20 s late.
   take(n) {
+    if (this.refilling) { if (this.end - this.at < REFILL) return Buffer.alloc(0); this.refilling = false; }
+    if (!this.started) { if (this.end - this.at < START) return Buffer.alloc(0); this.started = true; } // the first sound waits for 1 s
     // like the opening, the first 5 s heard after a stall keep catching up: the backlog lands over about a second
     if (!this.held && (this.heard < CATCH_UP_HEARD || this.heard < this.catchUpUntil) && this.end - this.at > LIVE_CUSHION + RATE) this.at = this.end - LIVE_CUSHION;
     this.at = Math.max(this.start, this.at); const want = n; n = Math.min(n, this.end - this.at);
-    if (n < want && this.heard > 0) this.catchUpUntil = this.heard + n + RATE * 5; // ran dry (the engine then waits for audio)
+    if (n < want && this.heard > 0) { this.catchUpUntil = this.heard + n + RATE * 5; this.refilling = true; } // ran dry (the engine then waits for audio)
     const b = this.slice(this.at, n); this.at += n; this.heard += n; return b;
   }
   slice(at, n) { at = Math.max(this.start, Math.min(this.end, at)); n = Math.min(n, this.end - at); const b = Buffer.alloc(n * FRAME), tail = at % this.cap, first = Math.min(n, this.cap - tail); this.bytes.copy(b, 0, tail * FRAME, (tail + first) * FRAME); if (first < n) this.bytes.copy(b, first * FRAME, 0, (n - first) * FRAME); return b; }
@@ -67,6 +71,41 @@ class PcmRing {
   rewind(seconds) { this.held = true; this.at = Math.max(this.start, this.at - Math.floor(Math.max(0, Math.min(KEEP, seconds)) * RATE)); }
   // RADIO-GO-LIVE-001: jump to just before the newest audio received; never backwards, never past what arrived.
   live(cushion = LIVE_CUSHION) { this.at = Math.min(this.end, Math.max(this.at, this.start, this.end - cushion)); }
+}
+/** RADIO-TITLE-INBAND-001: takes the playing stream's in-band title blocks out of its audio (the decoder must only see
+ *  audio) and reports each title with the audio bytes before it. The first title was already on air at connect. */
+class IcyDemux {
+  constructor(metaint, onTitle) { this.metaint = metaint; this.onTitle = onTitle; this.audioBytes = 0; this.untilMeta = metaint; this.metaLeft = -1; this.meta = []; this.last = null; }
+  feed(b) {
+    const out = []; let i = 0;
+    while (i < b.length) {
+      if (this.untilMeta > 0) { const k = Math.min(this.untilMeta, b.length - i); out.push(b.subarray(i, i + k)); this.audioBytes += k; this.untilMeta -= k; i += k; }
+      else if (this.metaLeft < 0) { this.metaLeft = b[i] * 16; i++; this.meta = []; if (this.metaLeft === 0) { this.metaLeft = -1; this.untilMeta = this.metaint; } }
+      else {
+        const k = Math.min(this.metaLeft, b.length - i); this.meta.push(b.subarray(i, i + k)); this.metaLeft -= k; i += k;
+        if (this.metaLeft === 0) {
+          const t = titleFromIcy(Buffer.concat(this.meta).toString('utf8').replace(/\0+$/, ''));
+          if (t && t !== this.last) { const first = this.last === null; this.last = t; this.onTitle(t, this.audioBytes, first); }
+          this.metaLeft = -1; this.untilMeta = this.metaint;
+        }
+      }
+    }
+    return out.length === 1 ? out[0] : Buffer.concat(out);
+  }
+}
+const STANDARD_KBPS = [16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+/** The standard bitrate within 12% of a measured one (stations encode at these), or null. */
+function standardKbps(measured) { const k = STANDARD_KBPS.reduce((a, b) => Math.abs(b - measured) < Math.abs(a - measured) ? b : a); return Math.abs(k - measured) <= k * 0.12 ? k : null; }
+/** One connection's titles on the ring clock. A station that states no icy-br (iHeart) has its bitrate worked out once
+ *  20 s of its audio are on the ring. */
+class IcyMarks {
+  constructor(ringFramesAtConnect, kbps) { this.at = ringFramesAtConnect; this.kbps = kbps; this.raw = []; }
+  add(title, audioBytes, first) { this.raw.push([title, audioBytes, first]); if (this.raw.length > 8) this.raw.shift(); }
+  resolved(ringEnd, audioBytes) {
+    const ringS = (ringEnd - this.at) / RATE;
+    if (!this.kbps && ringS >= 20 && audioBytes > 0) this.kbps = standardKbps(audioBytes * 8 / 1000 / ringS);
+    return this.raw.flatMap(([title, b, first]) => first ? [{ at: this.at / RATE, title, first: true }] : this.kbps ? [{ at: this.at / RATE + b / (this.kbps * 125), title, first: false }] : []);
+  }
 }
 /** RADIO-LIVE-EDGE-001: every ICY block in a stretch of stream bytes, newest non-empty title last wins. */
 function latestIcyTitle(bytes, interval) {
@@ -116,7 +155,7 @@ function createRadio({ toolsDir, saveRecording }) {
   function stop() { if (session) { session.stopped = true; session.response?.destroy(); session.proc?.kill(); } session = null; }
   async function pump(s, url, depth = 0) {
     if (depth > 4) throw Error('Too many nested station playlists');
-    const r = await openPublic(url, { 'icy-metadata': '0' }); if (s.stopped) { r.destroy(); return; } s.response = r;
+    const r = await openPublic(url, { 'icy-metadata': '1' }); if (s.stopped) { r.destroy(); return; } s.response = r;
     const type = String(r.headers['content-type'] || '');
     if (/mpegurl|scpls/.test(type) || /\.(m3u8?|pls)(\?|$)/i.test(r.radioUrl)) {
       const bytes = []; let size = 0; for await (const c of r) { size += c.length; if (size > 1000000) { r.destroy(); throw Error('Station playlist too large'); } bytes.push(c); }
@@ -134,10 +173,17 @@ function createRadio({ toolsDir, saveRecording }) {
       if (!s.stopped && !/#EXT-X-ENDLIST/.test(text)) { await new Promise(ok => setTimeout(ok, 1500)); return r.radioUrl; }
       return;
     }
-    for await (const c of r) { if (s.stopped) break; if (!s.proc.stdin.write(c)) await new Promise(ok => s.proc.stdin.once('drain', ok)); }
+    // RADIO-TITLE-INBAND-001: a station that interleaves titles has them taken out here and placed on the ring clock.
+    const metaint = Number(r.headers['icy-metaint']); const ok = Number.isInteger(metaint) && metaint > 0 && metaint <= 262144;
+    const kbps = Number(String(r.headers['icy-br'] || '').split(',')[0]); const marks = ok ? new IcyMarks(s.ring.end, kbps >= 8 && kbps <= 1024 ? kbps : null) : null;
+    const demux = ok ? new IcyDemux(metaint, (t, b, first) => marks.add(t, b, first)) : null;
+    if (marks) { s.icyLive = marks; s.icyBytes = () => demux.audioBytes; }
+    try {
+      for await (const c of r) { if (s.stopped) break; const audio = demux ? demux.feed(c) : c; if (audio.length && !s.proc.stdin.write(audio)) await new Promise(ok => s.proc.stdin.once('drain', ok)); }
+    } finally { if (marks && s.icyLive === marks) { s.icy = [...(s.icy || []), ...marks.resolved(s.ring.end, demux.audioBytes)].slice(-8); s.icyLive = null; } }
     if (!s.stopped) throw Error('Station disconnected');
   }
-  function snapshot(s) { return { id: s.id, stationId: s.stationId, paused: s.paused, shuffle: Boolean(s.shuffle), received: s.ring.end / RATE, position: s.ring.at / RATE, oldest: s.ring.start / RATE, heard: s.ring.heard / RATE, dropped: s.ring.dropped, state: s.error ? 'failed' : s.ring.end > RATE ? 'playing' : 'buffering', error: s.error || null, native: false, channels: 2, sampleRate: RATE }; }
+  function snapshot(s) { return { id: s.id, stationId: s.stationId, paused: s.paused, shuffle: Boolean(s.shuffle), received: s.ring.end / RATE, position: s.ring.at / RATE, oldest: s.ring.start / RATE, heard: s.ring.heard / RATE, dropped: s.ring.dropped, state: s.error ? 'failed' : s.ring.end > RATE ? 'playing' : 'buffering', error: s.error || null, native: false, channels: 2, sampleRate: RATE, icy: [...(s.icy || []), ...(s.icyLive ? s.icyLive.resolved(s.ring.end, s.icyBytes()) : [])].slice(-8) }; }
   async function handle(cmd) {
     const op = cmd.op;
     if (op === 'favourites') { if (Array.isArray(cmd.stations)) { favourites = cmd.stations.slice(0, 500); if (favouritesPath) { const tmp = favouritesPath + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(favourites)); fs.renameSync(tmp, favouritesPath); } } return { stations: favourites }; }
@@ -182,10 +228,10 @@ function createRadio({ toolsDir, saveRecording }) {
     if (op === 'shuffle') s.shuffle = Boolean(cmd.on);
     if (op === 'rewind') s.ring.rewind(Number(cmd.seconds) || 15);
     if (op === 'live') { s.paused = false; s.ring.live(); }
-    if (op === 'pull') { const pcm = s.paused ? Buffer.alloc(0) : s.ring.take(12000); return { ...snapshot(s), pcm: pcm.toString('base64') }; }
+    if (op === 'pull') { const pcm = s.paused ? Buffer.alloc(0) : s.ring.take(24000); return { ...snapshot(s), pcm: pcm.toString('base64') }; }
     if (op === 'sample') { const n = Math.min(RATE * 12, s.ring.at - s.ring.start); const pcm = s.ring.slice(s.ring.at - n, n); const mono = Buffer.alloc(Math.floor(n / 3) * 2); for (let i = 0; i < mono.length / 2; i++) mono.writeInt16LE(Math.round((pcm.readInt16LE(i * 12) + pcm.readInt16LE(i * 12 + 2)) / 2), i * 2); return { pcm: mono.toString('base64'), sampleRate: 16000, seconds: mono.length / 32000 }; }
     return snapshot(s);
   }
   return { handle, shutdown: stop };
 }
-module.exports = { publicAddress, openPublic, titleFromIcy, latestIcyTitle, reconnectStep, playlistEntries, firstThatPlays, PcmRing, createRadio };
+module.exports = { publicAddress, openPublic, titleFromIcy, latestIcyTitle, reconnectStep, playlistEntries, firstThatPlays, PcmRing, createRadio, IcyDemux, IcyMarks, standardKbps };

@@ -20,8 +20,7 @@ class TrackOutput(override val sampleRate: Int = 48000) : AudioOutput {
 
   init {
     val min = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_FLOAT)
-    // At least 4 engine chunks (4 x 1024 frames, ~85 ms) so one late chunk is not an audible gap.
-    val size = maxOf(min, 4 * AudioEngine.CHUNK_QUANTA * AudioEngine.QUANTUM * bytesPerFrame)
+    val size = bufferBytes(min)
     val builder = AudioTrack.Builder()
       .setAudioAttributes(
         AudioAttributes.Builder()
@@ -40,6 +39,12 @@ class TrackOutput(override val sampleRate: Int = 48000) : AudioOutput {
       .setTransferMode(AudioTrack.MODE_STREAM)
     if (Build.VERSION.SDK_INT >= 26) builder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_NONE)
     track = builder.build()
+  }
+
+  companion object {
+    /** RADIO-SMOOTH-001: 12 engine chunks (12 x 1024 frames, 256 ms). 85 ms ran dry for 2.0-2.4 s of every 30 s on the
+     *  emulator while the app was drawing (songs and radio alike); pause is still immediate and a seek still flushes. */
+    fun bufferBytes(minBytes: Int): Int = maxOf(minBytes, 12 * AudioEngine.CHUNK_QUANTA * AudioEngine.QUANTUM * 2 * 4)
   }
 
   /** The platform session id, for the visualiser/equaliser effects Android attaches by session. */

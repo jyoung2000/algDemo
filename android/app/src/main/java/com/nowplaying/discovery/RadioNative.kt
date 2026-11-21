@@ -19,8 +19,12 @@ import org.json.JSONObject
  * play directly; redirects and HLS segments are individually checked against private destinations. */
 object RadioNative {
   data class Session(val id: String, val station: String, val ring: RadioRing, val data: JSONObject, var paused: Boolean = false, @Volatile var stopped: Boolean = false, var process: Process? = null, var connection: HttpURLConnection? = null) {
-    /** RADIO-ICY-CLOCK-001: the last in-band title changes, each with the ring second where its audio begins. */
-    val icy: MutableList<Pair<Double, String>> = java.util.Collections.synchronizedList(mutableListOf())
+    /** RADIO-ICY-CLOCK-001 / RADIO-TITLE-INBAND-001: in-band titles of earlier connections, each on the ring clock. */
+    val icy: MutableList<RadioIcy.Mark> = java.util.Collections.synchronizedList(mutableListOf())
+    /** The playing connection's titles and how many audio bytes it has delivered. */
+    @Volatile var icyLive: RadioIcy.Marks? = null
+    @Volatile var icyLiveBytes: () -> Long = { 0L }
+    fun icyMarks(): List<RadioIcy.Mark> = (synchronized(icy) { icy.toList() } + (icyLive?.resolved(ring.end, icyLiveBytes()) ?: emptyList())).takeLast(8)
   }
   @Volatile var session: Session? = null; private set
   /** RADIO-SHUFFLE-001: with shuffle on, car/phone skips tune a RANDOM other station of the tuned
@@ -96,8 +100,15 @@ object RadioNative {
       // RADIO-ICY-CLOCK-001: a station that interleaves titles has them taken out here and placed on the ring clock.
       val metaint = c.getHeaderField("icy-metaint")?.toIntOrNull()?.takeIf { it in 1..262144 }
       val kbps = RadioIcy.kbps(c.getHeaderField("icy-br")); val at = s.ring.end
-      val demux = metaint?.let { RadioIcy.Demux(it) { title, bytes -> RadioIcy.ringSeconds(at, bytes, kbps)?.let { sec -> synchronized(s.icy) { s.icy += sec to title; while (s.icy.size > 8) s.icy.removeAt(0) } } } }
-      c.inputStream.use { input -> val b = ByteArray(32768); while (!s.stopped) { val n = input.read(b); if (n < 0) error("Station disconnected"); val o = s.process!!.outputStream; if (demux == null) o.write(b, 0, n) else demux.feed(b, n) { x, off, len -> o.write(x, off, len) } } }
+      val marks = metaint?.let { RadioIcy.Marks(at, kbps) }
+      val demux = metaint?.let { RadioIcy.Demux(it) { title, bytes, first -> marks!!.add(title, bytes, first) } }
+      if (marks != null) { s.icyLive = marks; s.icyLiveBytes = { demux!!.audioBytes } }
+      try {
+        c.inputStream.use { input -> val b = ByteArray(32768); while (!s.stopped) { val n = input.read(b); if (n < 0) error("Station disconnected"); val o = s.process!!.outputStream; if (demux == null) o.write(b, 0, n) else demux.feed(b, n) { x, off, len -> o.write(x, off, len) } } }
+      } finally {
+        // A reconnect starts a new set; this connection's titles stay on the ring clock.
+        if (marks != null && s.icyLive === marks) { val done = marks.resolved(s.ring.end, demux!!.audioBytes); synchronized(s.icy) { s.icy += done; while (s.icy.size > 8) s.icy.removeAt(0) }; s.icyLive = null }
+      }
       return null
     } finally { c.disconnect() }
   }
@@ -145,7 +156,7 @@ object RadioNative {
     EngineHub.fromPage(JSONObject().put("op", "radio").put("id", s.id).put("title", cmd.optString("title", "Live radio")).put("station", cmd.optString("name", "Radio")).toString())
     return s
   }
-  private fun snapshot(s: Session): JSONObject = JSONObject().put("id", s.id).put("stationId", s.station).put("station", s.data).put("paused", s.paused).put("shuffle", shuffle).put("received", s.ring.end / 48000.0).put("position", s.ring.positionFrames / 48000.0).put("held", s.ring.held).put("starved", s.ring.starved).put("heardS", s.ring.heard / 48000.0).put("oldest", s.ring.oldest / 48000.0).put("heard", s.ring.heard / 48000.0).put("dropped", s.ring.dropped).put("state", if (s.ring.failed != null) "failed" else if (s.ring.end > 48000) "playing" else "buffering").put("error", s.ring.failed?.message ?: JSONObject.NULL).put("native", true).put("icy", org.json.JSONArray().also { a -> synchronized(s.icy) { s.icy.forEach { (sec, t) -> a.put(JSONObject().put("at", sec).put("title", t)) } } })
+  private fun snapshot(s: Session): JSONObject = JSONObject().put("id", s.id).put("stationId", s.station).put("station", s.data).put("paused", s.paused).put("shuffle", shuffle).put("received", s.ring.end / 48000.0).put("position", s.ring.positionFrames / 48000.0).put("held", s.ring.held).put("starved", s.ring.starved).put("heardS", s.ring.heard / 48000.0).put("oldest", s.ring.oldest / 48000.0).put("heard", s.ring.heard / 48000.0).put("dropped", s.ring.dropped).put("state", if (s.ring.failed != null) "failed" else if (s.ring.end > 48000) "playing" else "buffering").put("error", s.ring.failed?.message ?: JSONObject.NULL).put("native", true).put("icy", org.json.JSONArray().also { a -> s.icyMarks().forEach { m -> a.put(JSONObject().put("at", m.at).put("title", m.title).put("first", m.first)) } })
   fun handle(ctx: Context, cmd: JSONObject): JSONObject {
     when (cmd.optString("op")) {
       "request" -> return JSONObject().put("text", fetchText(cmd.getString("url")))
