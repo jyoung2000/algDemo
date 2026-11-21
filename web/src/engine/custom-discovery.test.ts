@@ -134,6 +134,48 @@ describe('a whole run', () => {
   });
 });
 
+describe('one artist on their own (owner, 2026-11-20: "searching by artist doesnt work ... when all i had was a single artist")', () => {
+  const page = Array.from({ length: 4 }, (_, i) => tr(`Hit ${i}`, 'Drake Bell'));
+  const every = [...page, ...Array.from({ length: 30 }, (_, i) => tr(`Album track ${i}`, 'Drake Bell'))];
+  const ports = (log: string[], o: { open?: 'fail' } = {}): CustomPorts => ({
+    openArtist: async (t) => { log.push(`open ${t.name}`); if (o.open) throw new Error('no page'); return { name: 'Drake Bell', songs: page, features: [] }; },
+    everySong: async (t) => { log.push(`every ${t.name}`); if (o.open) throw new Error('no page'); return every; },
+    artistTop: async (name) => { log.push(`top ${name}`); return [tr('Found By Name', name)]; },
+    search: async () => [], enrichGenres: async () => {},
+  });
+  const crit = normaliseCriteria({ artists: [{ name: 'Drake Bell', own: true, features: true }], count: 10 });
+  it('the artist page has a few songs: the rest of their albums are read for more', async () => {
+    const log: string[] = [];
+    const res = await runCustomDiscovery(crit, ports(log), { exclude: new Set(), known: new Set(), taste: null, year: 2026 });
+    expect(log).toContain('every Drake Bell');
+    expect(res.picked).toHaveLength(10);
+  });
+  it('their best songs are already queued: the next run finds the songs not queued yet', async () => {
+    const log: string[] = [];
+    const res = await runCustomDiscovery(crit, ports(log), { exclude: new Set(page.map((t) => t.key)), known: new Set(), taste: null, year: 2026 });
+    expect(res.picked).toHaveLength(10);
+    expect(res.picked.every((p) => p.track.title.startsWith('Album track'))).toBe(true);
+  });
+  it('every song by them is already queued: the run says so, not "fewer genre restrictions"', async () => {
+    const res = await runCustomDiscovery(crit, ports([]), { exclude: new Set(every.map((t) => t.key)), known: new Set(), taste: null, year: 2026 });
+    expect(res.picked).toHaveLength(0);
+    expect(res.queued).toEqual(['Drake Bell']);
+    expect(customOutcome(0, 10, { a: { state: 'ok' } }, res.missed, { genres: 0, artists: ['Drake Bell'], queued: res.queued })).toBe('Every song found by Drake Bell is already in your queue.');
+  });
+  it('no artist page opens: their songs are found by name instead', async () => {
+    const log: string[] = [];
+    const res = await runCustomDiscovery(crit, ports(log, { open: 'fail' }), { exclude: new Set(), known: new Set(), taste: null, year: 2026 });
+    expect(log).toContain('top Drake Bell');
+    expect(res.picked.map((p) => p.track.title)).toEqual(['Found By Name']);
+    expect(res.missed).toEqual([]);
+  });
+  it('with no genre chosen the message never blames genres', () => {
+    expect(customOutcome(0, 10, { a: { state: 'ok' } }, ['Drake Bell'], { genres: 0, artists: ['Drake Bell'], queued: [] })).toBe('Could not find songs by Drake Bell. Check the name and try again.');
+    expect(customOutcome(0, 10, { a: { state: 'ok' } }, [], { genres: 0, artists: ['Drake Bell'], queued: [] })).toBe('No songs found for Drake Bell. Try adding features, collaborators or similar artists.');
+    expect(customOutcome(0, 10, { a: { state: 'ok' } }, [], { genres: 2, artists: ['Drake Bell'], queued: [] })).toBe('No matching songs found. Try fewer genre restrictions or more artist sources.');
+  });
+});
+
 describe('what the listener is told', () => {
   it('never says "no matching songs" when the services could not be searched', () => {
     expect(customOutcome(0, 10, { a: { state: 'budget' }, b: { state: 'budget' } }, [])).toBe('This discovery reached its size limit before any service answered. Raise "Discovery allowance" in Settings and try again.');

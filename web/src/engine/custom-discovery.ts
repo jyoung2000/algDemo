@@ -290,7 +290,18 @@ export function pickCustom(pool: readonly CustomCandidate[], crit: CustomCriteri
 }
 
 /** What the listener is told after a run. "No matching songs" only when the services were actually searched. */
-export function customOutcome(added: number, asked: number, sources: Record<string, { state: string }>, missed: readonly string[]): string {
+export interface OutcomeAsked {
+  /** How many genres were chosen. */
+  genres: number;
+  /** The artists chosen, by name. */
+  artists: readonly string[];
+  /** Artists every one of whose songs found is already in the queue. */
+  queued: readonly string[];
+}
+
+const names = (list: readonly string[]) => list.length <= 2 ? list.join(' and ') : `${list.slice(0, 2).join(', ')} and ${list.length - 2} more`;
+
+export function customOutcome(added: number, asked: number, sources: Record<string, { state: string }>, missed: readonly string[], what?: OutcomeAsked): string {
   const states = Object.values(sources).map((s) => s.state);
   const ok = states.includes('ok');
   const budget = states.includes('budget');
@@ -298,6 +309,12 @@ export function customOutcome(added: number, asked: number, sources: Record<stri
   // here is this one discovery reaching its own size limit (Settings, "Discovery allowance").
   if (added === 0 && !ok && budget) return 'This discovery reached its size limit before any service answered. Raise "Discovery allowance" in Settings and try again.';
   if (added === 0 && !ok && states.length) return 'No service answered. Check the connection and try again.';
+  // CUSTOM-ARTIST-001: with only artists chosen, say what happened to them; genres are blamed only when chosen.
+  if (added === 0 && what && !what.genres && what.artists.length) {
+    if (what.artists.every((a) => missed.includes(a))) return `Could not find songs by ${names(what.artists)}. Check the name and try again.`;
+    if (what.queued.length) return `Every song found by ${names(what.queued)} is already in your queue.`;
+    return `No songs found for ${names(what.artists)}. Try adding features, collaborators or similar artists.`;
+  }
   if (added === 0) return 'No matching songs found. Try fewer genre restrictions or more artist sources.';
   if (added >= asked) return '';
   const parts = [`Only ${added} matching ${added === 1 ? 'song was' : 'songs were'} available.`];
@@ -317,6 +334,8 @@ export interface ArtistRead {
 
 export interface CustomPorts {
   openArtist(target: { id?: string; name: string }): Promise<ArtistRead>;
+  /** Every song on the artist's albums and singles, read when the artist page's songs are not enough (CUSTOM-ARTIST-001). */
+  everySong?(target: { id?: string; name: string }): Promise<CandidateTrack[]>;
   /** Another artist's best known songs, by name (and id when known). */
   artistTop(name: string, id?: string): Promise<CandidateTrack[]>;
   /** Search: an artist on every platform; a genre's own words on the catalogue services only (an upload's title is
@@ -335,21 +354,44 @@ export interface CustomResult {
   candidates: number;
   /** Sources that could not be read, in the listener's words. */
   missed: string[];
+  /** Chosen artists every one of whose songs found is already queued. */
+  queued: string[];
 }
 
 /** Gather from the chosen sources, then pick. `tasteGenres` stand in when nothing is chosen. */
 export async function runCustomDiscovery(crit: CustomCriteria, ports: CustomPorts, o: PickOpts & { tasteGenres?: string[]; turn?: number }): Promise<CustomResult> {
   const pool: CustomCandidate[] = [];
   const missed: string[] = [];
+  const queued: string[] = [];
   const say = (s: string) => ports.progress?.(s);
+  // A song the run may still add: not queued, not hidden, a real recording.
+  const open = (t: CandidateTrack) => Boolean(t?.key) && !o.exclude.has(t.key) && !notTheRealSong(t.title) && !o.excludeSongs?.has(songId(t));
   for (const a of crit.artists) {
     ports.check?.();
     say(`Reading ${a.name}\u2019s songs`);
+    const target = { ...(a.id ? { id: a.id } : {}), name: a.name };
     let view: ArtistRead;
-    try { view = await ports.openArtist({ ...(a.id ? { id: a.id } : {}), name: a.name }); } catch { missed.push(a.name); continue; }
+    try { view = await ports.openArtist(target); } catch {
+      // CUSTOM-ARTIST-001: no artist page opened; their best known songs by name still count as theirs.
+      let top: CandidateTrack[] = [];
+      try { top = await ports.artistTop(a.name, a.id); } catch { /* counted below */ }
+      if (!top.length) { missed.push(a.name); continue; }
+      view = { name: a.name, songs: top, features: [] };
+    }
     const name = view.name || a.name;
-    if (a.own) for (const t of view.songs) pool.push({ track: t, source: 'own', from: name });
+    let songs = view.songs;
+    // CUSTOM-ARTIST-001: the artist page lists their best songs; once those are queued, the rest of their albums are read.
+    if (a.own && ports.everySong && songs.filter(open).length < crit.count) {
+      say(`Reading every album by ${name}`);
+      try {
+        const seen = new Set(songs.map((t) => t.key));
+        songs = [...songs, ...(await ports.everySong(target)).filter((t) => t?.key && !seen.has(t.key))];
+      } catch { /* the page's songs still count */ }
+    }
+    if (a.own) for (const t of songs) pool.push({ track: t, source: 'own', from: name });
     if (a.features) for (const t of view.features) pool.push({ track: t, source: 'feature', from: name });
+    const theirs = [...(a.own ? songs : []), ...(a.features ? view.features : [])];
+    if (theirs.length && !theirs.some(open)) queued.push(name);
     if (a.collaborators) {
       const circle = collaboratorsOf(name, [...view.songs, ...view.features], { min: 1, max: CIRCLE_ARTISTS });
       for (const c of circle) {
@@ -409,5 +451,5 @@ export async function runCustomDiscovery(crit: CustomCriteria, ports: CustomPort
   }
   ports.check?.();
   const effective = crit.genres.length || !keys.length ? crit : { ...crit, genres: [] };
-  return { picked: pickCustom(pool, effective, o), candidates: pool.length, missed };
+  return { picked: pickCustom(pool, effective, o), candidates: pool.length, missed, queued };
 }

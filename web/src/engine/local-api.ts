@@ -1620,6 +1620,10 @@ export class LocalApi {
           const v = await this.artists.open({ ...(t.id ? { id: t.id } : {}), name: t.name }, c);
           return { name: v.name, songs: v.songs as unknown as CandidateTrack[], features: v.features as unknown as CandidateTrack[], similar: v.similar ?? [] };
         },
+        everySong: async (t) => {
+          const v = await this.artists.open({ ...(t.id ? { id: t.id } : {}), name: t.name }, c);
+          return usable((await this.artists.everySong(v, c, { features: false })).songs as unknown as NativeTrack[]);
+        },
         artistTop: async (name, id) => {
           const dz = id && /^dz:\d{1,15}$/.test(id) ? id.slice(3) : null;
           const own = await p.call(job, `custom-top:${name.slice(0, 24)}`, () => (dz ? this.dz.artistTop(dz, 10, c).then(usable) : dzTopByName(name)), [] as CandidateTrack[]);
@@ -1666,7 +1670,7 @@ export class LocalApi {
       if (items.length) await this.store.put('last_result', next);
       job.result = {
         added: items.length, asked: crit.count, candidates: res.candidates, missed: res.missed,
-        reason: customOutcome(items.length, crit.count, job.sources as Record<string, { state: string }>, res.missed),
+        reason: customOutcome(items.length, crit.count, job.sources as Record<string, { state: string }>, res.missed, { genres: crit.genres.length, artists: crit.artists.map((a) => a.name), queued: res.queued }),
         queue: items.length ? this.completed(next) : null, sources: job.sources,
       };
     } catch (e) { job.error = e instanceof Cancelled ? 'cancelled' : (e as Error).message || 'Custom discovery failed.'; }
