@@ -10,6 +10,8 @@ import './styles.css';
 import './flat-controls.css';
 import { App } from './App';
 // BTN-UNIFORM-001: the shared button contract goes in after every component's own sheet.
+// TYPING-CLEAR-001: the docked player steps aside while a text field has the phone's keyboard (it brings typing.css).
+import { watchTyping } from './typing-hides-player';
 import './button-contract.css';
 
 const container = document.getElementById('root');
@@ -17,6 +19,8 @@ if (!container) throw new Error('jPlay needs a #root element');
 
 // The Windows window is a desktop window: its labels stay visible at any width, not only on phones.
 if (isDesktopShell(navigator.userAgent)) document.documentElement.classList.add('is-desktop-shell');
+
+watchTyping();
 
 createRoot(container).render(
   <StrictMode>

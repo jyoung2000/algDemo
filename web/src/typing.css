@@ -1,0 +1,8 @@
+/* TYPING-CLEAR-001: while a text field has focus on a phone, the docked player and the tab bar step aside so the
+   keyboard's field is never under them (typing-hides-player.ts sets .is-typing). The page keeps no space for them. */
+@media (max-width: 899px) {
+  html.is-typing .rail,
+  html.is-typing .side { display: none !important; }
+  html.is-typing .app,
+  html.is-typing .app.has-dock { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+}

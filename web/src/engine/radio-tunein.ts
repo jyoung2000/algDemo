@@ -27,7 +27,8 @@ function song(text: string): { artist: string; title: string } | null {
   const artist = text.slice(0, i).trim(), title = text.slice(i + 3).trim();
   return artist && title ? { artist, title } : null;
 }
-const words = (s: string) => fold(s).split(' ').filter(Boolean);
+/** RADIO-PLAYING-NOW-002: an apostrophe joins its word ("Don't" is "dont"), as people type it either way. */
+const words = (s: string) => fold(s.replace(/['’`´]/g, '')).split(' ').filter(Boolean);
 /** Every typed word is a whole word of the artist or the title ("drake" never matches "Drakeo the Ruler"). */
 export function playingMatches(now: { artist: string; title: string }, query: string): boolean {
   const q = words(query); if (!q.length || q.join('').length < 2) return false;
