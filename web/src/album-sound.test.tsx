@@ -92,6 +92,19 @@ describe('an album shows what it sounds like (ALBUM-SOUND-001)', () => {
     expect([...card!.querySelector('.sound__title')!.childNodes].filter((n) => n.nodeType === 3 && n.textContent!.trim())).toHaveLength(0);
   });
 
+  // ALBUM-NOTE-001 (owner, 2026-11-22): "remove the label under the color algorithim bar on the album page". The line
+  // "From the genres of the N songs on this album. It redraws\u2026" is not printed; it stays for screen readers, and
+  // it takes no room under the bar.
+  it('prints no line under a drawn bar', async () => {
+    await open(album(mixWith(3)));
+    const card = host.querySelector('.sound')!;
+    expect(card.querySelector('.sound__grad')!.getAttribute('style') ?? '').toMatch(/--c0:/);
+    expect(card.querySelector('.sound__changes')).toBeNull();
+    const note = card.querySelector('p[role="status"]')!;
+    expect(note.className).toBe('sr');
+    expect(note.textContent).toMatch(/From the genres of the/);
+  });
+
   it('colours the bar by genre, like the listener\u2019s own sound', async () => {
     await open(album(mixWith(3)));
     // The gradient bar carries one --cN colour stop per genre share.

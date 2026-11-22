@@ -34,6 +34,7 @@ export function SoundCard({
   emptyText,
   idleText = 'Play, skip or like songs and this redraws.',
   hideTitle = false,
+  hideNote = false,
 }: {
   taste: TasteSummary | null;
   listening: boolean;
@@ -46,6 +47,8 @@ export function SoundCard({
   idleText?: string;
   /** ALBUM-TIDY-001: the card keeps its name for screen readers but does not print it (the album page). */
   hideTitle?: boolean;
+  /** ALBUM-NOTE-001: the line under a drawn bar is kept for screen readers but not printed (the album page). */
+  hideNote?: boolean;
 }) {
   const view = useMemo(() => soundView(taste), [taste]);
   const [open, setOpen] = useState(defaultOpen);
@@ -108,7 +111,7 @@ export function SoundCard({
         )}
       </div>
 
-      <p className="sound__changes" role="status" aria-live="polite">
+      <p className={hideNote && view && !announce ? 'sr' : 'sound__changes'} role="status" aria-live="polite">
         {announce ? (
           <>
             {changes.map((c) => (

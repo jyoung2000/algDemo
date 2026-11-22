@@ -193,6 +193,7 @@ export function AlbumView({ target, onBack, onPreview, onPlayAll, seedKeys, onAd
                 listening={false}
                 title={`Sound of \u201C${a.title}\u201D`}
                 hideTitle
+                hideNote
                 label="This album's mix"
                 historyKey={`airwave.sound.album.${a.id}`}
                 idleText={a.mix ? listMixNote(a.mix, 'album') : 'Reading the album\u2026'}
