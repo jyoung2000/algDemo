@@ -30,16 +30,22 @@ export function RowPlayButton({ track, cache, onPlay, size = 16 }: { track: Trac
 /**
  * ROW-DL-STATE-001 (owner, 2026-11-22): "If a song is already downloaded remove the download icon, while a song is
  * downloading give it the same outline progress bar animation the play button has". One Download icon for every song
- * list: gone once the full file is on this device, and ringed to the real percent while it downloads.
+ * list: gone once the listener has saved the song for good, and ringed to the real percent while that download runs.
  */
-export function RowDownloadButton({ track, cache, onDownload }: { track: Track; cache: CardCache | null | undefined; onDownload: (t: Track) => void }) {
-  if (isLocalTrack(track) || cache?.state === 'ready') return null;
-  const busy = cache?.state === 'downloading';
-  const p = busy ? Math.max(0, Math.min(100, Math.round(cache!.progress))) : 0;
+export function RowDownloadButton({ track, cache, kept = false, onDownload }: { track: Track; cache: CardCache | null | undefined; /** Known to be in the Music folder already. */ kept?: boolean; onDownload: (t: Track) => void }) {
+  // ROW-DL-KEPT-001 (owner, 2026-11-22): "the download button should only be removed when the download button is
+  // explictly pressed and the user permanaently saved and downloaded the song, not just that the song is currently
+  // downloaded to the device since the device might delete the song in the queue to conserve space eventually".
+  // So a cached song keeps its Download icon; only a kept copy (or a file of the listener's own) removes it, and the
+  // ring is the listener's own download, not the queue caching the song to play it.
+  if (isLocalTrack(track) || kept || cache?.kept) return null;
+  const saving = cache?.saving ?? null;
+  const busy = saving !== null;
+  const p = saving ? Math.max(0, Math.min(100, Math.round(saving.progress))) : 0;
   return (
     <button className="iconbtn rowdl" type="button" onClick={() => onDownload(track)} aria-label={`Download ${track.title}`}
       title={busy ? (p > 0 ? `Downloading, ${p}%` : 'Downloading') : 'Download'} aria-busy={busy || undefined}
-      data-progress={busy || undefined} data-moving={(busy && cache!.indeterminate) || undefined}
+      data-progress={busy || undefined} data-moving={(saving !== null && (saving.indeterminate || p === 0)) || undefined}
       style={busy ? ({ '--dl': String(p) } as CSSProperties) : undefined}>
       <Glyph name="download" size={14} />
     </button>

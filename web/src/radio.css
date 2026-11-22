@@ -293,3 +293,38 @@ button.radio-live--behind { color:#8a5a00; text-decoration:underline; text-under
  .np.radio-player .radio-player__actions .radio-player__playlist,
  .np.radio-player .radio-player__actions .radio-player__download { width:33px; min-width:33px; flex-basis:33px; }
 }
+/* RADIO-DOCK-READ-001 (owner, 2026-11-22): "On radio on android make the title and tag slots taller so their legible,
+   everything on the radio player should be readable and nothing cut off". The words no longer share one 48px row:
+   the live badge, the title, the artist and station, the place and the genres each have a line of their own at a
+   readable size, and a long one wraps instead of being cut with dots; the station's heart sits beside the title. The bar, and the single row of controls, stay
+   as they were (RADIO-DOCK-SIZE-001), so the player is as tall as its words need and no taller. */
+@media (max-width:760px) {
+ .np.radio-player .radio-player__main { height:auto; align-items:flex-start; }
+ .np.radio-player .radio-player__identity { grid-template-rows:none; grid-auto-rows:auto; row-gap:2px; align-items:start; }
+ .np.radio-player .radio-live { grid-area:auto / 1; line-height:15px; }
+ .np.radio-player .radio-player__titleline strong { grid-area:auto / 1; font-size:16px; line-height:22px; white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
+ .np.radio-player .radio-player__song { line-height:22px; white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
+ .np.radio-player .radio-player__identity > span:not(.radio-live):not(.radio-player__tags) { grid-area:auto / 1 / auto / 3; max-width:100%; font-size:13px; line-height:18px; white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
+ .np.radio-player .radio-player__artist { font-size:inherit; line-height:18px; white-space:normal; text-align:left; }
+ .np.radio-player .radio-player__identity small { grid-area:auto / 1 / auto / 3; justify-self:start; max-width:100%; font-size:12px; line-height:17px; text-align:left; white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
+ /* The genres use the whole width of the player (the words keep clear of Stop above; this line is below it), so three
+    ordinary tags show whole; only a longer run glides (TAG-STRIP-001). */
+ .np.radio-player .radio-player__tags { grid-area:auto / 1 / auto / 3; justify-self:start; max-width:calc(100% + 36px); margin-right:-36px; height:auto; min-height:22px; margin-top:2px; overflow:visible; align-items:center; }
+ .np.radio-player .radio-player__tags .genre { padding:1px 8px; font-size:11.5px; line-height:18px; }
+ .np.radio-player .radio-player__tags .genre::before { width:10px; height:10px; }
+ .np.radio-player .radio-player__titleline .radio-player__starbtn { grid-area:1 / 2 / span 2 / 3; align-self:center; }
+}
+/* RADIO-STAR-ON-001 (owner, 2026-11-22): "when active make the star fill white". A starred station's heart is white
+   on the app's blue, like a starred artist; unstarred it stays the plain outline. */
+.iconbtn.radio-player__starbtn[aria-pressed='true'],
+.iconbtn.radio-station__star[aria-pressed='true'],
+ul.radio-stations .radio-station__actions.song-actions .iconbtn.radio-station__star[aria-pressed='true'] { background:var(--accent); border-color:transparent; box-shadow:none; color:#fff; }
+.iconbtn.radio-player__starbtn[aria-pressed='true'] svg,
+.iconbtn.radio-player__starbtn[aria-pressed='true'] svg path,
+.iconbtn.radio-station__star[aria-pressed='true'] svg,
+.iconbtn.radio-station__star[aria-pressed='true'] svg path { fill:#fff; }
+@media (hover: hover) {
+ .iconbtn.radio-player__starbtn[aria-pressed='true']:hover:not(:disabled),
+ .iconbtn.radio-station__star[aria-pressed='true']:hover:not(:disabled),
+ ul.radio-stations .radio-station__actions.song-actions .iconbtn.radio-station__star[aria-pressed='true']:hover:not(:disabled) { background:#1a62bb; }
+}

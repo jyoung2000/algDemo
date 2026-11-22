@@ -22,6 +22,11 @@ export interface CardCache {
   progress: number;
   /** Downloading, but the job has not reported a percent: show motion, not a fake number. */
   indeterminate: boolean;
+  /**
+   * ROW-DL-KEPT-001: the listener's own Download of this song is running (saving it for good), as distinct from the
+   * queue caching it for playback. Drives the ring on the song's Download icon.
+   */
+  saving?: { progress: number; indeterminate: boolean } | null;
 }
 
 export function cacheStateOf(o: {

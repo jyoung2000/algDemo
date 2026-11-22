@@ -43,7 +43,7 @@ describe('a song’s Play button shows its download (PLAY-LIVE-001)', () => {
     const app = readFileSync(`${process.cwd()}/src/App.tsx`, 'utf8');
     expect(app).toMatch(/withJob\(queueCache\(key\), dls\.jobOf\(key\)\)/);
     const hook = readFileSync(`${process.cwd()}/src/useCardCache.ts`, 'utf8');
-    expect(hook).toMatch(/\}, \[available, urls, kept, pct, landed\]\);/);
+    expect(hook).toMatch(/\}, \[available, urls, kept, rings, landed\]\);/); // RING-CLOSE-001: the held ring, not a bare percent
   });
   it('blue means a white arrow', () => {
     const css = readFileSync(`${process.cwd()}/src/row-play.css`, 'utf8');

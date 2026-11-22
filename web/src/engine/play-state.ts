@@ -20,16 +20,23 @@ const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
 
 /** The song's card with its Download job folded in: a finished job is ready, a running one is downloading. */
 export function withJob(card: CardCache | null, job: SongJob | null | undefined): CardCache | null {
-  if (!job || card?.state === 'ready') return card;
+  if (!job) return card;
+  // ROW-DL-KEPT-001 (owner, 2026-11-22): "the download button should only be removed when the download button is
+  // explictly pressed and the user permanaently saved and downloaded the song, not just that the song is currently
+  // downloaded to the device". The listener's own finished download is what makes a song kept; a cached one is not.
   if (job.state === 'done') {
+    if (card?.state === 'ready') return { ...card, keptText: 'Kept in Music folder', kept: true, saving: null };
     return { state: 'ready', glyph: '✓', text: 'Downloaded', keptText: 'Kept in Music folder', kept: true, progress: 100, indeterminate: false };
   }
   if (job.state === 'queued' || job.state === 'running') {
     const p = typeof job.percent === 'number' && Number.isFinite(job.percent) ? clamp(job.percent) : null;
+    const saving = { progress: p ?? 0, indeterminate: p === null };
+    // Already cached and now being saved for good: Play stays ready, the Download icon shows the saving.
+    if (card?.state === 'ready') return { ...card, saving };
     // The queue cache may already be further along with the same file; show whichever has more.
     const cached = card?.state === 'downloading' ? card.progress : 0;
     const progress = Math.max(p ?? 0, cached);
-    return { state: 'downloading', glyph: '↓', text: p === null ? 'Downloading' : `Downloading · ${progress}%`, keptText: card?.keptText ?? null, kept: card?.kept ?? false, progress, indeterminate: p === null && cached === 0 };
+    return { state: 'downloading', glyph: '↓', text: p === null ? 'Downloading' : `Downloading · ${progress}%`, keptText: card?.keptText ?? null, kept: card?.kept ?? false, progress, indeterminate: p === null && cached === 0, saving };
   }
   return card;
 }
@@ -37,7 +44,8 @@ export function withJob(card: CardCache | null, job: SongJob | null | undefined)
 /** The ring on one song's Play button: null when the song is ready (a full blue disc, no ring). */
 export function songRing(card: CardCache | null | undefined, local = false): { progress: number; moving: boolean } | null {
   if (local || card?.state === 'ready') return null;
-  if (card?.state === 'downloading') return { progress: clamp(card.progress), moving: card.indeterminate };
+  // RING-CLOSE-001: started with nothing to draw yet (no percent, or 0%) breathes; an arc, once there is one, does not.
+  if (card?.state === 'downloading') { const progress = clamp(card.progress); return { progress, moving: card.indeterminate || progress === 0 }; }
   return { progress: 0, moving: false };
 }
 

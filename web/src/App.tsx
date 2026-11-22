@@ -907,7 +907,8 @@ export function App() {
   const queueSongCount = useMemo(() => new Set(queueTracks.map((t) => t.key)).size, [queueTracks]);
   // TASTE-SPIN-001: the taste line's arrow turns while a song plays.
   const [songPlaying, setSongPlaying] = useState(false);
-  const keptKeys = useKeptKeys(cacheTracks);
+  // ROW-DL-KEPT-001: asked again each time one of the listener's own downloads finishes.
+  const keptKeys = useKeptKeys(cacheTracks, dls.jobs.filter((j) => j.state === 'done').length);
   const queueCache = useCardCache(cacheTracks, keptKeys);
   // PLAY-LIVE-001: each row's state is the queue cache's word with the song's own Download job folded in, so a Play
   // button turns blue (and its ring fills) as the download runs and finishes, with nothing else asked of the listener.

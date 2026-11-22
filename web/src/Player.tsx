@@ -27,6 +27,7 @@ import { downloadsAvailable, playbackActive } from './engine/downloads';
 import { mediaNativeAvailable, pushMediaState, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { engineAvailable, engineRev, engineSend, engineSong, engineState, markEngineEvent, subscribeEngineState, type EngineState } from './engine/native-engine';
 import { queueAudio } from './engine/queue-audio';
+import { songSources } from './engine/song-sources';
 import { clearResume, writeResume } from './engine/resume';
 import { type DeckId } from './engine/audio-bus';
 import { PreviewMixer } from './engine/preview-mixer';
@@ -326,6 +327,8 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     warmer().warm(nextTrackForCache);
   }, [nextTrackForCache]);
 
+  // RING-CLOSE-001: the song's row follows this very download, so its ring closes with it.
+  useEffect(() => { if (key && localSource) songSources.set(key, localSource); }, [key, localSource]);
   useEffect(() => {
     if (!canLocal) return;
     const protectedUrls = [localSource, upcomingSource].filter((u): u is string => Boolean(u));
@@ -340,6 +343,12 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   }, [localSource, playing, canLocal]);
   const askingLocal = localSource !== null && !latched && (localStatus === 'unknown' || (localStatus === 'ready' && localSrc === null));
   const fetchingLocal = canLocal && localSource !== null && localStatus === 'running';
+  // RING-CLOSE-001: from the press, the song's row shows the player is finding or fetching it.
+  const gettingSong = canLocal && Boolean(key) && (lookingUp || askingLocal || fetchingLocal);
+  useEffect(() => {
+    songSources.fetching(gettingSong ? key : null);
+    return () => songSources.fetching(null);
+  }, [gettingSong, key]);
   const localError = localSource !== null && localStatus === 'missing' ? localLibrary.error(localSource) : null;
   // STREAM-DL-001: the song plays from its source while it downloads, on this page's own deck (the
   // Android engine streams for itself). Whichever is playable first wins; a stream that has started
@@ -613,6 +622,7 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       if (!source) return;
       const protectedUrls = [localSource, source].filter((u): u is string => Boolean(u));
       localLibrary.protect(protectedUrls);
+      songSources.set(nextTrack.key, source);
       void queueAudio.protect(cacheGb, protectedUrls).then(() => localLibrary.ensure(source, `${nextTrack.title} — ${nextTrack.artist}`, false, true)).catch(() => undefined);
     }).catch(() => undefined);
     return () => { live = false; };

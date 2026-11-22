@@ -1,6 +1,7 @@
 import { useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { CardCacheContext } from './card-cache-context';
 import { RowDownloadButton, RowPlayButton, playOnDoubleClick } from './RowPlay';
+import { useKeptKeys } from './useKeptKeys';
 import './search-clean.css';
 import { SwipeLi } from './useSwipeRemove';
 import { Glyph } from '@now-playing/aqua-ui/icons';
@@ -1225,6 +1226,8 @@ export function TrackList({
 }) {
   // ROW-PLAY-001: which songs are ready to play, from the app's download cache.
   const cacheOf = useContext(CardCacheContext);
+  // ROW-DL-KEPT-001: which of these songs are already saved for good (their Download icon is not shown).
+  const keptHere = useKeptKeys(tracks);
   // Controlled by Search when it is in charge; the row's own state only when it stands alone.
   const [ownSaving, setOwnSaving] = useState<string | null>(null);
   const saving = onSaving ? (savingProp ?? null) : ownSaving;
@@ -1331,7 +1334,7 @@ export function TrackList({
                 the row's job is to ask.
               */}
               <RowPlayButton track={t} cache={cacheOf?.(t.key)} onPlay={() => onPreview(t, tracks)} />
-              {onDownload && <RowDownloadButton track={t} cache={cacheOf?.(t.key)} onDownload={onDownload} />}
+              {onDownload && <RowDownloadButton track={t} cache={cacheOf?.(t.key)} kept={keptHere.has(t.key)} onDownload={onDownload} />}
               {/* QUEUE-ADD-001: the owner replaced the link out to the song's own service with this. */}
               {onQueueAdd && (() => {
                 const inIt = addedKeys?.has(t.key) ?? false;
