@@ -28,6 +28,25 @@ export function RowPlayButton({ track, cache, onPlay, size = 16 }: { track: Trac
 }
 
 /**
+ * ROW-DL-STATE-001 (owner, 2026-11-22): "If a song is already downloaded remove the download icon, while a song is
+ * downloading give it the same outline progress bar animation the play button has". One Download icon for every song
+ * list: gone once the full file is on this device, and ringed to the real percent while it downloads.
+ */
+export function RowDownloadButton({ track, cache, onDownload }: { track: Track; cache: CardCache | null | undefined; onDownload: (t: Track) => void }) {
+  if (isLocalTrack(track) || cache?.state === 'ready') return null;
+  const busy = cache?.state === 'downloading';
+  const p = busy ? Math.max(0, Math.min(100, Math.round(cache!.progress))) : 0;
+  return (
+    <button className="iconbtn rowdl" type="button" onClick={() => onDownload(track)} aria-label={`Download ${track.title}`}
+      title={busy ? (p > 0 ? `Downloading, ${p}%` : 'Downloading') : 'Download'} aria-busy={busy || undefined}
+      data-progress={busy || undefined} data-moving={(busy && cache!.indeterminate) || undefined}
+      style={busy ? ({ '--dl': String(p) } as CSSProperties) : undefined}>
+      <Glyph name="download" size={14} />
+    </button>
+  );
+}
+
+/**
  * PLAY-DISC-001 (owner, 2026-11-19): one Play button for every list (Discover, Saved, Radio). A 40px
  * circle in a 44px target; light blue when the song plays at once (ready, local, a live station).
  * The triangle sits 1px right of the box centre, because a triangle's visual centre is left of its

@@ -22,15 +22,16 @@ for (const surface of ['search', 'queue', 'player'] as const) {
   };
   const button = () => screen.getAllByRole('button').find(b => /like/i.test(b.getAttribute('aria-label') ?? '') && !/dislike/i.test(b.getAttribute('aria-label') ?? ''))!;
   describe(`star and real playlist membership: ${surface}`, () => {
-    it('uses a star, never thumbs-up; liked alone is not saved to a playlist', () => {
+    // HEART-ICON-001 (owner, 2026-11-22): "change the star icon to a heart icon everywhere in the app".
+    it('uses a heart, never thumbs-up; liked alone is not saved to a playlist', () => {
       render(view([], true));
-      expect(paths(button())).toContain(GLYPH_PATHS.star);
+      expect(paths(button())).toContain(GLYPH_PATHS.heart);
       expect(paths(button())).not.toContain(GLYPH_PATHS['thumb-up']);
       expect(paths(button())).not.toContain(GLYPH_PATHS.check);
     });
-    it('shows star AND check when saved, even if not currently liked', () => {
+    it('shows heart AND check when saved, even if not currently liked', () => {
       render(view([list([t.key])], false));
-      expect(paths(button())).toContain(GLYPH_PATHS.star);
+      expect(paths(button())).toContain(GLYPH_PATHS.heart);
       expect(paths(button())).toContain(GLYPH_PATHS.check);
       expect(button().getAttribute('aria-label')).toMatch(/saved to a playlist/i);
     });

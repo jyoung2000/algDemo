@@ -159,20 +159,22 @@ export function AlbumView({ target, onBack, onPreview, onPlayAll, seedKeys, onAd
               {(() => {
                 const held = savedOf(a);
                 return (
+                  // ALBUM-TIDY-001 (owner, 2026-11-22): "make the save album just a heart". Filled once it is saved.
                   <button
-                    className={held ? 'push is-on' : 'push'}
+                    className="iconbtn artist__star album__save"
                     type="button"
                     aria-pressed={Boolean(held)}
                     aria-label={held ? `Saved. Remove ${a.title} from Saved` : `Save album ${a.title}`}
+                    title={held ? 'Saved. Tap to remove it from Saved' : 'Save album'}
                     disabled={saving || !a.tracks.length}
                     onClick={() => void toggleSave(a)}
                   >
-                    <Glyph name="heart" size={14} /> {held ? 'Saved' : 'Save album'}
+                    <Glyph name={held ? 'heart-filled' : 'heart'} size={16} />
                   </button>
                 );
               })()}
               {/* LIST-SAVE-FOLDER-001: the whole album, downloaded into a folder of its own. */}
-              <ListSaveButton tracks={a.tracks} kind="album" name={albumFolderName(a.title, a.artist)} label={`the album ${a.title}`} />
+              <ListSaveButton tracks={a.tracks} kind="album" name={albumFolderName(a.title, a.artist)} label={`the album ${a.title}`} icon />
             </div>
             {note && (
               <p className="state album__note" role="status">
@@ -190,6 +192,7 @@ export function AlbumView({ target, onBack, onPreview, onPlayAll, seedKeys, onAd
                 taste={a.mix?.taste ?? null}
                 listening={false}
                 title={`Sound of \u201C${a.title}\u201D`}
+                hideTitle
                 label="This album's mix"
                 historyKey={`airwave.sound.album.${a.id}`}
                 idleText={a.mix ? listMixNote(a.mix, 'album') : 'Reading the album\u2026'}

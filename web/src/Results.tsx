@@ -7,7 +7,7 @@ import { ROW_COVER } from './row-cover';
 import './song-row.css';
 import type { ArtistTarget, Characteristics, FeedbackKind, PlaylistSummary, RecItem, Track } from './api';
 import type { CacheState, CardCache } from './engine/queue-controls';
-import { RowPlayButton, playOnDoubleClick } from './RowPlay';
+import { RowDownloadButton, RowPlayButton, playOnDoubleClick } from './RowPlay';
 import { Art } from './Art';
 import { matchRecordings } from './engine/identity';
 import { SaveMenu } from './SaveMenu';
@@ -123,7 +123,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
         return (
           <SwipeLi key={`seed:${s.key}`} onRemove={() => onRemoveSeed(s.key)} onSwipeLeft={onLists ? () => setSaving(s.key) : undefined} className={classNames('rec', 'rec--seed', strong && 'is-strong', playingKey === s.key && 'is-playing')} onDoubleClick={seedPlayable ? playOnDoubleClick(() => onPlayTrack(s)) : undefined}>
             <span className="rec__rank" aria-hidden="true">
-              {playingKey === s.key ? <Glyph name="speaker" size={12} /> : <Glyph name="star" size={12} />}
+              {playingKey === s.key ? <Glyph name="speaker" size={12} /> : <Glyph name="heart" size={12} />}
             </span>
             <button
               className="rec__art"
@@ -180,11 +180,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               <button className="iconbtn" type="button" aria-label={`Remove ${s.title}`} title="Remove from the queue" onClick={() => onRemoveSeed(s.key)}>
                 <Glyph name="close" size={14} />
               </button>
-              {onDownload && (
-                <button className="iconbtn" type="button" onClick={() => onDownload(s)} aria-label={`Download ${s.title}`} title="Download">
-                  <Glyph name="download" size={14} />
-                </button>
-              )}
+              {onDownload && <RowDownloadButton track={s} cache={cacheOf?.(s.key)} onDownload={onDownload} />}
               {onSimilar && (
                 <button className="iconbtn rec__similar" type="button" onClick={() => onSimilar(s)} disabled={similarBusy} aria-label={`Find similar sound to ${s.title}`} title="Find similar sound">
                   <SimilarGlyph size={16} />
@@ -296,7 +292,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
             <div className="rec__sub">
               {seed && (
                 <span className="rec__why1 rec__why1--seed">
-                  <Glyph name="star" size={11} /> Starting song{seedStrong ? ' · counts double' : ''}
+                  <Glyph name="heart" size={11} /> Starting song{seedStrong ? ' · counts double' : ''}
                 </span>
               )}
               <span className="rec__why1">{it.reasons[0]?.text ?? 'Found from your starting songs.'}</span>
@@ -356,11 +352,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, play
               >
                 <Glyph name="close" size={14} />
               </button>
-              {onDownload && (
-                <button className="iconbtn" type="button" onClick={() => onDownload(t)} aria-label={`Download ${t.title}`} title="Download">
-                  <Glyph name="download" size={14} />
-                </button>
-              )}
+              {onDownload && <RowDownloadButton track={t} cache={cache} onDownload={onDownload} />}
               {/* SIMILAR-ICON-001: Find similar sound is an icon in the row, not a line of words. */}
               {onSimilar && (
                 <button className="iconbtn rec__similar" type="button" onClick={() => onSimilar(t)} disabled={similarBusy} aria-label={`Find similar sound to ${t.title}`} title="Find similar sound">

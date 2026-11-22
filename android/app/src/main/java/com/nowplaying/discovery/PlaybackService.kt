@@ -217,7 +217,9 @@ class PlaybackService : MediaLibraryService() {
       return listOf(
         shuffleButton(shuffle, if (shuffle) "Shuffle stations on" else "Shuffle stations off"),
         starButton(song != null && CarFeedback.state(song.id).first),
-        CommandButton.Builder(if (favourite) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED)
+        // HEART-ICON-001: the song's like is the heart now; the station's favourite is a radio with a small heart.
+        CommandButton.Builder(CommandButton.ICON_UNDEFINED)
+          .setCustomIconResId(if (favourite) R.drawable.car_station_fav_on else R.drawable.car_station_fav)
           .setDisplayName(if (favourite) "Remove favourite station" else "Favourite station")
           .setSessionCommand(FAVOURITE_STATION).setSlots(CommandButton.SLOT_OVERFLOW).build(),
         artistStarButton(song?.artist),
@@ -304,7 +306,8 @@ class PlaybackService : MediaLibraryService() {
       .build()
 
   private fun starButton(starred: Boolean): CommandButton =
-    CommandButton.Builder(if (starred) CommandButton.ICON_STAR_FILLED else CommandButton.ICON_STAR_UNFILLED)
+    // HEART-ICON-001 (owner, 2026-11-22): "change the star icon to a heart icon everywhere in the app and in android auto".
+    CommandButton.Builder(if (starred) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED)
       .setDisplayName(if (starred) "Remove star" else "Star")
       .setSessionCommand(STAR)
       .setSlots(CommandButton.SLOT_OVERFLOW)

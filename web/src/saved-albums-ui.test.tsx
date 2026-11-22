@@ -61,7 +61,8 @@ it('saves the open album to Saved, and takes it out again', async () => {
   const view = (lists: PlaylistSummary[]) => <AlbumView target={{ id: 'dz:2' }} onBack={() => {}} onPreview={() => {}} lists={lists} onLists={onLists} seedKeys={new Set()} onAdd={() => {}} />;
   await draw(view([ownList]));
   await act(async () => undefined);
-  const save = byText('Save album')!;
+  const save = button('Save album Lost Files')!;
+  expect(save.textContent?.trim()).toBe(''); // ALBUM-TIDY-001: a heart alone
   expect(save.getAttribute('aria-pressed')).toBe('false');
   await act(async () => save.click());
   expect(editCall).toHaveBeenCalledWith('save_album', { album: full });
@@ -69,7 +70,7 @@ it('saves the open album to Saved, and takes it out again', async () => {
   expect(host.textContent).toContain('Saved. Find it in Saved, under Albums.');
   // With the album among the lists the button says so, and pressing it again removes the album.
   await draw(view([ownList, albumList]));
-  const saved = byText('Saved')!;
+  const saved = button('Saved. Remove Lost Files from Saved')!;
   expect(saved.getAttribute('aria-pressed')).toBe('true');
   expect(saved.getAttribute('aria-label')).toBe('Saved. Remove Lost Files from Saved');
   editCall.mockResolvedValue({ lists: [ownList] });

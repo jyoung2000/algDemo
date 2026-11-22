@@ -54,7 +54,7 @@ describe('a song’s Play button shows its download (PLAY-LIVE-001)', () => {
   // until the circle is complete ... ensure the play button in side the blue play button is white".
   it('starts with the row icons\u2019 own 1px outline, and a black ring grows from right to left with the download', () => {
     const css = readFileSync(`${process.cwd()}/src/play-state.css`, 'utf8');
-    const thin = /\.iconbtn\.playbtn\.playbtn\[data-progress='true'\],\s*button\.listplay\.listplay:not\(\[data-ready='true'\]\)\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    const thin = /\.iconbtn\.playbtn\.playbtn\[data-progress='true'\],\s*\.iconbtn\.rowdl\.rowdl\[data-progress='true'\],\s*button\.listplay\.listplay:not\(\[data-ready='true'\]\)\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
     expect(thin).toMatch(/box-shadow:\s*inset 0 0 0 1px var\(--hair\)/);
     const ring = /\[data-progress='true'\]::before\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
     // PLAY-RING-003 (owner, 2026-11-22): "a bit thinner and starts in the middle at the top": a 2px arc from 12 o'clock,

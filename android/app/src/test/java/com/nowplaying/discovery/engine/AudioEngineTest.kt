@@ -51,9 +51,13 @@ class AudioEngineTest {
       return frames
     }
     override fun play() { playing = true }
-    override fun pause() { playing = false }
-    override fun flush() { flushes++ }
-    override fun pendingFrames() = 0L
+    override fun pause() { playing = false; pausedWithPending += pending }
+    override fun flush() { flushes++; lostToFlush += pending; pending = 0 }
+    /** FULL-END-001: frames written and not heard yet, as the test sets it; a flush or a pause before they are heard loses them. */
+    var pending = 0L
+    var lostToFlush = 0L
+    var pausedWithPending = 0L
+    override fun pendingFrames() = pending
     override fun close() {}
   }
 
@@ -129,6 +133,63 @@ class AudioEngineTest {
     // Every frame of the song (plus the quantum it ended in) reached the output, and it was audible.
     assertTrue(out.left.size >= 96000 && out.left.size < 96000 + 128 * AudioEngine.CHUNK_QUANTA)
     assertTrue("audible", rms(out, 0.5, 1.5) > 0.1)
+  }
+
+  /**
+   * FULL-END-001 (owner, 2026-11-22): "for some reason songs do not finish their last second, ensure songs can play
+   * 100% by default on platforms". The end of the decoder is not the end of the sound: the output still holds the last
+   * quarter second or more. Pausing and telling the controller at once let the next song's load flush it away.
+   */
+  @Test fun theEndIsNotReportedUntilTheOutputHasPlayedTheLastFrames() {
+    val (eng, ev, out) = engine()
+    eng.load("one", Tone(440.0, 1.0))
+    eng.renderQuanta(1) // the load itself flushes the output
+    out.pending = 12288 // the output's buffer: 256 ms written and not heard yet
+    eng.renderQuanta(quantaFor(2.0))
+    assertEquals("not ended while the tail is still to be heard", emptyList<String>(), ev.log)
+    assertTrue("still playing the tail", out.playing)
+    assertTrue("the engine says so too", eng.snapshot.playing)
+    assertEquals("nothing was paused away", 0L, out.pausedWithPending)
+    val written = out.left.size
+    eng.renderQuanta(quantaFor(0.5))
+    assertEquals("no silence is piled on while it waits", written, out.left.size)
+    out.pending = 0 // the listener has now heard every frame
+    eng.renderQuanta(1)
+    assertEquals(listOf("ended:one"), ev.log)
+    assertEquals(listOf(AudioEngine.Heard("one", 48000, 48000)), ev.heard)
+    assertFalse(out.playing)
+    eng.load("two", Tone(660.0, 1.0))
+    eng.renderQuanta(1)
+    assertEquals("the next song's load had nothing of the last one to throw away", 0L, out.lostToFlush)
+  }
+
+  @Test fun anOutputThatNeverEmptiesCannotHoldTheEndForEver() {
+    var now = 0L
+    val ev = Events(); val out = Capture()
+    val eng = AudioEngine(out, planner, ev, clock = { now })
+    eng.load("one", Tone(440.0, 1.0))
+    eng.renderQuanta(1)
+    out.pending = 12288
+    eng.renderQuanta(quantaFor(2.0))
+    assertEquals(emptyList<String>(), ev.log)
+    now += 4_000_000_000L // far past 256 ms and its margin
+    eng.renderQuanta(1)
+    assertEquals(listOf("ended:one"), ev.log)
+  }
+
+  @Test fun aSeekBackWhileTheTailPlaysKeepsTheSongGoing() {
+    val (eng, ev, out) = engine()
+    eng.load("one", Tone(440.0, 1.0))
+    eng.renderQuanta(1)
+    out.pending = 12288
+    eng.renderQuanta(quantaFor(2.0))
+    eng.seekTo(0)
+    out.pending = 0
+    eng.renderQuanta(quantaFor(0.25))
+    assertEquals("the song was sent back, so it has not ended", emptyList<String>(), ev.log)
+    assertTrue(eng.snapshot.playing)
+    eng.renderQuanta(quantaFor(2.0))
+    assertEquals(listOf("ended:one"), ev.log)
   }
 
   @Test fun repeatOneReplaysTheSongAndNeverBlends() {

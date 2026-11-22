@@ -1,6 +1,6 @@
 import { useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { CardCacheContext } from './card-cache-context';
-import { RowPlayButton, playOnDoubleClick } from './RowPlay';
+import { RowDownloadButton, RowPlayButton, playOnDoubleClick } from './RowPlay';
 import './search-clean.css';
 import { SwipeLi } from './useSwipeRemove';
 import { Glyph } from '@now-playing/aqua-ui/icons';
@@ -1331,11 +1331,7 @@ export function TrackList({
                 the row's job is to ask.
               */}
               <RowPlayButton track={t} cache={cacheOf?.(t.key)} onPlay={() => onPreview(t, tracks)} />
-              {onDownload && (
-                <button className="iconbtn" type="button" onClick={() => onDownload(t)} aria-label={`Download ${t.title}`} title="Download">
-                  <Glyph name="download" size={14} />
-                </button>
-              )}
+              {onDownload && <RowDownloadButton track={t} cache={cacheOf?.(t.key)} onDownload={onDownload} />}
               {/* QUEUE-ADD-001: the owner replaced the link out to the song's own service with this. */}
               {onQueueAdd && (() => {
                 const inIt = addedKeys?.has(t.key) ?? false;

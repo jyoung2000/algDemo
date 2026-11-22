@@ -231,7 +231,7 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
   };
   const toggle = async (s: RadioStation) => { const next = stars.some(x => x.id === s.id) ? stars.filter(x => x.id !== s.id) : [...stars, s]; try { setStars(await saveFavouriteStations(next)); } catch { setError('The favourite station could not be saved. Try again.'); } };
   return <section className="card radio-page" aria-labelledby="radio-h">
-    <header className="radio-page__header"><div><div className="eyebrow">LIVE AROUND THE WORLD</div><h1 id="radio-h">Radio</h1><p>Find a place. Hear what’s happening there.</p></div><button className="btn" type="button" disabled={busy} onClick={() => { if (!saved) void load(0); void poller.current?.tick(); refreshArt(); }}>Refresh stations</button></header>
+    <header className="radio-page__header"><div><div className="eyebrow">LIVE AROUND THE WORLD</div><h1 id="radio-h" className="radio-page__title">Radio{/* RADIO-REFRESH-ICON-001 (owner, 2026-11-22): "the refresh stations button should just be a spining arrow icon thats inline with the label". It turns while the stations are being read again. */}<button className="iconbtn radio-page__refresh" type="button" aria-label="Refresh stations" title="Refresh stations" aria-busy={busy || refreshing} disabled={busy} onClick={() => { if (!saved) void load(0); void poller.current?.tick(); refreshArt(); }}><RadioRefreshGlyph size={16} className={busy || refreshing ? 'radio-refresh__icon' : 'radio-refresh__still'} /></button></h1><p>Find a place. Hear what’s happening there.</p></div></header>
     <form className={`search__form radio-search${draft ? ' has-text' : ''}`} role="search" onSubmit={e => { e.preventDefault(); setQuery(draft.trim()); }}>
       <label className="sr" htmlFor="radio-q">Search radio stations worldwide, or the artist or song on air now</label>
       <span className="search__field">
@@ -314,7 +314,7 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
           {tags.length > 0 && <TagStrip className="radio-station__tags" label="Station genres" title={tags.map(g => g.label).join(', ')}>{tags.map((g, i) => <GenreBubbleView key={i} bubble={g} />)}</TagStrip>}</div>
           <div className="radio-station__actions song-actions">
             <PlayDisc className={`radio-station__play${active ? ' is-on' : ''}`} ready playing={active} label={`Play ${s.name}`} title={active ? 'This station is playing' : 'Play this station live'} onPlay={play} />
-            <button type="button" className="iconbtn radio-station__star" aria-pressed={starred} aria-label={`Star station ${s.name}`} title={starred ? 'Starred station' : 'Star this station'} onClick={() => void toggle(s)}><Glyph name={starred ? 'star-filled' : 'star'} size={16} /></button>
+            <button type="button" className="iconbtn radio-station__star" aria-pressed={starred} aria-label={`Star station ${s.name}`} title={starred ? 'Starred station' : 'Star this station'} onClick={() => void toggle(s)}><Glyph name={starred ? 'heart-filled' : 'heart'} size={16} /></button>
           </div>
           <div className="radio-station__details">
             <span className="radio-station__meta">{[s.codec, s.bitrate ? `${s.bitrate} kbps` : ''].filter(Boolean).join(' · ')}{b && <time dateTime={new Date(b.checkedAt).toISOString()} title={b.detail || b.source}>{s.codec || s.bitrate ? ' · ' : ''}checked {new Date(b.checkedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>}</span>

@@ -32,7 +32,7 @@ export function ArtistStarButton({ artist, row = false }: { artist: { id: string
       aria-label={starred ? `Unstar ${artist.name}` : `Star ${artist.name}: your discovery takes this artist into account`}
       title={starred ? `Starred: Find my next favorite takes ${artist.name} into account` : `Star ${artist.name}`}
       onClick={() => void toggle()}>
-      <Glyph name={starred ? 'star-filled' : 'star'} size={16} />
+      <Glyph name={starred ? 'heart-filled' : 'heart'} size={16} />
     </button>
   );
 }
@@ -85,7 +85,7 @@ export function FavArtistsSettings({ where = 'settings' }: { where?: 'settings' 
         <ul className="fav-artists__list" aria-label="Your starred artists">
           {list.map((a) => (
             <li key={a.name} className="fav-artists__row">
-              <Glyph name="star-filled" size={14} className="fav-artists__mark" />
+              <Glyph name="heart-filled" size={14} className="fav-artists__mark" />
               <span className="fav-artists__name">{a.name}</span>
               <button type="button" className="btn fav-artists__remove" aria-label={`Remove ${a.name} from your artists`} title={`Remove ${a.name}`}
                 onClick={() => void favArtistsStore.remove(a.name).catch(() => setError(`${a.name} could not be removed. Try again.`))}>
@@ -121,7 +121,7 @@ export function FavArtistsSettings({ where = 'settings' }: { where?: 'settings' 
                 <button type="button" className="iconbtn artist__star artist__star--row" aria-pressed={on} disabled={on}
                   aria-label={on ? `${a.name} is in your artists` : `Add ${a.name} to your artists`}
                   onClick={() => void addArtist({ name: a.name, pageId: a.id, fans: a.fans ?? null, picture: a.picture })}>
-                  <Glyph name={on ? 'star-filled' : 'star'} size={16} />
+                  <Glyph name={on ? 'heart-filled' : 'heart'} size={16} />
                 </button>
               </li>
             );

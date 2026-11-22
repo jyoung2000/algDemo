@@ -54,6 +54,8 @@ class AudioEngine(
   private val listener: Listener = object : Listener {},
   initialEq: EqConfig = EqConfig.DEFAULTS,
   private val cuePlanner: CuePlanner? = null,
+  /** FULL-END-001: the monotonic clock (nanoseconds) that bounds the wait for the output to play a song's last frames. */
+  private val clock: () -> Long = System::nanoTime,
 ) : AutoCloseable {
   /**
    * How much of a song was actually heard: frames rendered from it while audible (a seek does not
@@ -112,6 +114,14 @@ class AudioEngine(
   private var repeatOne = false
   private var next = NextState.NONE
   private var endedReported: String? = null
+  /**
+   * FULL-END-001 (owner, 2026-11-22): "for some reason songs do not finish their last second, ensure songs can play
+   * 100% by default". The decoder's end is not the end of the sound: the output still holds the song's last quarter
+   * second or more. The song that has ended, what was heard of it, and the latest the engine waits for the output to
+   * play it out; the end is reported, and the output paused, only then.
+   */
+  private var ending: Heard? = null
+  private var endingDeadline = 0L
   /** Output time until the promoted current song finishes fading in. */
   private var fadeUntil = 0.0
   /** Measured cues by song key: the few songs around the playhead. */
@@ -151,6 +161,7 @@ class AudioEngine(
     source.seekTo(startFrame)
     liveShort = true // a new song is buffering until it first sounds
     endedReported = null
+    ending = null
     output.flush()
     playing = play
     if (play) output.play() else output.pause()
@@ -174,7 +185,14 @@ class AudioEngine(
     next = NextState.READY
   }
 
-  fun play() = post { if (decks.getValue(active).source != null) { playing = true; output.play() } }
+  fun play() = post {
+    if (decks.getValue(active).source != null) {
+      playing = true
+      output.play()
+      // FULL-END-001: a tail paused mid-way gets its time again, so resuming does not cut it.
+      if (ending != null) endingDeadline = clock() + (END_MAX_SECONDS * 1e9).toLong()
+    }
+  }
   fun pause() = post { playing = false; output.pause() }
 
   /**
@@ -191,6 +209,7 @@ class AudioEngine(
     bus.cut(active)
     jump(deck.given ?: src)
     endedReported = null
+    ending = null
     output.flush()
   }
 
@@ -201,6 +220,7 @@ class AudioEngine(
     bus.cut(active)
     src.seekTo(frame)
     endedReported = null
+    ending = null
     output.flush()
   }
 
@@ -262,6 +282,12 @@ class AudioEngine(
         synchronized(lock) { if (commands.isEmpty() && !closed) lock.wait(250) }
         continue
       }
+      if (ending != null) {
+        // FULL-END-001: nothing more to write; let the output play the song's tail, then say it ended.
+        if (!settleEnd()) synchronized(lock) { if (commands.isEmpty() && !closed) lock.wait(END_POLL_MS) }
+        publish()
+        continue
+      }
       renderChunk(CHUNK_QUANTA)
     }
   }
@@ -271,6 +297,8 @@ class AudioEngine(
     var left = quanta
     while (left > 0) {
       drain()
+      if (!playing) { publish(); return }
+      if (ending != null && !settleEnd()) { publish(); return }
       if (!playing) { publish(); return }
       val n = min(left, CHUNK_QUANTA)
       renderChunk(n)
@@ -283,7 +311,7 @@ class AudioEngine(
   private fun renderChunk(quanta: Int) {
     var frames = 0
     for (q in 0 until quanta) {
-      if (!playing) break
+      if (!playing || ending != null) break
       renderQuantum(q * QUANTUM)
       frames += QUANTUM
     }
@@ -340,6 +368,7 @@ class AudioEngine(
     next = NextState.NONE
     // transitionTo already made this deck live. Cutting here would destroy its fade-in.
     endedReported = null
+    ending = null
     spare.key?.let { listener.onAdvanced(it, outgoing) }
   }
 
@@ -380,9 +409,22 @@ class AudioEngine(
     if (endedReported == key) return
     endedReported = key
     cancelBlend()
+    // FULL-END-001: every frame is written; wait for the listener to have heard them before stopping.
+    val pending = output.pendingFrames()
+    ending = heardOf(live)
+    endingDeadline = clock() + ((pending / RATE + END_MARGIN_SECONDS).coerceAtMost(END_MAX_SECONDS) * 1e9).toLong()
+    settleEnd()
+  }
+
+  /** FULL-END-001: report the end once the output has played the last frames (or the wait ran out). True when settled. */
+  private fun settleEnd(): Boolean {
+    val heard = ending ?: return true
+    if (output.pendingFrames() > 0 && clock() < endingDeadline) return false
+    ending = null
     playing = false
     output.pause()
-    listener.onEnded(key, heardOf(live))
+    listener.onEnded(heard.key, heard)
+    return true
   }
 
   private fun heardOf(deck: Deck) = Heard(deck.key ?: "", deck.heard, deck.source?.durationFrames ?: PcmSource.UNKNOWN)
@@ -428,6 +470,10 @@ class AudioEngine(
     /** Quanta rendered per output write: 1024 frames, about 21 ms. */
     const val CHUNK_QUANTA = 8
     const val RATE = 48000.0
+    /** FULL-END-001: how much longer than the output's own backlog the engine waits for a song's tail, and the most. */
+    const val END_MARGIN_SECONDS = 0.5
+    const val END_MAX_SECONDS = 3.0
+    const val END_POLL_MS = 8L
     /** crossfade.ts MIN_USEFUL_SECONDS. */
     const val MIN_USEFUL_SECONDS = 0.25
     /** A start this late or later is made up for; less is inside one render quantum. */

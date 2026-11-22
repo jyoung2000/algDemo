@@ -21,7 +21,7 @@ import type { CardCache } from './engine/queue-controls';
 import { classNames } from './util';
 import { GenreBubbleView } from './Results';
 import { TagStrip } from './TagStrip';
-import { ListPlayButton, RowPlayButton, playOnDoubleClick } from './RowPlay';
+import { ListPlayButton, RowDownloadButton, RowPlayButton, playOnDoubleClick } from './RowPlay';
 import { Marquee } from './Marquee';
 import { ROW_COVER } from './row-cover';
 import { listStrip, listTaste } from './list-strip';
@@ -481,11 +481,7 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
                 >
                   <Glyph name="close" size={14} />
                 </button>}
-                {onDownload && (
-                  <button className="iconbtn" type="button" aria-label={`Download ${track.title}`} title="Download" onClick={() => onDownload(track)}>
-                    <Glyph name="download" size={14} />
-                  </button>
-                )}
+                {onDownload && <RowDownloadButton track={track} cache={cache} onDownload={onDownload} />}
                 {onSimilar && (
                   <button className="iconbtn rec__similar" type="button" onClick={() => onSimilar(track)} disabled={similarBusy} aria-label={`Find similar sound to ${track.title}`} title="Find similar sound">
                     <SimilarGlyph size={16} />

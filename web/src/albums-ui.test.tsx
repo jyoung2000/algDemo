@@ -115,7 +115,11 @@ it('opens an album like a list: its songs in order, played as one list, and save
   await act(async () => byText('Play album')!.click());
   expect(play).toHaveBeenCalledWith(full.tracks[0], full.tracks);
   // ALBUM-SAVE-001 replaced “Save as a list”: the album is saved as an album (saved-albums-ui.test.tsx).
-  await act(async () => byText('Save album')!.click());
+  // ALBUM-TIDY-001: the save is a heart alone, the folder download an arrow alone, and the card prints no "Sound of".
+  const heart = button('Save album Lost Files')!;
+  expect(heart.textContent?.trim()).toBe('');
+  expect(heart.querySelector('svg')).toBeTruthy();
+  await act(async () => heart.click());
   expect(editCall).toHaveBeenCalledWith('save_album', { album: full });
   expect(lists).toHaveBeenCalledWith([{ id: 'L9', name: 'Lost Files', count: 2 }]);
   await act(async () => button('Back')!.click());

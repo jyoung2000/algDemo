@@ -107,3 +107,13 @@ it('as an icon, it shows no words but still says what it does', async () => {
   expect(b.getAttribute('aria-label')).toBe('Download to folder: every song by OsamaSon');
   expect(b.className).toMatch(/iconbtn/);
 });
+
+// ALBUM-TIDY-001 (owner, 2026-11-22): "on the album page turn the download to folder icon into just a download icon".
+it('as an icon, it is the arrow alone until the folder holds a song', async () => {
+  await act(async () => root.render(<ListSaveButton icon tracks={tracks} kind="album" name="Ken Carson - A Great Chaos" label="the album A Great Chaos" />));
+  expect([...host.querySelectorAll('button')].map((b) => b.className)).toEqual(['iconbtn list-save__go']);
+  expect(folder()).toBeNull();
+  await set({ held: 1 });
+  expect(folder()).toBeTruthy();
+  expect(folder().disabled).toBe(false);
+});

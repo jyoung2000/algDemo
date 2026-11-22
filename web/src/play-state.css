@@ -20,11 +20,13 @@
   initial-value: 0;
 }
 .iconbtn.playbtn.playbtn[data-progress='true'],
+.iconbtn.rowdl.rowdl[data-progress='true'],
 button.listplay.listplay:not([data-ready='true']) {
   position: relative;
   box-shadow: inset 0 0 0 1px var(--hair);
 }
 .iconbtn.playbtn.playbtn[data-moving='true'],
+.iconbtn.rowdl.rowdl[data-moving='true'],
 button.listplay.listplay[data-moving='true'] {
   animation: dl-wait 1.2s ease-in-out infinite;
 }
@@ -33,13 +35,16 @@ button.listplay.listplay[data-moving='true'] {
 }
 @media (prefers-reduced-motion: reduce) {
   .iconbtn.playbtn.playbtn[data-moving='true'],
+  .iconbtn.rowdl.rowdl[data-moving='true'],
   button.listplay.listplay[data-moving='true'] { animation: none; box-shadow: inset 0 0 0 1px var(--ink-2); }
 }
 .iconbtn.playbtn.playbtn[data-progress='true'] {
   background-color: #fff;
   color: var(--ink);
 }
+/* ROW-DL-STATE-001: a song's Download icon wears the same ring while its file downloads. */
 .iconbtn.playbtn[data-progress='true']::before,
+.iconbtn.rowdl[data-progress='true']::before,
 button.listplay[data-progress='true']::before {
   content: '';
   position: absolute;

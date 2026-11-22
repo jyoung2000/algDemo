@@ -92,7 +92,7 @@ describe('STAR-MENU-001: the star opens the saved-list menu everywhere', () => {
     const labels = [...row.querySelectorAll('.track__actions > button')].map((b) => (b.getAttribute('aria-label') ?? '').split(' ')[0]);
     expect(labels).toEqual(['Play', 'Choose', 'Remove', 'Download', 'Find']);
     const star = screen.getByRole('button', { name: /^Choose lists for Song one/ });
-    expect(paths(star)).toContain(GLYPH_PATHS.star);
+    expect(paths(star)).toContain(GLYPH_PATHS.heart); // HEART-ICON-001: the like is a heart now
     expect(paths(star)).not.toContain(GLYPH_PATHS.folder);
     fireEvent.click(star);
     expect(screen.getByRole('dialog', { name: /Save Song one to/ })).toBeTruthy();

@@ -10,7 +10,7 @@ export function inPlaylist(songKey: string | undefined, lists: PlaylistSummary[]
 /** The same star, with a playlist tick on its corner, in search, the queue and the current-song controls. */
 export function SongStar({ saved, size = 14 }: { saved: boolean; size?: number }) {
   return <span className="song-star" aria-hidden="true" data-playlist-saved={saved}>
-    <Glyph name="star" size={size} />
+    <Glyph name="heart" size={size} />
     {saved && <Glyph name="check" size={9} className="song-star__check" />}
   </span>;
 }

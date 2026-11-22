@@ -4094,6 +4094,8 @@ html {
   pointer-events: auto;
 }
 /* The folder button beside it is a full 44px target at every width (the desktop icon button is 30px). */
+/* DISCOVER-QUIET-001: a line that keeps its room and prints nothing. */
+.go__gone { visibility: hidden; }
 .list-save__folder {
   min-width: 44px;
   min-height: 44px;

@@ -5,6 +5,7 @@
 .push.artist__star { padding: 0 14px; }
 .artist__star.artist__star[aria-pressed='false'] { background: #fff; color: var(--ink); border-color: transparent; box-shadow: inset 0 0 0 1px var(--hair); }
 .artist__star.artist__star[aria-pressed='true'] { background: var(--accent); color: #fff; border-color: transparent; box-shadow: none; }
+.iconbtn.album__save { width: 44px; height: 44px; padding: 0; flex: 0 0 44px; }
 .iconbtn.artist__star--row { width: 44px; height: 44px; padding: 0; flex: 0 0 44px; align-self: center; margin-right: 6px; }
 .artists ul.tracks > li.track.album-row { display: flex; flex-wrap: nowrap; align-items: center; }
 .artists ul.tracks > li.track.album-row > .album-row__open { flex: 1 1 0; min-width: 0; width: auto; }

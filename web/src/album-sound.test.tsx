@@ -85,7 +85,11 @@ describe('an album shows what it sounds like (ALBUM-SOUND-001)', () => {
     await open(album(mixWith(3)));
     const card = host.querySelector('.sound');
     expect(card).toBeTruthy();
-    expect(card!.textContent).toContain('Sound of');
+    // ALBUM-TIDY-001 (owner, 2026-11-22): "on the album page get rid of the sound of album name label". The name stays
+    // for screen readers only.
+    expect(card!.getAttribute('aria-label')).toContain('Sound of');
+    expect(card!.querySelector('.sound__title .sr')?.textContent).toContain('Sound of');
+    expect([...card!.querySelector('.sound__title')!.childNodes].filter((n) => n.nodeType === 3 && n.textContent!.trim())).toHaveLength(0);
   });
 
   it('colours the bar by genre, like the listener\u2019s own sound', async () => {

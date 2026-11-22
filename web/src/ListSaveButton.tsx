@@ -64,7 +64,9 @@ export function ListSaveButton({ tracks, kind, name, label, icon = false }: { tr
       >
         <Glyph name={complete ? 'check' : 'download'} size={14} />{icon ? null : <> {text}</>}
       </button>
-      <button
+      {/* ALBUM-TIDY-001 (owner, 2026-11-22): "turn the download to folder icon into just a download icon". As an icon, the
+          folder button waits until the folder holds a song; a greyed-out folder beside the arrow said nothing. */}
+      {(!icon || s.held > 0) && <button
         type="button"
         className="iconbtn list-save__folder"
         disabled={s.held === 0}
@@ -73,7 +75,7 @@ export function ListSaveButton({ tracks, kind, name, label, icon = false }: { tr
         title={s.held ? `Open the folder with ${label} (${songs(s.held)})` : `Download ${label} to its folder first`}
       >
         <Glyph name="folder" size={14} />
-      </button>
+      </button>}
       {(status || note) && <span className="list-save__note" role="status">{note ?? status}</span>}
     </>
   );

@@ -1487,13 +1487,15 @@ export function App() {
                 </label>
                 <p className="go__hint go__level" aria-live="polite">{adventureLabel(adventurous)}</p>
                 {/* The limit itself lives in Settings, where it also governs listening top-ups. */}
-                <p className="go__hint">
+                {/* DISCOVER-QUIET-001 (owner, 2026-11-22): "get rid of labels under a mix of familar and new and the label under
+                    prefer new releases button but keep the spacing". The lines keep their room and print nothing. */}
+                <p className="go__hint go__gone" aria-hidden="true">
                   Up to {queueSize} new {queueSize === 1 ? 'song' : 'songs'} per discovery — change it in Settings
                 </p>
                 <label className="go__fresh">
                   <input type="checkbox" checked={fresh} onChange={(e) => patchSettings({ fresh: e.target.checked })} />
                   <span>Prefer new releases</span>
-                  <span className="go__freshnote">songs from the last 60 days, when the source gives a date</span>
+                  <span className="go__freshnote go__gone" aria-hidden="true">songs from the last 60 days, when the source gives a date</span>
                 </label>
               </div>
               <div className="go__row">

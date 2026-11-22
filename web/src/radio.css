@@ -243,3 +243,53 @@ button.radio-live--behind { color:#8a5a00; text-decoration:underline; text-under
   .radio-player__close > svg { width: 16px; height: 16px; }
   .radio-player__identity { padding-right: 28px; } /* titles never run under Stop */
 }
+/* RADIO-REFRESH-ICON-001: the refresh arrow sits on the heading's own line. */
+.radio-page__title { display:flex; align-items:center; gap:10px; }
+.iconbtn.radio-page__refresh { flex:none; color:var(--ink-2); border:0; background:transparent; box-shadow:none; }
+.iconbtn.radio-page__refresh[aria-busy='true'] { color:var(--accent); }
+@media (hover: hover) { .iconbtn.radio-page__refresh:hover:not(:disabled) { color:var(--accent); } }
+/* RADIO-DOCK-SIZE-001 (owner, 2026-11-22): "On android can we make the radio player the same size as the discover player
+   but keep all the same features and ui elements". On a phone the radio player was 325px tall against the song
+   player's 152px. Every element stays; they are laid out like the song player: one 48px row for the cover and the
+   words (live badge and genres, the title, the artist and place), one 28px row for the progress bar, and one 44px row
+   for every control (stations, pause, rewind, live, volume, playlist, download). */
+@media (max-width:760px) {
+ .np.radio-player { grid-template-columns:minmax(0,2fr) minmax(0,1fr); grid-template-areas:"main main" "timeline timeline" "controls side" "status status" "lists lists"; padding-block:8px 9.5px; gap:0; }
+ .np.radio-player .radio-player__main { height:48px; gap:10px; }
+ .np.radio-player .radio-player__identity { display:grid; grid-template-columns:minmax(0,1fr) 44px; grid-template-rows:15px 18px 15px; gap:0 4px; padding-right:36px; align-items:center; }
+ .np.radio-player .radio-live { grid-area:1/1; justify-self:start; line-height:15px; white-space:nowrap; }
+ .np.radio-player .radio-player__tags { grid-area:1/1; justify-self:end; display:flex; max-width:calc(100% - 100px); height:15px; overflow:hidden; }
+ .np.radio-player .radio-player__tags .genre { padding:0 6px; font-size:9.5px; line-height:13px; }
+ .np.radio-player .radio-player__tags .genre::before { width:7px; height:7px; }
+ .np.radio-player .radio-player__titleline { display:contents; }
+ .np.radio-player .radio-player__titleline strong { grid-area:2/1; font-size:14px; line-height:18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+ .np.radio-player .radio-player__song { display:block; max-width:100%; min-height:0; margin:0; padding:0; line-height:18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:left; }
+ .np.radio-player .radio-player__titleline .radio-player__starbtn { grid-area:1/2/4/3; align-self:center; }
+ .np.radio-player .radio-player__identity > span:not(.radio-live):not(.radio-player__tags) { grid-area:3/1; justify-self:start; max-width:62%; font-size:11.5px; line-height:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; overflow-wrap:normal; }
+ .np.radio-player .radio-player__artist { min-height:0; margin:0; padding:0; line-height:15px; }
+ .np.radio-player .radio-player__identity small { grid-area:3/1; justify-self:end; max-width:36%; font-size:10.5px; line-height:15px; text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; overflow-wrap:normal; }
+ .np.radio-player .radio-player__timeline { position:relative; margin-top:7px; }
+ .np.radio-player .prog__bar { padding:12px 0; }
+ .np.radio-player .radio-player__buffer { position:absolute; left:50px; right:50px; bottom:0; font-size:9.5px; line-height:11px; text-align:center; pointer-events:none; }
+ .np.radio-player .radio-player__controls,
+ .np.radio-player .radio-player__side { margin-top:6px; height:44px; }
+ .np.radio-player .radio-player__controls .radio-player__transport { flex:1 1 auto; justify-content:space-around; flex-wrap:nowrap; gap:0; }
+ .np.radio-player .radio-player__transport .tbtn { width:38px; flex:0 0 38px; height:44px; min-height:44px; }
+ .np.radio-player .radio-player__transport .tbtn--main { width:48px; flex-basis:48px; height:48px; }
+ .np.radio-player .radio-player__side { flex-direction:row; flex-wrap:nowrap; align-items:center; justify-content:space-around; gap:0; }
+ .np.radio-player .radio-player__side .vol { flex:0 0 38px; width:38px; justify-content:center; }
+ .np.radio-player .radio-player__actions { display:contents; }
+ .np.radio-player .radio-player__side .vol__btn,
+ .np.radio-player .radio-player__actions .radio-player__playlist,
+ .np.radio-player .radio-player__actions .radio-player__download { width:38px; min-width:38px; flex:0 0 38px; height:44px; min-height:44px; padding:0; border:0; border-radius:8px; background:transparent; }
+ .np.radio-player .radio-player__status:empty { display:none; }
+ .np.radio-player .radio-player__status { margin-top:4px; }
+}
+@media (max-width:379px) {
+ .np.radio-player .radio-player__transport .tbtn { width:33px; flex-basis:33px; }
+ .np.radio-player .radio-player__transport .tbtn--main { width:42px; flex-basis:42px; height:42px; }
+ .np.radio-player .radio-player__side .vol { flex-basis:33px; width:33px; }
+ .np.radio-player .radio-player__side .vol__btn,
+ .np.radio-player .radio-player__actions .radio-player__playlist,
+ .np.radio-player .radio-player__actions .radio-player__download { width:33px; min-width:33px; flex-basis:33px; }
+}
