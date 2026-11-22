@@ -3,7 +3,9 @@
  * find my next favorite button ... take these artist into account ... let the user see and edit their artist list in
  * the settings".
  */
-import { useState, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import { api, type ArtistSummary } from './api';
+import { Art } from './Art';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { favArtistsStore } from './fav-artists-store';
 import './fav-artists.css';
@@ -46,11 +48,28 @@ export function FavArtistsSettings({ where = 'settings' }: { where?: 'settings' 
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const id = (s: string) => `${s}-${where}`;
+  // ARTIST-ADD-SEARCH-001 (owner, 2026-11-22): "ensure the add artist ui and ux fits with the rest of the app and looks
+  // like the other search boxes". The same search box as Discover and Radio; as you type it suggests real artists
+  // (picture and fans), so the star carries the right artist and its size; Enter adds the exact match or the words.
+  const [found, setFound] = useState<ArtistSummary[]>([]);
+  useEffect(() => {
+    const q = name.trim();
+    if (q.length < 2) { setFound([]); return; }
+    const c = new AbortController();
+    const t = window.setTimeout(() => {
+      Promise.resolve().then(() => api.searchArtists(q, c.signal)).then((r) => { if (!c.signal.aborted) setFound(r.artists.slice(0, 5)); }, () => undefined);
+    }, 350);
+    return () => { window.clearTimeout(t); c.abort(); };
+  }, [name]);
+  const addArtist = async (a: { name: string; pageId?: string | null; fans?: number | null; picture?: string | null }) => {
+    setError(null);
+    try { await favArtistsStore.add(a); setName(''); setFound([]); } catch { setError(`${a.name} could not be added. Try again.`); }
+  };
   const add = async () => {
     const n = name.trim();
     if (!n) return;
-    setError(null);
-    try { await favArtistsStore.add({ name: n }); setName(''); } catch { setError(`${n} could not be added. Try again.`); }
+    const exact = found.find((a) => a.name.trim().toLowerCase() === n.toLowerCase());
+    await addArtist(exact ? { name: exact.name, pageId: exact.id, fans: exact.fans ?? null, picture: exact.picture } : { name: n });
   };
   const body = (
     <>
@@ -76,12 +95,39 @@ export function FavArtistsSettings({ where = 'settings' }: { where?: 'settings' 
           ))}
         </ul>
       )}
-      <form className="fav-artists__add" onSubmit={(e) => { e.preventDefault(); void add(); }}>
-        <label htmlFor={id('fav-artist-add')} className="fav-artists__label">Add an artist</label>
-        <input id={id('fav-artist-add')} className="field" type="text" value={name} maxLength={200} placeholder="Artist name"
-          autoComplete="off" onChange={(e) => setName(e.target.value)} />
-        <button type="submit" className="btn fav-artists__submit" disabled={!name.trim()}>Add</button>
+      <form className={`search__form fav-artists__add${name ? ' has-text' : ''}`} role="search" onSubmit={(e) => { e.preventDefault(); void add(); }}>
+        <label className="sr" htmlFor={id('fav-artist-add')}>Add an artist to your artists</label>
+        <span className="search__field">
+          <span className="search__icon" aria-hidden="true"><Glyph name="search" size={16} /></span>
+          <input id={id('fav-artist-add')} className="field" type="search" inputMode="search" enterKeyHint="done" value={name} maxLength={200}
+            placeholder="Add an artist" autoComplete="off" spellCheck={false} onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape' && name) { e.preventDefault(); setName(''); } }} />
+          {name && <button className="search__clear" type="button" aria-label="Clear artist search" onClick={() => { setName(''); document.getElementById(id('fav-artist-add'))?.focus(); }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>}
+        </span>
       </form>
+      {found.length > 0 && (
+        <ul className="well tracks fav-artists__found" aria-label="Artists to add">
+          {found.map((a) => {
+            const on = list.some((x) => x.name.trim().toLowerCase() === a.name.trim().toLowerCase());
+            return (
+              <li key={a.id} className="track album-row">
+                <span className="artist-pic"><Art src={a.picture} size={44} /></span>
+                <span className="track__text">
+                  <span className="track__title">{a.name}</span>
+                  <span className="track__meta">Artist{a.detail ? ` \u00b7 ${a.detail}` : ''}</span>
+                </span>
+                <button type="button" className="iconbtn artist__star artist__star--row" aria-pressed={on} disabled={on}
+                  aria-label={on ? `${a.name} is in your artists` : `Add ${a.name} to your artists`}
+                  onClick={() => void addArtist({ name: a.name, pageId: a.id, fans: a.fans ?? null, picture: a.picture })}>
+                  <Glyph name={on ? 'star-filled' : 'star'} size={16} />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       {error && <p className="note" role="alert">{error}</p>}
     </>
   );

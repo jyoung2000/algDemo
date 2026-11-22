@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const server = vi.hoisted(() => ({ list: [] as { name: string; deezerId: string | null; fans: number | null; picture: string | null; pageId: string | null; addedAt: number }[] }));
 vi.mock('./api', () => ({
   api: {
+    searchArtists: vi.fn(async (q: string) => ({ query: q, artists: q.toLowerCase().startsWith('nett') ? [{ id: 'dz:99', provider: 'deezer', name: 'Nettspend', picture: null, detail: '13,505 fans', fans: 13505, url: '' }] : [] })),
     favArtists: vi.fn(async () => ({ artists: server.list, algorithm: { id: 'user-under', name: 'Underground' } })),
     editFavArtists: vi.fn(async (body: { op: string; artist?: { name: string; pageId?: string; fans?: number | null }; name?: string }) => {
       if (body.op === 'add' && body.artist) server.list = [{ name: body.artist.name, deezerId: null, fans: body.artist.fans ?? null, picture: null, pageId: body.artist.pageId ?? null, addedAt: Date.now() }, ...server.list.filter((a) => a.name.toLowerCase() !== body.artist!.name.toLowerCase())];
@@ -100,6 +101,32 @@ describe('starring an artist (ARTIST-FAV-001)', () => {
     await act(async () => (host.querySelector('button[aria-label="Remove OsamaSon from your artists"]') as HTMLButtonElement).click()); await flush();
     expect([...host.querySelectorAll('.fav-artists__name')].map((n) => n.textContent)).toEqual(['Summrs']);
     expect(server.list.map((a) => a.name)).toEqual(['Summrs']);
+  });
+
+  // ARTIST-ADD-SEARCH-001 (owner, 2026-11-22): "ensure the add artist ui and ux fits with the rest of the app and looks
+  // like the other search boxes".
+  it('adds artists from the app\u2019s own search box, suggesting real artists as you type', async () => {
+    await act(async () => root.render(<FavArtistsSettings where="profile" />));
+    await flush();
+    const form = host.querySelector('form.fav-artists__add')!;
+    expect(form.className).toMatch(/search__form/);
+    expect(form.querySelector('.search__field .search__icon')).not.toBeNull();
+    const input = form.querySelector('input') as HTMLInputElement;
+    expect(input.type).toBe('search');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'nett');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 450)); }); await flush();
+    const add = host.querySelector('button[aria-label="Add Nettspend to your artists"]') as HTMLButtonElement;
+    expect(add).not.toBeNull();
+    await act(async () => add.click()); await flush();
+    expect(server.list[0]).toMatchObject({ name: 'Nettspend', pageId: 'dz:99', fans: 13505 });
+    expect(input.value).toBe('');
+  });
+
+  it('the active tab\u2019s icon takes the tab\u2019s own colour (white on Windows, blue on Android)', () => {
+    expect(readFileSync(`${process.cwd()}/src/fav-artists.css`, 'utf8')).toMatch(/\.side__item\.is-on svg \{ fill: currentColor; \}/);
   });
 
   it('an empty list says how to add artists', async () => {

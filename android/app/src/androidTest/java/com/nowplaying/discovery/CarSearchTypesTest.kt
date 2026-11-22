@@ -77,6 +77,7 @@ class CarSearchTypesTest {
     MediaHub.setCommandSink(sink)
     MediaHub.apply(JSONObject().put("state", JSONObject().put("queue", JSONArray())).put("library", JSONObject().put("songs", JSONArray()).put("playlists", JSONArray())))
     CarListener.fixture = null
+    CarVoice.fixture = null
     // Each Identify test listens afresh; the car's re-ask reuse window must not carry between tests.
     CarIdentifyReuse.reset()
   }
@@ -254,6 +255,8 @@ class CarSearchTypesTest {
   }
 
   @Test fun anIconPickedOnTheSearchTabAppliesToTheNextVoiceSearch() {
+    // A phone with no speech recognizer: the tile sends the driver to the search button, which uses the kind.
+    CarVoice.fixture = CarVoice.Outcome.Unavailable
     val b = connect()
     val hint = children(b, "stype/singles")
     assertTrue(hint.first().title.contains("search button"))
@@ -266,6 +269,35 @@ class CarSearchTypesTest {
     asked.clear()
     search(b, "overseas again $tag")
     assertEquals("all", asked.last { it.optString("type") == "catalogSearch" }.getString("mode"))
+  }
+
+  /**
+   * CAR-QUICK-SEARCH-001 (owner, 2026-11-22): "the search icon should bring up the quick search tab where the user can
+   * select the search filter like song name, artist, album, lyric, shazam reverse search before voice searching".
+   */
+  @Test fun tappingAKindListensForTheWordsThenListsOnlyThatKind() {
+    CarVoice.fixture = CarVoice.Outcome.Heard("A Great Chaos $tag")
+    val b = connect()
+    asked.clear()
+    val got = children(b, "stype/albums", timeout = 30)
+    assertEquals("albums", asked.last { it.optString("type") == "catalogSearch" }.getString("mode"))
+    assertEquals("You said \u201cA Great Chaos $tag\u201d", got.first().title)
+    assertFalse(got.first().isPlayable)
+    assertEquals(listOf("Green Room", "Fell In Love", "Rock N Roll", "Ken Carson Tribute"), songsOf(got))
+    // Saying a lead word on the All tile picks that kind.
+    CarVoice.fixture = CarVoice.Outcome.Heard("lyrics rock n roll $tag")
+    asked.clear()
+    val lyr = children(b, "stype/all", timeout = 30)
+    assertEquals("lyrics", asked.last { it.optString("type") == "catalogSearch" }.getString("mode"))
+    assertEquals(listOf("Rock N Roll"), songsOf(lyr))
+  }
+
+  @Test fun aKindThatHeardNothingSaysSoAndOffersTheSearchButton() {
+    CarVoice.fixture = CarVoice.Outcome.NothingHeard
+    val b = connect()
+    val got = children(b, "stype/artists", timeout = 30)
+    assertEquals(listOf("Didn\u2019t catch that", "Tap the search button. ${CarSearchType.ARTISTS.hint}"), got.map { it.title.toString() })
+    assertTrue(got.none { it.isPlayable })
   }
 
   @Test fun identifyListensThenListsTheSongsThePhoneNamed() {

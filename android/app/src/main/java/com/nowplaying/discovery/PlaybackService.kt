@@ -123,6 +123,7 @@ class PlaybackService : MediaLibraryService() {
   private val startCatalogWeb = Runnable { catalog?.start() }
   /** The Identify run in progress or just finished, so the car asking twice does not listen twice. */
   private var identifyRun: Triple<Long, Int, ListenableFuture<List<MediaItem>>>? = null
+  private var voiceRun: Triple<Long, CarSearchType, ListenableFuture<List<MediaItem>>>? = null
   /** The host may ask for an old prefix's result after a newer query has arrived. */
   private val latestSearchByClient = java.util.concurrent.ConcurrentHashMap<String, String>()
   private fun searchClient(browser: MediaSession.ControllerInfo): String = "${browser.uid}:${browser.packageName}"
@@ -701,6 +702,51 @@ class PlaybackService : MediaLibraryService() {
     typeTile(id, t, if (t == type) "Showing now" else null, SHOW_ONLY)
   }
 
+  /**
+   * CAR-QUICK-SEARCH-001: a kind tapped on the Search tab beeps, listens for the driver's words with Android's speech
+   * recognizer (playback paused meanwhile), then lists what that kind of search finds. Android Auto asks for a folder's
+   * children more than once, so a run is reused for a few seconds rather than listening again.
+   */
+  private fun voiceItems(type: CarSearchType): ListenableFuture<List<MediaItem>> {
+    val now = android.os.SystemClock.elapsedRealtime()
+    voiceRun?.let { (at, t, f) -> if (t == type && (!f.isDone || now - at < VOICE_REUSE_MS)) return f }
+    val out = SettableFuture.create<List<MediaItem>>()
+    voiceRun = Triple(now, type, out)
+    val tapSearch = note(if (type == CarSearchType.ALL) "Tap the search button and say anything" else "Tap the search button. ${type.hint}", "${type.title} search is on")
+    val wasPlaying = player.isPlaying
+    if (wasPlaying) player.pause()
+    mainHandler.post {
+      CarVoice.listen(this) { heard ->
+        if (wasPlaying && !player.isPlaying) player.play()
+        when (heard) {
+          is CarVoice.Outcome.Heard -> {
+            val (kind, words) = CarSearch.parse(heard.words, type)
+            if (kind == CarSearchType.IDENTIFY) { out.setFuture(identifyItems()); return@listen }
+            if (words.isBlank()) { out.set(listOf(note("Didn\u2019t catch that", "Go back and tap ${type.title} to try again"))); return@listen }
+            CarSearch.lastWords = words
+            val said = note("You said \u201c$words\u201d", "${kind.title} \u00b7 tap a song to play it")
+            Futures.addCallback(typedResults(words, kind) { it.title }, object : FutureCallback<List<MediaItem>> {
+              override fun onSuccess(r: List<MediaItem>?) {
+                mainHandler.post {
+                  out.set(listOf(said) + r.orEmpty().ifEmpty { listOf(note("No ${kind.title.lowercase()} found for \u201c$words\u201d", "Go back and tap ${type.title} to try again")) })
+                }
+              }
+              override fun onFailure(error: Throwable) {
+                val why = generateSequence(error) { it.cause }.mapNotNull { it.message?.takeIf(String::isNotBlank) }.firstOrNull()?.take(120)
+                mainHandler.post { out.set(listOf(said, note("${kind.title} search didn\u2019t finish", why ?: "Try again in a moment"))) }
+              }
+            }, MoreExecutors.directExecutor())
+          }
+          CarVoice.Outcome.NoPermission -> out.set(listOf(note("jPlay can\u2019t use the microphone", "Allow microphone access for jPlay on your phone"), tapSearch))
+          CarVoice.Outcome.Unavailable -> out.set(listOf(tapSearch))
+          CarVoice.Outcome.NothingHeard -> out.set(listOf(note("Didn\u2019t catch that", "Go back and tap ${type.title} to try again, or tap the search button"), tapSearch))
+          is CarVoice.Outcome.Failed -> out.set(listOf(note("Couldn\u2019t listen", heard.why.take(120)), tapSearch))
+        }
+      }
+    }
+    return out
+  }
+
   /** Identify: listen to the music playing for a few seconds and name it with the phone's app. */
   private fun identifyItems(): ListenableFuture<List<MediaItem>> {
     val now = android.os.SystemClock.elapsedRealtime()
@@ -873,14 +919,10 @@ class PlaybackService : MediaLibraryService() {
           val type = CarSearchType.of(parentId.removePrefix(TYPE_PREFIX)) ?: return Futures.immediateFuture(LibraryResult.ofError(SessionError.ERROR_BAD_VALUE))
           radioSearchUntil = 0
           CarSearch.pick(type, android.os.SystemClock.elapsedRealtime())
-          val hint = note(if (type == CarSearchType.ALL) "Tap the search button and say anything" else "Tap the search button. ${type.hint}", "${type.title} search is on")
-          val last = CarSearch.lastWords
-          if (last.isNullOrBlank()) listOf(hint)
-          else return Futures.catching(
-            Futures.transform(typedResults(last, type) { it.title }, { r -> LibraryResult.ofItemList(ImmutableList.copyOf(page(listOf(hint) + r!!, page, pageSize)), params) }, MoreExecutors.directExecutor()),
-            Throwable::class.java, { LibraryResult.ofItemList(ImmutableList.of(hint), params) }, MoreExecutors.directExecutor(),
-          )
+          // CAR-QUICK-SEARCH-001: tapping a kind listens for the words at once and lists only that kind.
+          return Futures.transform(voiceItems(type), { LibraryResult.ofItemList(ImmutableList.copyOf(page(it!!, page, pageSize)), params) }, MoreExecutors.directExecutor())
         }
+
         // CAR-RESULTS-FIRST-001: the chooser row after a search's results opens the type tiles.
         parentId.startsWith(CHOOSE_PREFIX) -> {
           val rest = parentId.removePrefix(CHOOSE_PREFIX)
@@ -1278,6 +1320,7 @@ class PlaybackService : MediaLibraryService() {
     const val HINT_PREFIX = "hint/"
     const val SHOW_ONLY = "Show only"
     const val IDENTIFY_REUSE_MS = 15_000L
+    const val VOICE_REUSE_MS = 15_000L
     const val ACTION_STAR = "com.nowplaying.discovery.STAR"
     const val ACTION_DISLIKE = "com.nowplaying.discovery.DISLIKE"
     const val ACTION_SHUFFLE = "com.nowplaying.discovery.SHUFFLE"

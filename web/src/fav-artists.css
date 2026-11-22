@@ -16,15 +16,17 @@
 .fav-artists__mark { color: var(--accent); flex-shrink: 0; }
 .fav-artists__name { overflow-wrap: anywhere; }
 .btn.fav-artists__remove { min-width: 32px; min-height: 32px; padding: 0; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; }
-.fav-artists__add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
-.fav-artists__add .field { flex: 1 1 180px; min-width: 0; min-height: 36px; }
-.fav-artists__label { flex-basis: 100%; font-weight: 600; }
-.btn.fav-artists__submit { min-height: 36px; }
+.search__form.fav-artists__add { margin-top: 8px; }
+.fav-artists__found { margin-top: 8px; }
+.fav-artists__found > li.track.album-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 10px; }
+.fav-artists__found .track__text { flex: 1 1 0; min-width: 0; }
 @media (hover: hover) {
   .artist__star.artist__star[aria-pressed='false']:hover:not(:disabled) { background: #f4f3ef; }
   .artist__star.artist__star[aria-pressed='true']:hover:not(:disabled) { filter: brightness(1.1); }
   .btn.fav-artists__remove:hover { color: var(--accent); }
-  .btn.fav-artists__submit:hover:not(:disabled) { border-color: var(--accent); }
 }
 .iconbtn.list-save__go { width: 44px; height: 44px; padding: 0; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: #fff; box-shadow: inset 0 0 0 1px var(--hair); }
 .iconbtn.list-save__go svg { fill: var(--ink); }
+/* ACTIVE-ICON-001 (owner, 2026-11-22): "make the active icons white on windows and on android make the active icon the
+   same color blue as the active text". The tab's glyph takes the tab's own text colour when it is the active tab. */
+.side__item.is-on svg { fill: currentColor; }

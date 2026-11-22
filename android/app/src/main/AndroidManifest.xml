@@ -12,6 +12,12 @@
   <uses-permission android:name="android.permission.WAKE_LOCK" />
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <uses-feature android:name="android.hardware.microphone" android:required="false" />
+  <!-- CAR-QUICK-SEARCH-001: the car's Search tab tiles listen with the phone's speech recognizer. -->
+  <queries>
+    <intent>
+      <action android:name="android.speech.RecognitionService" />
+    </intent>
+  </queries>
 
   <application
     android:allowBackup="false"
