@@ -14,6 +14,7 @@ vi.mock('./engine/downloads', async orig => ({ ...await orig<typeof import('./en
 vi.mock('./engine/queue-audio', () => ({ queueAudio: {
   subscribe: () => () => {}, expiredKeys: () => new Set<string>(), cardOf: () => null,
   isReady: (t: Track) => shell.ready.has(t.key), readyUrl: (t: Track) => shell.ready.has(t.key) ? `/fixture/${t.key}` : null,
+  sourceHint: () => null,
 } }));
 vi.mock('./QueuePreparation', () => ({ QueuePreparation: () => null }));
 vi.mock('./ListDownloadBar', () => ({ ListDownloadBar: () => null, ListDownloadButton: () => null, ListFolderButton: () => null, ListLoadedNote: () => null }));

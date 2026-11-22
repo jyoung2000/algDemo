@@ -328,3 +328,16 @@ ul.radio-stations .radio-station__actions.song-actions .iconbtn.radio-station__s
  .iconbtn.radio-station__star[aria-pressed='true']:hover:not(:disabled),
  ul.radio-stations .radio-station__actions.song-actions .iconbtn.radio-station__star[aria-pressed='true']:hover:not(:disabled) { background:#1a62bb; }
 }
+/* RADIO-CONTROLS-CLEAR-001: the six station controls need one full-width row. At 384 CSS pixels, the old
+   2:1 split gave LIVE only two thirds of the width, colliding with the adjacent volume button. Artist,
+   playlist and download get a separate full-width row, including on narrower phones. */
+@media (max-width:760px) {
+ .np.radio-player { grid-template-columns:minmax(0,1fr); grid-template-areas:"main" "timeline" "controls" "side" "status" "lists"; }
+ .np.radio-player .radio-player__controls .radio-player__transport { flex:0 1 auto; justify-content:center; }
+ .np.radio-player .radio-player__transport .tbtn { flex:0 1 44px; width:44px; min-width:0; }
+ .np.radio-player .radio-player__transport .tbtn--main { flex-basis:48px; width:48px; }
+ .np.radio-player .radio-player__side { justify-content:center; gap:10px; }
+ .np.radio-player .radio-player__side .artist-heart,
+ .np.radio-player .radio-player__actions .radio-player__playlist,
+ .np.radio-player .radio-player__actions .radio-player__download { flex:0 0 44px; width:44px; min-width:44px; height:44px; }
+}

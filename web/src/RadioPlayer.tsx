@@ -3,10 +3,13 @@ import { api, type PlaylistSummary } from './api';
 import { favouriteStations, saveFavouriteStations, radioSession } from './engine/radio-client';
 import { GapWindow, radioErrorText, stationLocation, broadcastTimeline, radioClock as clock } from './engine/radio';
 import { Art } from './Art';
-import { Volume } from './Volume';
+import { PlayingArtistHeart } from './FavArtists';
+import { volumeStore } from './volume-store';
+import { VOLUME_MAX } from './engine/volume-boost';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { ShuffleGlyph } from './icons';
 import { engineSend } from './engine/native-engine';
+import { mediaNativeAvailable, setMediaHandlers } from './engine/media-native';
 import { GenreBubbleView } from './Results';
 import { TagStrip } from './TagStrip';
 import { radioTagBubbles } from './engine/display-tags';
@@ -16,19 +19,36 @@ import './radio.css';
 /** RADIO-BEHIND-TRUE-001: this much older than the newest audio received, after a pause or rewind, is behind live. */
 export const BEHIND_LIVE_S = 4;
 export function RadioPlayer({ docked = false, onOpenArtist, onPlaySong, onDownloadSong }: { docked?: boolean; onOpenArtist?: (target: RadioArtistTarget) => void; onPlaySong?: (t: NonNullable<ReturnType<typeof radioSession.get>['track']>) => void; onDownloadSong?: (t: NonNullable<ReturnType<typeof radioSession.get>['track']>) => Promise<unknown> } = {}) {
-  const r = useSyncExternalStore(radioSession.subscribe, radioSession.get); const [menu, setMenu] = useState(false), [lists, setLists] = useState<PlaylistSummary[]>([]), [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [volume, setVolume] = useState(1), [stationStar, setStationStar] = useState(false);
+  const r = useSyncExternalStore(radioSession.subscribe, radioSession.get); const [menu, setMenu] = useState(false), [lists, setLists] = useState<PlaylistSummary[]>([]), [message, setMessage] = useState(''), [busy, setBusy] = useState(false), [stationStar, setStationStar] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const lastVolume = useRef(1);
   const gaps = useRef(new GapWindow());
   useEffect(() => { gaps.current.reset(); }, [r.station?.id, r.timeshifted]);
-  const changeVolume = (next: number) => {
-    const v = Math.max(0, Math.min(1, next));
-    if (v > 0) lastVolume.current = v;
-    setVolume(v);
-    radioSession.volume(v); // Web Audio radio graph on Windows
-    engineSend({ op: 'settings', volume: v }); // native playback, including radio on Android
-  };
   const t = r.track, snap = r.snapshot, s = r.station;
+  // VOLUME-SETTINGS-001: the radio plays at the app's volume (set at the top of Settings); it had a level of its own
+  // that started at 100% each time and was not remembered.
+  const volume = useSyncExternalStore(volumeStore.subscribe, volumeStore.audible);
+  const sessionId = snap?.id ?? null, nativeRadio = !!snap?.native;
+  useEffect(() => { radioSession.volume(Math.min(1, volume)); }, [volume, sessionId]); // the Web Audio radio graph (Windows)
+  useEffect(() => {
+    // A new native radio session must receive the persisted setting even if the song player never mounted.
+    if (nativeRadio) engineSend({ op: 'settings', volume });
+  }, [nativeRadio, sessionId, volume]);
+  // The car's Volume button moves the app's level while the radio plays too.
+  useEffect(() => { if (mediaNativeAvailable()) setMediaHandlers({ volume: (v) => volumeStore.set(v) }); }, []);
+  useEffect(() => {
+    volumeStore.setLimits(nativeRadio ? VOLUME_MAX : 1, '');
+    return () => volumeStore.setLimits(VOLUME_MAX, '');
+  }, [nativeRadio]);
+  // PLAYER-ARTIST-HEART-001: the artists of the SONG on air. An identified song carries its own credits; otherwise the
+  // broadcaster's text is cleaned to the artist its own link opens, so the heart stars exactly the named artist.
+  // A programme (and a station's own genre tags) is not a song and never becomes a listener preference: pressing the
+  // heart is an explicit choice about an artist, not taste learned from the station.
+  // What is on air decides, not the track object: while an unidentified song plays, `track` is still the station's
+  // programme bookmark (kind 'radio-programme'), so reading its kind would disable the heart on every live song.
+  const heartArtists = (r.broadcast?.kind !== 'song' ? []
+    : r.identified && t?.kind !== 'radio-programme' ? (t?.artists?.length ? t.artists : [t?.artist])
+    : [radioArtistTarget(r.broadcast?.artist ?? null, null, null)?.name])
+    .filter((x): x is string => !!x);
   // Anchor the published item clock to the ring's sample clock once audio is arriving. Network
   // bursts must not make a paused playhead wobble, and no start is inferred if none was published.
   const audible = !!snap && snap.received > 0;
@@ -110,7 +130,7 @@ export function RadioPlayer({ docked = false, onOpenArtist, onPlaySong, onDownlo
     </div>
     </div>
     <div className="radio-player__side">
-      <Volume value={volume} muted={volume === 0} onChange={changeVolume} onToggleMute={() => changeVolume(volume === 0 ? lastVolume.current : 0)} />
+      <PlayingArtistHeart artists={heartArtists} variant="icon" />
       <div className="radio-player__actions"><button type="button" className="btn radio-player__playlist" aria-label="Add song to playlist" title="Add song to playlist" disabled={!t || !r.broadcast?.title} aria-expanded={menu} onClick={() => { setMenu(!menu); void api.playlists().then(v => setLists(v.lists)).catch(() => setMessage('Playlists could not be loaded')); }}><Glyph name="heart" size={16} /><span className="radio-player__playlist-label">Add song to playlist</span></button><button type="button" className="iconbtn radio-player__download" aria-busy={downloading} aria-label={r.identified && t && onDownloadSong ? 'Download current song' : 'Download radio recording'} disabled={downloading || !snap || snap.received <= snap.oldest} title={r.identified && onDownloadSong ? 'Download the full catalogue song to the folder chosen in Settings' : 'Save the retained audio for this item so far — a recording excerpt, not a complete programme'} onClick={async () => {
         setDownloading(true); setMessage('');
         const sessionId = snap?.id;

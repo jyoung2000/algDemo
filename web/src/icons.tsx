@@ -97,6 +97,21 @@ export function RepeatGlyph({ mode, size = 22 }: Props & { mode: 'off' | 'once' 
  * SIMILAR-ICON-001 (owner, 2026-11-19): "Find similar sound" as an icon. A note sending out sound
  * waves: "more that sounds like this". The same drawing as the car's button (car_similar.xml).
  */
+/**
+ * PLAYER-ARTIST-HEART-001: "heart the artist of the song playing". A person with a small heart, the same drawing as
+ * the car's Star the artist button (car_star_artist.xml), so it is not mistaken for the song's own heart beside it.
+ */
+export const ARTIST_HEART_PATH = 'M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z';
+export function ArtistHeartGlyph({ size = 16, on = false }: Props & { on?: boolean }) {
+  return (
+    <svg className="glyph glyph--stroke glyph--artist-heart" {...svg(size)} strokeWidth={1.8}>
+      <circle cx="9" cy="8.2" r="3.4" fill={on ? 'currentColor' : 'none'} />
+      <path d="M2.5 20a6.5 6.5 0 0 1 13 0" fill={on ? 'currentColor' : 'none'} />
+      <path d={ARTIST_HEART_PATH} transform="translate(13.6 1.6) scale(0.4)" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 export const SIMILAR_PATHS = ['M8.8 17.6V4.6c1.7.4 3.2 1.5 3.2 3.4', 'M15 9a4.2 4.2 0 0 1 0 6', 'M18.2 6.2a8 8 0 0 1 0 11.6'] as const;
 export function SimilarGlyph({ size = 16 }: Props) {
   return (

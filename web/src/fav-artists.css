@@ -31,3 +31,12 @@
 /* ACTIVE-ICON-001 (owner, 2026-11-22): "make the active icons white on windows and on android make the active icon the
    same color blue as the active text". The tab's glyph takes the tab's own text colour when it is the active tab. */
 .side__item.is-on svg { fill: currentColor; }
+/* PLAYER-ARTIST-HEART-001: the artist button is distinct from the song's own heart. */
+.artist-heart { display:inline-grid; place-items:center; flex:0 0 44px; width:44px; min-width:44px; height:44px; min-height:44px; padding:0; border:0; border-radius:999px; color:var(--ink); background:transparent; cursor:pointer; }
+.artist-heart__disc { display:grid; place-items:center; width:36px; height:36px; border-radius:999px; }
+.artist-heart[aria-pressed='true'] .artist-heart__disc { background:var(--accent); color:#fff; }
+.artist-heart:disabled { opacity:.45; cursor:default; }
+@media (hover:hover) {
+ .artist-heart:hover:not(:disabled) .artist-heart__disc { background:#f4f3ef; }
+ .artist-heart[aria-pressed='true']:hover:not(:disabled) .artist-heart__disc { background:#1a62bb; }
+}

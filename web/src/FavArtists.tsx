@@ -8,6 +8,7 @@ import { api, type ArtistSummary } from './api';
 import { Art } from './Art';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import { favArtistsStore } from './fav-artists-store';
+import { ArtistHeartGlyph } from './icons';
 import './fav-artists.css';
 
 const useStarred = (name: string): boolean => useSyncExternalStore(favArtistsStore.subscribe, () => favArtistsStore.has(name));
@@ -33,6 +34,40 @@ export function ArtistStarButton({ artist, row = false }: { artist: { id: string
       title={starred ? `Starred: Find my next favorite takes ${artist.name} into account` : `Star ${artist.name}`}
       onClick={() => void toggle()}>
       <Glyph name={starred ? 'heart-filled' : 'heart'} size={16} />
+    </button>
+  );
+}
+
+/**
+ * PLAYER-ARTIST-HEART-001 (owner, 2026-11-22): in the player, where the volume was, "a button and icon to heart the
+ * current playing artist on the song and add them to your listening algorithim". One press stars every artist
+ * credited on what is playing (the active algorithm's starred artists, which discovery takes into account); it shows
+ * as on once all of them are starred, and a press then takes them off again.
+ */
+export function PlayingArtistHeart({ artists, variant = 'quiet' }: { artists: readonly string[]; variant?: 'quiet' | 'icon' }) {
+  const names = artists.map((n) => n.trim()).filter(Boolean);
+  const sig = names.join('\n');
+  // A primitive, as useSyncExternalStore needs: true once every artist of the song is starred.
+  const starred = useSyncExternalStore(favArtistsStore.subscribe, () => names.length > 0 && names.every((n) => favArtistsStore.has(n)));
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setBusy(false); }, [sig]);
+  const toggle = async () => {
+    if (busy || !names.length) return;
+    setBusy(true);
+    try {
+      if (starred) for (const n of names) await favArtistsStore.remove(n);
+      else for (const n of names) if (!favArtistsStore.has(n)) await favArtistsStore.add({ name: n });
+    } catch { /* the heart keeps its last known state */ } finally { setBusy(false); }
+  };
+  const who = names.join(', ');
+  const label = !names.length ? 'Star the artist: no artist is known for what is playing'
+    : starred ? `Unstar ${who}`
+    : `Star ${who}: your discovery takes ${names.length === 1 ? 'this artist' : 'these artists'} into account`;
+  return (
+    <button type="button" className={`${variant === 'icon' ? 'iconbtn' : 'quiet-control'} artist-heart`} aria-pressed={starred} disabled={busy || !names.length}
+      aria-label={label} title={!names.length ? 'No artist known' : starred ? `Starred: Find my next favorite takes ${who} into account` : `Star ${who}`}
+      onClick={() => void toggle()}>
+      <span className="artist-heart__disc"><ArtistHeartGlyph size={17} on={starred} /></span>
     </button>
   );
 }

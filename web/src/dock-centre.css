@@ -22,7 +22,7 @@
   .np.np--docked .np__controls--centred > .np__ctl-side > .np__track-actions { display: contents; }
   .np.np--docked .np__controls--centred > .np__ctl-side .tbtn,
   .np.np--docked .np__controls--centred > .np__ctl-side .np__track-actions > button,
-  .np.np--docked .np__controls--centred > .np__ctl-side > .vol {
+  .np.np--docked .np__controls--centred > .np__ctl-side > .artist-heart {
     flex: 0 1 44px;
     width: auto;
     min-width: 0;
@@ -32,8 +32,7 @@
     margin: 0;
     order: 0;
   }
-  .np.np--docked .np__controls--centred > .np__ctl-side > .vol { display: flex; justify-content: center; }
-  .np.np--docked .np__controls--centred > .np__ctl-side > .vol .vol__btn { width: 100%; min-width: 0; max-width: 44px; }
+  .np.np--docked .np__controls--centred > .np__ctl-side > .artist-heart { display: grid; place-items: center; }
   .np.np--docked .np__controls--centred > .np__ctl-mid {
     display: flex;
     align-items: center;

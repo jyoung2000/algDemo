@@ -209,29 +209,50 @@ describe('song title opens the real song (RADIO-UI-008)', () => {
 });
 
 describe('inline radio action icons (RADIO-UI-011)', () => {
-  it('stacks the radio timeline and centred transport like the song player, with actions and speaker in a side cluster', async () => {
+  it('stacks the radio timeline and centred transport, with artist heart and actions on their own row', async () => {
     await render();
     const player = host.querySelector('.radio-player')!;
     expect(player.querySelector('.radio-player__timeline')).not.toBeNull();
     expect(player.querySelector('.radio-player__controls > .transport')).not.toBeNull();
     expect(player.querySelector('.radio-player__side > .radio-player__actions')).not.toBeNull();
-    expect(player.querySelector('.radio-player__side > .vol')).not.toBeNull();
+    expect(player.querySelector('.radio-player__side > .artist-heart')).not.toBeNull();
+    expect(player.querySelector('.radio-player__side > .vol')).toBeNull();
     expect(player.querySelector('.radio-player__side')?.textContent).not.toContain('Volume');
   });
 
-  it('uses the music player speaker control: a double tap mutes, unmutes and restores the last chosen level (VOLUME-POP-001)', async () => {
+  it('does not put volume back in the radio dock: the app-wide control is in Settings', async () => {
     await render();
-    const speaker = host.querySelector<HTMLButtonElement>('.vol__btn')!;
-    expect(speaker).not.toBeNull();
-    expect(speaker.getAttribute('aria-label')).toMatch(/double tap to mute/);
-    await act(async () => { speaker.click(); speaker.click(); });
-    expect(f.volume).toHaveBeenLastCalledWith(0);
-    expect(speaker.getAttribute('aria-label')).toMatch(/double tap to unmute/);
-    await act(async () => { speaker.click(); speaker.click(); });
-    expect(f.volume).toHaveBeenLastCalledWith(1);
-    // A single tap opens the slider.
-    await act(async () => { speaker.click(); await new Promise((r) => setTimeout(r, 350)); });
-    expect(host.querySelector<HTMLInputElement>('.vol__bar')?.getAttribute('aria-label')).toBe('Volume');
+    expect(host.querySelector('.vol__btn')).toBeNull();
+    expect(host.querySelector('.radio-player__side > .artist-heart')).not.toBeNull();
+  });
+
+  // PLAYER-ARTIST-HEART-001 on radio: the heart stars the artist of the SONG on air, named as the player's own artist
+  // link names it. A programme is not a song, so there is nothing to star (and station tags never teach taste).
+  it('stars the on-air song\u2019s artist, and has none to star during a programme', async () => {
+    await render();
+    const heart = () => host.querySelector<HTMLButtonElement>('.artist-heart')!;
+    expect(heart().disabled).toBe(true);
+    expect(heart().getAttribute('aria-label')).toBe('Star the artist: no artist is known for what is playing');
+
+    f.state = { ...f.state, broadcast: { state: 'current', kind: 'song', title: 'Stack-A-Lee', artist: 'Archibald feat. Dave Bartholomew', source: 'Broadcaster ICY', checkedAt: NOW } as RadioState['broadcast'] };
+    await render();
+    expect(heart().disabled).toBe(false);
+    expect(heart().getAttribute('aria-label')).toBe('Star Archibald: your discovery takes this artist into account');
+
+    f.state = { ...f.state, identified: true, track: { key: 'song', title: 'Stack-A-Lee', artists: ['Archibald', 'Dave Bartholomew'] } as RadioState['track'] };
+    await render();
+    expect(heart().getAttribute('aria-label')).toBe('Star Archibald, Dave Bartholomew: your discovery takes these artists into account');
+
+    // Back to a programme: nothing to star, even though the bookmark track still names the station.
+    f.state = { ...f.state, identified: false, broadcast: { state: 'current', kind: 'programme', title: 'Evening programme', artist: null, source: 'Broadcaster schedule', checkedAt: NOW } as RadioState['broadcast'], track: { key: 'radio:world:evening', title: 'Evening programme', kind: 'radio-programme', artist: 'World radio', artists: [] } as unknown as RadioState['track'] };
+    await render();
+    expect(heart().disabled).toBe(true);
+
+    // A live song whose track object is still the station's programme bookmark: the on-air artist is starrable.
+    f.state = { ...f.state, broadcast: { state: 'current', kind: 'song', title: 'Stagolee', artist: 'Beck', source: 'Broadcaster ICY', checkedAt: NOW } as RadioState['broadcast'] };
+    await render();
+    expect(heart().disabled).toBe(false);
+    expect(heart().getAttribute('aria-label')).toBe('Star Beck: your discovery takes this artist into account');
   });
 
   it('adds a star to the playlist action and makes download icon-only without losing its accessible name', async () => {

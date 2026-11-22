@@ -1,0 +1,44 @@
+/* VOLUME-SETTINGS-001 (owner, 2026-11-22): the app's volume at the top of Settings: mute, then the slider across the
+   rest of the row. The slider is the Settings dial; past 100% (the tick) the fill turns amber (VOLUME-BOOST-001). */
+.volset__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.iconbtn.volset__mute {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+@media (hover: hover) {
+  .iconbtn.volset__mute:hover:not(:disabled) { background: #f4f3ef; }
+}
+.iconbtn.volset__mute[aria-pressed='true'] { color: var(--accent); }
+.discovery-settings .volset__dial {
+  position: relative;
+  flex: 1 1 auto;
+  width: auto;
+}
+.volset__mark {
+  position: absolute;
+  left: var(--at, 50%);
+  top: 50%;
+  width: 2px;
+  height: 14px;
+  margin: -7px 0 0 -1px;
+  border-radius: 1px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 45%);
+  pointer-events: none;
+}
+.volset.is-boosted .volset__n { color: #b4610a; font-weight: 600; }
+.discovery-settings .volset.is-boosted .volset__dial input,
+.volset.is-boosted .volset__dial input[type='range'] {
+  background: linear-gradient(to right, #0071e3 var(--at, 50%), #e8890c var(--at, 50%) var(--pct, 0%), #dcdcd8 var(--pct, 0%)) center / 100% 6px no-repeat;
+  background-clip: content-box;
+}
+.volset__dial input:disabled { opacity: 0.45; cursor: default; }
