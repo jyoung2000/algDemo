@@ -379,14 +379,14 @@ export function ProfileView() {
           <h2 id="pf-fb">Artists, albums and songs</h2>
           <p className="note">Feedback scores. A song carries its own score; half of it also goes to the artist. One skip never marks an artist, three skipped songs do. An album counts once you play two or more of its songs, and lifts the rest of it.</p>
           {p.artists.length > 0 && (
-            <table className="ptable">
+            <table className="ptable ptable--scores">
               <caption>Artists</caption>
               <tbody>
                 {p.artists.slice(0, 20).map((a) => (
                   <tr key={a.name}>
                     <th scope="row">
-                      {a.name}
-                      {a.liked && <span className="fact">favourite</span>}
+                      <span className="ptable__title">{a.name}</span>
+                      {a.liked && <span className="ptable__facts"><span className="fact">favourite</span></span>}
                     </th>
                     <td className="ptable__bar">
                       <div className="pcell">
@@ -400,7 +400,7 @@ export function ProfileView() {
             </table>
           )}
           {albums.length > 0 && (
-            <table className="ptable">
+            <table className="ptable ptable--scores">
               <caption>Albums</caption>
               <tbody>
                 {albums.slice(0, 12).map((a) => (
@@ -421,7 +421,7 @@ export function ProfileView() {
             </table>
           )}
           {p.songs.length > 0 && (
-            <table className="ptable">
+            <table className="ptable ptable--scores">
               <caption>Songs</caption>
               <tbody>
                 {p.songs.slice(0, 25).map((s) => (
@@ -429,8 +429,12 @@ export function ProfileView() {
                     <th scope="row">
                       <span className="ptable__title">{s.title}</span>
                       <span className="ptable__sub">{s.artist}</span>
-                      {s.excluded && <span className="fact">never suggested again</span>}
-                      {s.hidden && <span className="fact">hidden for 30 days</span>}
+                      {(s.excluded || s.hidden) && (
+                        <span className="ptable__facts">
+                          {s.excluded && <span className="fact">never suggested again</span>}
+                          {s.hidden && <span className="fact">hidden for 30 days</span>}
+                        </span>
+                      )}
                     </th>
                     <td className="ptable__bar">
                       <div className="pcell">

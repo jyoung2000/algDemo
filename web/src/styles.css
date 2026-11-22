@@ -2335,6 +2335,25 @@ a.push {
   flex-wrap: wrap;
   gap: 4px;
 }
+/* PROFILE-ALIGN-001 (owner, 2026-11-22): "ensure the numbers and ui on the profile tab artist, albums, and songs
+   sections are aligned properly". The three score tables share one fixed column plan, so a long song title can no
+   longer widen the Songs table past its card: every bar starts and every number ends at the same place in all three. */
+.ptable--scores {
+  table-layout: fixed;
+  width: 100%;
+}
+.ptable--scores tbody th {
+  width: auto;
+}
+.ptable--scores .ptable__bar {
+  width: 46%;
+}
+.ptable--scores tbody th .ptable__facts {
+  margin-top: 3px;
+}
+.ptable--scores tbody th .fact {
+  margin-left: 0;
+}
 .ptable .num {
   display: inline-block;
   min-width: 3.2em;
@@ -2445,6 +2464,9 @@ a.push {
 @media (max-width: 480px) {
   /* On a phone the bar column takes the room the other columns leave, so a bar stays readable. */
   .ptable__bar {
+    width: 52%;
+  }
+  .ptable--scores .ptable__bar {
     width: 52%;
   }
   .pcell {

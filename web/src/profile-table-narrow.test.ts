@@ -36,3 +36,20 @@ describe('the profile tables on a narrow phone (PROFILE-NARROW-001)', () => {
     for (let i = 1; i < rules.length; i++) expect(rules[i]!.upTo).toBeLessThanOrEqual(rules[i - 1]!.upTo);
   });
 });
+
+// PROFILE-ALIGN-001 (owner, 2026-11-22): "ensure the numbers and ui on the profile tab artist, albums, and songs
+// sections are aligned properly". On a 412 px phone the Songs table grew to 387 px in a 362 px card (auto layout
+// took a long title's width), so its bars started 60 px right of the Artists and Albums bars and its numbers left
+// the card. The three tables now share one fixed column plan.
+describe('the profile score tables line up', () => {
+  const profile = readFileSync(new URL('./Profile.tsx', import.meta.url), 'utf8');
+  it('marks Artists, Albums and Songs as score tables', () => {
+    for (const cap of ['Artists', 'Albums', 'Songs']) {
+      expect(profile).toMatch(new RegExp(`<table className="ptable ptable--scores">\\s*<caption>${cap}</caption>`));
+    }
+  });
+  it('gives them a fixed layout and the same bar column', () => {
+    expect(css).toMatch(/\.ptable--scores \{\s*table-layout: fixed;\s*width: 100%;/);
+    expect(css).toMatch(/\.ptable--scores \.ptable__bar \{\s*width: 46%;/);
+  });
+});
