@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Track } from '../api';
 import { QueuePreloader } from './queue-preload';
-import { RemoteQueue } from './queue-remote';
+import { RemoteQueue, WATCH_BUSY_MS, WATCH_IDLE_MS, type WatchTimer } from './queue-remote';
 import { CarSources, ServiceActor, type CarContext } from './service-actor';
 import { nativeApiBridge, ServiceClient, ServiceError, type Scheduler } from './service-client';
 
@@ -211,6 +211,54 @@ describe('ServiceActor', () => {
 });
 
 describe('RemoteQueue', () => {
+  // PLAY-PASSIVE-001 (owner, 2026-11-22): "The play button doesnt passively update from black to blue".
+  it('keeps asking the service about the songs it prepares while a screen listens, so a finished song turns ready by itself', async () => {
+    const timers: { fn: () => void; ms: number }[] = [];
+    const timer: WatchTimer = { set: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clear: () => undefined };
+    const facts = (status: string) => ({ status, blocked: false, inTarget: true, error: null, givenUp: false });
+    let held: 'running' | 'ready' = 'running';
+    const request = vi.fn(async (_m: string, path: string) => ({
+      status: 200,
+      body: { all: { total: 1, ready: held === 'ready' ? 1 : 0, active: held === 'ready' ? 0 : 1, failed: 0, blocked: false, queued: 0, parallel: 2, bulkActive: false, retrying: 0 }, ...(path.endsWith('/snapshot') ? { counts: null } : {}) },
+      cacheSnapshot: { tracks: [{ key: 'a', source: 'https://s/a', ready: held === 'ready' ? 'https://s/a' : null, facts: facts(held) }], expired: [] },
+    }));
+    const q = new RemoteQueue({ request }, () => 0, timer);
+    const listener = vi.fn();
+    const off = q.subscribe(listener);
+    q.update([track('a')]);
+    await vi.waitFor(() => expect(q.cardOf('a', { kept: false, percent: null }).state).not.toBe('unknown'));
+    expect(q.isReady(track('a'))).toBe(false);
+    // The service finishes the file without the page asking anything.
+    held = 'ready';
+    expect(timers.length).toBe(1);
+    timers.shift()!.fn();
+    await vi.waitFor(() => expect(q.isReady(track('a'))).toBe(true));
+    expect(request).toHaveBeenLastCalledWith('POST', '/_native/queue/snapshot', { tracks: [track('a')] });
+    expect(q.cardOf('a', { kept: false, percent: null }).state).toBe('ready');
+    expect(listener).toHaveBeenCalled();
+    // Nothing moving: it asks again only rarely; nobody listening: it stops.
+    await vi.waitFor(() => expect(timers.length).toBe(1));
+    expect(timers[0]!.ms).toBe(WATCH_IDLE_MS);
+    off();
+    const n = request.mock.calls.length;
+    timers.shift()!.fn();
+    await Promise.resolve();
+    expect(request.mock.calls.length).toBe(n);
+  });
+
+  it('asks often while the service is moving files', async () => {
+    const timers: { fn: () => void; ms: number }[] = [];
+    const timer: WatchTimer = { set: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clear: () => undefined };
+    const request = vi.fn(async () => ({ status: 200, body: { all: { total: 1, ready: 0, active: 1, failed: 0, blocked: false, queued: 0, parallel: 2, bulkActive: false, retrying: 0 } },
+      cacheSnapshot: { tracks: [{ key: 'a', source: null, ready: null, facts: { status: 'running', blocked: false, inTarget: true, error: null, givenUp: false } }], expired: [] } }));
+    const q = new RemoteQueue({ request }, () => 0, timer);
+    q.subscribe(() => undefined);
+    q.update([track('a')]);
+    timers.shift()!.fn();
+    await vi.waitFor(() => expect(timers.length).toBe(1));
+    expect(timers[0]!.ms).toBe(WATCH_BUSY_MS);
+  });
+
   it('reports nothing ready until the service answers, then exactly what it reported', async () => {
     let resolve!: (v: { status: number; body: unknown; cacheSnapshot?: unknown }) => void;
     const request = vi.fn(() => new Promise<{ status: number; body: unknown; cacheSnapshot?: unknown }>(r => { resolve = r; }));

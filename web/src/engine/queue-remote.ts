@@ -51,6 +51,18 @@ function validCounts(v: unknown): QueueCacheStatus | null {
 
 const signature = (tracks: readonly Track[]) => [...new Set(tracks.map(t => t.key))].join('\n');
 const REFRESH_MS = 1000;
+/**
+ * PLAY-PASSIVE-001 (owner, 2026-11-22): "The play button doesnt passively update from black to blue". The service
+ * caches the queue by itself, but this view only heard about it when the page asked something, so a song the loader
+ * finished stayed black until the listener touched the screen. While a screen is listening, the view now asks the
+ * service about the songs it is preparing: often while files are moving, rarely when nothing is.
+ */
+export const WATCH_BUSY_MS = 1500;
+export const WATCH_IDLE_MS = 6000;
+const WATCH_MAX = 500;
+
+export interface WatchTimer { set(fn: () => void, ms: number): unknown; clear(h: unknown): void }
+const realTimer: WatchTimer = { set: (fn, ms) => setTimeout(fn, ms), clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) };
 
 export class RemoteQueue implements QueueAudioPort {
   private readonly dtos = new Map<string, TrackCacheDto>();
@@ -60,15 +72,24 @@ export class RemoteQueue implements QueueAudioPort {
   private expired = new Set<string>();
   private readonly listeners = new Set<() => void>();
   private disposed = false;
+  /** The songs this page asked the service to prepare (or to look up): the ones a screen can show turning blue. */
+  private watched: Track[] = [];
+  private watchHandle: unknown = null;
+  private watchBusy = false;
 
-  constructor(private readonly client: Pick<ServiceClient, 'request'>, private readonly now: () => number = Date.now) {}
+  constructor(private readonly client: Pick<ServiceClient, 'request'>, private readonly now: () => number = Date.now,
+    private readonly timer: WatchTimer = realTimer) {}
 
-  subscribe(fn: () => void): () => void { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
+  subscribe(fn: () => void): () => void {
+    this.listeners.add(fn);
+    this.watch();
+    return () => { this.listeners.delete(fn); if (!this.listeners.size) this.unwatch(); };
+  }
   sourceHint(track: Track): string | null { return this.dtos.get(track.key)?.source ?? null; }
   readyUrl(track: Track): string | null { return this.dtos.get(track.key)?.ready ?? null; }
   isReady(track: Track): boolean { return this.readyUrl(track) !== null; }
   /** SHUFFLE-START-001: have the service find out what it holds of this list; its answer says. */
-  async look(tracks: readonly Track[]): Promise<void> { await this.send('look', { tracks }); }
+  async look(tracks: readonly Track[]): Promise<void> { this.remember(tracks, false); await this.send('look', { tracks }); }
   expiredKeys(): ReadonlySet<string> { return this.expired; }
 
   snapshot(): QueueCacheStatus {
@@ -92,7 +113,7 @@ export class RemoteQueue implements QueueAudioPort {
   }
 
   downloadAll(tracks: readonly Track[]): void { void this.send('download-all', { tracks }).catch(() => undefined); }
-  update(tracks: readonly Track[]): void { void this.send('update', { tracks }).catch(() => undefined); }
+  update(tracks: readonly Track[]): void { this.remember(tracks, true); void this.send('update', { tracks }).catch(() => undefined); }
   protect(gb: number, urls: string[]): Promise<unknown> { return this.send('protect', { gb, urls }); }
   limits(o: Parameters<QueuePreloader['limits']>[0]): Promise<unknown> { return this.send('limits', o); }
   retryFailed(): void { void this.send('retry', {}).catch(() => undefined); }
@@ -106,6 +127,43 @@ export class RemoteQueue implements QueueAudioPort {
   dispose(): void {
     this.disposed = true;
     this.listeners.clear();
+    this.unwatch();
+  }
+
+  /**
+   * PLAY-PASSIVE-001: the list to keep asking about. A new prepared list replaces the old one; songs only looked up
+   * stay beside it until they are ready. Newest last, within the cap.
+   */
+  private remember(tracks: readonly Track[], prepared: boolean): void {
+    const keep = prepared ? this.watched.filter(t => !this.isReady(t)) : this.watched;
+    const seen = new Set<string>();
+    const merged: Track[] = [];
+    for (const t of prepared ? [...tracks, ...keep] : [...keep, ...tracks]) {
+      if (!t?.key || seen.has(t.key)) continue;
+      seen.add(t.key); merged.push(t);
+    }
+    this.watched = merged.slice(0, WATCH_MAX);
+    this.watch();
+  }
+
+  private watch(): void {
+    if (this.disposed || this.watchHandle !== null || !this.listeners.size || !this.watched.length) return;
+    this.watchHandle = this.timer.set(() => void this.tick(), this.watchBusy ? WATCH_BUSY_MS : WATCH_IDLE_MS);
+  }
+
+  private unwatch(): void {
+    if (this.watchHandle !== null) this.timer.clear(this.watchHandle);
+    this.watchHandle = null;
+  }
+
+  private async tick(): Promise<void> {
+    this.watchHandle = null;
+    if (this.disposed || !this.listeners.size || !this.watched.length) return;
+    const list = this.watched;
+    try { await this.send('snapshot', { tracks: list }, signature(list)); } catch { /* the next tick asks again */ }
+    const a = this.all;
+    this.watchBusy = !!a && (a.active > 0 || a.queued > 0 || a.retrying > 0) && list.some(t => !this.isReady(t));
+    this.watch();
   }
 
   private async send(op: string, body: unknown, sig?: string): Promise<unknown> {
