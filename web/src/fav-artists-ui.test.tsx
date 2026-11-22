@@ -76,7 +76,7 @@ describe('starring an artist (ARTIST-FAV-001)', () => {
     expect(btn.getAttribute('aria-pressed')).toBe('true');
     expect(btn.innerHTML).not.toBe(outline); // the filled star
     const css = readFileSync(`${process.cwd()}/src/fav-artists.css`, 'utf8');
-    expect(css).toMatch(/\.artist__star\[aria-pressed='false'\][^{]*\{[^}]*background:\s*#fff[^}]*color:\s*var\(--ink\)[^}]*box-shadow:\s*inset 0 0 0 1\.5px var\(--ink\)/);
+    expect(css).toMatch(/\.artist__star\[aria-pressed='false'\][^{]*\{[^}]*background:\s*#fff[^}]*color:\s*var\(--ink\)[^}]*box-shadow:\s*inset 0 0 0 1px var\(--hair\)/);
     expect(css).toMatch(/\.artist__star\[aria-pressed='true'\][^{]*\{[^}]*background:\s*var\(--accent\)[^}]*color:\s*#fff/);
   });
 

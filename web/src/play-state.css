@@ -1,15 +1,17 @@
-/* PLAY-LIVE-001 / ALBUM-PLAY-STATE-001 / PLAY-RING-BLACK-001 (owner, 2026-11-21): "Change the blue ring around the
-   undownloaded play button to be black ring and have the download progress make the outline ring get thicker from
-   left to right, same with the album and artist play buttons".
-   A Play button for something still to download is black and white: a thin black outline, and over it a thicker
-   black ring revealed from the left edge to the right as far as the real download progress (--dl, 0-100): a song's
-   own download, or the share of a list's songs on this device. Ready is a solid blue disc with a white arrow
-   (row-play.css); a list turns blue once every song is downloaded. The rings sit inside the button's own box, so
-   nothing moves when they appear or go. */
+/* PLAY-LIVE-001 / ALBUM-PLAY-STATE-001 / PLAY-RING-002 (owner, 2026-11-22): "Make the starting outline for the play
+   button and the artist star button the same color and thickness as the icons here ... the download ring shouldnt
+   spin it should grow from right to left until the circle is complete representing a full download, then ensure the
+   play button inside the blue play button is white".
+   Still to download: white, black arrow, and the same 1px light outline as the row's download / queue / star icons.
+   As the real download progress (--dl, 0-100) rises, a thicker black ring is revealed from the right edge towards the
+   left until it is a complete circle; an unknown percent shows no ring yet (0), and nothing ever spins. A song's own
+   download fills its ring; a list's ring is the share of its songs on this device. Ready is a solid blue disc with a
+   white arrow; a list turns blue once every song is downloaded. The rings sit inside the button's own box, so nothing
+   moves when they appear or go. */
 .iconbtn.playbtn.playbtn[data-progress='true'],
-button.listplay.listplay[data-progress='true'] {
+button.listplay.listplay:not([data-ready='true']) {
   position: relative;
-  box-shadow: inset 0 0 0 1.5px var(--ink);
+  box-shadow: inset 0 0 0 1px var(--hair);
 }
 .iconbtn.playbtn.playbtn[data-progress='true'] {
   background-color: #fff;
@@ -21,24 +23,20 @@ button.listplay[data-progress='true']::before {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  padding: 4px;
+  padding: 3px;
   pointer-events: none;
   background: var(--ink);
-  clip-path: inset(0 calc(100% - var(--dl, 0) * 1%) 0 0);
+  clip-path: inset(0 0 0 calc(100% - var(--dl, 0) * 1%));
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
 }
-/* Downloading with no percent reported yet: a thick black quarter arc goes round, never a made-up number. */
-.iconbtn.playbtn[data-progress='true'][data-moving='true']::before {
-  background: conic-gradient(var(--ink) 0 25%, transparent 0);
-  clip-path: none;
-  animation: playbtn-ring 1.1s linear infinite;
-}
-@keyframes playbtn-ring { to { transform: rotate(1turn); } }
-@media (prefers-reduced-motion: reduce) {
-  .iconbtn.playbtn[data-progress='true'][data-moving='true']::before { animation: none; }
-}
+/* The glyphs carry no colour of their own (they draw black): these take the button's, so an arrow on blue is white.
+   PLAYER-MAIN-WHITE-001: the same for the player's and the radio player's main play/pause button on every tab. */
+.tbtn.tbtn--main svg { fill: currentColor; }
+.iconbtn.playbtn svg,
+button.listplay svg,
+.artist__star svg { fill: currentColor; }
 
 /* A list's Play button: black and white until every song is on this device, then the blue main-action fill. */
 button.listplay.listplay:not([data-ready='true']) {

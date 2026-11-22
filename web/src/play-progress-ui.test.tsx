@@ -49,20 +49,28 @@ describe('a song’s Play button shows its download (PLAY-LIVE-001)', () => {
     const css = readFileSync(`${process.cwd()}/src/row-play.css`, 'utf8');
     expect(css).toMatch(/\.iconbtn\.playbtn\[data-ready='true'\]\s*\{[^}]*background:\s*var\(--accent\)[^}]*color:\s*#fff/);
   });
-  // PLAY-RING-BLACK-001 (owner, 2026-11-21): "Change the blue ring around the undownloaded play button to be black ring
-  // and have the download progress make the outline ring get thicker from left to right, same with the album and
-  // artist play buttons".
-  it('a song still to download has a thin black ring that grows thicker from left to right with its download', () => {
+  // PLAY-RING-002 (owner, 2026-11-22): "Make the starting outline for the play button and the artist star button the
+  // same color and thickness as the icons here ... the download ring shouldnt spin it should grow from right to left
+  // until the circle is complete ... ensure the play button in side the blue play button is white".
+  it('starts with the row icons\u2019 own 1px outline, and a black ring grows from right to left with the download', () => {
     const css = readFileSync(`${process.cwd()}/src/play-state.css`, 'utf8');
-    const thin = /\.iconbtn\.playbtn\.playbtn\[data-progress='true'\],\s*button\.listplay\.listplay\[data-progress='true'\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
-    expect(thin).toMatch(/box-shadow:\s*inset 0 0 0 1\.5px var\(--ink\)/);
-    const thick = /\[data-progress='true'\]::before\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
-    expect(thick).toMatch(/background:\s*var\(--ink\)/);
-    expect(thick).toMatch(/padding:\s*4px/);
-    expect(thick).toMatch(/clip-path:\s*inset\(0 calc\(100% - var\(--dl, 0\) \* 1%\) 0 0\)/);
-    // No blue anywhere in a ring: blue is kept for ready.
-    expect(css.split('/* A list').shift()!.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/--accent|31, 111, 209/);
-    expect(/\.iconbtn\.playbtn\.playbtn\[data-progress='true'\]\s*\{[^}]*color:\s*var\(--ink\)/.test(css)).toBe(true);
+    const thin = /\.iconbtn\.playbtn\.playbtn\[data-progress='true'\],\s*button\.listplay\.listplay:not\(\[data-ready='true'\]\)\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(thin).toMatch(/box-shadow:\s*inset 0 0 0 1px var\(--hair\)/);
+    const ring = /\[data-progress='true'\]::before\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    expect(ring).toMatch(/background:\s*var\(--ink\)/);
+    expect(ring).toMatch(/clip-path:\s*inset\(0 0 0 calc\(100% - var\(--dl, 0\) \* 1%\)\)/);
+    expect(css.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/animation|@keyframes|rotate/);
+  });
+  // PLAYER-MAIN-WHITE-001 (owner, 2026-11-22): "the play and pause button on the radio, saved, and discover [tabs] need to
+  // be white filled whenever blue". The player's and the radio player's main button share .tbtn--main.
+  it('the player\u2019s blue play/pause button draws its glyph in its own white', () => {
+    const css = readFileSync(`${process.cwd()}/src/play-state.css`, 'utf8');
+    expect(css).toMatch(/\.tbtn\.tbtn--main svg[^{]*\{\s*fill:\s*currentColor;?\s*\}/);
+    for (const f of ['Player.tsx', 'RadioPlayer.tsx']) expect(readFileSync(`${process.cwd()}/src/${f}`, 'utf8')).toMatch(/className="tbtn tbtn--main"/);
+  });
+  it('the arrow in a blue Play button is white', () => {
+    const css = readFileSync(`${process.cwd()}/src/play-state.css`, 'utf8');
+    expect(css).toMatch(/\.iconbtn\.playbtn svg,\s*button\.listplay svg,\s*\.artist__star svg\s*\{\s*fill:\s*currentColor;?\s*\}/);
   });
 });
 
@@ -85,8 +93,7 @@ describe('a list’s Play button is blue only when every song is downloaded (ALB
     expect(artist.match(/<ListPlayButton/g)?.length).toBe(2);
     const css = readFileSync(`${process.cwd()}/src/play-state.css`, 'utf8');
     expect(css).toMatch(/\.listplay:not\(\[data-ready='true'\]\)\s*\{[^}]*background:\s*#fff[^}]*color:\s*var\(--ink\)/);
-    // The artist's Play and its most played Play wear the same black outline (PLAY-RING-BLACK-001).
-    expect(css).not.toMatch(/inset 0 0 0 1px var\(--hair\)/);
+
   });
 });
 

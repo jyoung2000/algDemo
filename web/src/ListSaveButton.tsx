@@ -13,7 +13,7 @@ const songs = (n: number) => `${n} ${n === 1 ? 'song' : 'songs'}`;
  * or album into a folder of its own; the folder button beside it opens that folder. The run belongs to
  * the app, not this button, so it carries on when the screen changes.
  */
-export function ListSaveButton({ tracks, kind, name, label }: { tracks: Track[]; kind: SaveKind; name: string; label: string }) {
+export function ListSaveButton({ tracks, kind, name, label, icon = false }: { tracks: Track[]; kind: SaveKind; name: string; label: string; /** ARTIST-SAVE-ICON-001: the download arrow alone, no words. */ icon?: boolean }) {
   const [, redraw] = useState(0);
   useEffect(() => folderSaves.subscribe(() => redraw((n) => n + 1)), []);
   const [note, setNote] = useState<string | null>(null);
@@ -51,8 +51,9 @@ export function ListSaveButton({ tracks, kind, name, label }: { tracks: Track[];
   return (
     <>
       <button
-        className="push"
+        className={icon ? 'iconbtn list-save__go' : 'push'}
         type="button"
+        aria-label={icon ? `${text}: ${label}` : undefined}
         // A finished folder can still be pressed: it puts back any song deleted from the folder since.
         // While it runs the button stays focusable (aria-disabled, not disabled), so a keyboard user's
         // focus is not dropped to the page when they press it.
@@ -61,7 +62,7 @@ export function ListSaveButton({ tracks, kind, name, label }: { tracks: Track[];
         title={s.held > 0 ? `Download the ${songs(Math.max(0, tracks.length - s.held))} of ${label} not in its folder yet` : `Download every song in ${label} into a folder of its own`}
         onClick={() => { if (running) return; setNote(null); folderSaves.start(kind, name, tracks); }}
       >
-        <Glyph name={complete ? 'check' : 'download'} size={14} /> {text}
+        <Glyph name={complete ? 'check' : 'download'} size={14} />{icon ? null : <> {text}</>}
       </button>
       <button
         type="button"

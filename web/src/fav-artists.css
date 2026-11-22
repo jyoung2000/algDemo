@@ -3,7 +3,7 @@
    gets blue and white filled tapped". The same star sits on an artist in the search results. */
 .artist__star { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; }
 .push.artist__star { padding: 0 14px; }
-.artist__star.artist__star[aria-pressed='false'] { background: #fff; color: var(--ink); border-color: transparent; box-shadow: inset 0 0 0 1.5px var(--ink); }
+.artist__star.artist__star[aria-pressed='false'] { background: #fff; color: var(--ink); border-color: transparent; box-shadow: inset 0 0 0 1px var(--hair); }
 .artist__star.artist__star[aria-pressed='true'] { background: var(--accent); color: #fff; border-color: transparent; box-shadow: none; }
 .iconbtn.artist__star--row { width: 44px; height: 44px; padding: 0; flex: 0 0 44px; align-self: center; margin-right: 6px; }
 .artists ul.tracks > li.track.album-row { display: flex; flex-wrap: nowrap; align-items: center; }
@@ -26,3 +26,5 @@
   .btn.fav-artists__remove:hover { color: var(--accent); }
   .btn.fav-artists__submit:hover:not(:disabled) { border-color: var(--accent); }
 }
+.iconbtn.list-save__go { width: 44px; height: 44px; padding: 0; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: #fff; box-shadow: inset 0 0 0 1px var(--hair); }
+.iconbtn.list-save__go svg { fill: var(--ink); }

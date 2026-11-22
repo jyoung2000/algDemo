@@ -497,7 +497,7 @@ export function ArtistView({ target, onBack, onPreview, onPlayAll, onOpenAlbum, 
               {/* ARTIST-FAV-001: starring the artist makes it a starting point for discovery. */}
               <ArtistStarButton artist={{ id: a.id, name: a.name, picture: a.picture, fans: fansOf(a.detail) }} />
               {/* LIST-SAVE-FOLDER-001: every song, downloaded into a folder named after the artist. */}
-              {every.state === 'ready' && <ListSaveButton tracks={full} kind="list" name={a.name} label={`every song by ${a.name}`} />}
+              {every.state === 'ready' && <ListSaveButton icon tracks={full} kind="list" name={a.name} label={`every song by ${a.name}`} />}
             </div>
             <TypeFilter
               types={PAGE_TYPES}
