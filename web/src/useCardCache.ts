@@ -14,7 +14,9 @@ import type { CardCache } from './engine/queue-controls';
  */
 export function useCardCache(tracks: Track[], kept: ReadonlySet<string>): (key: string) => CardCache | null {
   const available = downloadsAvailable();
-  const [, bump] = useState(0);
+  // PLAY-LIVE-001: counts files landing. It is part of the answer below, so every list re-reads its rows the moment
+  // a song finishes; without it the rows kept their old state until the listener did something else.
+  const [landed, bump] = useState(0);
   const [pct, setPct] = useState<Record<string, number | null>>({});
 
   // The library tells us when a file lands; that is also when a card flips to ready.
@@ -22,6 +24,9 @@ export function useCardCache(tracks: Track[], kept: ReadonlySet<string>): (key: 
     if (!available) return localLibrary.subscribe(() => undefined);
     return localLibrary.subscribe(() => bump(n => n + 1));
   }, [available]);
+
+  // The service's loader (Android) reports its songs through the queue view, not the page's library.
+  useEffect(() => (available ? queueAudio.subscribe(() => bump(n => n + 1)) : undefined), [available]);
 
   useEffect(() => {
     if (!available) return;
@@ -64,5 +69,5 @@ export function useCardCache(tracks: Track[], kept: ReadonlySet<string>): (key: 
       const url = urls.get(key);
       return queueAudio.cardOf(key, { kept: kept.has(key), percent: url ? pct[url] ?? null : null });
     };
-  }, [available, urls, kept, pct]);
+  }, [available, urls, kept, pct, landed]);
 }

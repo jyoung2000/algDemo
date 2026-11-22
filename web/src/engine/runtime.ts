@@ -73,8 +73,8 @@ export function startLocal(): Promise<LocalApi> {
  * Spotify search: the anonymous web-player search on every platform. Windows adds spotDL (in the
  * shell) as the fallback when that search fails; Android has no spotDL and reports the failure.
  */
-export function spotifySearchFor(http: Http) {
-  const anon = new SpotifySearch(http);
+export function spotifySearchFor(http: Http, store?: Store) {
+  const anon = new SpotifySearch(http, store);
   return async (q: string, limit: number) => {
     try {
       return await anon.searchTracks(q, limit);

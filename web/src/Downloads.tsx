@@ -211,7 +211,17 @@ export function useDownloads(flash: (m: string) => void) {
     [jobs, trackJobs],
   );
 
-  return { on, jobs, refresh: poll, format, setFormat, start, downloadTrack, trackState, activeCount: jobs.filter(active).length };
+  /** PLAY-LIVE-001: the job a song's Download button started, as the rows read it (state and real percent). */
+  const jobOf = useCallback(
+    (key: string): { state: string; percent: number | null } | null => {
+      const id = trackJobs[key];
+      const job = id ? jobs.find((j) => j.id === id) : undefined;
+      return job ? { state: job.state, percent: job.percent ?? null } : null;
+    },
+    [jobs, trackJobs],
+  );
+
+  return { on, jobs, refresh: poll, format, setFormat, start, downloadTrack, trackState, jobOf, activeCount: jobs.filter(active).length };
 }
 
 export type Downloads = ReturnType<typeof useDownloads>;

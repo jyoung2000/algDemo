@@ -2,6 +2,7 @@ import { Fragment } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
 import type { ArtistSummary, ArtistTarget, Track } from './api';
 import { Art } from './Art';
+import { ArtistStarButton } from './FavArtists';
 import { artistOf } from './util';
 
 const DZ_ID = /^\d{1,15}$/;
@@ -59,6 +60,8 @@ export function ArtistCard({ artist, onOpen }: { artist: ArtistSummary; onOpen: 
             </span>
             <Glyph name="chevron-right" size={14} />
           </button>
+          {/* ARTIST-STAR-LOOK-001: star the artist straight from the search results. */}
+          <ArtistStarButton row artist={{ id: artist.id, name: artist.name, picture: artist.picture, fans: artist.fans ?? null }} />
         </li>
       </ul>
     </div>

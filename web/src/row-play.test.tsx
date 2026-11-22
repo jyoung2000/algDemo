@@ -75,12 +75,14 @@ describe('the play button shows a song is ready (ROW-PLAY-001)', () => {
     render(<SavedView saved={[{ track: t('l', { provider: 'imported', url: 'imported:C:/m/a.opus' }), ts: 1 }] as never} lists={[]} onLists={() => {}} onPreview={() => {}} onRemoveSaved={() => {}} />);
     expect(screen.getByRole('button', { name: 'Play Song l' }).dataset['ready']).toBe('true');
   });
-  it('the ready look is a light blue fill on every list, not only the queue', () => {
+  // PLAY-LIVE-001 (owner, 2026-11-21): "the play button when blue should have a white arrow" — a solid blue disc
+  // with a white triangle replaces ROW-PLAY-001's light blue fill (a white arrow does not read on #bcd8ff).
+  it('the ready look is a solid blue disc with a white arrow on every list, not only the queue', () => {
     const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'row-play.css'), 'utf8');
-    expect(css).toMatch(/\.iconbtn\.playbtn\[data-ready='true'\]\s*\{[^}]*background:\s*#bcd8ff/i);
+    expect(css).toMatch(/\.iconbtn\.playbtn\[data-ready='true'\]\s*\{[^}]*background:\s*var\(--accent\)[^}]*color:\s*#fff/i);
     // Measured on Android: the queue's own older, more specific rule kept the faint #e6effb tint.
     const styles = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'styles.css'), 'utf8').replace(/\r\n/g, '\n');
     const queueRule = styles.match(/\.rec__actions \.iconbtn\.playbtn\[data-ready='true'\] \{[^}]*\}/)?.[0] ?? '';
-    expect(queueRule).toMatch(/background:\s*#bcd8ff/i);
+    expect(queueRule).toMatch(/background:\s*var\(--accent\)[^}]*color:\s*#fff/i);
   });
 });

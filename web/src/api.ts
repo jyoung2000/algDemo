@@ -118,6 +118,8 @@ export interface ArtistSummary {
   name: string;
   picture: string | null;
   detail: string | null;
+  /** Deezer's follower count when it gives one (ARTIST-SIZE-001 / ARTIST-FAV-001). */
+  fans?: number | null;
   url: string;
   alt?: string;
 }
@@ -549,6 +551,16 @@ export interface PlaylistItem {
 
 /** A list the listener made. `discovery_ready` is false until every song in it has been played. */
 /** The starting songs, and the saved list they came from when one is the now playing queue. */
+/** ARTIST-FAV-001: a starred artist (engine/fav-artists.ts). */
+export interface FavArtist {
+  name: string;
+  deezerId: string | null;
+  fans: number | null;
+  picture: string | null;
+  pageId: string | null;
+  addedAt: number;
+}
+
 export interface SeedsView {
   seeds: Track[];
   playlist?: { id: string; name: string } | null;
@@ -709,6 +721,9 @@ export const api = {
   },
   completeSpotify: (title: string, artist: string) => call<{ tracks: Track[] }>('/api/complete-spotify', { method: 'POST', body: json({ title, artist }) }),
   seeds: () => call<SeedsView>('/api/seeds'),
+  favArtists: () => call<{ artists: FavArtist[] }>('/api/fav-artists'),
+  editFavArtists: (body: { op: 'add'; artist: { name: string; pageId?: string | null; fans?: number | null; picture?: string | null } } | { op: 'remove'; name: string }) =>
+    call<{ artists: FavArtist[] }>('/api/fav-artists', { method: 'POST', body: json(body) }),
   /** PLAYLIST-QUEUE-001: a saved list takes the place of the now playing queue; every song becomes a starting song. */
   queuePlaylist: (id: string) => call<SeedsView & { missing: number }>('/api/queue/playlist', { method: 'POST', body: json({ id }) }),
   /** Bring back the queue a saved list replaced. */

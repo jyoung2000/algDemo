@@ -17,7 +17,10 @@ const answers: SearchResponse[] = [];
 const search = vi.fn((_q: string, _s?: AbortSignal, _src?: readonly string[]) => Promise.resolve(answers.shift()!));
 vi.mock('./api', async (orig) => {
   const real = await orig<typeof Api>();
-  return { ...real, api: { ...real.api, search: (q: string, s?: AbortSignal, src?: readonly string[]) => search(q, s, src), searchLyrics: () => Promise.reject(new Error('off')), genres: () => Promise.resolve({ items: {} }) } };
+  // SPEED-DATA-001: the SoundCloud/Spotify wave answers nothing here; every canned answer is the quick wave's.
+  const slowWave = (src?: readonly string[]) => src?.join(',') === 'soundcloud,spotify';
+  const none = { query: '', results: [], sources: {}, ms: 0, bytes: 0 } as unknown as SearchResponse;
+  return { ...real, api: { ...real.api, search: (q: string, s?: AbortSignal, src?: readonly string[]) => (slowWave(src) ? Promise.resolve(none) : search(q, s, src)), searchLyrics: () => Promise.reject(new Error('off')), genres: () => Promise.resolve({ items: {} }) } };
 });
 const { Search } = await import('./Search');
 

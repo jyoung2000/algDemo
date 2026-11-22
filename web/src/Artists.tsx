@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import './artist-spacing.css';
 import './album-spacing.css';
 import { Glyph } from '@now-playing/aqua-ui/icons';
+import { ListPlayButton } from './RowPlay';
+import { ArtistStarButton } from './FavArtists';
 import { SourceMark } from './SourceMark';
 import { RefreshGlyph } from './icons';
 import { api, ApiError, type AlbumSummary, type ArtistExtras, type ArtistSourceState, type ArtistTarget, type ArtistView as ArtistData, type PlaylistSummary, type Track } from './api';
@@ -64,6 +66,11 @@ const appendRows = <T,>(old: readonly T[], next: readonly T[], key: (row: T) => 
   return [...old, ...next.filter((row) => { const k = key(row); if (seen.has(k)) return false; seen.add(k); return true; })];
 };
 const keepSongs = (old: readonly Track[], next: readonly Track[]) => appendRows(old, next, songKey);
+/** ARTIST-SIZE-001: Deezer's follower count from the page's "112,807 fans"; a YouTube audience is a different measure. */
+export const fansOf = (detail: string | null | undefined): number | null => {
+  const m = /^([\d,]+) fans$/.exec(detail?.trim() ?? '');
+  return m ? Number(m[1]!.replace(/,/g, '')) : null;
+};
 const keepAlbums = (old: readonly AlbumSummary[], next: readonly AlbumSummary[]) => appendRows(old, next, (row) => row.id);
 
 /** FEATURES-FLOW-001: a stop for a look that never ends; a real one is over in a few dozen answers. */
@@ -481,11 +488,14 @@ export function ArtistView({ target, onBack, onPreview, onPlayAll, onOpenAlbum, 
               </div>
             </div>
             <div className="album__actions">
-              <button className="push push--default artist__play" type="button" disabled={!full.length}
-                aria-label={`Play songs by ${a.name}`} title={`Play songs by ${a.name}`}
+              {/* ALBUM-PLAY-STATE-001: blue only once every song is on this device; the ring shows how many are. */}
+              <ListPlayButton tracks={full} className="push push--default artist__play" disabled={!full.length}
+                label={`Play songs by ${a.name}`}
                 onClick={() => (onPlayAll ? onPlayAll(full) : onPreview(full[0]!, full))}>
                 <Glyph name="play" size={16} />
-              </button>
+              </ListPlayButton>
+              {/* ARTIST-FAV-001: starring the artist makes it a starting point for discovery. */}
+              <ArtistStarButton artist={{ id: a.id, name: a.name, picture: a.picture, fans: fansOf(a.detail) }} />
               {/* LIST-SAVE-FOLDER-001: every song, downloaded into a folder named after the artist. */}
               {every.state === 'ready' && <ListSaveButton tracks={full} kind="list" name={a.name} label={`every song by ${a.name}`} />}
             </div>
@@ -500,13 +510,11 @@ export function ArtistView({ target, onBack, onPreview, onPlayAll, onOpenAlbum, 
                 <div className="artist__songs-heading">
                   <h3 id="artist-songs-heading" className="albums__h">{all && every.state === 'ready' ? 'All songs' : 'Most played'}</h3>
                   {/* ARTIST-TOP-PLAY-001: play this section as a list, not the hidden full catalogue. */}
-                  <button className="btn artist__section-play" type="button" disabled={!shown.length}
-                    aria-label={`Play ${all && every.state === 'ready' ? 'all' : 'most played'} songs by ${a.name}`}
-                    aria-describedby="artist-songs-heading"
-                    title={`Play ${all && every.state === 'ready' ? 'all' : 'most played'} songs by ${a.name}`}
+                  <ListPlayButton tracks={shown} className="btn artist__section-play" disabled={!shown.length}
+                    label={`Play ${all && every.state === 'ready' ? 'all' : 'most played'} songs by ${a.name}`}
                     onClick={() => (onPlayAll ? onPlayAll(shown) : onPreview(shown[0]!, shown))}>
                     <Glyph name="play" size={14} />
-                  </button>
+                  </ListPlayButton>
                 </div>
                 {full.length ? (
                   <TrackList tracks={shown} {...listProps} label={`Songs by ${a.name}`} />

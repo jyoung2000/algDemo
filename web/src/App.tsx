@@ -24,6 +24,7 @@ import { QueuePreparation } from './QueuePreparation';
 import { ListDownloadButton, ListFolderButton, ListLoadedNote } from './ListDownloadBar';
 import './discover-tidy.css';
 import { useCardCache } from './useCardCache';
+import { withJob } from './engine/play-state';
 import { useKeptKeys } from './useKeptKeys';
 import { useQueueGenres } from './useQueueGenres';
 import { savedTracks, playbackRows, preparationTracks, contextRows, addTargetOf, addedRow, insertAfter, SEARCH_CONTEXT } from './engine/queue-context';
@@ -818,34 +819,44 @@ export function App() {
   const addTarget = addTargetOf(playingContext, queueList, lists);
   const addLabel = addTarget.kind === 'queue' ? 'Now playing queue' : `\u201c${addTarget.name}\u201d`;
   const addedKeys = new Set(addTarget.kind === 'queue' ? queueRows.map((x) => x.track.key) : (lists.find((l) => l.id === addTarget.id)?.items ?? []).map((i) => i.key));
+  /**
+   * SEARCH-DBL-NEXT-001 (owner, 2026-11-21): "double tapping or double clicking a song in search should add it to the
+   * discover / now playing queue, and add that new song right after the song currently playing". The playing song
+   * keeps playing and stays in the player; the + button with the queue chosen does the same.
+   */
+  const queueNext = (t: Track) => {
+    const row = addedRow(t);
+    const after = playingKey && queueRows.some((x) => x.track.key === playingKey) ? playingKey : null;
+    setResult((prev) => {
+      if (!prev) return prev;
+      const next = insertAfter(prev.items, row, after);
+      return { ...prev, items: next, count: next.length };
+    });
+    api.queueAdd(row, after).then((r) => setResult((prev) => prev ?? r), (e: Error) => flash(`Could not add that: ${e.message}`));
+    flash(`Added \u201c${t.title}\u201d to your now playing queue.`);
+    // QUEUE-SEED-001: a song put in the queue by hand is a starting song too, so one added song is
+    // enough to discover from — the listener should not have to find a second control for that.
+    if (!seeds.some((x) => x.key === t.key)) {
+      const next = [...seeds, { ...t, emphasis: t.emphasis ?? 1 }];
+      setSeeds(next);
+      void (async () => {
+        try {
+          await api.putSeeds(next);
+          // A discovery already under way is reading these same seeds; let it finish.
+          if (!running) await run(true);
+        } catch (e) {
+          flash(`Could not start from that song: ${(e as Error).message}`);
+        }
+      })();
+    }
+  };
+
   const addToListening = (t: Track) => {
     if (addTarget.kind === 'queue') {
-      const row = addedRow(t);
-      const after = playingKey && queueRows.some((x) => x.track.key === playingKey) ? playingKey : null;
-      setResult((prev) => {
-        if (!prev) return prev;
-        const next = insertAfter(prev.items, row, after);
-        return { ...prev, items: next, count: next.length };
-      });
-      api.queueAdd(row, after).then((r) => setResult((prev) => prev ?? r), (e: Error) => flash(`Could not add that: ${e.message}`));
-      flash(`Added \u201c${t.title}\u201d to your now playing queue.`);
-      // QUEUE-SEED-001: a song put in the queue by hand is a starting song too, so one added song is
-      // enough to discover from — the listener should not have to find a second control for that.
-      if (!seeds.some((x) => x.key === t.key)) {
-        const next = [...seeds, { ...t, emphasis: t.emphasis ?? 1 }];
-        setSeeds(next);
-        void (async () => {
-          try {
-            await api.putSeeds(next);
-            // A discovery already under way is reading these same seeds; let it finish.
-            if (!running) await run(true);
-          } catch (e) {
-            flash(`Could not start from that song: ${(e as Error).message}`);
-          }
-        })();
-      }
+      queueNext(t);
       return;
     }
+
     const target = addTarget;
     void (async () => {
       try {
@@ -896,7 +907,10 @@ export function App() {
   // TASTE-SPIN-001: the taste line's arrow turns while a song plays.
   const [songPlaying, setSongPlaying] = useState(false);
   const keptKeys = useKeptKeys(cacheTracks);
-  const cardCache = useCardCache(cacheTracks, keptKeys);
+  const queueCache = useCardCache(cacheTracks, keptKeys);
+  // PLAY-LIVE-001: each row's state is the queue cache's word with the song's own Download job folded in, so a Play
+  // button turns blue (and its ring fills) as the download runs and finishes, with nothing else asked of the listener.
+  const cardCache = useMemo(() => (key: string) => withJob(queueCache(key), dls.jobOf(key)), [queueCache, dls.jobOf]);
 
   // MEDIA-NATIVE-001: mirror the player onto the Android native MediaSession / Android Auto. Every
   // call is a no-op outside the Android app, so these run unconditionally but only act in the shell.
@@ -1432,6 +1446,7 @@ export function App() {
                 onPreview={playFromSearch}
                 onOpenSettings={() => setTab('settings')}
                 onQueueAdd={addToListening}
+                onQueueNext={queueNext}
                 addLabel={addLabel}
                 addedKeys={addedKeys}
                 onDownload={dls.on ? (t) => void dls.downloadTrack(t) : undefined}

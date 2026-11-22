@@ -51,6 +51,8 @@ export class SoundCloud {
   readonly name = 'soundcloud';
   readonly label = 'SoundCloud';
   private clientId: string | null = null;
+  /** SPEED-DATA-001: the key fetch in flight, shared by every call that needs it meanwhile (one ~3 MB read, not one each). */
+  private fetching: Promise<string> | null = null;
 
   constructor(private readonly http: Http, private readonly store?: Store) {}
 
@@ -96,10 +98,16 @@ export class SoundCloud {
       const hit = this.store?.cacheGet('sc:client_id');
       if (hit) return (this.clientId = hit.value as string);
     }
-    const id = await this.fetchClientId(c);
-    this.clientId = id;
-    await this.store?.cachePut('sc:client_id', 'meta', id, DAY);
-    return id;
+    if (!this.fetching) {
+      this.fetching = (async () => {
+        const id = await this.fetchClientId(c);
+        this.clientId = id;
+        // The web app's key lasts weeks; an expired one answers 401 and is fetched again then, so keep it a week.
+        await this.store?.cachePut('sc:client_id', 'meta', id, 7 * DAY);
+        return id;
+      })().finally(() => { this.fetching = null; });
+    }
+    return this.fetching;
   }
 
   private async get(path: string, c: Ctx): Promise<Json> {

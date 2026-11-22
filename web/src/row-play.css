@@ -1,15 +1,16 @@
 /* ROW-PLAY-001 (owner 2026-11-17): songs that are ready to play (full file on this device, local songs
    included) have a light blue filled Play button on every list. READY-PLAY-001's pale tint (#e6effb)
-   was too faint to notice. The triangle stays the accent blue so it reads on the light fill. */
+   was too faint to notice. PLAY-LIVE-001 (owner, 2026-11-21): "the play button when blue should have a white arrow",
+   so ready is now a solid blue disc with a white triangle. */
 .iconbtn.playbtn[data-ready='true'] {
-  background: #bcd8ff;
+  background: var(--accent);
   background-clip: content-box;
-  color: var(--accent);
-  box-shadow: inset 0 0 0 1px #8fbcf5;
+  color: #fff;
+  box-shadow: none;
 }
 @media (hover: hover) {
   .iconbtn.playbtn[data-ready='true']:hover:not([disabled]) {
-    background: #a9cdfd;
-    box-shadow: inset 0 0 0 1px var(--accent);
+    background: #1a62bb;
+    box-shadow: inset 0 0 0 1px #fff;
   }
 }

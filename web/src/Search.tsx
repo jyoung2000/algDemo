@@ -45,6 +45,8 @@ interface LikeProps {
    * queue, or a list), and `addedKeys` are the songs already there.
    */
   onQueueAdd?: ((t: Track) => void) | undefined;
+  /** SEARCH-DBL-NEXT-001: a double tap puts the song right after the playing one in Now playing. */
+  onQueueNext?: ((t: Track) => void) | undefined;
   addLabel?: string | undefined;
   addedKeys?: ReadonlySet<string> | undefined;
   /** ALBUM-OPEN-001: the row's album button, for a song on an album, EP or mixtape. */
@@ -160,10 +162,27 @@ function useNarrow(): boolean {
  *  - File / Mic: up to 12 s is fingerprinted on the device; only the fingerprint goes to Shazam.
  * A newer request aborts the older one. Searching or identifying is never a preference signal: only Add makes a starting song.
  */
-export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, addLabel, addedKeys, onOpenSettings, onOpenAlbumTarget, onOpenArtist, playingKey }: Props) {
+/** SPEED-DATA-001: the services asked first (they answer in about a second), then those that may need a key fetch first. */
+export const SEARCH_WAVES: readonly (readonly string[])[] = [['ytmusic', 'deezer', 'apple'], ['soundcloud', 'spotify']];
+
+/** One list from two answers: the first answer's order, then what only the second found; a song both found is listed once. */
+export function mergeSongs(a: SearchResponse | null, b: SearchResponse): SearchResponse {
+  if (!a) return b;
+  const byKey = new Map(a.results.map((t) => [t.key, t]));
+  const results = [...a.results];
+  for (const t of b.results) {
+    const had = byKey.get(t.key);
+    if (!had) { results.push(t); byKey.set(t.key, t); continue; }
+    const also = new Set([...((had as { also_on?: string[] }).also_on ?? []), t.provider, ...((t as { also_on?: string[] }).also_on ?? [])].filter((p) => p && p !== had.provider));
+    if (also.size) Object.assign(had, { also_on: [...also] });
+  }
+  return { ...a, results, sources: { ...a.sources, ...b.sources }, ms: Math.max(a.ms ?? 0, b.ms ?? 0) };
+}
+
+export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, onQueueAdd, onQueueNext, addLabel, addedKeys, onOpenSettings, onOpenAlbumTarget, onOpenArtist, playingKey }: Props) {
   const [saving, setSaving] = useState<string | null>(null);
   const onOpenAlbum = onOpenAlbumTarget ? (t: Track) => onOpenAlbumTarget({ track: t }) : undefined;
-  const likeProps: LikeProps = { onLike, onRemoveSeed, lists, onLists, saving, onSaving: setSaving, onQueueAdd, addLabel, addedKeys, onOpenAlbum, onOpenArtist, playingKey };
+  const likeProps: LikeProps = { onLike, onRemoveSeed, lists, onLists, saving, onSaving: setSaving, onQueueAdd, onQueueNext, addLabel, addedKeys, onOpenAlbum, onOpenArtist, playingKey };
   const [q, setQ] = useState('');
   const [view, setView] = useState<View>({ kind: 'idle' });
   // RESULT-TYPES-001: held here so the chosen icons survive each new query while typing.
@@ -279,9 +298,20 @@ export function Search({ seeds, onAdd, onPreview, onDownload, onLike, onRemoveSe
           setRefreshing(false);
         }
       };
-      const songsP = api.search(s, c.signal).then((r) => {
-        songs = r;
-        if (lyrics?.state === 'pending' || albums?.state === 'pending') show(false);
+      // SPEED-DATA-001: the quick services' rows show as soon as they answer; SoundCloud and Spotify, which may first
+      // fetch megabytes of script for their keys, join the same list when they do.
+      // Only the quick wave shows early; a slow answer that comes first waits for it, so a list being refreshed is
+      // never swapped for a shorter one.
+      let quickIn = false;
+      let slowIn = false;
+      const wave = (sources: readonly string[], i: number) => api.search(s, c.signal, sources).then((r) => {
+        songs = i === 0 ? mergeSongs(r, songs ?? r) : mergeSongs(songs, r);
+        if (i === 0) quickIn = true; else slowIn = true;
+        if (quickIn && (!slowIn || lyrics?.state === 'pending' || albums?.state === 'pending')) show(false);
+      });
+      const songsP = Promise.allSettled(SEARCH_WAVES.map(wave)).then((all) => {
+        const failed = all.filter((x): x is PromiseRejectedResult => x.status === 'rejected');
+        if (failed.length === all.length) throw failed[0]!.reason;
       });
       // ALBUM-SEARCH-001: albums are asked alongside, a little after the titles while typing.
       const albumsP = albums
@@ -802,6 +832,7 @@ function ResultsView({
   saving,
   onSaving,
   onQueueAdd,
+  onQueueNext,
   addLabel,
   addedKeys,
   onRefresh,
@@ -841,7 +872,7 @@ function ResultsView({
     lyrics: allLyricTracks.length,
   };
   const lead = lyricsLead(view.query, lyricTracks.length);
-  const common = { seedKeys, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, saving, onSaving, onQueueAdd, addLabel, addedKeys, onOpenAlbum, onOpenArtist, playingKey } as const;
+  const common = { seedKeys, onAdd, onPreview, onDownload, onLike, onRemoveSeed, lists, onLists, saving, onSaving, onQueueAdd, onQueueNext, addLabel, addedKeys, onOpenAlbum, onOpenArtist, playingKey } as const;
   const found = allFound.filter((a) => releaseMatches(a, types, view.query));
   const albumBlock = found.length && onOpenAlbumId ? <AlbumShelf key="albums" albums={found} query={view.query} onOpen={onOpenAlbumId} /> : null;
   const spent = Object.values(view.sources).some((x) => x.state === 'budget');
@@ -936,6 +967,7 @@ function IdentifiedView({
   saving,
   onSaving,
   onQueueAdd,
+  onQueueNext,
   addLabel,
   addedKeys,
 }: {
@@ -976,6 +1008,7 @@ function IdentifiedView({
         saving={saving}
         onSaving={onSaving}
         onQueueAdd={onQueueAdd}
+        onQueueNext={onQueueNext}
         addLabel={addLabel}
         addedKeys={addedKeys}
         label={view.origin === 'lyrics' ? `Songs with the words ${view.query}` : 'Songs heard in your clip'}
@@ -1155,6 +1188,7 @@ export function TrackList({
   saving: savingProp,
   onSaving,
   onQueueAdd,
+  onQueueNext,
   addLabel = 'Now playing queue',
   addedKeys,
   onOpenAlbum,
@@ -1176,6 +1210,8 @@ export function TrackList({
   saving?: string | null | undefined;
   onSaving?: ((songKey: string | null) => void) | undefined;
   onQueueAdd?: ((t: Track) => void) | undefined;
+  /** SEARCH-DBL-NEXT-001: when given (search), a double tap queues the song next instead of playing it. */
+  onQueueNext?: ((t: Track) => void) | undefined;
   addLabel?: string | undefined;
   addedKeys?: ReadonlySet<string> | undefined;
   /** ALBUM-OPEN-001: shown only on a song that sits on an album, EP or mixtape. */
@@ -1261,7 +1297,7 @@ export function TrackList({
             ref={(el: HTMLLIElement | null) => watchRow(el, t)}
             onPointerEnter={() => warmer().warm(t)}
             onFocus={() => warmer().warm(t)}
-            onDoubleClick={playOnDoubleClick(() => onPreview(t, tracks))}
+            onDoubleClick={playOnDoubleClick(() => (onQueueNext ? onQueueNext(t) : onPreview(t, tracks)))}
           >
             {numbered && <span className="track__num" aria-hidden="true">{i + 1}</span>}
             <Art src={t.artwork} size={44} />

@@ -98,7 +98,7 @@ summary:active {
   .iconbtn[aria-pressed='true']:hover,
   .rec__actions .iconbtn.playbtn[data-ready='true']:hover,
   .track__actions .iconbtn.playbtn[data-ready='true']:hover {
-    box-shadow: inset 0 0 0 1px var(--accent);
+    box-shadow: inset 0 0 0 1px #fff;
   }
   /* The same edge the round icon buttons and the open-link pill show. */
   .whybtn:hover {

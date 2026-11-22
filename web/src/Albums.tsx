@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Glyph } from '@now-playing/aqua-ui/icons';
+import { ListPlayButton } from './RowPlay';
 import { SourceMark } from './SourceMark';
 import { api, ApiError, type AlbumView as AlbumData, type ArtistTarget, type PlaylistSummary, type Track } from './api';
 import { Art } from './Art';
@@ -151,9 +152,10 @@ export function AlbumView({ target, onBack, onPreview, onPlayAll, seedKeys, onAd
               </div>
             </div>
             <div className="album__actions">
-              <button className="push push--default" type="button" disabled={!a.tracks.length} onClick={() => (onPlayAll ? onPlayAll(a.tracks) : onPreview(a.tracks[0]!, a.tracks))}>
+              {/* ALBUM-PLAY-STATE-001: black and white with a ring for the share downloaded; blue once every song is. */}
+              <ListPlayButton tracks={a.tracks} className="push push--default" label="Play album" disabled={!a.tracks.length} onClick={() => (onPlayAll ? onPlayAll(a.tracks) : onPreview(a.tracks[0]!, a.tracks))}>
                 <Glyph name="play" size={14} /> Play album
-              </button>
+              </ListPlayButton>
               {(() => {
                 const held = savedOf(a);
                 return (

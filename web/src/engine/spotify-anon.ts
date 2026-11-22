@@ -11,6 +11,7 @@
 import type { Http, Meter, CancelToken } from './net';
 import { makeTrack, type Track } from './track';
 import { ProviderError } from './deezer';
+import type { Store } from './store';
 
 const BASE = 'https://open.spotify.com';
 const PARTNER = 'https://api-partner.spotify.com/pathfinder/v1/query';
@@ -19,6 +20,9 @@ const PLAYER_JS = /"(https:\/\/[^" ]+\/(?:mobile-)?web-player\.[0-9a-f]+\.js)"/;
 const SECRETS = /\{\s*secret\s*:\s*["']([^"']+)["']\s*,\s*version\s*:\s*(\d+)\s*\}/g;
 
 interface Token { accessToken: string; expiresAt: number }
+/** The player bundle's token secret, and which bundle it came from. */
+interface Secret { url: string; v: number; s: string }
+const SECRET_KEY = 'sp:totp_secret';
 interface Ctx { meter?: Meter; token?: CancelToken }
 /** Per-response byte caps: the player bundle is the largest thing read here. */
 const JSON_MAX = 1_000_000;
@@ -47,8 +51,10 @@ export async function totpFor(serverTime: number, secret: string): Promise<strin
 
 export class SpotifySearch {
   private token: Token | null = null;
+  private secret: Secret | null = null;
+  private minting: Promise<string> | null = null;
 
-  constructor(private readonly http: Http) {}
+  constructor(private readonly http: Http, private readonly store?: Store) {}
 
   /** Search Spotify tracks for `query`. Throws ProviderError when the anonymous path is unavailable. */
   async searchTracks(query: string, limit: number, c: Ctx = {}): Promise<Track[]> {
@@ -90,12 +96,29 @@ export class SpotifySearch {
     return new TextDecoder().decode(response.body);
   }
 
-  private async accessToken(c: Ctx): Promise<string> {
-    if (this.token && this.token.expiresAt > Date.now() + 60_000) return this.token.accessToken;
-    const st = await this.json<{ serverTime: number }>(`${BASE}/api/server-time`, c);
+  /**
+   * SPEED-DATA-001: the token secret lives in the ~4.5 MB player bundle. It is read once and kept (in the store, so a
+   * new launch needs neither the bundle nor the player page); a token is then one small request. Only when Spotify
+   * refuses the kept secret is the page read again for the current bundle. Calls that need a token at the same time
+   * share one mint.
+   */
+  private accessToken(c: Ctx): Promise<string> {
+    if (this.token && this.token.expiresAt > Date.now() + 60_000) return Promise.resolve(this.token.accessToken);
+    if (!this.minting) this.minting = this.mint(c).finally(() => { this.minting = null; });
+    return this.minting;
+  }
+
+  private keptSecret(): Secret | null {
+    if (this.secret) return this.secret;
+    const v = this.store?.cacheGet(SECRET_KEY)?.value as Secret | undefined;
+    return v && typeof v.s === 'string' && v.s && Number.isFinite(v.v) ? (this.secret = v) : null;
+  }
+
+  private async secretFromBundle(c: Ctx): Promise<Secret> {
     const html = await this.text(BASE, c, HTML_MAX);
     const m = PLAYER_JS.exec(html);
     if (!m?.[1]) throw new ProviderError('Spotify’s web player page changed; the search token could not be read.');
+    if (this.secret?.url === m[1]) return this.secret;
     const js = await this.text(m[1], c, BUNDLE_MAX);
     let best = { v: 0, s: '' };
     for (const x of js.matchAll(SECRETS)) {
@@ -103,21 +126,43 @@ export class SpotifySearch {
       if (v > best.v) best = { v, s: x[1] ?? '' };
     }
     if (!best.s) throw new ProviderError('Spotify’s web player has no token secret; search is unavailable right now.');
-    const totp = await totpFor(st.serverTime, best.s);
+    this.secret = { url: m[1], v: best.v, s: best.s };
+    await this.store?.cachePut(SECRET_KEY, 'meta', this.secret, 30 * 86_400);
+    return this.secret;
+  }
+
+  private async tokenWith(secret: Secret, serverTime: number, c: Ctx): Promise<string | null> {
+    const totp = await totpFor(serverTime, secret.s);
     const u = new URL(`${BASE}/api/token`);
     u.searchParams.set('reason', 'init');
     u.searchParams.set('productType', 'web-player');
     u.searchParams.set('totp', totp);
-    u.searchParams.set('totpVer', String(best.v));
-    u.searchParams.set('ts', String(st.serverTime));
-    const tk = await this.json<{ accessToken?: string; accessTokenExpirationTimestampMs?: number }>(u.toString(), c, {
-      Accept: 'application/json',
-      Referer: `${BASE}/`,
-      Origin: BASE,
-    });
-    if (!tk.accessToken) throw new ProviderError('Spotify did not issue a search token.');
+    u.searchParams.set('totpVer', String(secret.v));
+    u.searchParams.set('ts', String(serverTime));
+    let tk: { accessToken?: string; accessTokenExpirationTimestampMs?: number };
+    try {
+      tk = await this.json(u.toString(), c, { Accept: 'application/json', Referer: `${BASE}/`, Origin: BASE });
+    } catch (e) {
+      if (e instanceof ProviderError) return null;
+      throw e;
+    }
+    if (!tk.accessToken) return null;
     this.token = { accessToken: tk.accessToken, expiresAt: tk.accessTokenExpirationTimestampMs ?? Date.now() + 3_600_000 };
     return tk.accessToken;
+  }
+
+  private async mint(c: Ctx): Promise<string> {
+    const st = await this.json<{ serverTime: number }>(`${BASE}/api/server-time`, c);
+    const kept = this.keptSecret();
+    if (kept) {
+      const t = await this.tokenWith(kept, st.serverTime, c);
+      if (t) return t;
+      this.secret = null; // refused: Spotify has moved on to a newer secret
+    }
+    const fresh = await this.secretFromBundle(c);
+    const t = await this.tokenWith(fresh, st.serverTime, c);
+    if (!t) throw new ProviderError('Spotify did not issue a search token.');
+    return t;
   }
 }
 

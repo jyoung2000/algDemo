@@ -174,6 +174,25 @@ export class Deezer {
     });
   }
 
+  /**
+   * ARTIST-SIZE-001: an artist's Deezer followers (nb_fan), by Deezer id when known, else the most followed artist of
+   * exactly this name; null when Deezer has no such artist. Sizes change slowly, so an answer is kept a week.
+   */
+  artistFans(id: string | null, name: string, c: Ctx = {}): Promise<number | null> {
+    const dz = id && /^\d{1,15}$/.test(id) ? id : null;
+    if (!dz && !fold(name)) return Promise.resolve(null);
+    return cached(this.store, dz ? `dz:artfans:${dz}` : `dz:artfans:n:${fold(name)}`, 'artist', 7 * 24 * H, async () => {
+      if (dz) {
+        const d = await this.get(`/artist/${dz}`, c);
+        return typeof d.nb_fan === 'number' ? d.nb_fan : null;
+      }
+      const d = await this.get(`/search/artist?q=${encodeURIComponent(name)}&limit=10`, c);
+      const same = ((d.data as Json[]) ?? []).filter((a) => fold(String(a.name ?? '')) === fold(name) && typeof a.nb_fan === 'number');
+      same.sort((a, b) => Number(b.nb_fan) - Number(a.nb_fan));
+      return same[0] ? Number(same[0].nb_fan) : null;
+    });
+  }
+
   relatedArtists(artistId: string, limit: number, c: Ctx = {}): Promise<{ id: string; name: string }[]> {
     return cached(this.store, `dz:artrel:${artistId}:${limit}`, 'related', 24 * H, async () => {
       const d = await this.get(`/artist/${artistId}/related?limit=${limit}`, c);

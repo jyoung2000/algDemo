@@ -21,7 +21,7 @@ import type { CardCache } from './engine/queue-controls';
 import { classNames } from './util';
 import { GenreBubbleView } from './Results';
 import { TagStrip } from './TagStrip';
-import { RowPlayButton, playOnDoubleClick } from './RowPlay';
+import { ListPlayButton, RowPlayButton, playOnDoubleClick } from './RowPlay';
 import { Marquee } from './Marquee';
 import { ROW_COVER } from './row-cover';
 import { listStrip, listTaste } from './list-strip';
@@ -306,9 +306,9 @@ export function SavedView({ saved, lists, onLists, onPreview, onPlayAll, onRemov
             {[ALBUM_KIND[albumOf.kind as AlbumSummary['kind']] ?? 'Album', albumOf.artist, albumOf.year].filter(Boolean).join(' · ')}
           </p>
           {rows.length > 0 && (
-            <button className="push push--default" type="button" onClick={() => (onPlayAll ? onPlayAll(rows.map((r) => r.track), current.id) : onPreview(rows[0]!.track, current.id))}>
+            <ListPlayButton tracks={rows.map((r) => r.track)} cacheOf={cacheOf} className="push push--default" label="Play album" onClick={() => (onPlayAll ? onPlayAll(rows.map((r) => r.track), current.id) : onPreview(rows[0]!.track, current.id))}>
               <Glyph name="play" size={12} /> Play album
-            </button>
+            </ListPlayButton>
           )}
           {onUseAsQueue && current.count > 0 && (
             queueListId === current.id ? (

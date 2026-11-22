@@ -165,10 +165,11 @@ ul.radio-stations .radio-station__actions.song-actions .iconbtn.playbtn {
 .track__actions .iconbtn.playbtn[data-ready='true'],
 .song-actions .iconbtn.playbtn[data-ready='true'],
 ul.radio-stations .radio-station__actions.song-actions .iconbtn.playbtn[data-ready='true'] {
-  background-color: #bcd8ff;
+  /* PLAY-LIVE-001: solid blue with a white arrow. */
+  background-color: var(--accent);
   background-clip: border-box;
-  box-shadow: inset 0 0 0 1px #8fbcf5;
-  color: var(--accent);
+  box-shadow: none;
+  color: #fff;
 }
 .rec__actions .iconbtn.playbtn[data-playing='true'],
 .track__actions .iconbtn.playbtn[data-playing='true'],
@@ -185,8 +186,8 @@ ul.radio-stations .radio-station__actions.song-actions .iconbtn.playbtn[data-pla
   .song-actions .iconbtn.playbtn[data-ready='true']:hover:not(:disabled),
   .rec__actions .iconbtn.playbtn[data-ready='true']:hover:not(:disabled),
   .track__actions .iconbtn.playbtn[data-ready='true']:hover:not(:disabled) {
-    background-color: #a9cdfd;
-    box-shadow: inset 0 0 0 1px var(--accent);
+    background-color: #1a62bb;
+    box-shadow: inset 0 0 0 1px #fff;
   }
 }
 

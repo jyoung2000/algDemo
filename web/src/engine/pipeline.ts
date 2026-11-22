@@ -187,6 +187,8 @@ export class Pipeline {
     deepAlbums: ReadonlySet<string> = new Set(),
     /** COLOR-DISCOVERY-001: the listener's colours and how far previous runs read into them. */
     colour: { colours: Colour[]; cursor: number } = { colours: [], cursor: 0 },
+    /** ARTIST-SIZE-001: an underground listener's run skips the genre charts, which list the biggest acts. */
+    opts: { skipCharts?: boolean } = {},
   ): Promise<{ cands: Dict[]; related: Map<string, Set<string>> }> {
     const n = Math.max(1, seeds.length);
     const perSeed = Math.max(6, Math.ceil(cfg.perSourceCap / n));
@@ -239,7 +241,7 @@ export class Pipeline {
       const dz = (profiles[String(s['key'])] as Dict)['dz'] as Dict | null;
       for (const g of (dz?.['tags'] as Dict[] | undefined) ?? []) tagNames.push({ name: g['name'], s });
     }
-    if (tagNames.length) {
+    if (tagNames.length && !opts.skipCharts) {
       const ids = await this.call<Record<string, number>>(job, 'deezer-genre-ids', () => this.dz.genreIds(c), {});
       for (const { name, s } of tagNames.slice(0, 2)) {
         const gid = ids[name];

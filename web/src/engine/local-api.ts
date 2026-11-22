@@ -63,6 +63,8 @@ import { BlockedUrl, BudgetExceeded, Cancelled, FetchError, Http, type HttpPort,
 import { dl, downloadsAvailable } from './downloads';
 import { localAudioUrl } from './local-audio';
 import { Job, Pipeline, pmap, type Embedder } from './pipeline';
+import { FAV_ARTISTS_KEY, FAV_PER_RUN, addFav, favSeed, normaliseFav, normaliseFavs, removeFav, type FavArtist } from './fav-artists';
+import { referenceSize, sizeFit, smallScene } from './artist-size';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
 import { Albums } from './albums';
@@ -90,7 +92,7 @@ export interface LocalDeps {
   now?: () => number;
   /** Spotify search, only where a shell can run spotDL (Windows). Absent on Android, where Spotify search is unavailable. */
   /** Builds the Spotify search on this api's own Http client. Absent only in tests. */
-  spotifySearch?: (http: Http) => (q: string, limit: number) => Promise<Dict[]>;
+  spotifySearch?: (http: Http, store?: Store) => (q: string, limit: number) => Promise<Dict[]>;
 }
 
 export interface LocalResponse {
@@ -318,7 +320,7 @@ export class LocalApi {
     this.sp = new Spotify(this.http, this.store);
     this.genius = new Genius(this.http);
     this.shazam = new Shazam(this.http);
-    this.spotifySearch = deps.spotifySearch ? deps.spotifySearch(this.http) : null;
+    this.spotifySearch = deps.spotifySearch ? deps.spotifySearch(this.http, this.store) : null;
     this.pipeline = new Pipeline(this.store, this.http, this.dz, this.ytm, this.sc, this.apple, this.spotifySearch, this.encoder);
     this.store.expireImpressions(unixNow() - DEFAULT_ENGINE.exposureWindowDays * 86400 * 4);
   }
@@ -430,6 +432,7 @@ export class LocalApi {
       if (m === 'POST' && path === '/api/resolve') return await this.resolve(String(body?.['url'] ?? ''));
       if (m === 'POST' && path === '/api/complete-spotify') return ok(await this.completeSpotify(String(body?.['title'] ?? ''), String(body?.['artist'] ?? '')));
       if (path === '/api/seeds') return m === 'PUT' ? await this.putSeeds(body ?? {}) : ok(this.seedsView());
+      if (path === '/api/fav-artists') return m === 'POST' ? await this.editFavArtists(body ?? {}) : ok({ artists: this.favArtists() });
       if (path === '/api/settings') return m === 'PUT' ? await this.putSettings(body ?? {}) : ok(this.settings());
       if (m === 'POST' && path === '/api/recommend') {
         // ALLOWANCE-ARCH-001: a top-up decides on the connection as it is now (the phone may have joined Wi-Fi since).
@@ -1542,6 +1545,77 @@ export class LocalApi {
     return ok(settingsWithAlgorithms(cur));
   }
 
+  // ---- starred artists (ARTIST-FAV-001) and artist size (ARTIST-SIZE-001) ----------------------
+  private favArtists(): FavArtist[] {
+    return normaliseFavs(this.store.get(FAV_ARTISTS_KEY));
+  }
+
+  /** `{op: 'add', artist}`, `{op: 'remove', name}` or `{op: 'set', artists}`; answers with the whole list. */
+  private async editFavArtists(body: Dict): Promise<LocalResponse> {
+    const op = String(body['op'] ?? '');
+    let list = this.favArtists();
+    if (op === 'add') {
+      const a = normaliseFav(body['artist']);
+      if (!a) return fail(400, 'An artist with a name is needed.');
+      list = addFav(list, { ...a, addedAt: Date.now() });
+    } else if (op === 'remove') {
+      const name = String(body['name'] ?? '').trim();
+      if (!name) return fail(400, 'Which artist?');
+      list = removeFav(list, name);
+    } else if (op === 'set') {
+      list = normaliseFavs(body['artists']);
+    } else return fail(400, 'Unknown change to the artist list.');
+    await this.store.put(FAV_ARTISTS_KEY, list);
+    return ok({ artists: list });
+  }
+
+  /** Each starred artist as a starting point, its Deezer id found by name when the star did not carry one. */
+  private async favSeeds(job: Job, favs: readonly FavArtist[]): Promise<{ seed: Dict; profile: Dict }[]> {
+    const c = { meter: job.meter ?? undefined, token: job.token };
+    return pmap(favs, 3, async (a) => {
+      let id = a.deezerId;
+      if (!id) id = await this.dz.artistByName(a.name, c).then((x) => x?.id ?? null, () => null);
+      return favSeed(a, id);
+    });
+  }
+
+  /** The typical Deezer follower count of the starting and starred artists, or null when none is known. */
+  private async sizeReference(job: Job, seedViews: readonly Dict[], profiles: Record<string, Dict>, favs: readonly FavArtist[]): Promise<number | null> {
+    const c = { meter: job.meter ?? undefined, token: job.token };
+    const byName = new Map(favs.map((f) => [fold(f.name), f]));
+    const asks = new Map<string, { id: string | null; name: string; fans: number | null }>();
+    for (const sv of seedViews) {
+      const name = String((sv['artists'] as string[] | undefined)?.[0] ?? '');
+      if (!name || asks.has(fold(name))) continue;
+      const fav = byName.get(fold(name));
+      const dz = ((profiles[String(sv['key'])]?.['dz'] as Dict | null)?.['artist_ids'] as Dict | undefined)?.['deezer'];
+      asks.set(fold(name), { id: typeof dz === 'string' && dz ? dz : fav?.deezerId ?? null, name, fans: fav?.fans ?? null });
+      if (asks.size >= 12) break;
+    }
+    const fans = await pmap([...asks.values()], 3, (a) => (a.fans !== null ? Promise.resolve(a.fans) : this.dz.artistFans(a.id, a.name, c).catch(() => null)));
+    return referenceSize(fans);
+  }
+
+  /** The size fit of each leading song's main artist; null when no artist could be sized. */
+  private async sizeFitFor(job: Job, reference: number, tracks: readonly Dict[]): Promise<((t: E.Track) => number) | null> {
+    const c = { meter: job.meter ?? undefined, token: job.token };
+    const artists = new Map<string, { id: string | null; name: string }>();
+    for (const t of tracks) {
+      const name = String((t['artists'] as string[] | undefined)?.[0] ?? '');
+      if (!name || artists.has(fold(name))) continue;
+      const dz = (t['artist_ids'] as Dict | undefined)?.['deezer'];
+      artists.set(fold(name), { id: typeof dz === 'string' && dz ? dz : null, name });
+      if (artists.size >= 40) break;
+    }
+    const list = [...artists.entries()];
+    const sizes = await pmap(list, 4, ([, a]) => this.dz.artistFans(a.id, a.name, c).catch(() => null));
+    const fans = new Map<string, number>();
+    list.forEach(([k], i) => { const n = sizes[i]; if (typeof n === 'number') fans.set(k, n); });
+    job.timings['sized_artists'] = fans.size;
+    if (!fans.size) return null;
+    return (t) => sizeFit(fans.get(fold(String(t.artists?.[0] ?? ''))) ?? null, reference);
+  }
+
   // ---- recommend -----------------------------------------------------------------------
   /**
    * Starts one discovery batch. Searching is one way in; finishing a song from a list that has
@@ -1558,7 +1632,8 @@ export class LocalApi {
       seeds = guard.seeds;
       moodLead = guard.mood;
     }
-    if (!seeds.length) return fail(400, 'Add at least one starting song first.');
+    // ARTIST-FAV-001: starred artists are starting points of their own, so they alone are enough to discover from.
+    if (!seeds.length && !(listening ? [] : this.favArtists()).length) return fail(400, 'Add at least one starting song first.');
     if (this.currentJob) this.jobs.get(this.currentJob)?.token.cancel('superseded by a newer request');
     const job = new Job(newId());
     this.jobs.set(job.id, job);
@@ -1996,8 +2071,16 @@ export class LocalApi {
         if (asked.has(String(sd['key']))) continue;
         profiles[sd['key']] = (this.store.cacheGet(`seedprofile:${sd['id']}`, true)?.value as Dict | undefined) ?? { dz: null, ytm_vid: null, dz_uncertain: [] };
       }
-      const seedViews = seeds.map((sd) => p.seedView(sd, profiles[sd['key']] as Dict));
-      const gatherViews = seedViews.filter((sv) => asked.has(String(sv['key'])));
+      // ARTIST-FAV-001: the newest starred artists join as starting points of their own (their radio, top songs and
+      // related artists), on every Find my next favorite run with no Customize options needed.
+      const favs = trigger === 'listening' ? [] : this.favArtists().slice(0, FAV_PER_RUN);
+      const favParts = await this.favSeeds(job, favs);
+      for (const f of favParts) profiles[String(f.seed['key'])] = f.profile;
+      const seedViews = [...seeds.map((sd) => p.seedView(sd, profiles[sd['key']] as Dict)), ...favParts.map((f) => f.seed)];
+      const gatherViews = seedViews.filter((sv) => asked.has(String(sv['key'])) || sv['fav_artist'] === true);
+      // ARTIST-SIZE-001: the size the list aims for, from the starting and starred artists' Deezer followers.
+      const sizeRef = await this.sizeReference(job, seedViews, profiles, favs);
+      job.timings['size_ref'] = sizeRef ?? 0;
       job.timings['seeds'] = seeds.length;
       job.timings['seeds_asked'] = gatherViews.length;
       job.timings['profile_ms'] = since();
@@ -2038,7 +2121,7 @@ export class LocalApi {
       const colours = this.colourList(taste);
       if (colours.length) await this.store.put(TASTE_CURSOR_KEY, colourCursor + 1);
       job.timings['taste_colours'] = colours.length;
-      const gathered = await p.gather(job, gatherViews, profiles, cfg, es.fresh, onPartial, deepAlbums, { colours, cursor: colourCursor });
+      const gathered = await p.gather(job, gatherViews, profiles, cfg, es.fresh, onPartial, deepAlbums, { colours, cursor: colourCursor }, { skipCharts: smallScene(sizeRef) });
       const related = gathered.related;
       // Only songs the list does not already hold can take a slot in this batch.
       const cands = newDiscoveryTracks(gathered.cands, held);
@@ -2071,6 +2154,12 @@ export class LocalApi {
       const ctx: E.Context = { seeds: seedViews as never, vectors, relatedArtists: relMap, feedback: fb, impressions: imps, settings: es, now: new Date(), cfg, taste, rankV2: v2, taste2 };
       let scored = E.scoreAll(cands as never, ctx);
       let chosen = E.select(scored, ctx);
+      // ARTIST-SIZE-001: the leading songs' artists are sized and the list is ranked again with their fit.
+      if (sizeRef !== null) {
+        job.progress = 'Matching artists of a similar size';
+        const fit = await this.sizeFitFor(job, sizeRef, scored.slice(0, 60).map((x) => x.track as Dict));
+        if (fit) { ctx.artistFit = fit; scored = E.scoreAll(cands as never, ctx); chosen = E.select(scored, ctx); }
+      }
       job.timings['metadata_ms'] = since();
       job.result = merge(this.serialise(chosen, ctx, 'metadata', job));
 

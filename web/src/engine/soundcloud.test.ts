@@ -241,3 +241,12 @@ describe('SoundCloud client id: the ~3 MB bundle read, and what it says when it 
     expect(r.length).toBeGreaterThan(0);
   }, 60_000);
 });
+
+describe('one key fetch for searches that start together (SPEED-DATA-001)', () => {
+  it('two searches started at once read SoundCloud\u2019s ~3 MB script bundle once, not twice', async () => {
+    const { s, seen } = sc();
+    await Promise.all([s.search('osamason', 5), s.search('summrs', 5)]);
+    expect(seen.filter((u) => u.startsWith('https://soundcloud.com/')).length).toBe(1);
+    expect(seen.filter((u) => u.includes('sndcdn.com/assets/') && !u.endsWith('x.js')).length).toBe(1);
+  });
+});

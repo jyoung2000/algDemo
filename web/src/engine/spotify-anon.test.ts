@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { Http, type HttpPort } from './net';
 import { SpotifySearch, totpFor } from './spotify-anon';
+import { MemoryBackend, Store } from './store';
 
 const live = process.env['AIRWAVE_LIVE'] === '1';
 
@@ -51,6 +52,59 @@ describe('SpotifySearch requests', () => {
     expect(tracks.map((t) => t.platform_id)).toEqual(['1pKYYY0dkg23sQQXi0Q5zN']);
     expect(seen.length).toBe(5);
     for (const s of seen) expect(s.ua).toMatch(/^Mozilla\/5\.0 \(Windows NT/);
+  });
+});
+
+describe('the 4.5 MB player bundle is read once, not on every token (SPEED-DATA-001)', () => {
+  const enc = (s: string) => new TextEncoder().encode(s);
+  const fakeWith = (seen: string[], player = 'abc123', expiresIn = 3_600_000) => ({
+    async request(req: { url: string }) {
+      seen.push(req.url);
+      const u = new URL(req.url);
+      const reply = (s: string) => ({ status: 200, headers: {}, body: enc(s) });
+      if (u.pathname === '/api/server-time') return reply('{"serverTime":1700000000}');
+      if (u.hostname === 'open.spotify.com' && u.pathname === '/') return reply(`<script src="https://open.spotifycdn.com/cdn/build/web-player/web-player.${player}.js"></script>`);
+      if (u.hostname === 'open.spotifycdn.com') return reply('x={secret:"abcdefghij",version:61}');
+      if (u.pathname === '/api/token') return reply(JSON.stringify({ accessToken: 't', accessTokenExpirationTimestampMs: Date.now() + expiresIn }));
+      return reply('{"data":{"searchV2":{"tracks":{"items":[]}}}}');
+    },
+  });
+  const bundles = (seen: string[]) => seen.filter((u) => u.includes('open.spotifycdn.com')).length;
+
+  it('two searches at once mint one token and read the bundle once', async () => {
+    const seen: string[] = [];
+    const s = new SpotifySearch(new Http(fakeWith(seen) as never));
+    await Promise.all([s.searchTracks('a', 3), s.searchTracks('b', 3)]);
+    expect(bundles(seen)).toBe(1);
+    expect(seen.filter((u) => u.includes('/api/token')).length).toBe(1);
+  });
+
+  it('the next launch (same store) gets its token without the bundle or the player page', async () => {
+    const store = await Store.open(new MemoryBackend());
+    const first: string[] = [];
+    await new SpotifySearch(new Http(fakeWith(first) as never), store).searchTracks('a', 3);
+    expect(bundles(first)).toBe(1);
+    const next: string[] = [];
+    await new SpotifySearch(new Http(fakeWith(next) as never), store).searchTracks('a', 3);
+    expect(bundles(next)).toBe(0);
+    expect(next.some((u) => new URL(u).pathname === '/' && u.includes('open.spotify.com'))).toBe(false);
+    expect(next.some((u) => u.includes('/api/token'))).toBe(true);
+  });
+
+  it('a kept secret Spotify no longer accepts is replaced from the current bundle', async () => {
+    const store = await Store.open(new MemoryBackend());
+    await new SpotifySearch(new Http(fakeWith([]) as never), store).searchTracks('a', 3);
+    const seen: string[] = [];
+    let refused = true;
+    const base = fakeWith(seen, 'def456');
+    const port = { async request(req: { url: string }) {
+      if (refused && req.url.includes('/api/token')) { refused = false; seen.push(req.url); return { status: 400, headers: {}, body: enc('{}') }; }
+      return base.request(req);
+    } };
+    const out = await new SpotifySearch(new Http(port as never), store).searchTracks('a', 3);
+    expect(out).toEqual([]);
+    expect(bundles(seen)).toBe(1);
+    expect(seen.filter((u) => u.includes('/api/token')).length).toBe(2);
   });
 });
 

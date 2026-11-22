@@ -3783,12 +3783,13 @@ html {
    The existing check and accessible readiness text remain; colour is an additional cue. */
 .rec__actions .iconbtn.playbtn[data-ready='true'] {
   /* ROW-PLAY-001: the same light blue fill as every other list (row-play.css); the old #e6effb was too faint. */
-  background: #bcd8ff;
+  /* PLAY-LIVE-001 (owner, 2026-11-21): solid blue with a white arrow. */
+  background: var(--accent);
   /* PLAY-DISC-001: the shorthand above resets the clip to the border box, which painted the fill into
      the transparent 44px target borders: a 36 x 44 pill whose blue sat off the ring's circle. */
   background-clip: content-box;
-  color: var(--accent);
-  box-shadow: inset 0 0 0 1px #8fbcf5;
+  color: #fff;
+  box-shadow: none;
 }
 .rec__dl[data-dl='failed'] .rec__dl-rail,
 .rec__dl[data-dl='blocked'] .rec__dl-rail { width: 100%; background: var(--danger); opacity: 0.5; clip-path: none; }
