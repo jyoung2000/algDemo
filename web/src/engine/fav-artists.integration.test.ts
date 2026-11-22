@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { LocalApi } from './local-api';
 import { MemoryBackend, Store } from './store';
+import { BUILT_IN_ALGORITHM, createFrom } from './algorithms';
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const ARTISTS: Record<string, { id: number; name: string; fans: number }> = {
@@ -70,6 +71,37 @@ describe('starred artists and artist size through the API (ARTIST-FAV-001, ARTIS
     l = (await api.handle('GET', '/api/fav-artists')).body as typeof l;
     expect(l.artists.map((a) => a.name)).toEqual(['OsamaSon']);
     expect((await api.handle('POST', '/api/fav-artists', { op: 'add', artist: { name: '' } })).status).toBe(400);
+  });
+
+  // ARTIST-FAV-ALGO-001 (owner, 2026-11-22): "the starred artist only apply to the current algorithim preset".
+  it('keeps a list per algorithm: switching presets shows and uses only that preset\u2019s artists', async () => {
+    const store = await Store.open(new MemoryBackend());
+    const api = new LocalApi({ store, port: fakeDeezer([]) as never, encoder: null, spotifySearch: () => async () => [] });
+    await api.handle('POST', '/api/fav-artists', { op: 'add', artist: { name: 'OsamaSon' } });
+    const def = (await api.handle('GET', '/api/fav-artists')).body as { artists: { name: string }[]; algorithm: { id: string; name: string } };
+    expect(def.algorithm).toEqual({ id: 'airwave-default', name: 'jPlay default' });
+    const mine = { ...createFrom(BUILT_IN_ALGORITHM, 'Underground', 'user-under') };
+    expect((await api.handle('PUT', '/api/settings', { algorithms: [mine], active_algorithm: 'user-under' })).status).toBe(200);
+    let l = (await api.handle('GET', '/api/fav-artists')).body as typeof def;
+    expect(l.algorithm.name).toBe('Underground');
+    expect(l.artists).toEqual([]);
+    await api.handle('POST', '/api/fav-artists', { op: 'add', artist: { name: 'Summrs' } });
+    await api.handle('PUT', '/api/settings', { active_algorithm: 'airwave-default' });
+    l = (await api.handle('GET', '/api/fav-artists')).body as typeof def;
+    expect(l.artists.map((a) => a.name)).toEqual(['OsamaSon']);
+    await api.handle('PUT', '/api/settings', { active_algorithm: 'user-under' });
+    l = (await api.handle('GET', '/api/fav-artists')).body as typeof def;
+    expect(l.artists.map((a) => a.name)).toEqual(['Summrs']);
+  });
+
+  it('a list saved before lists were per algorithm stays with the algorithm active then', async () => {
+    const store = await Store.open(new MemoryBackend());
+    await store.put('favourite_artists', [{ name: 'OsamaSon', addedAt: 1 }]);
+    await store.put('settings', { algorithms: [createFrom(BUILT_IN_ALGORITHM, 'Mine', 'user-mine')], active_algorithm: 'user-mine' });
+    const api = new LocalApi({ store, port: fakeDeezer([]) as never, encoder: null, spotifySearch: () => async () => [] });
+    expect(((await api.handle('GET', '/api/fav-artists')).body as { artists: { name: string }[] }).artists.map((a) => a.name)).toEqual(['OsamaSon']);
+    await api.handle('PUT', '/api/settings', { active_algorithm: 'airwave-default' });
+    expect(((await api.handle('GET', '/api/fav-artists')).body as { artists: unknown[] }).artists).toEqual([]);
   });
 
   it('a starred artist alone finds music from it and its related artists, mainstream acts ranked below same-size ones', { timeout: 120_000 }, async () => {

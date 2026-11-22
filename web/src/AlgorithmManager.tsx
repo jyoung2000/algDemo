@@ -5,10 +5,11 @@
  * a copy, reset, import and export, edit every value and the final step, and read the six-line
  * formula. A place differs only in its title and heading level.
  */
-import { useEffect, useRef, useState } from 'react';
-import type { Settings } from './api';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import type { FavArtist, Settings } from './api';
+import { favArtistsStore } from './fav-artists-store';
 import {
-  BUILT_IN_ALGORITHM, BUILT_IN_ID, MIGRATED_NAME, PARAM_FIELDS, createFrom, formulaLines, formulaNotes, getParam, nameError, parseAlgorithm,
+  BUILT_IN_ALGORITHM, BUILT_IN_ID, MIGRATED_NAME, PARAM_FIELDS, createFrom, formulaLines, formulaNotes, getParam, nameError, parseAlgorithmFile,
   serializeAlgorithm, uniqueName, type Algorithm, type AlgorithmSettings,
 } from './engine/algorithms';
 import { applyRankingFormula, DEFAULT_RANKING_FORMULA, FORMULA_FACTORS, MAX_FORMULA_LENGTH, rankingInputs } from './engine/ranking-formula';
@@ -70,6 +71,8 @@ export function AlgorithmManager({ state, place = 'profile', onChanged, onSaved 
   const { errors, shown } = draft;
   const dirty = draft.valuesDirty;
   const idle = busy || !view;
+  // ARTIST-FAV-ALGO-001: kept loaded so Export carries the active algorithm's starred artists.
+  useSyncExternalStore(favArtistsStore.subscribe, favArtistsStore.get);
   const persist = async (patch: AlgorithmSettings) => { const next = await saveAlgorithmSettings(patch); onSaved?.(next); return next; };
 
   const run = async (work: () => Promise<string>) => {
@@ -92,7 +95,9 @@ export function AlgorithmManager({ state, place = 'profile', onChanged, onSaved 
     if (err) { setFailure(err); return; }
     void run(async () => {
       const copy = createFrom(active, newName);
+      const artists = favArtistsStore.get(); // ARTIST-FAV-ALGO-001: a copy starts with the same starred artists
       await persist({ algorithms: [...users, copy], active_algorithm: copy.id });
+      if (artists.length) await favArtistsStore.setAll(artists);
       clearAlgorithmDrafts(); setPanel(null); setNewName('');
       return `Created “${copy.name}” from “${active.name}”. It is now active and editable.`;
     });
@@ -118,20 +123,24 @@ export function AlgorithmManager({ state, place = 'profile', onChanged, onSaved 
     if (!file) return;
     setFailure(''); setMessage('');
     try {
-      if (file.size > 16_384) throw new Error('This file is too large to be an algorithm (16 KB maximum).');
+      if (file.size > 65_536) throw new Error('This file is too large to be an algorithm (64 KB maximum).');
       setImportText(await file.text());
       setMessage(`Loaded ${file.name}. Check it, then choose Import algorithm.`);
     } catch (e) { setFailure((e as Error).message); }
   };
   const doImport = () => {
     let alg: Algorithm;
-    try { alg = parseAlgorithm(importText); }
+    let artists: FavArtist[];
+    try { ({ algorithm: alg, artists } = parseAlgorithmFile(importText)); }
     catch (e) { setFailure((e as Error).message); setMessage(''); return; }
     void run(async () => {
       const named = { ...alg, name: uniqueName(alg.name, users) };
       await persist({ algorithms: [...users, named], active_algorithm: named.id });
+      // ARTIST-FAV-ALGO-001: the file's starred artists become the new algorithm's own.
+      if (artists.length) await favArtistsStore.setAll(artists);
       clearAlgorithmDrafts(); setPanel(null); setImportText('');
-      return `Imported “${named.name}”. It is now the active algorithm.`;
+      const n = artists.length;
+      return `Imported “${named.name}”${n ? ` with ${n} starred ${n === 1 ? 'artist' : 'artists'}` : ''}. It is now the active algorithm.`;
     });
   };
 
@@ -139,7 +148,7 @@ export function AlgorithmManager({ state, place = 'profile', onChanged, onSaved 
     setFailure('');
     const file = `${slug(active.name)}.airwave-algorithm.json`;
     try {
-      const text = serializeAlgorithm(active);
+      const text = serializeAlgorithm(active, favArtistsStore.get());
       const a = document.createElement('a');
       const blobUrl = typeof URL.createObjectURL === 'function' ? URL.createObjectURL(new Blob([text], { type: 'application/json' })) : null;
       a.href = blobUrl ?? `data:application/json;charset=utf-8,${encodeURIComponent(text)}`;

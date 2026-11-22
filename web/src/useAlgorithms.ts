@@ -6,6 +6,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { api, type Settings } from './api';
+import { favArtistsStore } from './fav-artists-store';
 import { allAlgorithms, findAlgorithm, migrateAlgorithmSettings, type Algorithm, type AlgorithmSettings } from './engine/algorithms';
 
 export type AlgorithmView = { algorithms: Algorithm[]; active: string };
@@ -32,6 +33,8 @@ export async function saveAlgorithmSettings(patch: AlgorithmSettings): Promise<S
     && Array.isArray(next.algorithms);
   if (!accepted) throw new Error('The running engine did not accept this algorithm change. Update the app before retrying.');
   for (const l of [...listeners]) l(next);
+  // ARTIST-FAV-ALGO-001: starred artists belong to the active algorithm; a new one shows its own list.
+  if (patch.active_algorithm !== undefined) await favArtistsStore.reload();
   return next;
 }
 

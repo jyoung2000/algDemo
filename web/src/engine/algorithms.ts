@@ -8,6 +8,7 @@ import { DEFAULT_ENGINE, FRESH_WEIGHT_MULTIPLIER, MODE_MULTIPLIERS, validateWeig
 import { TASTE_WEIGHT } from './taste';
 import { TASTE2_MAX_WEIGHT } from './taste2';
 import { compileRankingFormula, DEFAULT_RANKING_FORMULA, MAX_FORMULA_LENGTH, parseRankingFormula } from './ranking-formula';
+import { exportFavs, importFavs, type FavArtist } from './fav-artists';
 
 export const SEED_WEIGHT_KEYS = ['audio', 'genre', 'artist', 'provider', 'feedback', 'tempo'] as const;
 export const GLOBAL_WEIGHT_KEYS = ['feedback', 'freshness', 'novelty'] as const;
@@ -47,7 +48,8 @@ export const MIGRATED_NAME = 'My formula';
 export const MAX_USER_ALGORITHMS = 50;
 export const MAX_NAME_LENGTH = 60;
 export const MAX_WEIGHT = 100;
-export const MAX_IMPORT_CHARS = 16_384;
+/** An algorithm file, with up to 200 starred artists of its own (ARTIST-FAV-ALGO-001). */
+export const MAX_IMPORT_CHARS = 65_536;
 export const EXPORT_FORMAT = 'airwave-algorithm';
 export const EXPORT_VERSION = 1;
 
@@ -317,12 +319,20 @@ export function uniqueName(base: string, existing: Algorithm[]): string {
   for (let i = 2; ; i++) if (!names.has(`${base} ${i}`.toLowerCase())) return `${base} ${i}`;
 }
 
-export function serializeAlgorithm(alg: Algorithm): string {
-  return JSON.stringify({ format: EXPORT_FORMAT, version: EXPORT_VERSION, algorithm: { name: alg.name, params: alg.params, finalFormula: alg.finalFormula } }, null, 2);
+/** The algorithm as a file; ARTIST-FAV-ALGO-001: with its own starred artists when given. */
+export function serializeAlgorithm(alg: Algorithm, artists?: readonly FavArtist[]): string {
+  const algorithm: Record<string, unknown> = { name: alg.name, params: alg.params, finalFormula: alg.finalFormula };
+  if (artists) algorithm['artists'] = exportFavs(artists);
+  return JSON.stringify({ format: EXPORT_FORMAT, version: EXPORT_VERSION, algorithm }, null, 2);
 }
 
 /** Reads an exported algorithm. Strict: unknown fields, other versions and oversized input are rejected. */
 export function parseAlgorithm(text: unknown, id: string = newAlgorithmId()): Algorithm {
+  return parseAlgorithmFile(text, id).algorithm;
+}
+
+/** An algorithm file and the starred artists it carries (none for a file from before ARTIST-FAV-ALGO-001). */
+export function parseAlgorithmFile(text: unknown, id: string = newAlgorithmId()): { algorithm: Algorithm; artists: FavArtist[] } {
   if (typeof text !== 'string' || !text.trim()) throw new Error('Paste algorithm JSON or choose a .json file.');
   if (text.length > MAX_IMPORT_CHARS) throw new Error(`This is too large to be an algorithm (${MAX_IMPORT_CHARS / 1024} KB maximum).`);
   let data: unknown;
@@ -333,10 +343,11 @@ export function parseAlgorithm(text: unknown, id: string = newAlgorithmId()): Al
   strictKeys('The file', data, ['format', 'version', 'algorithm'], errors);
   const a = data['algorithm'];
   if (!isObj(a)) errors.push('The file has no algorithm.');
-  else strictKeys('The algorithm', a, ['name', 'params', 'finalFormula'], errors);
+  else strictKeys('The algorithm', a, ['name', 'params', 'finalFormula', 'artists'], errors);
   if (errors.length) throw new Error(errors.join(' '));
   const alg = a as Record<string, unknown>;
-  return validateAlgorithm({ id, name: alg['name'], params: alg['params'], finalFormula: alg['finalFormula'] });
+  const algorithm = validateAlgorithm({ id, name: alg['name'], params: alg['params'], finalFormula: alg['finalFormula'] });
+  return { algorithm, artists: importFavs(alg['artists']) };
 }
 
 // ---- settings: storage, migration and the active algorithm ---------------------------------------

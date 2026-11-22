@@ -8,11 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const server = vi.hoisted(() => ({ list: [] as { name: string; deezerId: string | null; fans: number | null; picture: string | null; pageId: string | null; addedAt: number }[] }));
 vi.mock('./api', () => ({
   api: {
-    favArtists: vi.fn(async () => ({ artists: server.list })),
+    favArtists: vi.fn(async () => ({ artists: server.list, algorithm: { id: 'user-under', name: 'Underground' } })),
     editFavArtists: vi.fn(async (body: { op: string; artist?: { name: string; pageId?: string; fans?: number | null }; name?: string }) => {
       if (body.op === 'add' && body.artist) server.list = [{ name: body.artist.name, deezerId: null, fans: body.artist.fans ?? null, picture: null, pageId: body.artist.pageId ?? null, addedAt: Date.now() }, ...server.list.filter((a) => a.name.toLowerCase() !== body.artist!.name.toLowerCase())];
       if (body.op === 'remove') server.list = server.list.filter((a) => a.name.toLowerCase() !== String(body.name).toLowerCase());
-      return { artists: server.list };
+      return { artists: server.list, algorithm: { id: 'user-under', name: 'Underground' } };
     }),
   },
 }));
@@ -54,7 +54,7 @@ describe('starring an artist (ARTIST-FAV-001)', () => {
     expect(names()).toEqual(['OsamaSon', 'Summrs']);
     await act(async () => (host.querySelector('button[aria-label="Remove Summrs from your artists"]') as HTMLButtonElement).click()); await flush();
     expect(names()).toEqual(['OsamaSon']);
-    const input = host.querySelector('input#fav-artist-add') as HTMLInputElement;
+    const input = host.querySelector('input#fav-artist-add-settings') as HTMLInputElement;
     await act(async () => {
       const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
       set.call(input, '  Nettspend '); input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -87,6 +87,19 @@ describe('starring an artist (ARTIST-FAV-001)', () => {
     expect(star).not.toBeNull();
     await act(async () => star.click()); await flush();
     expect(server.list[0]).toMatchObject({ name: 'OsamaSon', pageId: 'dz:7', fans: 21296 });
+  });
+
+  // ARTIST-FAV-ALGO-001 (owner, 2026-11-22): "Ensure users can see the list of starred artist in the profile tab ...
+  // ensure in the profile tab users can remove artist from there artist list".
+  it('the Profile tab lists the active algorithm\u2019s artists and removes one', async () => {
+    server.list = [{ name: 'OsamaSon', deezerId: null, fans: null, picture: null, pageId: null, addedAt: 2 }, { name: 'Summrs', deezerId: null, fans: null, picture: null, pageId: null, addedAt: 1 }];
+    await act(async () => root.render(<FavArtistsSettings where="profile" />));
+    await flush();
+    expect(host.querySelector('h2')!.textContent).toBe('Your artists');
+    expect(host.textContent).toContain('“Underground”');
+    await act(async () => (host.querySelector('button[aria-label="Remove OsamaSon from your artists"]') as HTMLButtonElement).click()); await flush();
+    expect([...host.querySelectorAll('.fav-artists__name')].map((n) => n.textContent)).toEqual(['Summrs']);
+    expect(server.list.map((a) => a.name)).toEqual(['Summrs']);
   });
 
   it('an empty list says how to add artists', async () => {

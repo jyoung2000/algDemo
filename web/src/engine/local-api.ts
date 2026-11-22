@@ -3,7 +3,7 @@
  * needs no server. `handle()` takes what the UI would have sent to /api/* and returns what the server
  * would have answered, status code included. Jobs run as async tasks; the browser polls them as before.
  */
-import { applyAlgorithmPatch, engineFromSettings, settingsWithAlgorithms } from './algorithms';
+import { BUILT_IN_ID, activeAlgorithm, applyAlgorithmPatch, engineFromSettings, settingsWithAlgorithms } from './algorithms';
 import * as A from './audio';
 import { isSimilarityPercent, selectSimilar, soundMatch, SIMILAR_DEFAULT, SIMILAR_FLOOR, SIMILAR_LIMIT, type SoundHit, type SoundTrack } from './similar-sound';
 import { customOutcome, normaliseCriteria, runCustomDiscovery, songIdOf, type CandidateTrack, type CustomCriteria, type CustomPorts } from './custom-discovery';
@@ -63,7 +63,7 @@ import { BlockedUrl, BudgetExceeded, Cancelled, FetchError, Http, type HttpPort,
 import { dl, downloadsAvailable } from './downloads';
 import { localAudioUrl } from './local-audio';
 import { Job, Pipeline, pmap, type Embedder } from './pipeline';
-import { FAV_ARTISTS_KEY, FAV_PER_RUN, addFav, favSeed, normaliseFav, normaliseFavs, removeFav, type FavArtist } from './fav-artists';
+import { FAV_ARTISTS_KEY, FAV_PER_RUN, addFav, favMap, favSeed, normaliseFav, normaliseFavs, removeFav, type FavArtist } from './fav-artists';
 import { referenceSize, sizeFit, smallScene } from './artist-size';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
@@ -432,7 +432,7 @@ export class LocalApi {
       if (m === 'POST' && path === '/api/resolve') return await this.resolve(String(body?.['url'] ?? ''));
       if (m === 'POST' && path === '/api/complete-spotify') return ok(await this.completeSpotify(String(body?.['title'] ?? ''), String(body?.['artist'] ?? '')));
       if (path === '/api/seeds') return m === 'PUT' ? await this.putSeeds(body ?? {}) : ok(this.seedsView());
-      if (path === '/api/fav-artists') return m === 'POST' ? await this.editFavArtists(body ?? {}) : ok({ artists: this.favArtists() });
+      if (path === '/api/fav-artists') return m === 'POST' ? await this.editFavArtists(body ?? {}) : ok(this.favArtistsView());
       if (path === '/api/settings') return m === 'PUT' ? await this.putSettings(body ?? {}) : ok(this.settings());
       if (m === 'POST' && path === '/api/recommend') {
         // ALLOWANCE-ARCH-001: a top-up decides on the connection as it is now (the phone may have joined Wi-Fi since).
@@ -1546,8 +1546,19 @@ export class LocalApi {
   }
 
   // ---- starred artists (ARTIST-FAV-001) and artist size (ARTIST-SIZE-001) ----------------------
+  /** ARTIST-FAV-ALGO-001: the active algorithm's starred artists; every other preset keeps its own. */
   private favArtists(): FavArtist[] {
-    return normaliseFavs(this.store.get(FAV_ARTISTS_KEY));
+    const alg = activeAlgorithm(this.settings());
+    const raw = this.store.get(FAV_ARTISTS_KEY);
+    const map = favMap(raw, alg.id);
+    // A list from before lists were per algorithm is pinned to the algorithm active now, once.
+    if (Array.isArray(raw)) void this.store.put(FAV_ARTISTS_KEY, map);
+    return map[alg.id] ?? [];
+  }
+
+  private favArtistsView(): Dict {
+    const alg = activeAlgorithm(this.settings());
+    return { artists: this.favArtists(), algorithm: { id: alg.id, name: alg.name } };
   }
 
   /** `{op: 'add', artist}`, `{op: 'remove', name}` or `{op: 'set', artists}`; answers with the whole list. */
@@ -1565,8 +1576,16 @@ export class LocalApi {
     } else if (op === 'set') {
       list = normaliseFavs(body['artists']);
     } else return fail(400, 'Unknown change to the artist list.');
-    await this.store.put(FAV_ARTISTS_KEY, list);
-    return ok({ artists: list });
+    // Only the active algorithm's list changes; lists of algorithms since deleted are dropped.
+    const s = this.settings();
+    const alg = activeAlgorithm(s);
+    const all = favMap(this.store.get(FAV_ARTISTS_KEY), alg.id);
+    const live = new Set([BUILT_IN_ID, ...((settingsWithAlgorithms(s)['algorithms'] as { id: string }[]) ?? []).map((a) => a.id)]);
+    const next: Record<string, FavArtist[]> = {};
+    for (const [id, l] of Object.entries(all)) if (live.has(id) && l.length) next[id] = l;
+    if (list.length) next[alg.id] = list; else delete next[alg.id];
+    await this.store.put(FAV_ARTISTS_KEY, next);
+    return ok(this.favArtistsView());
   }
 
   /** Each starred artist as a starting point, its Deezer id found by name when the star did not carry one. */

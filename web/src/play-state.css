@@ -3,8 +3,8 @@
    spin it should grow from right to left until the circle is complete representing a full download, then ensure the
    play button inside the blue play button is white".
    Still to download: white, black arrow, and the same 1px light outline as the row's download / queue / star icons.
-   As the real download progress (--dl, 0-100) rises, a thicker black ring is revealed from the right edge towards the
-   left until it is a complete circle; an unknown percent shows no ring yet (0), and nothing ever spins. A song's own
+   As the real download progress (--dl, 0-100) rises, a 2px black arc grows from the middle of the top, round the right
+   side and back up the left until it is a complete circle (PLAY-RING-003); an unknown percent shows no ring yet (0), and nothing ever spins. A song's own
    download fills its ring; a list's ring is the share of its songs on this device. Ready is a solid blue disc with a
    white arrow; a list turns blue once every song is downloaded. The rings sit inside the button's own box, so nothing
    moves when they appear or go. */
@@ -23,10 +23,9 @@ button.listplay[data-progress='true']::before {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  padding: 3px;
+  padding: 2px;
   pointer-events: none;
-  background: var(--ink);
-  clip-path: inset(0 0 0 calc(100% - var(--dl, 0) * 1%));
+  background: conic-gradient(from 0deg, var(--ink) calc(var(--dl, 0) * 1%), transparent 0);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;

@@ -5,6 +5,7 @@ import { TastePicker, type TrailPoint } from './TastePicker';
 import { familyName, placeGenre, placeSong } from './taste-map';
 import { Art } from './Art';
 import { AlgorithmManager } from './AlgorithmManager';
+import { FavArtistsSettings } from './FavArtists';
 import { PARAM_FIELDS, formulaText, getParam } from './engine/algorithms';
 import { useAlgorithms } from './useAlgorithms';
 import { useAlgorithmDraft } from './useAlgorithmDraft';
@@ -369,6 +370,9 @@ export function ProfileView() {
           <p className="note">Not on the map (no known genre, or no genre with a tempo): {notPlaced.join(', ')}.</p>
         )}
       </section>
+
+      {/* ARTIST-FAV-ALGO-001: the active algorithm's starred artists, removable here. */}
+      <FavArtistsSettings where="profile" />
 
       {(p.artists.length > 0 || albums.length > 0 || p.songs.length > 0) && (
         <section className="card" aria-labelledby="pf-fb">

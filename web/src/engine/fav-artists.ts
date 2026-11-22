@@ -7,6 +7,10 @@
  * its related artists and their top songs are asked for like a starting song's, its name counts for the artist
  * factor, and its size counts toward the size the list aims for (ARTIST-SIZE-001). A star is about the artist, not
  * a song, so it never trains the song feedback and is kept apart from the starting songs.
+ *
+ * ARTIST-FAV-ALGO-001 (owner, 2026-11-22): "the starred artist only apply to the current algorithim preset and are
+ * imported and exported with the algorithim". The list is kept per algorithm id; only the active algorithm's list
+ * is shown, edited and used, and an algorithm file carries its own list.
  */
 import { fold } from './identity';
 
@@ -82,4 +86,35 @@ export function favSeed(a: FavArtist, deezerId: string | null): { seed: Dict; pr
     seed: { key, id: key, provider: 'favourite-artist', platform_id: deezerId ?? '', title: a.name, artists: [a.name], tags: [], emphasis: 1, fav_artist: true },
     profile: { dz: deezerId ? { artist_ids: { deezer: deezerId } } : null, ytm_vid: null, dz_uncertain: [] },
   };
+}
+
+/** Starred artists per algorithm id (ARTIST-FAV-ALGO-001). */
+export type FavByAlgorithm = Record<string, FavArtist[]>;
+const ALG_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * The stored value as lists per algorithm. A list stored before lists were per algorithm (a bare array) belongs to
+ * the algorithm that was active when it is first read, so nobody's stars move to another preset or vanish.
+ */
+export function favMap(raw: unknown, activeId: string): FavByAlgorithm {
+  if (Array.isArray(raw)) return { [activeId]: normaliseFavs(raw) };
+  const out: FavByAlgorithm = {};
+  if (raw && typeof raw === 'object') {
+    for (const [id, list] of Object.entries(raw as Record<string, unknown>)) if (ALG_ID.test(id)) out[id] = normaliseFavs(list);
+  }
+  return out;
+}
+
+/** What an algorithm file carries for each starred artist: enough to find it again, nothing device-bound. */
+export interface ExportedFav { name: string; deezerId: string | null; fans: number | null; pageId: string | null }
+export const exportFavs = (list: readonly FavArtist[]): ExportedFav[] =>
+  list.map((a) => ({ name: a.name, deezerId: a.deezerId, fans: a.fans, pageId: a.pageId }));
+
+/** An algorithm file's artists, newest first as exported; throws an English message when they are not a list. */
+export function importFavs(raw: unknown, now = Date.now()): FavArtist[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) throw new Error('The starred artists in this file must be a list.');
+  if (raw.length > FAV_ARTISTS_MAX) throw new Error(`An algorithm file can carry at most ${FAV_ARTISTS_MAX} starred artists.`);
+  // Keep the file's order: the first artist is the newest star.
+  return normaliseFavs(raw.map((a, i) => ({ ...(a && typeof a === 'object' ? a : {}), addedAt: now - i })));
 }

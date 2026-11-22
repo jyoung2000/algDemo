@@ -57,8 +57,11 @@ describe('a song’s Play button shows its download (PLAY-LIVE-001)', () => {
     const thin = /\.iconbtn\.playbtn\.playbtn\[data-progress='true'\],\s*button\.listplay\.listplay:not\(\[data-ready='true'\]\)\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
     expect(thin).toMatch(/box-shadow:\s*inset 0 0 0 1px var\(--hair\)/);
     const ring = /\[data-progress='true'\]::before\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
-    expect(ring).toMatch(/background:\s*var\(--ink\)/);
-    expect(ring).toMatch(/clip-path:\s*inset\(0 0 0 calc\(100% - var\(--dl, 0\) \* 1%\)\)/);
+    // PLAY-RING-003 (owner, 2026-11-22): "a bit thinner and starts in the middle at the top": a 2px arc from 12 o'clock,
+    // round the right side first, closing the circle at 100%.
+    expect(ring).toMatch(/padding:\s*2px/);
+    expect(ring).toMatch(/background:\s*conic-gradient\(from 0deg, var\(--ink\) calc\(var\(--dl, 0\) \* 1%\), transparent 0\)/);
+    expect(ring).not.toMatch(/clip-path/);
     expect(css.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/animation|@keyframes|rotate/);
   });
   // PLAYER-MAIN-WHITE-001 (owner, 2026-11-22): "the play and pause button on the radio, saved, and discover [tabs] need to

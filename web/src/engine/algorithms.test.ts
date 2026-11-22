@@ -162,7 +162,8 @@ describe('import and export', () => {
     expect(() => parseAlgorithm(JSON.stringify({ ...ok, extra: true }))).toThrow('The file has an unknown field “extra”.');
     expect(() => parseAlgorithm(JSON.stringify({ ...ok, algorithm: { ...ok.algorithm, builtIn: true } }))).toThrow('The algorithm has an unknown field “builtIn”.');
     expect(() => parseAlgorithm(JSON.stringify({ ...ok, algorithm: { ...ok.algorithm, params: { ...ok.algorithm.params, coverageFloor: 3 } } }))).toThrow('Coverage floor must be between 0 and 1.');
-    expect(() => parseAlgorithm(' '.repeat(20_000) + '{}')).toThrow(/too large/);
+    // ARTIST-FAV-ALGO-001: the limit is 64 KB now that a file carries up to 200 starred artists.
+    expect(() => parseAlgorithm(' '.repeat(70_000) + '{}')).toThrow(/too large/);
     expect(() => parseAlgorithm('')).toThrow(/Paste algorithm JSON/);
   });
 });

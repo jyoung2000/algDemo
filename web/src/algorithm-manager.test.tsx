@@ -19,6 +19,8 @@ vi.mock('./api', () => ({
     settings: () => call('GET', '/api/settings'),
     putSettings: (patch: unknown) => call('PUT', '/api/settings', patch),
     profile: () => call('GET', '/api/profile'),
+    favArtists: () => call('GET', '/api/fav-artists'),
+    editFavArtists: (body: unknown) => call('POST', '/api/fav-artists', body),
     health: () => new Promise(() => {}),
     status: () => new Promise(() => {}),
   },
@@ -30,6 +32,7 @@ import { MemoryBackend, Store } from './engine/store';
 import type { HttpPort } from './engine/net';
 import { ProfileView } from './Profile';
 import { clearAlgorithmDrafts } from './useAlgorithmDraft';
+import { favArtistsStore } from './fav-artists-store';
 import { SettingsView } from './Settings';
 import type { Settings } from './api';
 
@@ -37,6 +40,7 @@ const port = { request: async () => { throw new Error('UI tests must not contact
 let store: Store;
 async function boot(settings?: Record<string, unknown>) {
   clearAlgorithmDrafts();
+  favArtistsStore.reset();
   store = await Store.open(new MemoryBackend());
   if (settings) await store.put('settings', settings);
   h.local = new LocalApi({ store, port, encoder: null });
@@ -178,6 +182,38 @@ describe('Profile algorithm toolbar', () => {
     const data = JSON.parse(await urls[0]!.text());
     expect(data).toMatchObject({ format: 'airwave-algorithm', version: 1, algorithm: { name: 'Mine', params: BUILT_IN_ALGORITHM.params } });
     click.mockRestore();
+  });
+});
+
+// ARTIST-FAV-ALGO-001 (owner, 2026-11-22): "the starred artist only apply to the current algorithim preset and are
+// imported and exported with the algorithim".
+describe('starred artists travel with the algorithm', () => {
+  it('Export carries the active algorithm\u2019s artists; Import gives them to the new algorithm only', async () => {
+    await boot({ algorithms: [user('Mine', 'user-mine')], active_algorithm: 'user-mine' });
+    await call('POST', '/api/fav-artists', { op: 'add', artist: { name: 'OsamaSon', pageId: 'dz:7', fans: 21296 } });
+    const urls: Blob[] = [];
+    Object.assign(URL, { createObjectURL: vi.fn((b: Blob) => { urls.push(b); return 'blob:algo'; }), revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    await renderProfile();
+    await waitFor(() => expect(screen.getAllByText('OsamaSon').length).toBeGreaterThan(0));
+    fireEvent.click(within(manager()).getByRole('button', { name: 'Export' }));
+    const text = await urls[0]!.text();
+    expect(JSON.parse(text).algorithm.artists).toEqual([{ name: 'OsamaSon', deezerId: '7', fans: 21296, pageId: 'dz:7' }]);
+    click.mockRestore();
+    // Back on the built-in algorithm the list is empty; importing the file brings the artist with the new algorithm.
+    fireEvent.change(profileSelect(), { target: { value: BUILT_IN_ID } });
+    await waitFor(() => expect(stored().active_algorithm).toBe(BUILT_IN_ID));
+    await waitFor(() => expect(((store.get('favourite_artists') ?? {}) as Record<string, unknown>)[BUILT_IN_ID]).toBeUndefined());
+    fireEvent.click(within(manager()).getByRole('button', { name: 'Import' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Or paste algorithm JSON' }), { target: { value: text } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import algorithm' }));
+    await waitFor(() => expect(within(manager()).getAllByRole('status').map((x) => x.textContent).join(' ')).toMatch(/Imported “Mine 2” with 1 starred artist/));
+    const lists = store.get('favourite_artists') as Record<string, { name: string }[]>;
+    const imported = stored().active_algorithm!;
+    expect(imported).not.toBe('user-mine');
+    expect(lists[imported]!.map((a) => a.name)).toEqual(['OsamaSon']);
+    expect(lists['user-mine']!.map((a) => a.name)).toEqual(['OsamaSon']);
+    expect(lists[BUILT_IN_ID]).toBeUndefined();
   });
 });
 
