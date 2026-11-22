@@ -143,6 +143,11 @@ object MediaHub {
   }
 
   /** Car Identify can be answered now: by the service engine, or by a page that is answering. */
+  /** ARTIST-FAV-CAR-001: hands a command to the service's own engine page; false when it is not ready. */
+  fun toServiceEngine(cmd: JSONObject): Boolean {
+    val s = catalogSink?.takeIf { catalogReady } ?: return false
+    return runCatching { s(cmd) }.isSuccess
+  }
   fun canIdentify(): Boolean = (catalogSink != null && catalogReady) || (sink != null && pageAnswering)
 
   /** Fail the searches sent through [via], and the unsent ones nothing is left to answer. */

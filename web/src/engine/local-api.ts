@@ -1645,11 +1645,13 @@ export class LocalApi {
     const settings = this.settings();
     const listening = body['trigger'] === 'listening';
     let moodLead: string[] | undefined;
+    let lane: Lane = 'interactive';
     if (listening) {
       const guard = this.listeningGuard(body, settings);
       if (guard.skip) return ok({ job: null, reason: guard.reason, ...(guard.resumes_at ? { resumes_at: guard.resumes_at } : {}) });
       seeds = guard.seeds;
       moodLead = guard.mood;
+      lane = guard.lane;
     }
     // ARTIST-FAV-001: starred artists are starting points of their own, so they alone are enough to discover from.
     if (!seeds.length && !(listening ? [] : this.favArtists()).length) return fail(400, 'Add at least one starting song first.');
@@ -1658,7 +1660,7 @@ export class LocalApi {
     this.jobs.set(job.id, job);
     this.currentJob = job.id;
     for (const [k, j] of this.jobs) if (j.done && unixNow() - j.started > 900) this.jobs.delete(k);
-    void this.runJob(job, seeds, settings, listening ? 'listening' : 'search');
+    void this.runJob(job, seeds, settings, listening ? 'listening' : 'search', lane);
     return ok(moodLead ? { job: job.id, mood: moodLead } : { job: job.id });
   }
 
@@ -1934,7 +1936,7 @@ export class LocalApi {
    * came from the list counts, and only while the unplayed remainder is nearly gone; a skip, a
    * replay, a pause or a preview from search never starts a search. One listen starts one batch.
    */
-  private listeningGuard(body: Dict, settings: Dict): { skip: true; reason: string; resumes_at?: number } | { skip: false; seeds: Dict[]; mood?: string[] } {
+  private listeningGuard(body: Dict, settings: Dict): { skip: true; reason: string; resumes_at?: number } | { skip: false; seeds: Dict[]; mood?: string[]; lane: Lane } {
     const seeds = this.store.seeds() as Dict[];
     const eventId = String(body['event_id'] ?? '');
     const event = this.store.feedback().find((f) => (f as unknown as Dict)['event_id'] === eventId) as unknown as Dict | undefined;
@@ -1973,8 +1975,12 @@ export class LocalApi {
     const active = this.currentJob ? this.jobs.get(this.currentJob) : null;
     if (active && !active.done) return { skip: true, reason: 'Discovery is already running.' };
     // ALLOWANCE-ARCH-001: a top-up nobody asked for by hand waits for the reserve on mobile data, and says when it resumes.
+    // QUEUE-NEVER-DRY-001 (owner, 2026-11-22): "the discovery / now playing queue needs to keep finding new music, the
+    // user should never be able to fully listen to all the songs in now playing queue twice without anything new being
+    // found". A queue that is nearly all heard is what plays next, so its top-up is playback, which the allowance never
+    // limits; only the mood's optional top-up waits for the reserve.
     const allowance = this.budget.state();
-    if (allowance.paused) return { skip: true, reason: 'Finding new songs is paused to save mobile data.', ...(allowance.resumes_at ? { resumes_at: allowance.resumes_at } : {}) };
+    if (!low && allowance.paused) return { skip: true, reason: 'Finding new songs is paused to save mobile data.', ...(allowance.resumes_at ? { resumes_at: allowance.resumes_at } : {}) };
     const handled = (this.store.get<string[]>('discovery_events') ?? []) as string[];
     if (handled.includes(eventId)) return { skip: true, reason: 'Already discovered for this listen.' };
     void this.store.put('discovery_events', [...handled.slice(-99), eventId]);
@@ -1985,9 +1991,9 @@ export class LocalApi {
       void this.store.put(MOOD_DISCOVERY_AT, unixNow());
       const first = [...want.seeds, ...(heard ? [heard] : [])];
       const firstKeys = new Set(first.map((t) => String(t['key'])));
-      return { skip: false, seeds: [...first.filter((t, i) => first.findIndex((u) => u['key'] === t['key']) === i), ...seeds.filter((s) => !firstKeys.has(String(s['key'])))], mood: want.leading };
+      return { skip: false, seeds: [...first.filter((t, i) => first.findIndex((u) => u['key'] === t['key']) === i), ...seeds.filter((s) => !firstKeys.has(String(s['key'])))], mood: want.leading, lane: 'background' };
     }
-    return { skip: false, seeds: heard ? [heard, ...seeds.filter((s) => s['key'] !== event['key'])] : seeds };
+    return { skip: false, seeds: heard ? [heard, ...seeds.filter((s) => s['key'] !== event['key'])] : seeds, lane: 'playback' };
   }
 
   /**
@@ -2056,7 +2062,7 @@ export class LocalApi {
     };
   }
 
-  private async runJob(job: Job, seeds: Dict[], settings: Dict, trigger: 'search' | 'listening' = 'search'): Promise<void> {
+  private async runJob(job: Job, seeds: Dict[], settings: Dict, trigger: 'search' | 'listening' = 'search', lane: Lane = trigger === 'listening' ? 'background' : 'interactive'): Promise<void> {
     const p = this.pipeline;
     const t0 = performance.now();
     const since = () => Math.round(performance.now() - t0);
@@ -2074,7 +2080,7 @@ export class LocalApi {
     try {
       const cfg = { ...engineFromSettings(settings), queueSize: Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize) };
       const es = E.normaliseSettings({ fresh: Boolean(settings['fresh']), adventurous: settings['adventurous'] });
-      job.meter = this.jobMeter(settings, trigger === 'listening' ? 'background' : 'interactive');
+      job.meter = this.jobMeter(settings, lane);
       job.phase = 'profiling';
       job.progress = 'Looking up your starting songs';
       // PLAYLIST-QUEUE-001: a long list of starting songs (a saved list sent to the queue) is asked

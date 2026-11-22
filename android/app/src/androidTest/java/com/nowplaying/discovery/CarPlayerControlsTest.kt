@@ -27,6 +27,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import com.nowplaying.discovery.engine.EngineHub
 import kotlin.math.PI
 import kotlin.math.sin
 
@@ -53,7 +54,7 @@ class CarPlayerControlsTest {
   }
   private val sent = CopyOnWriteArrayList<JSONObject>()
   private val seenStates = CopyOnWriteArrayList<String>()
-  private val sink: (JSONObject) -> Unit = { if (it.optString("type") in setOf("feedback", "playlistAdd", "findSimilar")) sent.add(it) }
+  private val sink: (JSONObject) -> Unit = { if (it.optString("type") in setOf("feedback", "playlistAdd", "findSimilar", "starArtists")) sent.add(it) }
   private var browser: MediaBrowser? = null
   private var controller: PlatformController? = null
   private var compat: MediaBrowserCompat? = null
@@ -78,6 +79,7 @@ class CarPlayerControlsTest {
   }
 
   @After fun tearDown() {
+    runCatching { RadioNative.handle(ctx, JSONObject().put("op", "stop")) }
     main {
       controller?.let { c -> c.playbackState?.customActions?.firstOrNull { it.name.toString() == "Shuffle on" }?.let { c.transportControls.sendCustomAction(it.action, null) } }
       controller?.transportControls?.stop()
@@ -189,8 +191,8 @@ class CarPlayerControlsTest {
     main { seed() }
     val c = connect()
     playTone(c, 1)
-    until("all the buttons") { names(c).containsAll(listOf("Shuffle off", "Repeat song: off", "Find similar songs", "Star", "Dislike")) }
-    assertEquals(listOf("Shuffle off", "Star", "Dislike", "Repeat song: off", "Find similar songs"), names(c))
+    until("all the buttons") { names(c).containsAll(listOf("Shuffle off", "Repeat song: off", "Find similar songs", "Star", "Dislike", "Star the artist")) }
+    assertEquals(listOf("Shuffle off", "Star", "Dislike", "Star the artist", "Repeat song: off", "Find similar songs"), names(c).filterNot { it.startsWith("Volume") })
   }
 
   /** CAR-SIMILAR-001 (owner, 2026-11-18): "add the button to find similar songs ... next to the repeat icon". */
@@ -455,8 +457,8 @@ class CarPlayerControlsTest {
     }
     val c = connect()
     val car = connectCar()
-    val top = children(car, "playlists").first()
-    assertEquals("On this phone", top.description.title.toString())
+    // Playlists opens with Sound & discovery settings (CAR-SETTINGS-001), then On this phone.
+    val top = children(car, "playlists").first { it.description.title.toString() == "On this phone" }
     assertTrue("a list the car can open", top.isBrowsable)
     val local = children(car, top.mediaId!!)
     assertEquals("every song held on the phone once, nothing else",
@@ -468,13 +470,13 @@ class CarPlayerControlsTest {
       override fun onChildrenLoaded(parentId: String?, children: MutableList<MediaBrowserCompat.MediaItem>?, options: Bundle?) { reloads.add(children.orEmpty().map { it.description.subtitle.toString() }) }
     }) }
     until("Playlists loaded") { reloads.isNotEmpty() }
-    assertEquals("5 songs saved on this phone", reloads.last().first())
+    assertEquals("5 songs saved on this phone", reloads.last().first { it.endsWith("saved on this phone") })
     main {
       val s = JSONArray().apply { for (i in 1..4) put(song(i)) }.put(JSONObject(notHeld.toString()).put("ready", true).put("source", link(6)))
       MediaHub.apply(JSONObject().put("library", JSONObject().put("songs", s).put("playlists", JSONArray()
         .put(JSONObject().put("id", "road").put("title", "Road trip").put("songs", JSONArray().put(song(5)).put(song(1)))))))
     }
-    until("the car reloads Playlists when a song lands") { reloads.last().first() == "6 songs saved on this phone" }
+    until("the car reloads Playlists when a song lands") { reloads.last().first { it.endsWith("saved on this phone") } == "6 songs saved on this phone" }
     main { c.transportControls.playFromMediaId(local[2].mediaId, null) }
     until("the chosen song plays") { title(c) == "Control test tone 3" && main { c.playbackState?.state } == PlaybackState.STATE_PLAYING }
     main { c.transportControls.skipToNext() }
@@ -482,6 +484,82 @@ class CarPlayerControlsTest {
     press(c, ".STAR")
     until("the star likes it") { sent.any { it.optString("type") == "feedback" && it.optString("id") == "ctl-tone-4" } }
     assertEquals("Add \u201cControl test tone 4\u201d to a playlist", children(car, top.mediaId!!).first().description.title.toString())
+  }
+
+  /**
+   * ARTIST-FAV-CAR-001 (owner, 2026-11-22): "add a player control button to android auto to star the artist of current
+   * playing track and add the artist / artist on the current track to your prefered artist".
+   */
+  @Test fun starTheArtistSendsTheSongsArtistsToTheApp() {
+    MediaHub.setCommandSink(sink)
+    main { seed() }
+    val c = connect()
+    playTone(c, 1)
+    until("the artist button") { "Star the artist" in names(c) }
+    assertEquals(R.drawable.car_star_artist, actions(c).first { it.name.toString() == "Star the artist" }.icon)
+    press(c, ".STAR_ARTISTS")
+    until("the app heard it") { sent.any { it.optString("type") == "starArtists" } }
+    val cmd = sent.first { it.optString("type") == "starArtists" }
+    assertEquals("ctl-tone-1", cmd.getString("id"))
+    assertEquals("Airwave diagnostic fixture", cmd.getString("artist"))
+    assertTrue("a star of the artist never likes the song: $sent", sent.none { it.optString("type") == "feedback" })
+  }
+
+  /**
+   * CAR-RADIO-TO-QUEUE-001 (owner, 2026-11-22): "on android auto playing radio and switching to now playing queue just
+   * takes the user back to the radio queue". With the phone app closed, a song chosen from Now playing queue while a
+   * station plays ends the broadcast and plays the song.
+   */
+  @Test fun aQueueSongChosenWhileTheRadioPlaysLeavesTheRadio() {
+    main { seed() }
+    val row = JSONObject().put("id", "q-radio").put("name", "Radio test q-radio").put("url", "https://streams.example/q-radio")
+    RadioCatalog.rememberStations(JSONArray().put(row))
+    RadioCatalog.selectContext("q-radio")
+    val radio = RadioNative.Session("radio-to-queue-test", "q-radio", RadioRing(48000 * 60), row)
+    val silence = ByteArray(48000 * 4 * 30)
+    radio.ring.write(silence, silence.size)
+    RadioNative::class.java.getDeclaredField("session").apply { isAccessible = true }.set(RadioNative, radio)
+    main { EngineHub.fromPage(JSONObject().put("op", "radio").put("id", radio.id).put("title", "Radio test q-radio").put("station", "q-radio").toString()) }
+    val c = connect()
+    until("the radio plays") { title(c) == "Radio test q-radio" }
+    val car = connectCar()
+    val song = children(car, "songs").first { it.description.title.toString() == "Control test tone 2" }
+    main { c.transportControls.playFromMediaId(song.mediaId, null) }
+    until("the chosen song plays, not the station") { title(c) == "Control test tone 2" && main { c.playbackState?.state } == PlaybackState.STATE_PLAYING }
+    assertNull("the broadcast ended", RadioNative.session)
+    Thread.sleep(1500)
+    assertEquals("it stays on the song", "Control test tone 2", title(c))
+    assertTrue("the song player's buttons: ${names(c)}", "Dislike" in names(c))
+  }
+
+  private fun key(c: PlatformController, code: Int, action: Int, repeat: Int = 0) {
+    val t = SystemClock.uptimeMillis()
+    main { c.dispatchMediaButtonEvent(android.view.KeyEvent(t, t, action, code, repeat)) }
+  }
+
+  /**
+   * CAR-SCRUB-001 (owner, 2026-11-22): "let the user hold down the skip and back arrows to x2 scrub through the current
+   * song". A held Next key moves the song on at twice real time and does not skip; a tap still skips.
+   */
+  @Test fun holdingNextScrubsTheSongAndATapStillSkips() {
+    main { seed() }
+    val c = connect()
+    playTone(c, 1)
+    until("the song plays") { main { c.playbackState?.state } == PlaybackState.STATE_PLAYING }
+    Thread.sleep(500)
+    val before = position(c)
+    val code = android.view.KeyEvent.KEYCODE_MEDIA_NEXT
+    key(c, code, android.view.KeyEvent.ACTION_DOWN)
+    for (r in 1..20) { Thread.sleep(100); key(c, code, android.view.KeyEvent.ACTION_DOWN, r) }
+    key(c, code, android.view.KeyEvent.ACTION_UP)
+    Thread.sleep(400)
+    val after = position(c)
+    assertEquals("a hold does not skip", "Control test tone 1", title(c))
+    // About 2.4 s went by: playing alone moves about 2.4 s; scrubbing at twice real time moves about 4 s or more.
+    assertTrue("scrubbed forward: $before -> $after", after - before >= 3500)
+    key(c, code, android.view.KeyEvent.ACTION_DOWN)
+    key(c, code, android.view.KeyEvent.ACTION_UP)
+    until("a tap skips") { title(c) == "Control test tone 2" }
   }
 
   @Test fun aPlaylistPickWhileTheAppIsClosedReachesTheAppWhenItOpens() {

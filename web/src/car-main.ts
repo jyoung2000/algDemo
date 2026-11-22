@@ -15,7 +15,7 @@ import { openIdbBackend } from './engine/idb';
 import { LocalApi } from './engine/local-api';
 import { runCarSimilar } from './engine/car-similar';
 import { runCarMood } from './engine/car-mood';
-import { pushQueueTopUp, pushSourceUpdates, setMediaHandlers, songFromTrack } from './engine/media-native';
+import { artistNamesOf, pushQueueTopUp, pushSourceUpdates, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { ServiceListening } from './engine/service-listening';
 import { applyCarSettings } from './engine/car-settings';
 import { engineSend } from './engine/native-engine';
@@ -136,6 +136,11 @@ async function startService(n: FullBridge): Promise<void> {
             song: carSong,
           });
         } finally { similarBusy = false; }
+      },
+      // ARTIST-FAV-CAR-001: with the phone closed, the car's Star the artist button is saved by this engine.
+      starArtists: async (id, credit, carTrack) => {
+        const t = (await carTrackFor(id)) ?? carTrack ?? null;
+        for (const name of artistNamesOf(t, credit)) await api.editFavArtists({ op: 'add', artist: { name } }).catch(() => undefined);
       },
       // CAR-SETTINGS-001: with the phone closed, the car's EQ / discovery / mood choice is saved by this engine.
       carSettings: (change) => { void applyCarSettings(change, { save: api.putSettings, send: engineSend }).catch(() => { /* resent on the next hello */ }); },

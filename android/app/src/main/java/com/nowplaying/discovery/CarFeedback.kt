@@ -62,6 +62,16 @@ object CarFeedback {
     if (MediaHub.hasPage() && MediaHub.pageAnswering) MediaHub.command(cmd) else enqueue(cmd)
   }
 
+  /**
+   * ARTIST-FAV-CAR-001: the car's Star the artist button. The phone app answers when it is open; with it closed the
+   * service's own engine saves the stars (they live in the engine's store); with neither, they wait for the app.
+   */
+  fun starArtists(songId: String, credit: String) {
+    val cmd = withRadioTrack(JSONObject().put("type", "starArtists").put("id", songId).put("artist", credit), songId)
+    if (MediaHub.hasPage() && MediaHub.pageAnswering) MediaHub.command(cmd)
+    else if (!MediaHub.toServiceEngine(cmd)) enqueue(cmd)
+  }
+
   /** CAR-RADIO-CONTROLS-001: a song starred on the radio is in no list the page holds, so its Track goes along. */
   private fun withRadioTrack(cmd: JSONObject, songId: String): JSONObject {
     val track = MediaHub.radioTrack

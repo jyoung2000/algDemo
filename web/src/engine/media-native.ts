@@ -112,6 +112,8 @@ export interface MediaHandlers {
   /** CAR-ACTIONS-001: Star or Dislike pressed in the car (or queued while the app was closed). */
   /** CAR-RADIO-CONTROLS-001: `track` is the radio song's own Track when the car starred a song on air. */
   feedback?: (id: string, kind: CarFeedbackKind, track?: Track) => void;
+  /** ARTIST-FAV-CAR-001: the car's Star the artist button: the song's artists join the starred artists. */
+  starArtists?: (id: string, credit: string, track?: Track) => void | Promise<void>;
   /** CAR-CONTROLS-001: the car's playlist picker (after a row's star) chose playlist `list` for song `id`. */
   playlistAdd?: (id: string, list: string, track?: Track) => void;
   /** CAR-SIMILAR-001: the car's Find similar button: add songs that sound like song `id` to the list. */
@@ -327,7 +329,7 @@ export function samplesFromPcm16(b64: string): Float32Array {
 export function installMediaCommands(): void {
   if (typeof window === 'undefined') return;
   (window as unknown as { __awMediaCmd?: (json: string) => void }).__awMediaCmd = (json: string) => {
-    let cmd: { type?: string; requestId?: string; positionMs?: number; index?: number; id?: string; query?: string; on?: boolean; mode?: number | string; album?: boolean; kind?: string; pcm?: string; list?: string; track?: unknown; current?: unknown; upcoming?: unknown; signal?: unknown; value?: unknown };
+    let cmd: { type?: string; requestId?: string; positionMs?: number; index?: number; id?: string; query?: string; on?: boolean; mode?: number | string; album?: boolean; kind?: string; pcm?: string; list?: string; track?: unknown; current?: unknown; upcoming?: unknown; signal?: unknown; value?: unknown; artist?: unknown };
     try {
       cmd = JSON.parse(json);
     } catch {
@@ -419,6 +421,12 @@ export function installMediaCommands(): void {
           if (t) handlers.feedback?.(String(cmd.id), cmd.kind as CarFeedbackKind, t); else handlers.feedback?.(String(cmd.id), cmd.kind as CarFeedbackKind);
         }
         break;
+      case 'starArtists':
+        if (typeof cmd.id === 'string' && cmd.id && cmd.id.length <= 500 && typeof cmd.artist === 'string' && cmd.artist.length <= 500) {
+          const t = carTrack(cmd.track, cmd.id);
+          void Promise.resolve(t ? handlers.starArtists?.(cmd.id, cmd.artist, t) : handlers.starArtists?.(cmd.id, cmd.artist)).catch(() => undefined);
+        }
+        break;
       case 'playlistAdd':
         if (typeof cmd.id === 'string' && cmd.id && typeof cmd.list === 'string' && cmd.list && cmd.list.length <= 200) {
           const t = carTrack(cmd.track, cmd.id);
@@ -443,4 +451,15 @@ export function carSettingsFrom(cmd: Record<string, unknown>): CarSettingsChange
   if (typeof a === 'number' && Number.isFinite(a) && a >= 0 && a <= 1) out.adventurous = a;
   if (typeof cmd['mood'] === 'boolean') out.mood_queue = cmd['mood'];
   return Object.keys(out).length ? out : null;
+}
+
+/**
+ * ARTIST-FAV-CAR-001: the artists to star for a song the car named: its own artist list when the song is known, else
+ * the credit line read as the car reads it (commas and "feat." separate artists; "&" stays inside a name).
+ */
+export function artistNamesOf(t: Pick<Track, 'artists'> | null | undefined, credit: string): string[] {
+  const own = (t?.artists ?? []).map((a) => String(a).trim()).filter(Boolean);
+  const names = own.length ? own : credit.replace(/[()[\]]/g, ' ').split(/\s*,\s*|\s+(?:feat\.?|ft\.?|featuring|with)\s+/i).map((x) => x.trim()).filter(Boolean);
+  const seen = new Set<string>();
+  return names.filter((n) => { const k = n.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 6);
 }

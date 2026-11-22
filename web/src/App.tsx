@@ -32,7 +32,8 @@ import { runCarSimilar } from './engine/car-similar';
 import { captureRows, moodMovable, pinNext, placeMood, playMoodMove } from './engine/mood-apply';
 import { arrangeShuffle, restoreOrder } from './engine/shuffle-order';
 import { phoneWait } from './engine/native-http';
-import { PHONE_LIST, decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pickCarContext, pushMediaLibrary, pushMediaState, pushMediaTracks, setMediaHandlers, songFromTrack } from './engine/media-native';
+import { favArtistsStore } from './fav-artists-store';
+import { PHONE_LIST, artistNamesOf, decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pickCarContext, pushMediaLibrary, pushMediaState, pushMediaTracks, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { engineAvailable, engineSend, listenFromEvent, markEngineEvent, subscribeEngineState } from './engine/native-engine';
 import { engineInstance } from './engine/service-listening';
 import { similarDetail, SimilarNotice, type SimilarNote } from './SimilarNotice';
@@ -998,6 +999,11 @@ export function App() {
         const t = trackById(id) ?? (playing?.track.key === id ? playing.track : undefined) ?? onAirSong(id) ?? carTrack;
         if (!t) return;
         learnFeedback(t, kind).catch((e) => flash(`Could not save that: ${(e as Error).message}`));
+      },
+      // ARTIST-FAV-CAR-001: the car's Star the artist button stars every artist of the song (the active algorithm's list).
+      starArtists: async (id, credit, carTrack) => {
+        const t = trackById(id) ?? (playing?.track.key === id ? playing.track : undefined) ?? onAirSong(id) ?? carTrack;
+        for (const name of artistNamesOf(t, credit)) await favArtistsStore.add({ name }).catch(() => undefined);
       },
       // CAR-CONTROLS-001: a playlist picked in the car after a row's star, saved like the app's own add.
       playlistAdd: (id, listId, carTrack) => {

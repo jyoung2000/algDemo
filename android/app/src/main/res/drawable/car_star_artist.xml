@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ARTIST-FAV-CAR-001: a person with a small star, the car's "Star the artist" button (tintable, like the other car icons). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M5.6,8.2a3.4,3.4 0 1,0 6.8,0a3.4,3.4 0 1,0 -6.8,0" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000"/>
+    <path android:pathData="M2.5,20a6.5,6.5 0 0,1 13,0" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000"/>
+    <path android:pathData="M18.5,3.2l1.25,2.55l2.8,0.4l-2.03,1.98l0.48,2.79l-2.5,-1.32l-2.5,1.32l0.48,-2.79l-2.03,-1.98l2.8,-0.4z" android:fillColor="#FFFFFFFF"/>
+</vector>

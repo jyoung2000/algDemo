@@ -239,7 +239,7 @@ class EnginePlayer(
    * the newest [rev] the page had seen; a load from before a change the service made is stale.
    */
   fun pageLoad(song: MediaHub.Song, mediaId: String?, positionMs: Long, play: Boolean, pageRev: Int) {
-    if (radioLive) { radioLive = false; forgetRadioItem(); com.nowplaying.discovery.RadioNative.stop(); com.nowplaying.discovery.RadioNative.shuffle = false }
+    leaveRadio()
     val id = mediaId ?: song.id
     val current = queue.current
     Log.i(TAG, "page load ${song.id.take(60)} link=${song.source != null} play=$play rev=$pageRev/$rev")
@@ -262,6 +262,12 @@ class EnginePlayer(
     playWhenReady = play
     holdWake(play)
     loadCurrent(positionMs.coerceAtLeast(0), chosen = true)
+  }
+
+  /** Ends a live broadcast (the song player takes over). Nothing when no radio plays. */
+  private fun leaveRadio() {
+    if (!radioLive) return
+    radioLive = false; forgetRadioItem(); com.nowplaying.discovery.RadioNative.stop(); com.nowplaying.discovery.RadioNative.shuffle = false
   }
 
   /** What the page will play after the current song; null for nothing (end of list, repeat-one). */
@@ -480,6 +486,11 @@ class EnginePlayer(
     if (chosen != null && chosen == queue.current?.mediaId && mediaItems[start].requestMetadata.extras?.getBoolean(KEEP_PLAYING) == true) return Futures.immediateVoidFuture()
     // Radio is native even with a live page: never send station ids through music lookup/playId.
     if (chosen != null && RadioCatalog.stationId(chosen) != null) return RadioCatalog.play(context, chosen)
+    // CAR-RADIO-TO-QUEUE-001 (owner, 2026-11-22): "on android auto playing radio and switching to now playing queue just
+    // takes the user back to the radio queue". A song chosen in the car while the radio plays ends the broadcast first;
+    // before, the native path loaded the song under a still-live radio session, so the car stayed on the station.
+    // A playlist pick (KEEP_PLAYING) changes nothing that plays, the radio included.
+    if (chosen != null && mediaItems[start].requestMetadata.extras?.getBoolean(KEEP_PLAYING) != true) leaveRadio()
     if (pageLive && chosen != null) {
       // The page knows the playlist context, the shuffle round and how to fetch a song it lacks.
       page?.command(JSONObject().put("type", "playId").put("id", chosen))

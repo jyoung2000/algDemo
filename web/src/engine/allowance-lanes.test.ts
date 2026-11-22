@@ -77,16 +77,24 @@ describe('with the allowance used up on mobile data', () => {
     expect(r.resumes_at! - Date.now() / 1000).toBeGreaterThan(600);
     expect(r.resumes_at! - Date.now() / 1000).toBeLessThan(1200);
   });
-  it('a listening top-up waits and says so', async () => {
+  // QUEUE-NEVER-DRY-001 (owner, 2026-11-22): "I was on data and shuffle played the entire discovery playlist twice and no
+  // new tracks were added ... the user should never be able to fully listen to all the songs in now playing queue twice
+  // without anything new being found". A queue nearly all heard tops up as playback, which the allowance never limits.
+  it('a queue that is nearly all heard still tops up, as playback', async () => {
     const { api, store, asked } = await open({ empty: true, metered: true });
     await store.put('last_result', { items: [bare(0), bare(1)] });
     await api.handle('POST', '/api/feedback', { kind: 'complete', event_id: 'e1', track: { ...seed, key: 'k0' }, listened: 180, origin: 'queue' });
     const before = asked.length;
-    const r = (await api.handle('POST', '/api/recommend', { trigger: 'listening', event_id: 'e1', exclude: ['k0'] })).body as { job: string | null; reason?: string; resumes_at?: number };
-    expect(r.job).toBeNull();
-    expect(r.reason).toMatch(/paused to save mobile data/i);
-    expect(r.resumes_at).toBeGreaterThan(Date.now() / 1000);
-    expect(asked.length).toBe(before);
+    const r = (await api.handle('POST', '/api/recommend', { trigger: 'listening', event_id: 'e1', exclude: ['k0'] })).body as { job: string | null; reason?: string };
+    expect(r.reason).toBeUndefined();
+    expect(r.job).toBeTruthy();
+    let st: { done: boolean; error?: string | null; progress?: string } = { done: false };
+    for (let i = 0; i < 40 && !st.done && asked.length === before; i++) {
+      await new Promise((res) => setTimeout(res, 100));
+      st = (await api.handle('GET', `/api/jobs/${r.job}`)).body as typeof st;
+    }
+    expect(st.error ?? null, JSON.stringify(st).slice(0, 300)).toBeNull();
+    expect(asked.length).toBeGreaterThan(before);
   });
   it('the status says it is paused and when it resumes; "Check again" fills it', async () => {
     const { api } = await open({ empty: true, metered: true });

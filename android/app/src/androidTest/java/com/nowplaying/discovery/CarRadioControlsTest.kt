@@ -149,7 +149,7 @@ class CarRadioControlsTest {
   @Test fun radioRowIsShuffleStarAndFavouriteStationWithoutRepeatSimilarOrDislike() {
     val c = connect()
     radioPlays(c)
-    until("the radio buttons") { names(c) == listOf("Shuffle stations off", "Star", "Favourite station") }
+    until("the radio buttons") { names(c).filterNot { it.startsWith("Volume") } == listOf("Shuffle stations off", "Star", "Favourite station", "Star the artist") }
   }
 
   @Test fun shuffleButtonShufflesStations() {
