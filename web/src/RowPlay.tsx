@@ -69,7 +69,7 @@ export function ListPlayButton({ tracks, className, label, title, disabled, onCl
   const words = s.ready ? 'every song downloaded' : `${s.done} of ${s.total} song${s.total === 1 ? '' : 's'} downloaded`;
   return (
     <button className={`${className} listplay`} type="button" disabled={disabled} onClick={onClick} aria-label={label}
-      title={`${title ?? label} — ${words}`} data-ready={s.ready || undefined} data-progress={!s.ready || undefined}
+      title={`${title ?? label} — ${words}`} data-ready={s.ready || undefined} data-progress={!s.ready || undefined} data-moving={s.moving || undefined}
       style={s.ready ? undefined : ({ '--dl': String(s.progress) } as CSSProperties)}>
       {children}
     </button>

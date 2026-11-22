@@ -246,6 +246,20 @@ describe('RemoteQueue', () => {
     expect(request.mock.calls.length).toBe(n);
   });
 
+  // PLAY-RING-004: an album or artist sent to download from its page is watched too, so its Play button fills by itself.
+  it('watches the songs of a list it was asked to download', async () => {
+    const timers: { fn: () => void; ms: number }[] = [];
+    const timer: WatchTimer = { set: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clear: () => undefined };
+    const request = vi.fn(async () => ({ status: 200, body: {}, cacheSnapshot: { tracks: [], expired: [] } }));
+    const q = new RemoteQueue({ request }, () => 0, timer);
+    q.subscribe(() => undefined);
+    q.downloadAll([track('a'), track('b')]);
+    expect(timers.length).toBe(1);
+    expect(timers[0]!.ms).toBe(WATCH_BUSY_MS);
+    timers.shift()!.fn();
+    await vi.waitFor(() => expect(request).toHaveBeenLastCalledWith('POST', '/_native/queue/snapshot', { tracks: [track('a'), track('b')] }));
+  });
+
   it('asks often while the service is moving files', async () => {
     const timers: { fn: () => void; ms: number }[] = [];
     const timer: WatchTimer = { set: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clear: () => undefined };

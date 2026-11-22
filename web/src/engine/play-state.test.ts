@@ -33,10 +33,13 @@ describe('a list’s Play button is blue only when every song is downloaded (ALB
   const states: Record<string, CardCache> = { a: card('ready'), b: card('downloading', 50), c: card('queued') };
   const of = (k: string) => states[k] ?? null;
   it('counts the songs on hand and the share downloaded so far', () => {
-    expect(listPlayState(['a', 'b', 'c', 'd'], of)).toEqual({ ready: false, done: 1, total: 4, progress: 38 });
+    expect(listPlayState(['a', 'b', 'c', 'd'], of)).toMatchObject({ ready: false, done: 1, total: 4, progress: 38 });
+    // PLAY-RING-004: a list with a song downloading right now says so; one with nothing moving does not.
+    expect(listPlayState(['a', 'b'], of).moving).toBe(true);
+    expect(listPlayState(['a', 'c'], of).moving).toBe(false);
   });
   it('is ready when every song is ready or a local file, and never for an empty list', () => {
-    expect(listPlayState(['a', 'a'], of)).toEqual({ ready: true, done: 1, total: 1, progress: 100 });
+    expect(listPlayState(['a', 'a'], of)).toMatchObject({ ready: true, done: 1, total: 1, progress: 100, moving: false });
     expect(listPlayState(['a', 'x'], of, (k) => k === 'x').ready).toBe(true);
     expect(listPlayState([], of).ready).toBe(false);
     expect(listPlayState(['a'], null)).toMatchObject({ ready: false, progress: 0 });

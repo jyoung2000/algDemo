@@ -112,7 +112,7 @@ export class RemoteQueue implements QueueAudioPort {
     return this.counts.get(sig) ?? { total: n, ready: 0, active: 0, failed: 0, blocked: false, queued: n, parallel: this.all?.parallel ?? 0, bulkActive: false, retrying: 0 };
   }
 
-  downloadAll(tracks: readonly Track[]): void { void this.send('download-all', { tracks }).catch(() => undefined); }
+  downloadAll(tracks: readonly Track[]): void { this.watchBusy = true; this.unwatch(); this.remember(tracks, false); void this.send('download-all', { tracks }).catch(() => undefined); }
   update(tracks: readonly Track[]): void { this.remember(tracks, true); void this.send('update', { tracks }).catch(() => undefined); }
   protect(gb: number, urls: string[]): Promise<unknown> { return this.send('protect', { gb, urls }); }
   limits(o: Parameters<QueuePreloader['limits']>[0]): Promise<unknown> { return this.send('limits', o); }

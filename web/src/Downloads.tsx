@@ -52,6 +52,7 @@ export function useDownloads(flash: (m: string) => void) {
   const [jobs, setJobs] = useState<DlJob[]>([]);
   /** Which native job each song's download button started, so the button can show that job's state. */
   const [trackJobs, setTrackJobs] = useState<Record<string, string>>({});
+  const [starting, setStarting] = useState<Record<string, true>>({});
   const [format, setFormatState] = useState<DlFormat>(loadFormat);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -69,7 +70,8 @@ export function useDownloads(flash: (m: string) => void) {
   const poll = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
     void refresh().then((list) => {
-      if (list.some(active)) timer.current = setTimeout(poll, 1000);
+      // PLAY-RING-004: often enough that a Play button's ring follows the real percent of a short download.
+      if (list.some(active)) timer.current = setTimeout(poll, 300);
     });
   }, [refresh]);
 
@@ -173,8 +175,11 @@ export function useDownloads(flash: (m: string) => void) {
   /** Songs with their own link go straight to a tool; others are matched on YouTube Music first. */
   const downloadTrack = useCallback(
     async (t: Track) => {
+      // PLAY-RING-004: from the press until the job exists (the song is being matched), the row already reads as started.
+      setStarting((m) => ({ ...m, [t.key]: true }));
       const remember = (job: DlJob | null) => {
         if (job) setTrackJobs((m) => ({ ...m, [t.key]: job.id }));
+        setStarting((m) => { const { [t.key]: _gone, ...rest } = m; return rest; });
         return Boolean(job);
       };
       const label = `${t.title}${t.artists?.length ? ` — ${t.artists.join(', ')}` : ''}`;
@@ -186,12 +191,12 @@ export function useDownloads(flash: (m: string) => void) {
         const target = m.id ? matchTarget(m.id) : null;
         if (!target) {
           flash(`No confident YouTube Music match for “${t.title}”, so nothing was downloaded.`);
-          return false;
+          return remember(null);
         }
         return remember(await start(target.tool, target.url, label));
       } catch (e) {
         flash(`Could not look up “${t.title}”: ${(e as Error).message}`);
-        return false;
+        return remember(null);
       }
     },
     [start, flash],
@@ -216,9 +221,10 @@ export function useDownloads(flash: (m: string) => void) {
     (key: string): { state: string; percent: number | null } | null => {
       const id = trackJobs[key];
       const job = id ? jobs.find((j) => j.id === id) : undefined;
-      return job ? { state: job.state, percent: job.percent ?? null } : null;
+      if (job) return { state: job.state, percent: job.percent ?? null };
+      return starting[key] ? { state: 'queued', percent: null } : null;
     },
-    [jobs, trackJobs],
+    [jobs, trackJobs, starting],
   );
 
   return { on, jobs, refresh: poll, format, setFormat, start, downloadTrack, trackState, jobOf, activeCount: jobs.filter(active).length };

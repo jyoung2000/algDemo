@@ -62,7 +62,14 @@ describe('a song’s Play button shows its download (PLAY-LIVE-001)', () => {
     expect(ring).toMatch(/padding:\s*2px/);
     expect(ring).toMatch(/background:\s*conic-gradient\(from 0deg, var\(--ink\) calc\(var\(--dl, 0\) \* 1%\), transparent 0\)/);
     expect(ring).not.toMatch(/clip-path/);
-    expect(css.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/animation|@keyframes|rotate/);
+    // Nothing ever turns (PLAY-RING-002). PLAY-RING-004: the arc glides between the real percents, and a download
+    // that has started but reports no percent yet breathes its thin outline instead of looking stuck.
+    const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(bare).not.toMatch(/rotate|spin/);
+    expect(bare).toMatch(/@property --dl \{\s*syntax: '<number>';\s*inherits: true;\s*initial-value: 0;\s*\}/);
+    expect(ring).toMatch(/transition:\s*--dl 450ms linear/);
+    expect(bare).toMatch(/\[data-moving='true'\][^{]*\{\s*animation: dl-wait/);
+    expect(/@keyframes dl-wait \{([\s\S]*?)\}\s*\}/.exec(bare)?.[1]).toMatch(/box-shadow/);
   });
   // PLAYER-MAIN-WHITE-001 (owner, 2026-11-22): "the play and pause button on the radio, saved, and discover [tabs] need to
   // be white filled whenever blue". The player's and the radio player's main button share .tbtn--main.
@@ -86,6 +93,7 @@ describe('a list’s Play button is blue only when every song is downloaded (ALB
     const b = btn('Play album');
     expect(b.dataset['ready']).toBeUndefined(); expect(b.dataset['progress']).toBe('true'); expect(b.style.getPropertyValue('--dl')).toBe('75');
     expect(b.title).toBe('Play album — 1 of 2 songs downloaded');
+    expect(b.dataset['moving']).toBe('true'); // PLAY-RING-004: a song of the list is downloading now
     states = { a: card('ready'), b: card('ready') }; await render(view());
     expect(btn('Play album').dataset['ready']).toBe('true'); expect(btn('Play album').dataset['progress']).toBeUndefined();
     expect(btn('Play album').title).toBe('Play album — every song downloaded');

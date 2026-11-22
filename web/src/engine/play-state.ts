@@ -43,13 +43,14 @@ export function songRing(card: CardCache | null | undefined, local = false): { p
 
 /** A whole list's Play button: blue only when every song is ready; the ring is the share of the list on hand. */
 export function listPlayState(keys: readonly string[], cacheOf: ((key: string) => CardCache | null) | null | undefined,
-  isLocal: (key: string) => boolean = () => false): { ready: boolean; done: number; total: number; progress: number } {
+  isLocal: (key: string) => boolean = () => false): { ready: boolean; done: number; total: number; progress: number; moving: boolean } {
   const unique = [...new Set(keys)];
-  let done = 0, sum = 0;
+  let done = 0, sum = 0, moving = false;
   for (const k of unique) {
     const c = isLocal(k) ? null : cacheOf?.(k) ?? null;
-    if (isLocal(k) || c?.state === 'ready') { done++; sum += 100; } else if (c?.state === 'downloading') sum += clamp(c.progress);
+    if (isLocal(k) || c?.state === 'ready') { done++; sum += 100; } else if (c?.state === 'downloading') { sum += clamp(c.progress); moving = true; }
   }
   const total = unique.length;
-  return { ready: total > 0 && done === total, done, total, progress: total ? clamp(sum / total) : 0 };
+  // PLAY-RING-004: `moving` says a song of the list is downloading right now, so the button can show it is working.
+  return { ready: total > 0 && done === total, done, total, progress: total ? clamp(sum / total) : 0, moving: moving && done < total };
 }
