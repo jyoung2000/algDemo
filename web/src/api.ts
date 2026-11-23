@@ -312,6 +312,8 @@ export interface RecResult {
   transfer: Record<string, number>;
   candidates?: number;
   empty_reason?: string;
+  /** NEXT-FAV-COLD-001: for a run with no starting song, which of stars / listening / sound it read. */
+  started_from?: string;
   sample?: { label: string; recorded: string };
   /** Set on the last finished queue restored from the server after a reload. */
   saved_at?: number;

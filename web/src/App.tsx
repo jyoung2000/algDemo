@@ -365,7 +365,10 @@ export function App() {
   );
 
   const run = async (force = false) => {
-    if (!force && !seeds.length) return;
+    // NEXT-FAV-COLD-001 (owner, 2026-11-23): with no starting song the engine starts from the listener's stars,
+    // their listening and their taste map, so a press is never refused here; the engine answers when it truly
+    // has nothing to go on.
+    void force;
     setRunErr(null);
     if (jobRef.current) void api.cancelJob(jobRef.current).catch(() => undefined);
     try {
@@ -1507,7 +1510,7 @@ export function App() {
               <div className="go__row">
                 {/* DISCOVER-TIDY-001 (owner): one row, Find my next favorite 75% and Customize discovery 25% as an icon. */}
                 <div className="go__pair">
-                  <button className="push push--default push--big" type="button" disabled={(!seeds.length && !customSet) || running || !loaded} aria-describedby="go-why" onClick={findNext}>
+                  <button className="push push--default push--big" type="button" disabled={running || !loaded} aria-describedby="go-why" onClick={findNext}>
                     {running ? 'Finding…' : 'Find my next favorite'}
                   </button>
                   <button className="push push--big go__custom" type="button" disabled={!loaded} aria-haspopup="dialog" aria-expanded={customOpen}
@@ -1521,7 +1524,8 @@ export function App() {
                   </button>
                 )}
                 <span id="go-why" className="go__why" aria-live="polite">
-                  {customStatus.text && (customStatus.running || !customOpen) ? customStatus.text : running ? job?.progress : ''}
+                  {/* NEXT-FAV-COLD-001: when a run had no starting song, the line under the button says what it read. */}
+                  {customStatus.text && (customStatus.running || !customOpen) ? customStatus.text : running ? job?.progress : result?.started_from ?? ''}
                 </span>
                 {customStatus.running && !customOpen && (
                   <button className="push push--big" type="button" onClick={stopCustom}>Stop</button>
@@ -1643,6 +1647,8 @@ export function App() {
                   {(result.count - (result.items ?? []).filter(x => expired.has(x.track.key)).length) < result.asked && !sample && (
                     <p className="note">
                       Found {result.count - (result.items ?? []).filter(x => expired.has(x.track.key)).length} songs worth suggesting{result.empty_reason ? ` — ${result.empty_reason}` : '.'} Airwave does not pad the list.
+                      {/* NEXT-FAV-COLD-001: a run with no starting song says what it read instead. */}
+                      {result.started_from ? ` ${result.started_from}` : ''}
                     </p>
                   )}
                   {/* SRC-WARN-001: a quiet provider is a status detail, not news for the listener.
@@ -1732,7 +1738,7 @@ export function App() {
                   <span className="empty__art" aria-hidden="true">
                     <Glyph name="note" size={28} />
                   </span>
-                  <p>Search for a song you love, press Add, then find your next favorite.</p>
+                  <p>Press “Find my next favorite” and this reads your starred artists, your listening and your sound. Or search for a song you love and press Add to start from it.</p>
                 </div>
               )}
             </section>

@@ -39,12 +39,14 @@ describe('Discover: one row of discovery buttons, a quiet loaded count', () => {
     expect(rule(css, '.go__pair > .go__custom')).toMatch(/min-height:\s*0/);
   });
 
-  it('no “Add at least one starting song first” label; Find works without starting songs once custom discovery is set', () => {
+  it('no “Add at least one starting song first” label; Find works with no starting song at all', () => {
     const app = src('App.tsx');
     expect(app).not.toMatch(/Add at least one starting song first/);
     const find = app.slice(app.indexOf('className="go__pair"'));
     const btn = find.slice(0, find.indexOf('</button>'));
-    expect(btn).toMatch(/disabled=\{\(!seeds\.length && !customSet\) \|\| running \|\| !loaded\}/);
+    // NEXT-FAV-COLD-001 (owner, 2026-11-23): "should work without a starting song and with no songs in queue" —
+    // only a run in progress, or an engine that has not loaded, stops the press.
+    expect(btn).toMatch(/disabled=\{running \|\| !loaded\}/);
     expect(btn).toMatch(/onClick=\{findNext\}/);
     // with no starting songs, Find runs the saved custom discovery choices
     expect(app).toMatch(/const findNext = \(\) => \{ if \(!seeds\.length && customSet\) void runCustom\(readCustom\(customDefaults\)\); else void run\(\); \};/);

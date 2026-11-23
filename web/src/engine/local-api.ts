@@ -65,6 +65,7 @@ import { localAudioUrl } from './local-audio';
 import { Job, Pipeline, pmap, type Embedder } from './pipeline';
 import { FAV_ARTISTS_KEY, FAV_PER_RUN, addFav, favMap, favSeed, normaliseFav, normaliseFavs, removeFav, type FavArtist } from './fav-artists';
 import { referenceSize, sizeFit, smallScene } from './artist-size';
+import { coldReason, coldStarters, type ColdStarter } from './cold-start';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
 import { Albums } from './albums';
@@ -1654,7 +1655,14 @@ export class LocalApi {
       lane = guard.lane;
     }
     // ARTIST-FAV-001: starred artists are starting points of their own, so they alone are enough to discover from.
-    if (!seeds.length && !(listening ? [] : this.favArtists()).length) return fail(400, 'Add at least one starting song first.');
+    // NEXT-FAV-COLD-001 (owner, 2026-11-23): "the find my new favorite button should work without a starting song
+    // and with no songs in queue. It should use the users listening algorithm, taste map, and favorite artist".
+    // With no starting song the run begins from the stars, the listening and the taste map instead; only a listener
+    // with none of the three has nothing to go on.
+    if (!seeds.length && !listening && !this.coldStarters().length) {
+      return fail(400, 'Nothing to go on yet. Play, like or star something \u2014 or add a starting song \u2014 and this finds music from it.');
+    }
+    if (!seeds.length && listening && !this.favArtists().length) return fail(400, 'Add at least one starting song first.');
     if (this.currentJob) this.jobs.get(this.currentJob)?.token.cancel('superseded by a newer request');
     const job = new Job(newId());
     this.jobs.set(job.id, job);
@@ -2075,8 +2083,12 @@ export class LocalApi {
       // batch was being found is kept rather than overwritten by the queue as it was at the start.
       const now = (this.store.get<Dict>('last_result')?.['items'] ?? previous) as { track: Dict }[];
       const items = appendDiscovery(now, (batch['items'] ?? []) as { track: Dict }[], limit);
-      return { ...batch, items, count: items.length, discovery: { added: items.length - now.length, limit, trigger } };
+      // NEXT-FAV-COLD-001: a run with no starting song says which of the three it read.
+      const from = coldReason(coldUsed);
+      return { ...batch, items, count: items.length, ...(from ? { started_from: from } : {}), discovery: { added: items.length - now.length, limit, trigger } };
     };
+    /** NEXT-FAV-COLD-001: filled in below once the seedless run knows its starting artists. */
+    let coldUsed: ColdStarter[] = [];
     try {
       const cfg = { ...engineFromSettings(settings), queueSize: Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize) };
       const es = E.normaliseSettings({ fresh: Boolean(settings['fresh']), adventurous: settings['adventurous'] });
@@ -2098,7 +2110,17 @@ export class LocalApi {
       }
       // ARTIST-FAV-001: the newest starred artists join as starting points of their own (their radio, top songs and
       // related artists), on every Find my next favorite run with no Customize options needed.
-      const favs = trigger === 'listening' ? [] : this.favArtists().slice(0, FAV_PER_RUN);
+      // NEXT-FAV-COLD-001: with no starting song the run's starting points are the listener's stars, the artists
+      // their listening says they like, and their taste map's colours — in that order, run-only.
+      const cold = trigger === 'listening' || seeds.length ? [] : this.coldStarters(FAV_PER_RUN);
+      coldUsed = cold;
+      const favs = trigger === 'listening'
+        ? []
+        : cold.length
+          ? cold.map((cs) => this.favArtists().find((f) => fold(f.name) === fold(cs.name)) ?? { name: cs.name, deezerId: null, fans: null, picture: null, pageId: null, addedAt: 0 })
+          : this.favArtists().slice(0, FAV_PER_RUN);
+      job.timings['cold_start'] = cold.length;
+      if (cold.length) job.progress = 'Reading your listening and your sound';
       const favParts = await this.favSeeds(job, favs);
       for (const f of favParts) profiles[String(f.seed['key'])] = f.profile;
       const seedViews = [...seeds.map((sd) => p.seedView(sd, profiles[sd['key']] as Dict)), ...favParts.map((f) => f.seed)];
@@ -2160,7 +2182,10 @@ export class LocalApi {
             ? colours.length
               ? 'No new songs this time. Your list is unchanged; the next run reads further into your sound.'
               : 'No new songs this time. Your list is unchanged. Finish or like a few songs and your sound starts finding more on its own.'
-            : 'No service returned related songs for these starting songs.',
+            : coldUsed.length
+              // NEXT-FAV-COLD-001: a seedless run names what it read rather than blaming starting songs there are none of.
+              ? `No service returned songs for ${coldUsed.slice(0, 3).map((x) => x.name).join(', ')}. Try again, or add a starting song.`
+              : 'No service returned related songs for these starting songs.',
         });
         return;
       }
@@ -2599,6 +2624,21 @@ export class LocalApi {
   }
 
   /** The listening taste as of now, from every stored playback and feedback event. */
+  /**
+   * NEXT-FAV-COLD-001: the artists a Find my next favorite with no starting song begins from — the listener's
+   * starred artists, then the artists their listening says they like, then their taste map's colours. Run-only:
+   * nothing here is written into the starting songs or the starred list.
+   */
+  private coldStarters(want = FAV_PER_RUN): ColdStarter[] {
+    return coldStarters({
+      starred: this.favArtists().map((a) => a.name),
+      rows: this.historyRows().map((r) => ({ kind: r.kind, ts: r.ts, track: (r.track as Dict | null) ?? null })),
+      colours: this.colourList(this.taste()),
+      now: unixNow(),
+      cursor: Math.max(0, Math.trunc(Number(this.store.get(TASTE_CURSOR_KEY) ?? 0))),
+    }, want);
+  }
+
   /** The colours the Sound card draws, as the gather step wants them (COLOR-DISCOVERY-001). */
   private colourList(taste: TasteProfile): Colour[] {
     const sum = tasteSummary(taste);
