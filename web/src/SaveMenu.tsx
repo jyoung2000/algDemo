@@ -40,6 +40,11 @@ export function SaveMenu({
   // a tap outside and moving focus away all close it.
   useEffect(() => {
     first.current?.focus();
+    // SAVE-MENU-REACH-001 (owner, 2026-11-23): "the playlist pop up and create menu doesn't work on
+    // android". On a phone the menu opens inside the scrolling list, and a row near an edge put it off
+    // the screen (measured: top -68 CSS px), so the tap looked dead. Bring it into view; 'nearest'
+    // leaves a menu that is already visible where it is.
+    box.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
@@ -92,6 +97,17 @@ export function SaveMenu({
     }
   };
 
+  /**
+   * SAVE-MENU-REACH-001: while the on-screen keyboard is up, a touch that moves focus off the name
+   * field hides the keyboard, and the window grows back (measured 502 → 780 CSS px) before the finger
+   * lifts — the control slides out from under it and no click is ever generated, so the first press on
+   * "Create and save" did nothing. Refusing the default on touch keeps focus, and the keyboard, where
+   * they are: the press lands the first time. A mouse is left alone.
+   */
+  const holdFocus = (e: React.PointerEvent) => {
+    if (e.pointerType !== 'mouse') e.preventDefault();
+  };
+
   return (
     <div className="savemenu" role="dialog" aria-modal="false" aria-labelledby={headingId} ref={box}>
       <p className="savemenu__head" id={headingId}>
@@ -102,7 +118,7 @@ export function SaveMenu({
         <ul className="savemenu__list">
           {lists.map((l, i) => (
             <li key={l.id}>
-              <label className="savemenu__row">
+              <label className="savemenu__row" onPointerDown={holdFocus}>
                 <input
                   type="checkbox"
                   checked={holding.has(l.id)}
@@ -141,18 +157,18 @@ export function SaveMenu({
             }}
           />
           <div className="savemenu__newrow">
-            <button className="push" type="button" disabled={busy || !name.trim()} onClick={() => void create()}>
+            <button className="push" type="button" disabled={busy || !name.trim()} onPointerDown={holdFocus} onClick={() => void create()}>
               Create and save
             </button>
             {lists.length > 0 && (
-              <button className="linkbtn" type="button" disabled={busy} onClick={() => { setCreating(false); setError(null); }}>
+              <button className="linkbtn" type="button" disabled={busy} onPointerDown={holdFocus} onClick={() => { setCreating(false); setError(null); }}>
                 Cancel
               </button>
             )}
           </div>
         </div>
       ) : (
-        <button className="savemenu__add" type="button" disabled={busy} onClick={() => { setCreating(true); setError(null); }}>
+        <button className="savemenu__add" type="button" disabled={busy} onPointerDown={holdFocus} onClick={() => { setCreating(true); setError(null); }}>
           <Glyph name="add" size={13} /> New list
         </button>
       )}
@@ -169,11 +185,11 @@ export function SaveMenu({
       </p>
       <div className="savemenu__foot">
         {onUnstar && (
-          <button className="linkbtn savemenu__unstar" type="button" disabled={busy} onClick={() => { onUnstar(); onClose(); }}>
+          <button className="linkbtn savemenu__unstar" type="button" disabled={busy} onPointerDown={holdFocus} onClick={() => { onUnstar(); onClose(); }}>
             Remove star
           </button>
         )}
-        <button className="savemenu__done" type="button" onClick={onClose}>
+        <button className="savemenu__done" type="button" onPointerDown={holdFocus} onClick={onClose}>
           Done
         </button>
       </div>

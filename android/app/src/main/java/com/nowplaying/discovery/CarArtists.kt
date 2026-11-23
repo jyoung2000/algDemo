@@ -12,6 +12,13 @@ object CarArtists {
     credit.orEmpty().replace(Regex("""[()\[\]]"""), " ").split(SPLIT).map { it.trim() }.filter { it.isNotEmpty() }
       .distinctBy { it.lowercase() }.take(6)
 
+  /** CAR-ANSWERABLE-001: nothing could save them yet, so say that rather than claim it is done. */
+  fun waiting(names: List<String>): String = when (names.size) {
+    0 -> "This song names no artist to star."
+    1 -> "${names[0]} will be added to your artists when you open jPlay"
+    else -> "${names.dropLast(1).joinToString(", ")} and ${names.last()} will be added to your artists when you open jPlay"
+  }
+
   fun told(names: List<String>): String = when (names.size) {
     0 -> "This song names no artist to star."
     1 -> "Added ${names[0]} to your artists"

@@ -21,4 +21,23 @@ describe('the car\u2019s Star the artist command', () => {
     expect(starArtists.mock.calls[0]![0]).toBe('deezer:1');
     expect(starArtists.mock.calls[0]![1]).toBe('OsamaSon');
   });
+  it('tells the car which artists were saved, and why none were', async () => {
+    // CAR-ANSWERABLE-001 (owner, 2026-11-23): "sometimes the ... heart artist buttons don't work".
+    // The car waits for this answer instead of assuming the press worked.
+    const sent: Record<string, unknown>[] = [];
+    (window as unknown as { AirwaveNative?: { media: (json: string) => void } }).AirwaveNative =
+      { media: (json: string) => { sent.push(JSON.parse(json) as Record<string, unknown>); } };
+    setMediaHandlers({ starArtists: () => Promise.resolve(['Lil Tecca']) });
+    const hook = (window as unknown as { __awMediaCmd?: (json: string) => void }).__awMediaCmd!;
+    hook(JSON.stringify({ type: 'starArtists', requestId: 'r1', id: 'deezer:1', artist: 'Lil Tecca, Ken Carson' }));
+    await vi.waitFor(() => expect(sent.some((p) => (p.starArtists as { requestId?: string } | undefined)?.requestId === 'r1')).toBe(true));
+    expect(sent.find((p) => p.starArtists)!.starArtists).toMatchObject({ requestId: 'r1', id: 'deezer:1', names: ['Lil Tecca'] });
+
+    sent.length = 0;
+    setMediaHandlers({ starArtists: () => { throw new Error('The artist list is locked'); } });
+    const hook2 = (window as unknown as { __awMediaCmd?: (json: string) => void }).__awMediaCmd!;
+    hook2(JSON.stringify({ type: 'starArtists', requestId: 'r2', id: 'deezer:1', artist: 'Lil Tecca' }));
+    await vi.waitFor(() => expect(sent.some((p) => p.starArtists)).toBe(true));
+    expect(sent.find((p) => p.starArtists)!.starArtists).toMatchObject({ requestId: 'r2', names: [], error: 'The artist list is locked' });
+  });
 });

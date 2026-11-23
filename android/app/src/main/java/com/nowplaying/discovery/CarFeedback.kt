@@ -66,10 +66,13 @@ object CarFeedback {
    * ARTIST-FAV-CAR-001: the car's Star the artist button. The phone app answers when it is open; with it closed the
    * service's own engine saves the stars (they live in the engine's store); with neither, they wait for the app.
    */
-  fun starArtists(songId: String, credit: String) {
-    val cmd = withRadioTrack(JSONObject().put("type", "starArtists").put("id", songId).put("artist", credit), songId)
-    if (MediaHub.hasPage() && MediaHub.pageAnswering) MediaHub.command(cmd)
-    else if (!MediaHub.toServiceEngine(cmd)) enqueue(cmd)
+  fun starArtists(songId: String, credit: String): com.google.common.util.concurrent.ListenableFuture<MediaHub.ArtistAnswer>? {
+    // CAR-ANSWERABLE-001 (owner, 2026-11-23): ask a surface that can answer and wait for it to say it
+    // saved them. With nothing listening the press is kept for the app, and the caller says so.
+    val track = MediaHub.radioTrack?.takeIf { MediaHub.radioSong?.id == songId }
+    MediaHub.starArtists(songId, credit, track)?.let { return it }
+    enqueue(withRadioTrack(JSONObject().put("type", "starArtists").put("id", songId).put("artist", credit), songId))
+    return null
   }
 
   /** CAR-RADIO-CONTROLS-001: a song starred on the radio is in no list the page holds, so its Track goes along. */

@@ -166,6 +166,7 @@ object MediaHub {
     json.optJSONObject("identify")?.let { acceptIdentifyReply(it) }
     json.optJSONObject("similar")?.let { acceptSimilarReply(it) }
     json.optJSONObject("mood")?.let { acceptMoodReply(it) }
+    json.optJSONObject("starArtists")?.let { acceptArtistsReply(it) }
   }
 
   /** A native surface (lock screen, Bluetooth, car) asked for something; hand it to the page. */
@@ -189,6 +190,7 @@ object MediaHub {
     json.optJSONObject("search")?.let { acceptCatalogReply(it) }
     json.optJSONObject("identify")?.let { acceptIdentifyReply(it) }
     json.optJSONObject("similar")?.let { acceptSimilarReply(it) }
+    json.optJSONObject("starArtists")?.let { acceptArtistsReply(it) }
     // CAR-ACTIONS-001: judgements made in the car while no page could answer go to it now that it
     // can, once it holds a library to find their songs in.
     if (firstAnswer) carFeedbackDelivered = false
@@ -571,8 +573,11 @@ object MediaHub {
    * service's own engine; the songs it adds are at the end of the now playing list, as on the phone.
    */
   fun findSimilar(id: String, timeoutMs: Long = 200000): ListenableFuture<SimilarAnswer> {
+    // CAR-ANSWERABLE-001 (owner, 2026-11-23): "sometimes the find similar songs ... buttons don't work".
+    // The fallback used to be the page itself even when it was hidden and could not answer, so the press
+    // disappeared into the timeout. Only a surface that can answer is asked; otherwise say so at once.
     val page = sink?.takeIf { pageVisible && pageAnswering }
-    val target = page ?: catalogSink?.takeIf { catalogReady } ?: sink
+    val target = page ?: catalogSink?.takeIf { catalogReady }
       ?: return Futures.immediateFailedFuture(IllegalStateException("Open jPlay on your phone to find similar songs"))
     val requestId = UUID.randomUUID().toString()
     val future = SettableFuture.create<SimilarAnswer>()
@@ -587,6 +592,43 @@ object MediaHub {
       future.setException(e)
     }
     return future
+  }
+
+  /** ARTIST-FAV-CAR-001: the artists a press actually starred, as the page or the engine saved them. */
+  data class ArtistAnswer(val names: List<String>, val saved: Boolean)
+  private val pendingArtists = LinkedHashMap<String, SettableFuture<ArtistAnswer>>()
+
+  /**
+   * CAR-ANSWERABLE-001 (owner, 2026-11-23): "sometimes the ... heart artist buttons don't work". The
+   * star used to be handed to the page whether or not it could answer, and the driver was told it was
+   * saved either way. Now only a surface that can answer is asked, and it says when it has saved; the
+   * caller tells the driver the truth. No surface at all: the caller keeps it for the app (CarFeedback).
+   */
+  fun starArtists(id: String, credit: String, track: JSONObject?, timeoutMs: Long = 10000): ListenableFuture<ArtistAnswer>? {
+    val target = sink?.takeIf { pageVisible && pageAnswering } ?: catalogSink?.takeIf { catalogReady } ?: return null
+    val requestId = UUID.randomUUID().toString()
+    val future = SettableFuture.create<ArtistAnswer>()
+    synchronized(catalogLock) { pendingArtists[requestId] = future }
+    main.postDelayed({
+      synchronized(catalogLock) { pendingArtists.remove(requestId) }?.setException(TimeoutException("Starring the artist took too long"))
+    }, timeoutMs.coerceIn(50, 60000))
+    try {
+      val cmd = JSONObject().put("type", "starArtists").put("requestId", requestId).put("id", id).put("artist", credit)
+      if (track != null) cmd.put("track", track)
+      target(cmd)
+    } catch (e: Exception) {
+      synchronized(catalogLock) { pendingArtists.remove(requestId) }
+      future.setException(e)
+    }
+    return future
+  }
+
+  private fun acceptArtistsReply(reply: JSONObject) {
+    val future = synchronized(catalogLock) { pendingArtists.remove(reply.optString("requestId")) } ?: return
+    val error = reply.optString("error")
+    if (error.isNotBlank()) { future.setException(IllegalStateException(error.take(200))); return }
+    val names = reply.optJSONArray("names")
+    future.set(ArtistAnswer((0 until (names?.length() ?: 0)).mapNotNull { names!!.optString(it).takeIf { s -> s.isNotBlank() } }.take(6), true))
   }
 
   /** CAR-MOOD-001: the engine's order for the car's movable songs, and the moods leading it. */

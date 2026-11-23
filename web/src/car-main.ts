@@ -140,7 +140,12 @@ async function startService(n: FullBridge): Promise<void> {
       // ARTIST-FAV-CAR-001: with the phone closed, the car's Star the artist button is saved by this engine.
       starArtists: async (id, credit, carTrack) => {
         const t = (await carTrackFor(id)) ?? carTrack ?? null;
-        for (const name of artistNamesOf(t, credit)) await api.editFavArtists({ op: 'add', artist: { name } }).catch(() => undefined);
+        // CAR-ANSWERABLE-001: the car hears which artists this engine really saved.
+        const saved: string[] = [];
+        for (const name of artistNamesOf(t, credit)) {
+          if (await api.editFavArtists({ op: 'add', artist: { name } }).then(() => true).catch(() => false)) saved.push(name);
+        }
+        return saved;
       },
       // CAR-SETTINGS-001: with the phone closed, the car's EQ / discovery / mood choice is saved by this engine.
       carSettings: (change) => { void applyCarSettings(change, { save: api.putSettings, send: engineSend }).catch(() => { /* resent on the next hello */ }); },

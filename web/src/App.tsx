@@ -1004,7 +1004,12 @@ export function App() {
       // ARTIST-FAV-CAR-001: the car's Star the artist button stars every artist of the song (the active algorithm's list).
       starArtists: async (id, credit, carTrack) => {
         const t = trackById(id) ?? (playing?.track.key === id ? playing.track : undefined) ?? onAirSong(id) ?? carTrack;
-        for (const name of artistNamesOf(t, credit)) await favArtistsStore.add({ name }).catch(() => undefined);
+        // CAR-ANSWERABLE-001: only the names that really saved go back to the car.
+        const saved: string[] = [];
+        for (const name of artistNamesOf(t, credit)) {
+          if (await favArtistsStore.add({ name }).then(() => true).catch(() => false)) saved.push(name);
+        }
+        return saved;
       },
       // CAR-CONTROLS-001: a playlist picked in the car after a row's star, saved like the app's own add.
       playlistAdd: (id, listId, carTrack) => {

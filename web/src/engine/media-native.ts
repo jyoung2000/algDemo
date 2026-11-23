@@ -112,8 +112,12 @@ export interface MediaHandlers {
   /** CAR-ACTIONS-001: Star or Dislike pressed in the car (or queued while the app was closed). */
   /** CAR-RADIO-CONTROLS-001: `track` is the radio song's own Track when the car starred a song on air. */
   feedback?: (id: string, kind: CarFeedbackKind, track?: Track) => void;
-  /** ARTIST-FAV-CAR-001: the car's Star the artist button: the song's artists join the starred artists. */
-  starArtists?: (id: string, credit: string, track?: Track) => void | Promise<void>;
+  /**
+   * ARTIST-FAV-CAR-001: the car's Star the artist button: the song's artists join the starred artists.
+   * CAR-ANSWERABLE-001: the names actually saved go back, so the car can say what happened instead of
+   * assuming it worked.
+   */
+  starArtists?: (id: string, credit: string, track?: Track) => void | Promise<void> | Promise<string[]>;
   /** CAR-CONTROLS-001: the car's playlist picker (after a row's star) chose playlist `list` for song `id`. */
   playlistAdd?: (id: string, list: string, track?: Track) => void;
   /** CAR-SIMILAR-001: the car's Find similar button: add songs that sound like song `id` to the list. */
@@ -217,7 +221,9 @@ export function pushMediaLibrary(songs: NativeSong[], playlists: NativeFolder[])
 
 function send(payload: { state: NativeState; library?: { songs: NativeSong[]; playlists: NativeFolder[] }; search?: { requestId: string; query: string; songs: NativeSong[]; albums?: NativeAlbum[]; play?: string; error?: string }; identify?: { requestId: string; songs: NativeSong[]; error?: string };
   similar?: { requestId: string; id: string; added: number; minimum?: number; reason?: string; songs: NativeSong[]; error?: string };
-  mood?: { requestId: string; order: string[]; moved: string[]; changed: boolean; leading: string[]; error?: string } }): void {
+  mood?: { requestId: string; order: string[]; moved: string[]; changed: boolean; leading: string[]; error?: string };
+  /** CAR-ANSWERABLE-001: which artists the car's Star the artist press really saved, or why none did. */
+  starArtists?: { requestId: string; id: string; names: string[]; error?: string } }): void {
   const n = nativeMedia();
   if (typeof n?.media !== 'function') return;
   try {
@@ -424,7 +430,19 @@ export function installMediaCommands(): void {
       case 'starArtists':
         if (typeof cmd.id === 'string' && cmd.id && cmd.id.length <= 500 && typeof cmd.artist === 'string' && cmd.artist.length <= 500) {
           const t = carTrack(cmd.track, cmd.id);
-          void Promise.resolve(t ? handlers.starArtists?.(cmd.id, cmd.artist, t) : handlers.starArtists?.(cmd.id, cmd.artist)).catch(() => undefined);
+          const id = cmd.id;
+          const artist = cmd.artist;
+          // CAR-ANSWERABLE-001: with a requestId the car is waiting to hear whether this worked.
+          const requestId = typeof cmd.requestId === 'string' && cmd.requestId.length <= 100 ? cmd.requestId : '';
+          void (async () => {
+            try {
+              if (!handlers.starArtists) throw new Error('Open jPlay on your phone to star the artist.');
+              const names = await Promise.resolve(t ? handlers.starArtists(id, artist, t) : handlers.starArtists(id, artist));
+              if (requestId) send({ state: lastState, starArtists: { requestId, id, names: Array.isArray(names) ? names.slice(0, 6) : [] } });
+            } catch (e) {
+              if (requestId) send({ state: lastState, starArtists: { requestId, id, names: [], error: String((e as Error)?.message ?? 'Could not star the artist').slice(0, 200) } });
+            }
+          })();
         }
         break;
       case 'playlistAdd':
