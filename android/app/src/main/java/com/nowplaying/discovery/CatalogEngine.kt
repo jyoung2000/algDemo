@@ -178,6 +178,8 @@ class CatalogEngine(private val context: Context) {
       main.post {
         if (web !== view) return@post
         MediaHub.applyCatalog(obj)
+        // CAR-SAVE-HIDDEN-001: a car save this engine could not make is kept for the phone app instead.
+        obj.optJSONObject("carUnsaved")?.let { if (claimed) CarFeedback.keepForPage(it) }
         // QUEUE-HEARD-001: songs this engine's listening top-up found with the phone app closed join the queue's end.
         obj.optJSONArray("queueTopUp")?.let { found ->
           if (claimed) Log.i(TAG, "queue top-up: ${EngineHub.appendFound(MediaHub.songsOf(found))} new songs")
@@ -207,6 +209,8 @@ class CatalogEngine(private val context: Context) {
         if (web !== view || !claimed) return@post
         ServiceApi.core.toService = apiSink
         ServiceApi.core.serviceReady()
+        // CAR-SAVE-HIDDEN-001: this engine can save now; it takes what the car pressed while nothing could.
+        CarFeedback.flush()
         EngineHub.addObserver(stateObserver)
       }
     }

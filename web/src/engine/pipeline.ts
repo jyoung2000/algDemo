@@ -22,6 +22,7 @@ import type { Store } from './store';
 import type { YouTubeMusic } from './ytmusic';
 import type { Dict } from './shape';
 import type { Tag } from './genres';
+import { cheapestFirst } from './queue-data-flow';
 
 export interface Embedder {
   /** Trim, tempo and optionally the embedding for one decoded clip; may run on another thread. */
@@ -188,7 +189,8 @@ export class Pipeline {
     /** COLOR-DISCOVERY-001: the listener's colours and how far previous runs read into them. */
     colour: { colours: Colour[]; cursor: number } = { colours: [], cursor: 0 },
     /** ARTIST-SIZE-001: an underground listener's run skips the genre charts, which list the biggest acts. */
-    opts: { skipCharts?: boolean } = {},
+    /** QUEUE-DATA-FLOW-001: `cheapFirst` asks the small sources before YouTube Music (a top-up on mobile data). */
+    opts: { skipCharts?: boolean; cheapFirst?: boolean } = {},
   ): Promise<{ cands: Dict[]; related: Map<string, Set<string>> }> {
     const n = Math.max(1, seeds.length);
     const perSeed = Math.max(6, Math.ceil(cfg.perSourceCap / n));
@@ -318,7 +320,9 @@ export class Pipeline {
     const live = new Map<string, Map<string, Rel[]>>();
     let partialFired = false;
     let tasksDone = 0;
-    const done = await pmap(tasks, 4, async (t) => {
+    // QUEUE-DATA-FLOW-001: only the order of asking changes; the merge below still reads the answers in task order.
+    const asking = opts.cheapFirst ? cheapestFirst(tasks) : tasks;
+    const answered = await pmap(asking, 4, async (t) => {
       const r = { ...t, out: await this.call(job, `${t.source}:${(t.seedKey.split('|')[1] ?? '').slice(0, 30)}`, t.fn, [] as Rel[]) };
       addTo(live, r);
       tasksDone += 1;
@@ -331,6 +335,7 @@ export class Pipeline {
       }
       return r;
     });
+    const done = opts.cheapFirst ? tasks.map((t) => answered[asking.indexOf(t)]!) : answered;
     for (const t of done) addTo(results, t);
     const sims = await pmap(similar, 4, async (t) => ({ ...t, out: await this.call(job, `ytmusic-similar-artists:${(t.seedKey.split('|')[1] ?? '').slice(0, 30)}`, t.fn, [] as string[]) }));
     for (const t of sims) for (const name of t.out) relatedNames.get(t.seedKey)?.add(fold(name));

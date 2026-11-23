@@ -77,6 +77,8 @@ class CarRadioControlsTest {
   @After fun tearDown() {
     runCatching { RadioNative.handle(ctx, JSONObject().put("op", "stop")) }
     main {
+      // CAR-HEART-ALWAYS-001: the service outlives a test; a picker left open would be the next test's buttons.
+      controller?.transportControls?.sendCustomAction("com.nowplaying.discovery.PICK_LIST", null)
       EngineHub.fromPage(JSONObject().put("op", "load")
         .put("song", JSONObject().put("id", "radio-controls-cleanup").put("title", "Cleanup").put("ready", false))
         .put("play", false).put("rev", Int.MAX_VALUE).toString())
@@ -190,7 +192,7 @@ class CarRadioControlsTest {
     assertEquals(songId, like.getString("id"))
     assertEquals("like", like.getString("kind"))
     assertEquals("the song's own Track travels with it", songId, like.getJSONObject("track").getString("key"))
-    until("the star shows it is starred") { "Remove star" in names(c) }
+    until("the star shows it is starred") { CarPickList.STARRED_LABEL in names(c) || "Cancel" in names(c) }
     val car = connectCar()
     // CAR-STAR-PICKER-001: the radio lists the car goes back to show the picker on top too.
     assertEquals("Add \u201cRadio test song\u201d to a playlist", children(car, "radio/favourites").first().description.title.toString())
@@ -209,6 +211,33 @@ class CarRadioControlsTest {
     assertEquals(PlaybackState.STATE_PLAYING, main { c.playbackState?.state })
   }
 
+  /** CAR-PICK-LIST-001 (owner, 2026-11-23): "Ensure hearting songs on radio works the same way". */
+  @Test fun onTheRadioTheHeartShowsTheSameListAndAPickGoesBackToTheStation() {
+    CarPickList.listForTests = true
+    try {
+      val c = connect()
+      radioPlays(c)
+      nowPlaying("Radio test song", onAirSong(), onAirTrack(), null, null)
+      until("the song is on the card") { title(c) == "Radio test song" }
+      press(c, ".STAR")
+      until("the page heard the star") { sent.any { it.optString("type") == "feedback" } }
+      until("the car is shown nothing playing, so it leaves its player") { main { c.playbackState?.state } == PlaybackState.STATE_NONE && title(c) == null }
+      assertSame("the station plays on meanwhile", radio, RadioNative.session)
+      val car = connectCar()
+      val rows = children(car, "radio/favourites")
+      assertEquals("Back to \u201cRadio test song\u201d", rows.first().description.title.toString())
+      val road = rows.first { it.description.title.toString() == "Add to Road trip" }
+      main { c.transportControls.playFromMediaId(road.mediaId, null) }
+      until("added to the playlist") { sent.any { it.optString("type") == "playlistAdd" } }
+      val add = sent.first { it.optString("type") == "playlistAdd" }
+      assertEquals(songId, add.getString("id"))
+      assertEquals("road", add.getString("list"))
+      assertEquals("the song's own Track travels with it", songId, add.getJSONObject("track").getString("key"))
+      until("the car is back on the station's song") { title(c) == "Radio test song" && main { c.playbackState?.state } == PlaybackState.STATE_PLAYING }
+      assertSame("the station keeps playing", radio, RadioNative.session)
+    } finally { CarPickList.listForTests = null }
+  }
+
   @Test fun elapsedAndLengthFollowTheSongOnAir() {
     val c = connect()
     radioPlays(c)
@@ -219,7 +248,9 @@ class CarRadioControlsTest {
     val at = position(c)
     assertTrue("elapsed is the song's, not the time since tuning in ($at, ring $ring)", at >= 30000 + ring - 1500 && at <= 30000 + ring + 2500)
     Thread.sleep(1500)
-    assertTrue("and it moves", position(c) >= at + 1000)
+    val later = position(c)
+    val s = main { c.playbackState }
+    assertTrue("and it moves ($at -> $later; ring $ring -> ${radio.ring.positionFrames * 1000 / 48000}; state ${s?.state} speed ${s?.playbackSpeed} raw ${s?.position})", later >= at + 1000)
     // A programme with no published clock: no length and no made-up elapsed time.
     nowPlaying("Morning programme", null, null, null, null)
     until("the programme is on the card") { title(c) == "Morning programme" }

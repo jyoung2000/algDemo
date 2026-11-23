@@ -19,6 +19,12 @@ export type Lane = 'interactive' | 'playback' | 'background';
 
 /** Where the reserve is kept between starts. */
 export const RESERVE_KEY = 'allowance_reserve';
+/**
+ * QUEUE-DATA-FLOW-001: the most one listening top-up may read on mobile data. Finding the next songs is never
+ * refused for the allowance (QUEUE-NEVER-DRY-001), so on mobile data each run is kept small instead: the lists of
+ * related songs fit many times over, and the comparison of 30-second previews is what gives way.
+ */
+export const TOPUP_RUN_BYTES = 5_000_000;
 /** A lane the allowance does not limit: only the request's own cap applies. */
 const UNLIMITED = Number.MAX_SAFE_INTEGER;
 const DAY_SECONDS = 86_400;
@@ -104,6 +110,14 @@ export class Budget {
     this.settle();
     this.reserve.metered = metered;
     this.save();
+  }
+
+  /**
+   * QUEUE-DATA-FLOW-001: the ceiling for one listening top-up. On mobile data (or when the shell never said what
+   * the connection is) it is TOPUP_RUN_BYTES at most; on Wi-Fi only the request's own cap applies.
+   */
+  topUpCap(requestCap: number): number {
+    return this.unmetered ? requestCap : Math.min(requestCap, TOPUP_RUN_BYTES);
   }
 
   /** A meter for one piece of work. `cap` bounds that piece whatever the lane. */

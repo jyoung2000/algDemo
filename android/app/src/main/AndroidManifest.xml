@@ -17,6 +17,8 @@
     <intent>
       <action android:name="android.speech.RecognitionService" />
     </intent>
+    <!-- CAR-KEEP-001: Settings says whether Android Auto is installed and opens its settings. -->
+    <package android:name="com.google.android.projection.gearhead" />
   </queries>
 
   <application

@@ -16,6 +16,7 @@ import { SIMILAR_DEFAULT, SIMILAR_MAX, SIMILAR_MIN } from './engine/similar-soun
 import { NumberField } from './NumberField';
 import { FavArtistsSettings } from './FavArtists';
 import { VolumeSetting } from './VolumeSetting';
+import { CarKeep } from './CarKeep';
 
 const CAPS: [string, string][] = [
   ['search', 'Search'],
@@ -469,6 +470,9 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFo
 
       {/* FOLDER-IMPORT-001: the Downloads section — download queue plus local folder imports. */}
       {downloads && <DownloadsSettings downloads={downloads} />}
+
+      {/* CAR-KEEP-001: Android only; renders nothing where the phone bridge is absent. */}
+      <CarKeep />
 
       <section className="card" aria-labelledby="src-h">
         <div className="card__head">

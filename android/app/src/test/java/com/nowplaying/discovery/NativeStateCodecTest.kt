@@ -40,6 +40,45 @@ class NativeStateCodecTest {
     assertEquals(1, again.tracks().length())
   }
 
+  // PLAYLIST-KEEP-001: the page pushes its songs before it has read its lists; that must not cost the car its playlists.
+  @Test fun aPushThatNamesOnlyTheSongsKeepsTheSavedPlaylists() {
+    val io = MapIo()
+    val road = JSONArray().put(JSONObject().put("id", "p1").put("title", "Road").put("songs", JSONArray().put(song("b"))))
+    val store = NativeStateCodec.Store(io)
+    assertTrue(store.recordLibrary(JSONObject().put("songs", JSONArray().put(song("a"))).put("playlists", road)))
+    assertTrue(store.recordLibrary(JSONObject().put("songs", JSONArray().put(song("c")))))
+    val again = NativeStateCodec.Store(io).library()!!
+    assertEquals("c", again.getJSONArray("songs").getJSONObject(0).getString("id"))
+    assertEquals(road.toString(), again.getJSONArray("playlists").toString())
+    // An explicit empty list still means the listener has none.
+    assertTrue(store.recordLibrary(JSONObject().put("songs", JSONArray()).put("playlists", JSONArray())))
+    assertEquals(0, NativeStateCodec.Store(io).library()!!.getJSONArray("playlists").length())
+  }
+
+  // CAR-SAVE-HIDDEN-001: a song the driver added to a playlist with the phone app away is in the saved lists the
+  // car reads on its next cold start, without waiting for the app to be opened.
+  @Test fun aSongAddedFromTheCarIsInTheSavedPlaylists() {
+    val io = MapIo()
+    val store = NativeStateCodec.Store(io)
+    val lists = JSONArray().put(JSONObject().put("id", "p1").put("title", "Road").put("songs", JSONArray().put(song("b"))))
+    assertTrue(store.recordLibrary(JSONObject().put("songs", JSONArray().put(song("a")).put(song("b"))).put("playlists", lists)))
+    assertTrue(store.addToPlaylist("p1", song("a"), null))
+    assertEquals(listOf("b", "a"), ids(NativeStateCodec.Store(io).library()!!.getJSONArray("playlists").getJSONObject(0).getJSONArray("songs")))
+    assertEquals("a second add of the same song changes nothing", false, store.addToPlaylist("p1", song("a"), null))
+    assertEquals("an unknown playlist is not invented", false, store.addToPlaylist("nope", song("a"), null))
+    // With a name, the playlist is started (the car's own "Car picks").
+    assertTrue(store.addToPlaylist("new", song("a"), "Car picks"))
+    val again = NativeStateCodec.Store(io).library()!!.getJSONArray("playlists")
+    assertEquals(2, again.length())
+    assertEquals("Car picks", again.getJSONObject(1).getString("title"))
+    assertEquals(listOf("a"), ids(again.getJSONObject(1).getJSONArray("songs")))
+  }
+  private fun ids(a: JSONArray) = (0 until a.length()).map { a.getJSONObject(it).getString("id") }
+
+  @Test fun addingFromTheCarWithNothingSavedYetIsRefused() {
+    assertEquals(false, NativeStateCodec.Store(MapIo()).addToPlaylist("p1", song("a"), "Car picks"))
+  }
+
   @Test fun corruptOrOtherVersionValuesAreIgnoredAndRemoved() {
     val io = MapIo()
     io.map[NativeStateCodec.KEY_LIBRARY] = "{not json"

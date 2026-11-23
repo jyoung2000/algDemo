@@ -4,6 +4,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.media.browse.MediaBrowser
 import android.media.session.MediaController as PlatformController
+import android.media.session.PlaybackState
+import android.os.SystemClock
+import android.view.KeyEvent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -74,7 +77,8 @@ class CarPickOnPlayerTest {
   }
 
   @After fun tearDown() {
-    main { controller?.transportControls?.stop(); browser?.disconnect() }
+    CarPickList.listForTests = null
+    main { controller?.transportControls?.sendCustomAction("com.nowplaying.discovery.PICK_LIST", null); controller?.transportControls?.stop(); browser?.disconnect() }
     MediaHub.clearCommandSink(sink)
     CarFeedback.resetForTests()
   }
@@ -99,6 +103,132 @@ class CarPickOnPlayerTest {
     main { c.transportControls.sendCustomAction(a.action, a.extras) }
   }
   private fun ofType(t: String) = sent.filter { it.optString("type") == t }
+  private fun state(c: PlatformController) = main { c.playbackState?.state }
+  private fun position(c: PlatformController): Long = main {
+    val s = c.playbackState ?: return@main -1L
+    if (s.state != PlaybackState.STATE_PLAYING) s.position
+    else s.position + ((SystemClock.elapsedRealtime() - s.lastPositionUpdateTime) * s.playbackSpeed).toLong()
+  }
+  /** What the car's list [parent] holds now, as the car's browser reads it. */
+  private fun children(parent: String): List<MediaBrowser.MediaItem> {
+    val got = AtomicReference<List<MediaBrowser.MediaItem>>()
+    val done = CountDownLatch(1)
+    val cb = object : MediaBrowser.SubscriptionCallback() {
+      override fun onChildrenLoaded(parentId: String, children: MutableList<MediaBrowser.MediaItem>) { got.set(children.toList()); done.countDown() }
+      override fun onError(parentId: String) { got.set(emptyList()); done.countDown() }
+    }
+    main { browser!!.subscribe(parent, cb) }
+    assertTrue("children of $parent", done.await(10, TimeUnit.SECONDS))
+    main { browser!!.unsubscribe(parent, cb) }
+    return got.get()
+  }
+  private fun rowTitles(parent: String) = children(parent).map { it.description.title.toString() }
+  /** Where the song was, and when: to tell a song that played on from one that stopped or started again. */
+  private class Mark(val position: Long, val at: Long, val queued: Int)
+  /** Tone 2 playing steadily, as the car sees it. */
+  private fun playingInTheCar(c: PlatformController): Mark {
+    // The service outlives a test: go by way of another song, so "tone 2 plays" is this test's own start and not
+    // what the last test left on the session.
+    main { c.transportControls.playFromMediaId("pick-tone-1", null) }
+    until("tone 1 plays") { title(c) == "Pick test tone 1" && state(c) == PlaybackState.STATE_PLAYING }
+    main { c.transportControls.playFromMediaId("pick-tone-2", null) }
+    until("tone 2 plays") { title(c) == "Pick test tone 2" && state(c) == PlaybackState.STATE_PLAYING }
+    until("star button") { "Star" in names(c) }
+    until("the clock runs at the song's own speed") { val a = position(c); Thread.sleep(400); (position(c) - a) in 250..600 }
+    return Mark(position(c), SystemClock.elapsedRealtime(), main { c.queue.orEmpty().size })
+  }
+  /** The song is where it would be had nothing happened to it since [m]. */
+  private fun assertPlayedOn(c: PlatformController, m: Mark) {
+    val moved = position(c) - m.position
+    val passed = SystemClock.elapsedRealtime() - m.at
+    assertTrue("the song played on without stopping or starting again: moved $moved ms in $passed ms", moved in (passed - 600)..(passed + 600))
+  }
+
+  /**
+   * CAR-PICK-LIST-001 (owner, 2026-11-23): "on android auto the playlist menu should replace the current playing
+   * track player and quick controls, open up a list where the user can select playlist then get taken back to the
+   * song player once the track is added to the right playlist".
+   */
+  @Test fun inTheCarTheHeartShowsAListOfPlaylistsInPlaceOfThePlayerAndAPickGoesBackToTheSong() {
+    CarPickList.listForTests = true
+    MediaHub.setCommandSink(sink)
+    main { seed() }
+    val c = connect()
+    val before = playingInTheCar(c)
+    assertEquals("the car's first list is the songs", "Pick test tone 1", rowTitles("songs").first())
+    press(c, "Star")
+    // What makes Android Auto leave its player for the lists (measured on the head unit): nothing playing to show.
+    until("the car is shown nothing playing") { state(c) == PlaybackState.STATE_NONE && title(c) == null }
+    assertEquals("and no queue", 0, main { c.queue.orEmpty().size })
+    assertEquals("the star was saved at once", listOf("like"), ofType("feedback").map { it.getString("kind") })
+    val rows = children("songs")
+    assertEquals(listOf("Back to \u201cPick test tone 2\u201d", "Add to Night drive", "Add to Gym"), rows.map { it.description.title.toString() })
+    assertEquals("every other list the car can be in shows the same", rows.map { it.mediaId }, children("playlists").map { it.mediaId })
+    Thread.sleep(1200)
+    main { c.transportControls.playFromMediaId(rows[2].mediaId, null) }
+    until("added to the playlist picked") { ofType("playlistAdd").any { it.getString("list") == "pl-gym" && it.getString("id") == "pick-tone-2" } }
+    until("the car is back on the song") { title(c) == "Pick test tone 2" && state(c) == PlaybackState.STATE_PLAYING }
+    assertEquals("the queue is as it was", before.queued, main { c.queue.orEmpty().size })
+    assertPlayedOn(c, before)
+    until("the ordinary buttons") { CarPickList.STARRED_LABEL in names(c) }
+    assertEquals("and the lists are the lists again", "Pick test tone 1", rowTitles("songs").first())
+    assertEquals(1, ofType("playlistAdd").size)
+  }
+
+  /** CAR-PICK-LIST-001: the first row is the way back; it adds the song nowhere and keeps its star. */
+  @Test fun theWayBackRowReturnsToTheSongAndAddsItNowhere() {
+    CarPickList.listForTests = true
+    MediaHub.setCommandSink(sink)
+    main { seed() }
+    val c = connect()
+    val before = playingInTheCar(c)
+    press(c, "Star")
+    until("the list") { state(c) == PlaybackState.STATE_NONE }
+    Thread.sleep(1500)
+    val back = children("songs").first()
+    assertEquals("Back to \u201cPick test tone 2\u201d", back.description.title.toString())
+    main { c.transportControls.playFromMediaId(back.mediaId, null) }
+    until("back on the song") { title(c) == "Pick test tone 2" && state(c) == PlaybackState.STATE_PLAYING }
+    assertPlayedOn(c, before)
+    Thread.sleep(400)
+    assertTrue(ofType("playlistAdd").isEmpty())
+    assertEquals("it stays starred", listOf("like"), ofType("feedback").map { it.getString("kind") })
+  }
+
+  /** CAR-PICK-LIST-001: a key on the wheel during the list acts on the real player; it must not reload the queue. */
+  @Test fun aWheelKeyDuringTheListClosesItAndTheSongGoesOnFromWhereItWas() {
+    CarPickList.listForTests = true
+    MediaHub.setCommandSink(sink)
+    main { seed() }
+    val c = connect()
+    val before = playingInTheCar(c)
+    press(c, "Star")
+    until("the list") { state(c) == PlaybackState.STATE_NONE }
+    Thread.sleep(1500)
+    main {
+      c.dispatchMediaButtonEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MEDIA_PLAY))
+      c.dispatchMediaButtonEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MEDIA_PLAY))
+    }
+    until("the player is back") { title(c) == "Pick test tone 2" && state(c) == PlaybackState.STATE_PLAYING }
+    assertEquals(before.queued, main { c.queue.orEmpty().size })
+    assertPlayedOn(c, before)
+    assertEquals("the songs list is the songs again", "Pick test tone 1", rowTitles("songs").first())
+  }
+
+  /** CAR-PICK-LIST-001: left alone, the list goes by itself and the song was playing all along. */
+  @Test fun leftAloneTheListGoesAndTheSongWasPlayingAllAlong() {
+    CarPickList.listForTests = true
+    MediaHub.setCommandSink(sink)
+    main { seed() }
+    val c = connect()
+    val before = playingInTheCar(c)
+    press(c, "Star")
+    until("the list") { state(c) == PlaybackState.STATE_NONE }
+    until("the player comes back by itself", timeout = 32000) { title(c) == "Pick test tone 2" && state(c) == PlaybackState.STATE_PLAYING }
+    assertTrue("it stayed up for the driver to read", SystemClock.elapsedRealtime() - before.at >= 20000)
+    assertPlayedOn(c, before)
+    assertTrue(ofType("playlistAdd").isEmpty())
+  }
 
   /** The heart brings the playlist choice to the player itself: no trip back to a browse list. */
   @Test fun theHeartTurnsThePlayerButtonsIntoThePlaylistPicker() {
@@ -116,7 +246,147 @@ class CarPickOnPlayerTest {
     until("the page was told which list") { ofType("playlistAdd").isNotEmpty() }
     assertEquals("pick-tone-2", ofType("playlistAdd")[0].getString("id"))
     assertEquals("pl-gym", ofType("playlistAdd")[0].getString("list"))
-    until("the ordinary buttons come back") { "Remove star" in names(c) && names(c).none { it.startsWith("Add to ") } }
+    until("the ordinary buttons come back") { CarPickList.STARRED_LABEL in names(c) && names(c).none { it.startsWith("Add to ") } }
+  }
+
+  /**
+   * CAR-HEART-ALWAYS-001 (owner, 2026-11-23): "on android auto hearting a song doesnt bring up the playlist sub menu
+   * like desired". A song that is already starred used to lose its star on the next press and show no lists.
+   */
+  @Test fun theHeartOnAnAlreadyStarredSongBringsThePickerAgainAndKeepsTheStar() {
+    MediaHub.setCommandSink(sink)
+    main { seed() }
+    val c = connect()
+    main { c.transportControls.playFromMediaId("pick-tone-2", null) }
+    until("tone 2 plays") { title(c) == "Pick test tone 2" }
+    until("star button") { "Star" in names(c) }
+    press(c, "Star")
+    until("the picker is up") { "Cancel" in names(c) }
+    assertTrue("a song starred by this press is not offered Remove star", "Remove star" !in names(c))
+    press(c, "Cancel")
+    until("starred, ordinary buttons") { CarPickList.STARRED_LABEL in names(c) }
+
+    press(c, CarPickList.STARRED_LABEL)
+    until("the lists come up again") { names(c).containsAll(listOf("Add to Night drive", "Add to Gym", "Remove star", "Cancel")) }
+    assertEquals("the second press did not take the star off", listOf("like"), ofType("feedback").map { it.getString("kind") })
+    press(c, "Add to Night drive")
+    until("added") { ofType("playlistAdd").any { it.getString("list") == "pl-night" } }
+
+    press(c, CarPickList.STARRED_LABEL)
+    until("the picker again") { "Remove star" in names(c) }
+    press(c, "Remove star")
+    until("the star came off because the driver asked") { ofType("feedback").map { it.getString("kind") } == listOf("like", "unlike") }
+    until("heart is empty again") { "Star" in names(c) }
+  }
+
+  /** CAR-HEART-ALWAYS-001: with no playlist at all the heart still brings a choice: start one. */
+  @Test fun withNoPlaylistTheHeartOffersToStartOne() {
+    MediaHub.setCommandSink(sink)
+    main {
+      val s = songs()
+      MediaHub.apply(JSONObject().put("state", JSONObject().put("queue", s)).put("library", JSONObject().put("songs", s).put("playlists", JSONArray())))
+    }
+    val c = connect()
+    main { c.transportControls.playFromMediaId("pick-tone-3", null) }
+    until("tone 3 plays") { title(c) == "Pick test tone 3" }
+    until("star button") { "Star" in names(c) }
+    press(c, "Star")
+    until("a playlist is offered") { names(c) == listOf("New playlist \u201cCar picks\u201d", "Cancel") }
+    press(c, "New playlist \u201cCar picks\u201d")
+    until("the page is asked to start the list with this song") { ofType("playlistAdd").isNotEmpty() }
+    assertEquals(CarPickList.NEW_LIST, ofType("playlistAdd")[0].getString("list"))
+    assertEquals("pick-tone-3", ofType("playlistAdd")[0].getString("id"))
+  }
+
+  /**
+   * CAR-SAVE-HIDDEN-001 (owner, 2026-11-23): "on android auto hearting a song doesnt bring up the playlist sub menu
+   * like desired" / "the playlist dont load or save the music". Measured with the head unit: with jPlay not in
+   * front its page is frozen, and the star and the playlist choice handed to it were saved late or never. They go
+   * to the service's own engine, which keeps running in a car.
+   */
+  @Test fun withThePhonePageHiddenTheServiceEngineSavesTheStarAndThePlaylistChoice() {
+    val service = CopyOnWriteArrayList<JSONObject>()
+    val serviceSink: (JSONObject) -> Unit = { service.add(it) }
+    val oldSaves = MediaHub.serviceSaves
+    val old = MediaHub.swapCatalogSinkForTests(serviceSink, true)
+    MediaHub.serviceSaves = { true }
+    try {
+      MediaHub.setCommandSink(sink)
+      main { seed() }
+      // The phone goes into a pocket: the page is hidden and its WebView paused.
+      main { MediaHub.setPageVisible(sink, false); MediaHub.setPageRunning(sink) { false } }
+      val c = connect()
+      main { c.transportControls.playFromMediaId("pick-tone-2", null) }
+      until("tone 2 plays") { title(c) == "Pick test tone 2" }
+      until("star button") { "Star" in names(c) }
+      press(c, "Star")
+      until("the service engine is asked to save the star") { service.any { it.optString("type") == "feedback" && it.optString("kind") == "like" && it.optString("id") == "pick-tone-2" } }
+      until("the picker") { "Add to Night drive" in names(c) }
+      press(c, "Add to Night drive")
+      until("and the playlist choice") { service.any { it.optString("type") == "playlistAdd" && it.optString("list") == "pl-night" && it.optString("id") == "pick-tone-2" } }
+      assertTrue("the frozen page was asked nothing: $sent", ofType("feedback").isEmpty() && ofType("playlistAdd").isEmpty())
+      assertEquals("nothing is left waiting", 0, CarFeedback.pendingCount())
+    } finally {
+      MediaHub.serviceSaves = oldSaves
+      MediaHub.swapCatalogSinkForTests(old.first, old.second)
+    }
+  }
+
+  /** CAR-SAVE-HIDDEN-001: a save the service's engine hands back is kept for the phone page, and never offered to the service again. */
+  @Test fun aSaveTheServiceEngineCouldNotMakeIsKeptForThePhonePageOnly() {
+    val service = CopyOnWriteArrayList<JSONObject>()
+    val serviceSink: (JSONObject) -> Unit = { service.add(it) }
+    val oldSaves = MediaHub.serviceSaves
+    val old = MediaHub.swapCatalogSinkForTests(serviceSink, true)
+    MediaHub.serviceSaves = { true }
+    try {
+      CarFeedback.keepForPage(JSONObject().put("type", "feedback").put("id", "unknown-song").put("kind", "like"))
+      CarFeedback.keepForPage(JSONObject().put("type", "somethingElse").put("id", "x"))
+      assertEquals("only a save is kept", 1, CarFeedback.pendingCount())
+      main { CarFeedback.flush() }
+      assertTrue("the service is not asked again: $service", service.isEmpty())
+      assertEquals(1, CarFeedback.pendingCount())
+      MediaHub.setCommandSink(sink) // the phone app opens
+      main { seed() }
+      until("the page is asked") { ofType("feedback").size == 1 }
+      assertEquals("unknown-song", ofType("feedback")[0].getString("id"))
+      assertTrue("the marker stays inside", !ofType("feedback")[0].has("pageOnly"))
+      assertEquals(0, CarFeedback.pendingCount())
+    } finally {
+      MediaHub.serviceSaves = oldSaves
+      MediaHub.swapCatalogSinkForTests(old.first, old.second)
+    }
+  }
+
+  /** CAR-SAVE-HIDDEN-001: with no engine able to save, the press is kept and goes to the page when it is back in front. */
+  @Test fun withNothingAbleToSaveThePressIsKeptForThePageComingBack() {
+    val oldSaves = MediaHub.serviceSaves
+    MediaHub.serviceSaves = { false }
+    try {
+      MediaHub.setCommandSink(sink)
+      main { seed() }
+      main { MediaHub.setPageVisible(sink, false); MediaHub.setPageRunning(sink) { false } }
+      val c = connect()
+      main { c.transportControls.playFromMediaId("pick-tone-3", null) }
+      until("tone 3 plays") { title(c) == "Pick test tone 3" }
+      until("star button") { "Star" in names(c) }
+      press(c, "Star")
+      until("kept on the phone") { CarFeedback.pendingCount() == 1 }
+      assertTrue("the frozen page was asked nothing: $sent", ofType("feedback").isEmpty())
+      main { MediaHub.setPageRunning(sink) { true }; MediaHub.setPageVisible(sink, true) }
+      until("the page gets it when it is back in front") { ofType("feedback").map { it.getString("kind") } == listOf("like") }
+      assertEquals(0, CarFeedback.pendingCount())
+    } finally { MediaHub.serviceSaves = oldSaves }
+  }
+
+  /** PLAYLIST-KEEP-001: the page's first push names only its songs; the car must keep the playlists it has. */
+  @Test fun aPushWithoutPlaylistsKeepsTheCarsPlaylists() {
+    main { seed() }
+    assertEquals(listOf("Night drive", "Gym"), MediaHub.playlists.map { it.title })
+    main { MediaHub.apply(JSONObject().put("state", JSONObject().put("queue", songs())).put("library", JSONObject().put("songs", songs()))) }
+    assertEquals(listOf("Night drive", "Gym"), MediaHub.playlists.map { it.title })
+    main { MediaHub.apply(JSONObject().put("library", JSONObject().put("songs", songs()).put("playlists", JSONArray()))) }
+    assertTrue("an explicit empty list still clears them", MediaHub.playlists.isEmpty())
   }
 
   /** A list that already holds the song says so instead of pretending to add it again. */

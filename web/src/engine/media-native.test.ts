@@ -45,6 +45,18 @@ describe('car albums (ALBUM-CAR-001)', () => {
     for (const albumId of ['yt:MPREb_QqGdeeXXgBz', 'sc:1843556490']) expect(decodeCarAlbumId(carAlbumTrackId(albumId, 'k'))).toEqual({ albumId, key: 'k' });
   });
 
+  // PLAYLIST-KEEP-001: before the lists are read, the car must not be told the listener has none.
+  it('sends only the songs while the lists are still unread, and the real lists once they are', () => {
+    const media = vi.fn();
+    win().AirwaveNative = { media };
+    pushMediaLibrary([], null);
+    const first = JSON.parse(media.mock.calls.at(-1)![0]).library;
+    expect(first).toEqual({ songs: [] });
+    expect('playlists' in first).toBe(false);
+    pushMediaLibrary([], []);
+    expect(JSON.parse(media.mock.calls.at(-1)![0]).library).toEqual({ songs: [], playlists: [] });
+  });
+
   it('marks saved albums in the library so the car lists them under Albums', () => {
     const media = vi.fn();
     win().AirwaveNative = { media };

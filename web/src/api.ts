@@ -2,6 +2,7 @@
  * Typed client for the discovery sidecar (../server/airwave_discovery/app.py). Shapes mirror what the
  * server returns today; optional fields are the ones the server omits when a provider does not know them.
  */
+import { ListCache, type Held, type WireReply } from './engine/playlist-delta';
 
 export type ProviderId = 'deezer' | 'ytmusic' | 'soundcloud' | 'spotify' | 'apple' | 'bandcamp' | 'audius' | 'hearthis' | 'archive' | 'radio';
 
@@ -629,6 +630,11 @@ export class ApiError extends Error {
 }
 
 // The Android shell injects AirwaveNative; ?local=1 runs the same engine in a desktop browser for testing.
+const listCache = new ListCache();
+const readLists = (have: Held) => call<WireReply>(`/api/playlists?have=${encodeURIComponent(JSON.stringify(have))}`);
+/** For tests: forget the lists this page holds. */
+export const resetListCacheForTest = (): void => listCache.clear();
+
 const inApp = (): boolean => typeof window !== 'undefined' && (Boolean((window as { AirwaveNative?: unknown }).AirwaveNative) || new URLSearchParams(window.location.search).has('local'));
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -776,10 +782,13 @@ export const api = {
   saved: () => call<{ items: SavedItem[] }>('/api/saved'),
   /** TAGS-ALWAYS-001: genres for songs outside the engine's lists (search results); null where nothing is known. */
   genres: (tracks: Track[]) => call<{ items: Record<string, Characteristics | null>; pending?: string[] }>('/api/genres', { method: 'POST', body: json({ tracks }) }),
-  playlists: () => call<{ lists: PlaylistSummary[] }>('/api/playlists'),
+  // PLAYLIST-DELTA-001: the app's own engine is told which lists this page already holds and sends only the rest.
+  playlists: () => (inApp() ? listCache.read(readLists) : call<{ lists: PlaylistSummary[] }>('/api/playlists')),
   /** Every list edit goes through one call and answers with the lists as they now stand. */
   playlistEdit: (action: PlaylistAction, opts: { ids?: string[]; id?: string; name?: string; key?: string; tracks?: Track[]; album?: AlbumView } = {}) =>
-    call<{ lists: PlaylistSummary[] }>('/api/playlists', { method: 'POST', body: json({ action, ...opts }) }),
+    (inApp()
+      ? listCache.read((have) => call<WireReply>('/api/playlists', { method: 'POST', body: json({ action, ...opts, have }) }), readLists)
+      : call<{ lists: PlaylistSummary[] }>('/api/playlists', { method: 'POST', body: json({ action, ...opts }) })),
   health: (refresh = false) => call<Health>(`/api/health${refresh ? '?refresh=1' : ''}`),
   status: () => call<Status>('/api/status'),
   reset: (clearCache: boolean) => call<{ ok: boolean }>('/api/reset', { method: 'POST', body: json({ clear_cache: clearCache }) }),

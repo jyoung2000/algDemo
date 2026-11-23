@@ -33,9 +33,10 @@ import { captureRows, moodMovable, pinNext, placeMood, playMoodMove } from './en
 import { arrangeShuffle, restoreOrder } from './engine/shuffle-order';
 import { phoneWait } from './engine/native-http';
 import { favArtistsStore } from './fav-artists-store';
-import { PHONE_LIST, artistNamesOf, decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pickCarContext, pushMediaLibrary, pushMediaState, pushMediaTracks, setMediaHandlers, songFromTrack } from './engine/media-native';
+import { CAR_NEW_LIST, CAR_NEW_LIST_NAME, PHONE_LIST, artistNamesOf, decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pickCarContext, pushMediaLibrary, pushMediaState, pushMediaTracks, setMediaHandlers, songFromTrack } from './engine/media-native';
 import { engineAvailable, engineSend, listenFromEvent, markEngineEvent, subscribeEngineState } from './engine/native-engine';
 import { engineInstance } from './engine/service-listening';
+import { keepTrying } from './engine/playlist-delta';
 import { similarDetail, SimilarNotice, type SimilarNote } from './SimilarNotice';
 import { applyCarSettings, discoveryForEngine } from './engine/car-settings';
 import { SettingsView } from './Settings';
@@ -189,7 +190,11 @@ export function App() {
   const historyRef = useRef<string[]>([]);
   const [saved, setSaved] = useState<SavedItem[] | null>(null);
   /** The listener's saved lists. Loaded with Saved and refreshed by every list edit. */
-  const [lists, setLists] = useState<PlaylistSummary[]>([]);
+  const [lists, setListsRaw] = useState<PlaylistSummary[]>([]);
+  // PLAYLIST-KEEP-001: "no lists yet" and "the lists have not been read yet" are different things. Until the engine
+  // has answered once, the car is not told the listener has no playlists.
+  const [listsKnown, setListsKnown] = useState(false);
+  const setLists = useCallback((next: PlaylistSummary[]) => { setListsRaw(next); setListsKnown(true); }, []);
   /**
    * Which saved list the current song was started from, or null for the discovery queue. A list
    * is topped up only once everything in it has been played, so the engine needs to know which.
@@ -1017,15 +1022,20 @@ export function App() {
       // CAR-CONTROLS-001: a playlist picked in the car after a row's star, saved like the app's own add.
       playlistAdd: (id, listId, carTrack) => {
         const t = trackById(id) ?? (playing?.track.key === id ? playing.track : undefined) ?? onAirSong(id) ?? carTrack;
-        const list = lists.find((l) => l.id === listId && !l.album);
-        if (!t || !list) return;
+        // CAR-HEART-ALWAYS-001: with no playlist the car offers to start one; it is made once and found by name after.
+        const starting = listId === CAR_NEW_LIST;
+        const list = lists.find((l) => !l.album && (starting ? l.name === CAR_NEW_LIST_NAME : l.id === listId));
+        if (!t || (!list && !starting)) return;
+        const name = list?.name ?? CAR_NEW_LIST_NAME;
         void (async () => {
           try {
             await api.feedback('save', t, { event_id: newEventId('save', t.key) });
-            const r = await api.playlistEdit('add', { ids: [list.id], key: t.key, tracks: [t] });
+            const r = list
+              ? await api.playlistEdit('add', { ids: [list.id], key: t.key, tracks: [t] })
+              : await api.playlistEdit('create', { name, key: t.key, tracks: [t] });
             setLists(r.lists);
           } catch (e) {
-            flash(`Could not add that to ${list.name}: ${(e as Error).message}`);
+            flash(`Could not add that to ${name}: ${(e as Error).message}`);
           }
         })();
       },
@@ -1085,7 +1095,8 @@ export function App() {
     if (!mediaNativeAvailable()) return;
     pushMediaLibrary(
       activeItems.map((x) => nativeSong(x.track)),
-      lists.map((l) => ({
+      // PLAYLIST-KEEP-001: before the lists have been read the car keeps the playlists it already has.
+      !listsKnown ? null : lists.map((l) => ({
         id: l.id, title: l.name, songs: savedTracks(saved, lists, l.id).map((t) => nativeSong(t)),
         // ALBUM-SAVE-001: saved albums are listed under Albums in the car.
         ...(l.album ? { album: true, artist: l.album.artist, artwork: l.album.artwork } : {}),
@@ -1093,7 +1104,7 @@ export function App() {
     );
     // NATIVE-COLD-STATE-001: their original Tracks too, so a cold car start acquires these exact songs.
     pushMediaTracks([...activeItems.map((x) => x.track), ...lists.flatMap((l) => savedTracks(saved, lists, l.id))]);
-  }, [activeItems, lists, saved, readySignature]);
+  }, [activeItems, lists, listsKnown, saved, readySignature]);
 
   // A skip or a full listen is recorded, then the songs still to come are ranked again with it.
   // Only the newest answer is applied, so two quick skips cannot show the older order.
@@ -1118,7 +1129,8 @@ export function App() {
       .then(() => {
         // Learning shows even with no queue to re-rank: the Your sound card reads the same taste.
         if (sample || !result) void refreshTaste();
-        return sample || !result ? null : api.rerank([...playedRef.current]);
+        // QUEUE-DATA-FLOW-001: a re-rank that fails must not cost the queue its top-up further down this chain.
+        return sample || !result ? null : api.rerank([...playedRef.current]).catch(() => null);
       })
       .then((r) => {
         nudgeMood();
@@ -1269,10 +1281,31 @@ export function App() {
   };
 
   useEffect(() => {
-    if (tab === 'saved') api.saved().then((r) => setSaved(r.items), () => setSaved([]));
+    // PLAYLIST-KEEP-001 (owner, 2026-11-23: "the playlist dont load or save the music"): a read that fails (the
+    // engine busy at start, a slow answer) is tried again. It used to be shown as an empty Saved and no lists.
+    if (tab === 'saved') api.saved().then((r) => setSaved(r.items), () => setSaved((prev) => prev ?? []));
     // The lists are needed on Discover too, for the menu the like button opens.
-    if (tab === 'saved' || tab === 'discover') api.playlists().then((r) => setLists(r.lists), () => setLists([]));
+    if (tab !== 'saved' && tab !== 'discover') return;
+    return keepTrying(() => api.playlists(), (r) => setLists(r.lists));
   }, [tab, flags]);
+
+  // CAR-SAVE-HIDDEN-001 (owner, 2026-11-23): while this screen was away the car may have starred songs and added
+  // them to playlists; the playback service's engine saves those. Back in front, read the stars again. The lists
+  // and Saved follow them (the effect above), so the phone shows what the car did and never hands the car an
+  // older set of playlists.
+  useEffect(() => {
+    const onShow = () => {
+      if (document.visibilityState !== 'visible') return;
+      api.feedbackState().then((fb) => {
+        const f: Record<string, FeedbackFlags> = {};
+        for (const [k, v] of Object.entries(fb.state)) f[k] = { like: v.like, dislike: v.dislike, hide: v.hide, save: v.save };
+        setFlags(f);
+        if (fb.taste) setTaste(fb.taste);
+      }, () => undefined);
+    };
+    document.addEventListener('visibilitychange', onShow);
+    return () => document.removeEventListener('visibilitychange', onShow);
+  }, []);
 
   /**
    * Like or unlike a song that is not in a recommendation row — from the search list, say

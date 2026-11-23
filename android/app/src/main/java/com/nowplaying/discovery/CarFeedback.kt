@@ -20,6 +20,8 @@ object CarFeedback {
   private const val PREFS = "airwave-car-feedback"
   private const val KEY = "pending"
   private const val MAX_PENDING = 50
+  /** Marks a kept press that only the phone page can save (the service's engine already said it cannot). */
+  private const val PAGE_ONLY = "pageOnly"
   val KINDS = setOf("like", "unlike", "dislike", "undislike")
 
   @Volatile private var prefs: SharedPreferences? = null
@@ -48,7 +50,16 @@ object CarFeedback {
       else -> starred to false
     }
     val cmd = withRadioTrack(JSONObject().put("type", "feedback").put("id", songId).put("kind", kind), songId)
-    if (MediaHub.hasPage() && MediaHub.pageAnswering) MediaHub.command(cmd) else enqueue(cmd)
+    send(cmd)
+  }
+
+  /**
+   * CAR-SAVE-HIDDEN-001: to whoever can save it now (the page in front, else the service's engine), else kept.
+   * It used to go to the phone page whenever one existed, and a page that is not in front is frozen.
+   */
+  private fun send(cmd: JSONObject) {
+    val target = MediaHub.saveSink()
+    if (target != null) target(cmd) else enqueue(cmd)
   }
 
   /**
@@ -59,7 +70,7 @@ object CarFeedback {
   fun addToPlaylist(songId: String, listId: String) {
     MediaHub.addToPlaylistNow(listId, songId)
     val cmd = withRadioTrack(JSONObject().put("type", "playlistAdd").put("id", songId).put("list", listId), songId)
-    if (MediaHub.hasPage() && MediaHub.pageAnswering) MediaHub.command(cmd) else enqueue(cmd)
+    send(cmd)
   }
 
   /**
@@ -75,11 +86,26 @@ object CarFeedback {
     return null
   }
 
-  /** CAR-RADIO-CONTROLS-001: a song starred on the radio is in no list the page holds, so its Track goes along. */
+  /**
+   * CAR-RADIO-CONTROLS-001: a song starred on the radio is in no list the page holds, so its Track goes along.
+   * CAR-SAVE-HIDDEN-001: so does the original Track of any other song the phone has told us about, because the
+   * engine that saves it now may be the service's, which does not hold the phone page's lists.
+   */
   private fun withRadioTrack(cmd: JSONObject, songId: String): JSONObject {
-    val track = MediaHub.radioTrack
-    if (MediaHub.radioSong?.id == songId && track != null) cmd.put("track", track)
+    val track = MediaHub.radioTrack?.takeIf { MediaHub.radioSong?.id == songId }
+      ?: runCatching { NativeLibraryState.rawTrack(songId) }.getOrNull()
+    if (track != null) cmd.put("track", track)
     return cmd
+  }
+
+  /**
+   * CAR-SAVE-HIDDEN-001: the service's engine could not make this save (it cannot name the song, or its write
+   * failed). Kept for the phone page, and only for it: the service is not asked the same thing again.
+   */
+  fun keepForPage(cmd: JSONObject) {
+    val type = cmd.optString("type")
+    if ((type != "feedback" && type != "playlistAdd") || cmd.optString("id").isEmpty()) return
+    enqueue(cmd.put(PAGE_ONLY, true))
   }
 
   /** The page pushed its state; a press it now agrees with no longer needs holding. */
@@ -89,15 +115,20 @@ object CarFeedback {
     if (p.first == s.liked && p.second == s.disliked) pressed.remove(id)
   }
 
-  /** Hand every judgement kept while the app was closed to the page, oldest first. */
+  /** Hand every judgement kept while nothing could save it to whoever can now, oldest first. */
   fun flush() {
     val p = prefs ?: return
+    val target = MediaHub.saveSink() ?: return
+    val toPage = MediaHub.savesGoToPage()
     val list = synchronized(this) {
       val raw = p.getString(KEY, null) ?: return
-      p.edit().remove(KEY).apply()
-      runCatching { JSONArray(raw) }.getOrNull() ?: return
+      val all = runCatching { JSONArray(raw) }.getOrNull() ?: run { p.edit().remove(KEY).apply(); return }
+      val now = JSONArray(); val later = JSONArray()
+      for (i in 0 until all.length()) all.optJSONObject(i)?.let { if (toPage || !it.optBoolean(PAGE_ONLY)) now.put(it) else later.put(it) }
+      if (later.length() == 0) p.edit().remove(KEY).apply() else p.edit().putString(KEY, later.toString()).apply()
+      now
     }
-    for (i in 0 until list.length()) list.optJSONObject(i)?.let { MediaHub.command(it) }
+    for (i in 0 until list.length()) list.optJSONObject(i)?.let { it.remove(PAGE_ONLY); target(it) }
   }
 
   fun pendingCount(): Int = runCatching { JSONArray(prefs?.getString(KEY, null) ?: "[]").length() }.getOrDefault(0)

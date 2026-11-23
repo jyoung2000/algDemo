@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react';
+import { useRef, useState, type CSSProperties } from 'react';
 import { Glyph, type GlyphName } from '@now-playing/aqua-ui/icons';
 import { SimilarGlyph } from './icons';
 import { Marquee } from './Marquee';
@@ -85,9 +85,20 @@ interface Props {
  * diversified order; nothing here re-sorts it.
  * Arrow keys / j k move between rows; Enter plays; the row keeps focus when results refresh.
  */
-export function Results({ seeds, onRemoveSeed, onEmphasis, items, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload, onSimilar, similarBusy, cacheOf, lists, onLists, onOpenAlbum, onOpenArtist }: Props) {
+export function Results({ seeds, onRemoveSeed, onEmphasis, items: liveItems, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload, onSimilar, similarBusy, cacheOf, lists, onLists, onOpenAlbum, onOpenArtist }: Props) {
   /** Which row's save menu is showing, by song key. Only one opens at a time. */
   const [saving, setSaving] = useState<string | null>(null);
+  /**
+   * SAVE-MENU-STAY-001 (owner, 2026-11-23: "adding songs to playlist doesnt work"). The playlist menu lives in its
+   * song's row. Liking the song refreshes the queue a few seconds later, and when that refresh dropped or moved the
+   * row the menu vanished with it, mid-choice (measured on the emulator: gone 8 s after it opened, untouched).
+   * While a menu is open the rows are held exactly as they were when it opened — same songs, same order, each
+   * showing its newest state — and the queue catches up the moment the menu closes.
+   */
+  const held = useRef<RecItem[] | null>(null);
+  if (saving === null) held.current = null;
+  else if (!held.current) held.current = liveItems;
+  const items = held.current ? held.current.map((old) => liveItems.find((x) => x.track.key === old.track.key) ?? old) : liveItems;
   const [confirming, setConfirming] = useState<{ title: string; run: () => void } | null>(null);
 
   /**

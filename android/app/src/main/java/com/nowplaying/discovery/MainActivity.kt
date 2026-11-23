@@ -192,6 +192,8 @@ class MainActivity : Activity() {
    */
   private fun startNativeSession() {
     MediaHub.setCommandSink(mediaCommandSink)
+    // CAR-SAVE-HIDDEN-001: behind another app this page's WebView is paused unless it is the one making the sound.
+    MediaHub.setPageRunning(mediaCommandSink) { !activityPaused || pageNeeded() }
     EngineHub.attachPage(enginePage)
     EngineHub.addObserver(engineWatch)
     val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
@@ -499,6 +501,52 @@ class MainActivity : Activity() {
     @JavascriptInterface
     fun api(id: Int, json: String) {
       ServiceApi.onMain { if (web === view) ServiceApi.core.fromUi(id, json) }
+    }
+
+    /**
+     * CAR-KEEP-001: how this copy of jPlay was installed and whether Android Auto is on the phone,
+     * for the Settings card. Read-only; Android Auto's own "Unknown sources" switch is not readable.
+     */
+    @JavascriptInterface
+    fun carInstall(): String {
+      var installer: String? = null
+      var initiating: String? = null
+      var originating: String? = null
+      runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+          val src = packageManager.getInstallSourceInfo(packageName)
+          installer = src.installingPackageName
+          initiating = src.initiatingPackageName
+          originating = src.originatingPackageName
+        } else {
+          @Suppress("DEPRECATION")
+          installer = packageManager.getInstallerPackageName(packageName)
+        }
+      }
+      val auto = runCatching { packageManager.getPackageInfo(CarInstall.ANDROID_AUTO, 0) }.getOrNull()
+      return CarInstall.describe(installer, initiating, originating, auto != null, auto?.versionName, Build.VERSION.SDK_INT).toString()
+    }
+
+    /** CAR-KEEP-001: open Android Auto's settings, else its app page. False when nothing started. */
+    @JavascriptInterface
+    fun openCarSettings(): Boolean {
+      if (web !== view) return false
+      val pkg = CarInstall.ANDROID_AUTO
+      val tries = listOf(
+        { Intent(CarInstall.ANDROID_AUTO_SETTINGS).setPackage(pkg) },
+        { Intent(Intent.ACTION_APPLICATION_PREFERENCES).setPackage(pkg) },
+        { packageManager.getLaunchIntentForPackage(pkg) },
+        { Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg")) },
+      )
+      for (make in tries) {
+        val started = runCatching {
+          val intent = make() ?: return@runCatching false
+          startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+          true
+        }.getOrDefault(false)
+        if (started) return true
+      }
+      return false
     }
   }
 

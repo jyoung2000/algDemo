@@ -32,6 +32,7 @@ object NativeLibraryState {
 
   @Synchronized fun library(): JSONObject? = store?.library()
   @Synchronized fun recordLibrary(snapshot: JSONObject): Boolean = store?.recordLibrary(snapshot) == true
+  @Synchronized fun addToPlaylist(listId: String, song: JSONObject, startAs: String?): Boolean = store?.addToPlaylist(listId, song, startAs) == true
   @Synchronized fun nativeState(): JSONObject? = store?.nativeState()
   @Synchronized fun recordNativeState(state: JSONObject) { store?.recordNativeState(state) }
   @Synchronized fun settings(): JSONObject? = store?.settings()

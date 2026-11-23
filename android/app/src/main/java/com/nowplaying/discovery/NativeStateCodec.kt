@@ -223,11 +223,40 @@ object NativeStateCodec {
     fun recordLibrary(snapshot: JSONObject): Boolean {
       load()
       val c = runCatching { copy(snapshot) }.getOrNull()?.takeIf(::validLibrary) ?: return false
+      // PLAYLIST-KEEP-001: a push that names only the songs (the page has not read its lists yet) keeps the
+      // playlists already saved, so a cold start in the car still shows them.
+      if (!c.has("playlists")) library?.optJSONArray("playlists")?.let { c.put("playlists", JSONArray(it.toString())) }
       if (!write(KEY_LIBRARY, c)) return false
       library = c
       // Songs that carry their original Track are remembered under its exact key.
       c.optJSONArray("songs")?.let { a -> for (i in 0 until a.length()) a.optJSONObject(i)?.optJSONObject("track")?.let { remember(it) } }
       flushTracks()
+      return true
+    }
+
+    /**
+     * CAR-SAVE-HIDDEN-001: [song] joins playlist [listId] in the saved library, so the car's next cold start shows
+     * it without waiting for the phone app. With [startAs] a playlist that is not there yet is started under that
+     * name. False when nothing changed (no saved library, an unknown list, or the song is already in it).
+     */
+    fun addToPlaylist(listId: String, song: JSONObject, startAs: String?): Boolean {
+      load()
+      val c = library?.let(::copy) ?: return false
+      val songId = song.optString("id")
+      if (listId.isEmpty() || songId.isEmpty()) return false
+      val lists = c.optJSONArray("playlists") ?: JSONArray().also { c.put("playlists", it) }
+      val list = (0 until lists.length()).mapNotNull { lists.optJSONObject(it) }.firstOrNull { it.optString("id") == listId }
+      if (list == null) {
+        if (startAs.isNullOrBlank()) return false
+        lists.put(JSONObject().put("id", listId).put("title", startAs).put("songs", JSONArray().put(copy(song))))
+      } else {
+        if (list.optBoolean("album")) return false
+        val songs = list.optJSONArray("songs") ?: JSONArray().also { list.put("songs", it) }
+        if ((0 until songs.length()).any { songs.optJSONObject(it)?.optString("id") == songId }) return false
+        songs.put(copy(song))
+      }
+      if (!validLibrary(c) || !write(KEY_LIBRARY, c)) return false
+      library = c
       return true
     }
 

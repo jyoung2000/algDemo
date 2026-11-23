@@ -66,7 +66,10 @@ class CarActionButtonsTest {
   }
 
   @After fun tearDown() {
+    MediaHub.serviceSaves = { ServiceApi.core.ready }
     main {
+      // CAR-HEART-ALWAYS-001: the service outlives a test; a picker left open would be the next test's buttons.
+      controller?.transportControls?.sendCustomAction("com.nowplaying.discovery.PICK_LIST", null)
       controller?.let { c -> actionNamed(c, "Shuffle on")?.let { c.transportControls.sendCustomAction(it.action, null) } }
       controller?.let { c ->
         // REPEAT-COUNT-001: the service outlives a test; leave the song repeat off for the next one.
@@ -108,6 +111,11 @@ class CarActionButtonsTest {
     val a = actions(c).firstOrNull { it.action.endsWith(prefix) } ?: throw AssertionError("no $prefix button in ${names(c)}")
     main { c.transportControls.sendCustomAction(a.action, null) }
   }
+  /** A button by the words on it, sent with its own extras: the playlist choices share one action. */
+  private fun pressNamed(c: PlatformController, name: String) {
+    val a = actions(c).firstOrNull { it.name.toString() == name } ?: throw AssertionError("no \"$name\" button in ${names(c)}")
+    main { c.transportControls.sendCustomAction(a.action, a.extras) }
+  }
 
   @Test fun carPlayerOffersStarDislikeAndShuffleBesideTrackSkips() {
     MediaHub.setCommandSink(sink)
@@ -135,8 +143,14 @@ class CarActionButtonsTest {
     until("the page heard the star") { sent.isNotEmpty() }
     assertEquals("act-tone-2", sent[0].getString("id"))
     assertEquals("like", sent[0].getString("kind"))
-    until("button shows the song is starred") { "Remove star" in names(c) }
+    // CAR-HEART-ALWAYS-001: the heart brings the playlist choices; it no longer takes the star off by itself.
+    until("the choices are up") { "Cancel" in names(c) }
+    pressNamed(c, "Cancel")
+    until("button shows the song is starred") { CarPickList.STARRED_LABEL in names(c) }
     press(c, ".STAR")
+    until("the choices again, with Remove star") { "Remove star" in names(c) }
+    assertEquals("the second press did not unstar", 1, sent.size)
+    pressNamed(c, "Remove star")
     until("unstar sent") { sent.size == 2 }
     assertEquals("unlike", sent[1].getString("kind"))
     until("button back to Star") { "Star" in names(c) }
@@ -152,7 +166,8 @@ class CarActionButtonsTest {
     until("the page heard the dislike") { sent.isNotEmpty() }
     assertEquals("act-tone-2", sent[0].getString("id"))
     assertEquals("dislike", sent[0].getString("kind"))
-    until("a disliked song is skipped") { title(c) == "Action test tone 3" }
+    try { until("a disliked song is skipped") { title(c) == "Action test tone 3" } }
+    catch (e: AssertionError) { throw AssertionError("${e.message}; now playing ${title(c)}; buttons ${names(c)}; queue ${main { c.queue.orEmpty().map { it.description.title.toString() } }}; sent ${sent.map { it.toString() }}") }
   }
 
   @Test fun shuffleButtonTogglesTheSessionShuffleMode() {
@@ -226,13 +241,18 @@ class CarActionButtonsTest {
   }
 
   @Test fun aStarPressedWhileTheAppIsClosedReachesTheAppWhenItOpens() {
+    // CAR-SAVE-HIDDEN-001: where the service has its own engine that engine saves the star at once
+    // (CarPickOnPlayerTest); this is the other case, with no engine able to save.
+    MediaHub.serviceSaves = { false }
     main { seed() } // the service plays alone: no page sink
     val c = connect()
     playTone(c, 3)
     until("star button") { "Star" in names(c) }
     press(c, ".STAR")
     until("kept on the phone") { CarFeedback.pendingCount() == 1 }
-    until("button answers at once") { "Remove star" in names(c) }
+    until("button answers at once") { "Cancel" in names(c) }
+    pressNamed(c, "Cancel")
+    until("the heart is filled") { CarPickList.STARRED_LABEL in names(c) }
     assertTrue(sent.isEmpty())
     MediaHub.setCommandSink(sink) // the app opens
     main { seed() }

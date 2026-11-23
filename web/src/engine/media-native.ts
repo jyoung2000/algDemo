@@ -163,6 +163,13 @@ export function pickCarContext(ctx: unknown, id: string): { track: Track; tracks
   return { track, tracks };
 }
 
+/**
+ * CAR-HEART-ALWAYS-001: the list id the car sends when the listener has no playlist and picks "New playlist"
+ * (CarPickList.NEW_LIST), and the name of the list that makes (CarPickList.NEW_LIST_NAME). It is made once: the
+ * next pick finds it by that name.
+ */
+export const CAR_NEW_LIST = 'airwave:new-list';
+export const CAR_NEW_LIST_NAME = 'Car picks';
 /** CAR-LOCAL-001: the car's "On this phone" list id (MediaHub.PHONE_LIST): songs held on the phone. */
 export const PHONE_LIST = 'airwave:on-this-phone';
 
@@ -213,13 +220,22 @@ export function pushMediaState(partial: Partial<NativeState>): void {
   send({ state: lastState });
 }
 
-/** Push the browsable library (the song list and the playlists). Larger and rare (list changes). */
-export function pushMediaLibrary(songs: NativeSong[], playlists: NativeFolder[]): void {
+/**
+ * Push the browsable library (the song list and the playlists). Larger and rare (list changes).
+ * PLAYLIST-KEEP-001: `null` playlists means "not read yet" — only the songs are sent, and the native side keeps
+ * the playlists it has. An empty array still means the listener really has none.
+ */
+export function pushMediaLibrary(songs: NativeSong[], playlists: NativeFolder[] | null): void {
+  if (playlists === null) {
+    lastLibrary = { songs, playlists: lastLibrary.playlists };
+    send({ state: lastState, library: { songs } });
+    return;
+  }
   lastLibrary = { songs, playlists };
   send({ state: lastState, library: lastLibrary });
 }
 
-function send(payload: { state: NativeState; library?: { songs: NativeSong[]; playlists: NativeFolder[] }; search?: { requestId: string; query: string; songs: NativeSong[]; albums?: NativeAlbum[]; play?: string; error?: string }; identify?: { requestId: string; songs: NativeSong[]; error?: string };
+function send(payload: { state: NativeState; library?: { songs: NativeSong[]; playlists?: NativeFolder[] }; search?: { requestId: string; query: string; songs: NativeSong[]; albums?: NativeAlbum[]; play?: string; error?: string }; identify?: { requestId: string; songs: NativeSong[]; error?: string };
   similar?: { requestId: string; id: string; added: number; minimum?: number; reason?: string; songs: NativeSong[]; error?: string };
   mood?: { requestId: string; order: string[]; moved: string[]; changed: boolean; leading: string[]; error?: string };
   /** CAR-ANSWERABLE-001: which artists the car's Star the artist press really saved, or why none did. */
@@ -251,6 +267,17 @@ export function pushSourceUpdates(updates: { id: string; key: string; ready: boo
  * QUEUE-HEARD-001: songs a listening top-up found while the phone app was closed, for the end of the engine's queue
  * (EnginePlayer.appendFound, through CatalogEngine.media). The native side drops any it already has.
  */
+/** CAR-SAVE-HIDDEN-001: a car save the service engine could not make goes back to be kept for the phone app. */
+export function pushCarUnsaved(cmd: { type: string; id: string }): void {
+  const n = nativeMedia();
+  if (typeof n?.media !== 'function') return;
+  try {
+    n.media(JSON.stringify({ carUnsaved: cmd }));
+  } catch {
+    /* as send(): drop rather than crash */
+  }
+}
+
 export function pushQueueTopUp(songs: NativeSong[]): void {
   const n = nativeMedia();
   if (typeof n?.media !== 'function' || !songs.length) return;

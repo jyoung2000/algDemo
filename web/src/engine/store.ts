@@ -155,7 +155,13 @@ export class Store {
 
   /** Writes reach the backend in order; a failed write surfaces on the next flush(). */
   private write(fn: () => Promise<void>): void {
+    this.changes++;
     this.queue = this.queue.then(fn);
+  }
+  private changes = 0;
+  /** PLAYLIST-DELTA-001: goes up with every change to what is kept, so an answer worked out from it can be reused until then. */
+  get version(): number {
+    return this.changes;
   }
   flush(): Promise<void> {
     const q = this.queue;

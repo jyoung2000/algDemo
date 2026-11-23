@@ -51,6 +51,7 @@ const IMPORTED_SOURCE_TTL = 10 * 365 * 86400;
 
 import { buildProfile } from './profile';
 import { playlistMix } from './playlist-mix';
+import { parseHeld, shapeLists, type Held } from './playlist-delta';
 import { albumGenres, baseAlbumTitle, releaseGroupId, tagsFromReleaseGroup } from './album-genres';
 import { seedWindow } from './seed-window';
 import type { Tag } from './genres';
@@ -66,6 +67,7 @@ import { Job, Pipeline, pmap, type Embedder } from './pipeline';
 import { FAV_ARTISTS_KEY, FAV_PER_RUN, addFav, favMap, favSeed, normaliseFav, normaliseFavs, removeFav, type FavArtist } from './fav-artists';
 import { referenceSize, sizeFit, smallScene } from './artist-size';
 import { coldReason, coldStarters, type ColdStarter } from './cold-start';
+import { FLOW_KEY, dryReason, flowPick, flowState, heardTest } from './queue-data-flow';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
 import { Albums } from './albums';
@@ -158,6 +160,8 @@ const FEEDBACK_KINDS = new Set(['qualified', 'like', 'dislike', 'hide', 'save', 
 const QUEUE_PLAYLIST_KEY = 'queue_playlist';
 /** Songs saved lists were made with (ALBUM-OPEN-001), by key, so a list made from an album shows every song. */
 const LIST_TRACKS_KEY = 'list_tracks';
+/** QUEUE-DATA-FLOW-001: how many of the listener's artists the listening top-ups walk through, a few per run. */
+const FLOW_POOL = 24;
 /** TAGS-ALWAYS-001: genres looked up for saved songs that had none, by song key. */
 const SAVED_TAGS_KEY = 'saved_tags';
 /** TAGS-ALWAYS-001: release dates looked up for saved songs that had none (key -> release or year hint). */
@@ -453,7 +457,8 @@ export class LocalApi {
       if (m === 'POST' && path === '/api/embed-local') return await this.embedLocal(body ?? {});
       if (m === 'GET' && path === '/api/saved') return ok(this.saved());
       if (m === 'POST' && path === '/api/genres') return ok(await this.genresFor(((body ?? {})['tracks'] as Dict[] | undefined) ?? []));
-      if (m === 'GET' && path === '/api/playlists') return ok(this.playlists());
+      // PLAYLIST-DELTA-001: a caller that names the versions it holds is sent only the lists that changed.
+      if (m === 'GET' && path === '/api/playlists') return ok(this.playlists(parseHeld(q.get('have'))));
       if (m === 'POST' && path === '/api/playlists') return await this.playlistAction(body ?? {});
       if (m === 'GET' && path === '/api/status') return ok(await this.status());
       if (m === 'POST' && path === '/api/reset') return this.reset(Boolean(body?.['clear_cache']));
@@ -2089,10 +2094,18 @@ export class LocalApi {
     };
     /** NEXT-FAV-COLD-001: filled in below once the seedless run knows its starting artists. */
     let coldUsed: ColdStarter[] = [];
+    // QUEUE-DATA-FLOW-001: a top-up never offers a song the listener has already finished or skipped.
+    const heardBefore = trigger === 'listening' ? heardTest(this.store.feedback() as never) : null;
+    const unheard = (t: Dict): boolean => !heardBefore || !heardBefore(t);
     try {
       const cfg = { ...engineFromSettings(settings), queueSize: Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize) };
       const es = E.normaliseSettings({ fresh: Boolean(settings['fresh']), adventurous: settings['adventurous'] });
-      job.meter = this.jobMeter(settings, lane);
+      // QUEUE-DATA-FLOW-001: a top-up while listening is never refused for the allowance when the queue is running
+      // dry, so on mobile data each one is held to a small ceiling instead (Budget.topUpCap).
+      const topUp = trigger === 'listening';
+      job.meter = topUp
+        ? this.budget.meter(lane, this.budget.topUpCap(Math.trunc(Number(settings['request_mb'] ?? TRANSFER.perRequest / 1e6) * 1e6)))
+        : this.jobMeter(settings, lane);
       job.phase = 'profiling';
       job.progress = 'Looking up your starting songs';
       // PLAYLIST-QUEUE-001: a long list of starting songs (a saved list sent to the queue) is asked
@@ -2112,12 +2125,24 @@ export class LocalApi {
       // related artists), on every Find my next favorite run with no Customize options needed.
       // NEXT-FAV-COLD-001: with no starting song the run's starting points are the listener's stars, the artists
       // their listening says they like, and their taste map's colours — in that order, run-only.
-      const cold = trigger === 'listening' || seeds.length ? [] : this.coldStarters(FAV_PER_RUN);
+      const cold = topUp || seeds.length ? [] : this.coldStarters(FAV_PER_RUN);
       coldUsed = cold;
-      const favs = trigger === 'listening'
-        ? []
+      const asFav = (cs: ColdStarter): FavArtist => this.favArtists().find((f) => fold(f.name) === fold(cs.name)) ?? { name: cs.name, deezerId: null, fans: null, picture: null, pageId: null, addedAt: 0 };
+      // QUEUE-DATA-FLOW-001 (owner, 2026-11-23): "the discovery engine doesnt continously find new songs ... you
+      // repeat the same songs". A top-up used to ask only the starting songs, so once their sources were spent every
+      // run came back with what the queue already held. Each top-up now also asks a few of the listener's own
+      // artists — starred, then learned from listening, then their sound's — carrying on where the last one stopped.
+      const flow = flowState(this.store.get(FLOW_KEY));
+      const seedArtists = new Set(win.window.map((sd) => fold(String((sd['artists'] as string[] | undefined)?.[0] ?? sd['artist'] ?? ''))));
+      const flowPool = topUp ? this.coldStarters(FLOW_POOL).filter((cs) => !seedArtists.has(fold(cs.name))) : [];
+      const walk = flowPick(flowPool, flow);
+      const settleFlow = async (added: number) => {
+        if (topUp) await this.store.put(FLOW_KEY, { cursor: walk.next, dry: added > 0 ? 0 : flow.dry + 1 });
+      };
+      const favs = topUp
+        ? walk.picked.map(asFav)
         : cold.length
-          ? cold.map((cs) => this.favArtists().find((f) => fold(f.name) === fold(cs.name)) ?? { name: cs.name, deezerId: null, fans: null, picture: null, pageId: null, addedAt: 0 })
+          ? cold.map(asFav)
           : this.favArtists().slice(0, FAV_PER_RUN);
       job.timings['cold_start'] = cold.length;
       if (cold.length) job.progress = 'Reading your listening and your sound';
@@ -2150,7 +2175,7 @@ export class LocalApi {
             seeds: seedViews as never, vectors: new Map(), relatedArtists: relMapQ, feedback: fb, impressions: imps,
             settings: es2, now: new Date(), cfg, taste, rankV2: v2, taste2,
           };
-          const quickChosen = E.select(E.scoreAll(newDiscoveryTracks(quick, held) as never, ctxQ), ctxQ);
+          const quickChosen = E.select(E.scoreAll(newDiscoveryTracks(quick, held).filter(unheard) as never, ctxQ), ctxQ);
           if (quickChosen.length) {
             job.result = merge(this.serialise(quickChosen, ctxQ, 'gathering', job));
             job.progress = `First ${quickChosen.length} songs found; still asking the other services`;
@@ -2168,17 +2193,25 @@ export class LocalApi {
       const colours = this.colourList(taste);
       if (colours.length) await this.store.put(TASTE_CURSOR_KEY, colourCursor + 1);
       job.timings['taste_colours'] = colours.length;
-      const gathered = await p.gather(job, gatherViews, profiles, cfg, es.fresh, onPartial, deepAlbums, { colours, cursor: colourCursor }, { skipCharts: smallScene(sizeRef) });
+      const gathered = await p.gather(job, gatherViews, profiles, cfg, es.fresh, onPartial, deepAlbums, { colours, cursor: colourCursor }, { skipCharts: smallScene(sizeRef), cheapFirst: topUp && !this.budget.unmetered });
       const related = gathered.related;
-      // Only songs the list does not already hold can take a slot in this batch.
-      const cands = newDiscoveryTracks(gathered.cands, held);
+      // Only songs the list does not already hold can take a slot in this batch — and, for a top-up, only songs
+      // the listener has not already heard (QUEUE-DATA-FLOW-001: a heard song must never come back as new).
+      const cands = newDiscoveryTracks(gathered.cands, held).filter(unheard);
       job.timings['gather_ms'] = since() - job.timings['profile_ms'];
       job.timings['candidates'] = cands.length;
       if (!cands.length) {
+        await settleFlow(0);
         job.result = merge({
           phase: 'final', items: [], count: 0, asked: cfg.queueSize, sources: job.sources, audio: job.audio, timings: job.timings,
           transfer: { ...job.meter.counts },
-          empty_reason: previous.length
+          // QUEUE-DATA-FLOW-001: a top-up that found nothing new says what it asked and what the next one asks.
+          empty_reason: topUp
+            ? dryReason(
+              { seeds: win.window.filter((sd) => seeds.some((s0) => s0['key'] === sd['key'])).length, artists: walk.picked.map((x) => x.name), colours: colours.length },
+              flowPick(flowPool, { cursor: walk.next, dry: flow.dry + 1 }).picked.map((x) => x.name).filter((nm) => !walk.picked.some((x) => x.name === nm)),
+            )
+            : previous.length
             ? colours.length
               ? 'No new songs this time. Your list is unchanged; the next run reads further into your sound.'
               : 'No new songs this time. Your list is unchanged. Finish or like a few songs and your sound starts finding more on its own.'
@@ -2335,6 +2368,7 @@ export class LocalApi {
         cands: poolCands, seeds: seedViews, related: [...relMap].map(([k, v]) => [k, [...v]]), settings: es, weights: settings['weights'] ?? null,
       });
       await this.store.put('last_result', { ...job.result, saved_at: unixNow() });
+      await settleFlow(Number(((job.result as Dict | null)?.['discovery'] as Dict | undefined)?.['added'] ?? 0));
     } catch (e) {
       job.error = e instanceof Cancelled ? 'cancelled' : `${(e as Error).name}: ${(e as Error).message}`;
     } finally {
@@ -2891,7 +2925,21 @@ export class LocalApi {
    * The lists, each with the songs it holds resolved back to tracks. A song whose track was never
    * recorded still counts towards the list's length, so the discovery gate cannot be fooled by it.
    */
-  private playlists(): Dict {
+  /** PLAYLIST-DELTA-001: the lists as last worked out, good until anything kept in the store changes. */
+  private listsMemo: { at: number; made: number; lists: (Dict & { id: string; items: unknown[] })[] } | null = null;
+
+  private playlists(held: Held | null = null): Dict {
+    // Reading a large library takes several calls (playlist-delta.ts); they must not each work all of it out again.
+    // A minute at most: a look-up that is due to be tried again changes the answer without changing the store.
+    const at = this.store.version;
+    const made = unixNow();
+    if (this.listsMemo?.at === at && made - this.listsMemo.made < 60) return { lists: shapeLists(this.listsMemo.lists, held) };
+    const full = this.playlistsNow();
+    this.listsMemo = { at, made, lists: full };
+    return { lists: shapeLists(full, held) };
+  }
+
+  private playlistsNow(): (Dict & { id: string; items: unknown[] })[] {
     const lists = this.storedPlaylists();
     const played = this.playedKeys();
     const byKey = this.knownTracks();
@@ -2911,8 +2959,7 @@ export class LocalApi {
       return this.withDate(own.length ? { ...t, tags: own } : t);
     };
     if (lists.some((l) => l.entries.some((e) => { const t = withTags(byKey.get(e.key) ?? null); return t && t['kind'] !== 'radio-programme' && t['provider'] !== 'imported' && this.savedWants(t); }))) this.kickSavedGenres();
-    return {
-      lists: lists.map((l) => {
+    return lists.map((l) => {
         const pending = l.entries.filter((e) => wanting.has(e.key)).length;
         const items = l.entries.map((e) => ({ key: e.key, added: e.added, track: withTags(byKey.get(e.key) ?? null), played: played.has(e.key) }));
         return {
@@ -2926,8 +2973,7 @@ export class LocalApi {
           items: this.importedCharacteristics(items),
           ...(pending ? { genre_pending: pending } : {}),
         };
-      }),
-    };
+      });
   }
 
   /**
@@ -3045,7 +3091,7 @@ export class LocalApi {
       throw e;
     }
     await this.savePlaylists(lists);
-    return ok(this.playlists());
+    return ok(this.playlists(parseHeld(body['have'])));
   }
 
   // ---- playback ------------------------------------------------------------------------

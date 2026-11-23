@@ -74,9 +74,11 @@ class PlaybackService : MediaLibraryService() {
    * player button, and 17.9 draws no row actions). Cleared by a pick, an un-star or the next song.
    */
   @Volatile private var pickFor: String? = null
-  private fun setPickFor(id: String?) {
-    if (pickFor == id) return
+  private fun setPickFor(id: String?, asList: Boolean = false) {
+    val list = id != null && asList
+    if (pickFor == id && listPick == list) return
     pickFor = id
+    showList(list)
     // CAR-PICK-ON-PLAYER-001: the player's own buttons come back after a while, picked or not.
     mainHandler.removeCallbacks(dropPicker)
     if (id != null) mainHandler.postDelayed(dropPicker, PICK_WINDOW_MS)
@@ -92,16 +94,12 @@ class PlaybackService : MediaLibraryService() {
   private fun pickerButtons(): List<CommandButton>? {
     val id = pickFor ?: return null
     if (id != currentSongId()) return null
-    val choices = CarPickList.choices(
-      MediaHub.playlists.filter { !it.album }.map { it.id to it.title },
-      MediaHub.playlists.filter { f -> f.songs.any { it.id == id } }.map { it.id }.toSet(),
-    )
-    if (choices.isEmpty()) return null
+    val choices = pickChoices(id)
     return choices.map { c ->
       val extras = Bundle().apply { putString(PICK_LIST_EXTRA, c.listId); putString(PICK_SONG_EXTRA, id) }
       CommandButton.Builder(CommandButton.ICON_UNDEFINED)
-        .setCustomIconResId(if (c.listId.isEmpty()) R.drawable.car_dislike else R.drawable.car_star_add)
-        .setDisplayName(if (c.listId.isEmpty()) "Cancel" else if (c.holds) "Already in ${c.label}" else "Add to ${c.label}")
+        .setCustomIconResId(if (c.listId.isEmpty() || c.listId == CarPickList.UNSTAR) R.drawable.car_dislike else R.drawable.car_star_add)
+        .setDisplayName(CarPickList.buttonLabel(c))
         .setSessionCommand(SessionCommand(ACTION_PICK_LIST, extras))
         .setSlots(CommandButton.SLOT_OVERFLOW)
         .build()
@@ -112,7 +110,10 @@ class PlaybackService : MediaLibraryService() {
   private fun pickChoices(songId: String): List<CarPickList.Choice> = CarPickList.choices(
     MediaHub.playlists.filter { !it.album }.map { it.id to it.title },
     MediaHub.playlists.filter { f -> f.songs.any { it.id == songId } }.map { it.id }.toSet(),
+    starredBefore = pickUnstar,
   )
+  /** CAR-HEART-ALWAYS-001: the song was starred before the heart was pressed, so the picker offers "Remove star". */
+  @Volatile private var pickUnstar = false
 
   /** CAR-PICK-ON-PLAYER-001: the picker leaves the player on its own if the driver ignores it. */
   private val dropPicker = Runnable { setPickFor(null); refreshCarButtons() }
@@ -130,8 +131,72 @@ class PlaybackService : MediaLibraryService() {
       parentId == RadioCatalog.ROOT || parentId.startsWith("radio/")
   private fun withPicker(parentId: String, items: List<MediaItem>): List<MediaItem> {
     if (!takesPicker(parentId)) return items
-    val row = pickFor?.let { id -> MediaHub.findSong(id)?.let { pickerRow(it) } } ?: return items
+    val song = pickFor?.let { id -> MediaHub.findSong(id) } ?: return items
+    // CAR-PICK-LIST-001: while the driver chooses, the list the car shows IS the playlists, by name.
+    if (listPick) return pickRows(song)
+    val row = pickerRow(song)
     return listOf(row) + items.filter { it.mediaId != row.mediaId }
+  }
+
+  /**
+   * CAR-PICK-LIST-001 (owner, 2026-11-23): "on android auto the playlist menu should replace the current playing
+   * track player and quick controls, open up a list where the user can select playlist then get taken back to the
+   * song player once the track is added". While true the session shows the car [curtain] (nothing playing), which
+   * makes Android Auto leave its player for the lists; the lists hold the playlists ([pickRows]). [player] is never
+   * touched: the music plays on and everything here still reads the real player.
+   */
+  @Volatile private var listPick = false
+  private val curtain by lazy { CarCurtainPlayer(mainLooper, real = { player }, lift = { setPickFor(null) }) }
+  private fun showList(on: Boolean) {
+    if (listPick == on) return
+    listPick = on
+    val s = session ?: return
+    s.player = if (on) curtain else player
+    android.util.Log.i("AirwaveCar", "playlist list ${if (on) "shown in place of the player" else "closed; the player is back"}")
+  }
+
+  /** Whether the heart was pressed somewhere that shows lists in place of its player (Android Auto does). */
+  private fun picksFromList(s: MediaSession, controller: MediaSession.ControllerInfo): Boolean =
+    CarPickList.listForTests ?: s.isAutoCompanionController(controller)
+
+  /** The playlists as rows the driver taps: the way back first, then one per playlist, by name. */
+  private fun pickRows(song: MediaHub.Song): List<MediaItem> = CarPickList.rows(song.title, pickChoices(song.id)).map { row ->
+    val leaves = row.listId == CarPickList.CANCEL || row.listId == CarPickList.UNSTAR
+    val art = Uri.parse("android.resource://$packageName/drawable/${resources.getResourceEntryName(if (leaves) R.drawable.car_dislike else R.drawable.car_star_add)}")
+    MediaItem.Builder()
+      .setMediaId(CarPickList.rowId(row.listId, song.id))
+      .setMediaMetadata(
+        MediaMetadata.Builder().setTitle(row.title).setSubtitle(row.subtitle).setArtworkUri(art)
+          .setIsBrowsable(false).setIsPlayable(true).setMediaType(MediaMetadata.MEDIA_TYPE_PLAYLIST).build(),
+      ).build()
+  }
+
+  /** A row of that list was tapped: the (playlist or choice, song) it stands for. */
+  private fun rowPick(items: List<MediaItem>): Pair<String, String>? = items.singleOrNull()?.let { CarPickList.parseRow(it.mediaId) }
+
+  /** CAR-PICK-ON-PLAYER-001 / CAR-PICK-LIST-001: the driver chose [listId] (a playlist, or one of the other choices) for [songId]. */
+  private fun applyPick(listId: String, songId: String) {
+    setPickFor(null)
+    if (listId == CarPickList.UNSTAR && songId.isNotEmpty()) {
+      CarFeedback.submit(songId, "unlike")
+      tellDriver("Star removed")
+    } else if (listId == CarPickList.NEW_LIST && songId.isNotEmpty()) {
+      // CAR-HEART-ALWAYS-001: no playlist yet, so the car starts one (the page makes it, once, by name).
+      CarFeedback.addToPlaylist(songId, listId)
+      tellDriver(CarPickList.added(CarPickList.NEW_LIST_NAME, false))
+    } else if (listId.isNotEmpty() && listId != CarPickList.CANCEL && songId.isNotEmpty()) {
+      val list = MediaHub.playlist(listId)
+      val already = list?.songs?.any { it.id == songId } == true
+      if (!already) CarFeedback.addToPlaylist(songId, listId)
+      tellDriver(CarPickList.added(list?.title ?: "the playlist", already))
+    }
+    refreshCarButtons()
+  }
+
+  /** CAR-PICK-LIST-001: the notification and the foreground service stay as they are while the car is shown the list. */
+  override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
+    if (listPick) return
+    super.onUpdateNotification(session, startInForegroundRequired)
   }
   private var radioSearchUntil = 0L
   private val radioListener: () -> Unit = { mainHandler.post {
@@ -348,7 +413,9 @@ class PlaybackService : MediaLibraryService() {
   private fun starButton(starred: Boolean): CommandButton =
     // HEART-ICON-001 (owner, 2026-11-22): "change the star icon to a heart icon everywhere in the app and in android auto".
     CommandButton.Builder(if (starred) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED)
-      .setDisplayName(if (starred) "Remove star" else "Star")
+      // CAR-HEART-ALWAYS-001: a starred song's heart opens the playlist choices (with "Remove star" among them),
+      // so it is named for what it does.
+      .setDisplayName(if (starred) CarPickList.STARRED_LABEL else "Star")
       .setSessionCommand(STAR)
       .setSlots(CommandButton.SLOT_OVERFLOW)
       .build()
@@ -890,6 +957,9 @@ class PlaybackService : MediaLibraryService() {
 
     /** CAR-SCRUB-001: the car's and the steering wheel's Next/Previous keys; a hold scrubs at twice real time. */
     override fun onMediaButtonEvent(session: MediaSession, controllerInfo: MediaSession.ControllerInfo, intent: Intent): Boolean {
+      // CAR-PICK-LIST-001: a key on the wheel ends the playlist choice first, so it acts on the real player (with
+      // the empty one in place a Play key would be taken as "resume what was playing" and reload the queue).
+      if (listPick) setPickFor(null)
       // The radio's Next/Previous change station; only songs scrub.
       if (RadioNative.session?.station != null) return false
       @Suppress("DEPRECATION")
@@ -934,10 +1004,14 @@ class PlaybackService : MediaLibraryService() {
             val song = MediaHub.radioSong
             if (song == null) tellDriver("No song has been identified on this station yet.")
             else {
-              val starring = !CarFeedback.state(song.id).first
-              CarFeedback.submit(song.id, if (starring) "like" else "unlike")
-              setPickFor(if (starring) song.id else null)
-              if (starring) tellDriver(CarPickList.hint(song.title, pickChoices(song.id)))
+              // CAR-HEART-ALWAYS-001: the heart always brings the picker; it no longer takes a star off by itself.
+              val starredBefore = CarFeedback.state(song.id).first
+              if (!starredBefore) CarFeedback.submit(song.id, "like")
+              pickUnstar = starredBefore
+              // CAR-PICK-LIST-001: in the car the playlists come as a list in place of the player, radio included.
+              val asList = picksFromList(session, controller)
+              setPickFor(song.id, asList)
+              if (!asList) tellDriver(CarPickList.hint(song.title, pickChoices(song.id), starredBefore))
             }
           }
           ACTION_STAR_ARTISTS -> {
@@ -959,25 +1033,25 @@ class PlaybackService : MediaLibraryService() {
         ACTION_SIMILAR -> findSimilar(currentSongId() ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE)))
         ACTION_STAR -> {
           val id = currentSongId() ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE))
-          val starring = !CarFeedback.state(id).first
-          CarFeedback.submit(id, if (starring) "like" else "unlike")
-          val picking = starring && MediaHub.findSong(id) != null
-          setPickFor(if (picking) id else null)
-          // CAR-PICK-ON-PLAYER-001: the lists become the player's buttons, so say what to do, not where to go.
-          if (picking) tellDriver(CarPickList.hint(MediaHub.findSong(id)?.title, pickChoices(id)))
-          if (starring) moodNudge(id, "like")
+          // CAR-HEART-ALWAYS-001 (owner, 2026-11-23): "hearting a song doesnt bring up the playlist sub menu like
+          // desired". The heart always brings the picker: a song already starred keeps its star and gets the same
+          // choices plus "Remove star". Only a song the car cannot name (nothing to add) still toggles.
+          val starredBefore = CarFeedback.state(id).first
+          val picking = MediaHub.findSong(id) != null
+          if (!starredBefore) CarFeedback.submit(id, "like") else if (!picking) CarFeedback.submit(id, "unlike")
+          pickUnstar = starredBefore
+          // CAR-PICK-LIST-001: in the car the playlists come as a list in place of the player. Anywhere else
+          // (CAR-PICK-ON-PLAYER-001) they become the player's buttons, so say what to do, not where to go.
+          val asList = picking && picksFromList(session, controller)
+          setPickFor(if (picking) id else null, asList)
+          if (picking && !asList) tellDriver(CarPickList.hint(MediaHub.findSong(id)?.title, pickChoices(id), starredBefore))
+          if (!starredBefore) moodNudge(id, "like")
         }
         // CAR-PICK-ON-PLAYER-001: one of those list buttons (or Cancel) was pressed.
         ACTION_PICK_LIST -> {
           val listId = customCommand.customExtras.getString(PICK_LIST_EXTRA).orEmpty()
           val songId = customCommand.customExtras.getString(PICK_SONG_EXTRA).orEmpty().ifEmpty { currentSongId().orEmpty() }
-          setPickFor(null)
-          if (listId.isNotEmpty() && songId.isNotEmpty()) {
-            val list = MediaHub.playlist(listId)
-            val already = list?.songs?.any { it.id == songId } == true
-            if (!already) CarFeedback.addToPlaylist(songId, listId)
-            tellDriver(CarPickList.added(list?.title ?: "the playlist", already))
-          }
+          applyPick(listId, songId)
         }
         ACTION_DISLIKE -> {
           val id = currentSongId() ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE))
@@ -1144,6 +1218,9 @@ class PlaybackService : MediaLibraryService() {
         }
         mediaId.startsWith(FILTER_PREFIX) -> CarSearchType.of(mediaId.removePrefix(FILTER_PREFIX).substringBefore('/'))?.let { typeTile(mediaId, it, null, SHOW_ONLY) }
         mediaId.startsWith(HINT_PREFIX) -> note(Uri.decode(mediaId.removePrefix(HINT_PREFIX)), null)
+        mediaId.startsWith(CarPickList.ROW_PREFIX) -> CarPickList.parseRow(mediaId)?.let { (_, songId) ->
+          MediaHub.findSong(songId)?.let { song -> pickRows(song).firstOrNull { it.mediaId == mediaId } }
+        }
         mediaId.startsWith(ADD_TO_PREFIX) -> pickTarget(mediaId)?.let { (list, songId) -> pickItem(list, songId) }
           ?: MediaHub.findSong(Uri.decode(mediaId.removePrefix(ADD_TO_PREFIX)))?.let(::pickerRow)
         mediaId.startsWith(PLAYLIST_PREFIX) && mediaId.contains("/track/") ->
@@ -1218,6 +1295,9 @@ class PlaybackService : MediaLibraryService() {
       controller: MediaSession.ControllerInfo,
       isForPlayback: Boolean,
     ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+      // CAR-PICK-LIST-001: asked to resume while the car was shown the playlist list: nothing stopped, so the answer
+      // is the queue as it is, the song where it is.
+      if (listPick) { setPickFor(null); currentSongId()?.let { return Futures.immediateFuture(stayOnCurrent(it)) } }
       NativeLibraryState.init(this@PlaybackService)
       val plan = CarResume.plan(NativeLibraryState.nativeState(), MediaHub.state.queue, Downloads::urlAllowed)
         ?: return Futures.immediateFailedFuture(UnsupportedOperationException("Nothing has been played yet."))
@@ -1233,7 +1313,8 @@ class PlaybackService : MediaLibraryService() {
       controller: MediaSession.ControllerInfo,
       mediaItems: MutableList<MediaItem>,
     ): ListenableFuture<MutableList<MediaItem>> =
-      if (pickTarget(mediaItems)?.let { (list, songId) -> addPicked(list, songId) } != null) Futures.immediateFuture(mutableListOf())
+      if (rowPick(mediaItems)?.let { (choice, songId) -> applyPick(choice, songId) } != null) Futures.immediateFuture(mutableListOf())
+      else if (pickTarget(mediaItems)?.let { (list, songId) -> addPicked(list, songId) } != null) Futures.immediateFuture(mutableListOf())
       else Futures.transform(Futures.allAsList(mediaItems.map(::resolveAsync)), { it!!.toMutableList() }, MoreExecutors.directExecutor())
 
     override fun onSetMediaItems(
@@ -1246,6 +1327,9 @@ class PlaybackService : MediaLibraryService() {
       // CAR-CONTROLS-001: a tap in the playlist picker adds the song and changes nothing that plays.
       // Android Auto opens its player on the tap and shows "Could not load your selection" when the
       // request fails, so the answer is the queue as it is, the current song at its current place.
+      // CAR-PICK-LIST-001: a row of the playlist list. The real player is back before the answer is read, so the
+      // answer is the real queue; Android Auto opens its player on the tap, on the song that never stopped.
+      rowPick(mediaItems)?.let { (choice, songId) -> applyPick(choice, songId); return Futures.immediateFuture(stayOnCurrent(songId)) }
       pickTarget(mediaItems)?.let { (list, songId) -> addPicked(list, songId); return Futures.immediateFuture(stayOnCurrent(songId)) }
       // AUTO-QUEUE-001: the queue as it stands when the driver taps, read on the session thread.
       val queueNow = (0 until player.mediaItemCount).map { player.getMediaItemAt(it) }

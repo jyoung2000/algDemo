@@ -108,15 +108,38 @@ object MediaHub {
    *  be relied on to answer, so then the service's own catalogue engine answers car searches. */
   @Volatile private var pageVisible: Boolean = true
 
-  fun setCommandSink(s: (JSONObject) -> Unit) { sink = s; pageAnswering = false; pageVisible = true }
+  fun setCommandSink(s: (JSONObject) -> Unit) { sink = s; pageAnswering = false; pageVisible = true; pageRunning = { true } }
   fun setPageVisible(s: (JSONObject) -> Unit, visible: Boolean) {
     if (sink !== s) return
     pageVisible = visible
     if (visible) main.post { synchronized(catalogLock) { pendingSearches.keys.toList() }.forEach(::dispatchCatalogSearch) }
+    // CAR-SAVE-HIDDEN-001: back in front, the page takes what the car pressed while nothing could save it.
+    if (visible && pageAnswering) CarFeedback.flush()
+  }
+
+  /** CAR-SAVE-HIDDEN-001: whether the page behind [sink] runs its JavaScript now (a paused WebView runs none). */
+  @Volatile private var pageRunning: () -> Boolean = { true }
+  fun setPageRunning(s: (JSONObject) -> Unit, running: () -> Boolean) { if (sink === s) pageRunning = running }
+
+  /** CAR-SAVE-HIDDEN-001: whether the service's own page is the engine and has said it is ready. */
+  @Volatile var serviceSaves: () -> Boolean = { ServiceApi.core.ready }
+
+  /** CAR-SAVE-HIDDEN-001: where a star or a playlist choice made in the car is saved now; null: keep it. */
+  fun saveSink(): ((JSONObject) -> Unit)? = when (saveRoute()) {
+    CarRoute.To.PAGE -> sink
+    CarRoute.To.SERVICE -> catalogSink
+    CarRoute.To.KEEP -> null
+  }
+  /** Whether a car save made now goes to the phone page (rather than the service's engine, or nowhere). */
+  fun savesGoToPage(): Boolean = saveRoute() == CarRoute.To.PAGE
+  private fun saveRoute(): CarRoute.To {
+    val service = catalogSink != null && catalogReady && runCatching { serviceSaves() }.getOrDefault(false)
+    return CarRoute.saveTarget(sink != null, pageAnswering, pageVisible, runCatching { pageRunning() }.getOrDefault(false), service)
   }
   fun clearCommandSink(s: (JSONObject) -> Unit) {
     if (sink !== s) return
     sink = null
+    pageRunning = { true }
     // CAR-CATALOG-SERVICE-001: only what the page held is lost with it; the service engine's searches carry on.
     failPending("page", "Open jPlay on your phone to search the catalogue")
   }
@@ -134,12 +157,20 @@ object MediaHub {
     if (catalogSink !== s) return
     catalogReady = true
     main.post { synchronized(catalogLock) { pendingSearches.keys.toList() }.forEach(::dispatchCatalogSearch) }
+    // CAR-SAVE-HIDDEN-001: the service engine takes what the car pressed while nothing could save it.
+    main.post { CarFeedback.flush() }
   }
   fun clearCatalogSink(s: (JSONObject) -> Unit) {
     if (catalogSink !== s) return
     catalogSink = null
     catalogReady = false
     failPending("catalog", "The music catalogue stopped")
+  }
+  /** For tests: stand in for the service engine's page, and put the real one back with what this returns. */
+  internal fun swapCatalogSinkForTests(s: ((JSONObject) -> Unit)?, ready: Boolean): Pair<((JSONObject) -> Unit)?, Boolean> {
+    val old = catalogSink to catalogReady
+    catalogSink = s; catalogReady = ready
+    return old
   }
 
   /** Car Identify can be answered now: by the service engine, or by a page that is answering. */
@@ -348,11 +379,21 @@ object MediaHub {
   fun addToPlaylistNow(listId: String, songId: String) {
     val song = findSong(songId) ?: return
     var changed = false
-    playlists = playlists.map { f ->
-      if (f.id != listId || f.album || f.songs.any { it.id == songId }) f
+    // CAR-HEART-ALWAYS-001: the car's own first playlist shows in the car at once, under the name it will have.
+    val starting = listId == CarPickList.NEW_LIST && playlists.none { it.id == listId || (!it.album && it.title == CarPickList.NEW_LIST_NAME) }
+    if (starting) { playlists = playlists + Folder(listId, CarPickList.NEW_LIST_NAME, listOf(song)); changed = true }
+    else playlists = playlists.map { f ->
+      val target = f.id == listId || (listId == CarPickList.NEW_LIST && !f.album && f.title == CarPickList.NEW_LIST_NAME)
+      if (!target || f.album || f.songs.any { it.id == songId }) f
       else { changed = true; f.copy(songs = f.songs + song) }
     }
-    if (changed) notifyListeners()
+    if (!changed) return
+    // CAR-SAVE-HIDDEN-001: and in the saved library the car reads on a cold start, without waiting for the phone app.
+    runCatching {
+      val saved = playlists.firstOrNull { it.songs.any { s -> s.id == songId } && (it.id == listId || (listId == CarPickList.NEW_LIST && it.title == CarPickList.NEW_LIST_NAME)) }
+      if (saved != null) NativeLibraryState.addToPlaylist(saved.id, NativeStateCodec.songJson(song), if (starting) CarPickList.NEW_LIST_NAME else null)
+    }
+    notifyListeners()
   }
 
   /** ALBUM-SAVE-001: saved albums, listed under Albums in the car; the rest are playlists. */

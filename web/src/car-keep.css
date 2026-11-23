@@ -1,0 +1,46 @@
+/* CAR-KEEP-001: the Settings "Android Auto" card. The surface is .card and the button is the app's
+   .push pill; the text colours are the shared --ink, --ink-2 and --danger variables. */
+.carkeep__line,
+.carkeep__lead {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: break-word;
+}
+.carkeep__lead {
+  color: var(--ink-2);
+}
+.carkeep__steps {
+  margin: 0;
+  padding: 0 0 0 22px;
+  display: grid;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: break-word;
+}
+/* .note has no shared rule; Settings sections size their own (see audio-settings.css). */
+.carkeep .note {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: break-word;
+}
+.carkeep .note--bad {
+  color: var(--danger);
+}
+.carkeep__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* A full 44px on every pointer (Settings pills are 36px on a mouse), and it may wrap, never overflow. */
+.settings .carkeep .carkeep__open,
+.carkeep .carkeep__open {
+  min-height: 44px;
+  max-width: 100%;
+  white-space: normal;
+}

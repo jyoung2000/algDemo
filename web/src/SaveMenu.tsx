@@ -36,9 +36,15 @@ export function SaveMenu({
   const headingId = useId();
   const nameId = useId();
 
+  // SAVE-MENU-STAY-001 (owner, 2026-11-23: "adding songs to playlist doesnt work"): the rows pass a new onClose
+  // function on every draw, and this effect used to depend on it — so the menu took focus and scrolled itself back
+  // into view on every redraw of a page that redraws several times a second. It now does both once, when it opens.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   // Opening a menu that lands under the thumb is no use if it cannot be dismissed, so Escape,
   // a tap outside and moving focus away all close it.
   useEffect(() => {
+    const onClose = () => closeRef.current();
     first.current?.focus();
     // SAVE-MENU-REACH-001 (owner, 2026-11-23): "the playlist pop up and create menu doesn't work on
     // android". On a phone the menu opens inside the scrolling list, and a row near an edge put it off
@@ -60,9 +66,14 @@ export function SaveMenu({
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('pointerdown', onDown, true);
     };
-  }, [onClose]);
+  }, []);
 
-  const holding = new Set(lists.filter((l) => l.items.some((i) => i.key === songKey)).map((l) => l.id));
+  const saved = new Set(lists.filter((l) => l.items.some((i) => i.key === songKey)).map((l) => l.id));
+  // SAVE-MENU-STAY-001: a tick shows at once. On a large library the engine takes seconds to answer (measured:
+  // 6.7 s on the emulator with 9,400 list songs), and a box that did not move looked like a press that did nothing.
+  const [ticked, setTicked] = useState<{ id: string; on: boolean } | null>(null);
+  const holding = new Set(saved);
+  if (ticked) { if (ticked.on) holding.add(ticked.id); else holding.delete(ticked.id); }
 
   const run = async (fn: () => Promise<{ lists: PlaylistSummary[] }>) => {
     setBusy(true);
@@ -79,10 +90,12 @@ export function SaveMenu({
   };
 
   const toggle = (id: string) => {
-    const next = new Set(holding);
+    const next = new Set(saved);
     if (next.has(id)) next.delete(id);
     else next.add(id);
-    void run(() => api.playlistEdit('set', { ids: [...next], key: songKey }));
+    setTicked({ id, on: next.has(id) });
+    // Whatever the answer, the boxes then show what is really saved: a failed tick goes back.
+    void run(() => api.playlistEdit('set', { ids: [...next], key: songKey })).finally(() => setTicked(null));
   };
 
   const create = async () => {
@@ -179,9 +192,11 @@ export function SaveMenu({
         </p>
       )}
       <p className="savemenu__note">
-        {holding.size === 0
-          ? 'Liked songs stay in Saved whether or not you pick a list.'
-          : `In ${holding.size} ${holding.size === 1 ? 'list' : 'lists'}. Changes save as you tick.`}
+        {busy
+          ? 'Saving\u2026'
+          : holding.size === 0
+            ? 'Liked songs stay in Saved whether or not you pick a list.'
+            : `In ${holding.size} ${holding.size === 1 ? 'list' : 'lists'}. Changes save as you tick.`}
       </p>
       <div className="savemenu__foot">
         {onUnstar && (

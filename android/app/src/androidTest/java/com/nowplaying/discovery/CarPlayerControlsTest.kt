@@ -79,8 +79,11 @@ class CarPlayerControlsTest {
   }
 
   @After fun tearDown() {
+    MediaHub.serviceSaves = { ServiceApi.core.ready }
     runCatching { RadioNative.handle(ctx, JSONObject().put("op", "stop")) }
     main {
+      // CAR-HEART-ALWAYS-001: the service outlives a test; a picker left open would be the next test's buttons.
+      controller?.transportControls?.sendCustomAction("com.nowplaying.discovery.PICK_LIST", null)
       controller?.let { c -> c.playbackState?.customActions?.firstOrNull { it.name.toString() == "Shuffle on" }?.let { c.transportControls.sendCustomAction(it.action, null) } }
       controller?.transportControls?.stop()
       browser?.disconnect()
@@ -359,7 +362,7 @@ class CarPlayerControlsTest {
     assertFalse("no picker row before a star", children(car, "songs").any { it.mediaId!!.startsWith("addto/") })
     until("star button") { "Star" in names(c) }
     press(c, ".STAR")
-    until("starred") { "Remove star" in names(c) }
+    until("starred") { "Cancel" in names(c) }
     until("picker row first in Now playing") { children(car, "songs").firstOrNull()?.mediaId == "addto/ctl-tone-1" }
     val row = children(car, "songs").first()
     assertEquals("Add \u201cControl test tone 1\u201d to a playlist", row.description.title.toString())
@@ -563,6 +566,9 @@ class CarPlayerControlsTest {
   }
 
   @Test fun aPlaylistPickWhileTheAppIsClosedReachesTheAppWhenItOpens() {
+    // CAR-SAVE-HIDDEN-001: where the service has its own engine that engine saves the pick at once
+    // (CarPickOnPlayerTest); this is the other case, with no engine able to save.
+    MediaHub.serviceSaves = { false }
     main { seed() } // the service plays alone: no page sink
     val c = connect()
     playTone(c, 1)
