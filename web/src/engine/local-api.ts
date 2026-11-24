@@ -16,6 +16,7 @@ import { DEFAULT_ENGINE, TRANSFER, engineWithWeights } from './config';
 import { EQ_DEFAULTS, parseEq } from './eq';
 import { PLAY_THROUGH_DEFAULT, clampPlayThrough, clampSlider } from './crossfade';
 import { appendDiscovery, needsListeningDiscovery, newDiscoveryTracks } from './discovery';
+import { carryPool, unionRelated, unionSeeds } from './pool-carry';
 import {
   PLAYLIST_TRACKS_MAX,
   PlaylistError,
@@ -2367,10 +2368,19 @@ export class LocalApi {
       job.timings['total_ms'] = since();
       job.result = merge(this.serialise(chosen, ctx, 'final', job));
       // The pool keeps every song the list holds, so a later re-rank can reorder all of them.
-      const poolCands = [...previous.map((x) => x.track), ...cands];
-      this.pool = { cands: poolCands, ctx, job };
+      // WP2 (plan 2026-11-24, A2): a carried row keeps its raw candidate (provenance, dz_id, links) from the old pool,
+      // related artists and seeds are unioned across runs, and the best non-chosen rows wait on a separate bench.
+      const oldPool = this.pool ?? this.restorePool();
+      const oldSaved = this.store.get<Dict>('last_pool');
+      const oldRows = [...(oldPool?.cands ?? []), ...(((oldSaved?.['bench'] as Dict[] | undefined) ?? []))];
+      const rankedKeys = [...scored].sort((a, b) => b.final - a.final).map((x) => x.track.key);
+      const carried = carryPool(previous as never, oldRows, chosen.map((x) => x.track.key), cands, rankedKeys, 100);
+      const poolRelated = unionRelated(relMap, oldPool?.ctx.relatedArtists ?? null);
+      const poolSeeds = unionSeeds(seedViews as Dict[], (oldPool?.ctx.seeds as unknown as Dict[] | undefined) ?? null, 40);
+      const poolCands = carried.cands;
+      this.pool = { cands: poolCands, ctx: { ...ctx, seeds: poolSeeds as never, relatedArtists: poolRelated }, job };
       await this.store.put('last_pool', {
-        cands: poolCands, seeds: seedViews, related: [...relMap].map(([k, v]) => [k, [...v]]), settings: es, weights: settings['weights'] ?? null,
+        cands: poolCands, bench: carried.bench, seeds: poolSeeds, related: [...poolRelated].map(([k, v]) => [k, [...v]]), settings: es, weights: settings['weights'] ?? null,
       });
       await this.store.put('last_result', { ...job.result, saved_at: unixNow() });
       await settleFlow(Number(((job.result as Dict | null)?.['discovery'] as Dict | undefined)?.['added'] ?? 0));
@@ -2398,8 +2408,18 @@ export class LocalApi {
     const v2 = settings['rank_v2'] !== false;
     // Re-ranking reorders the songs the list already holds and adds nothing, so the discovery limit
     // must not trim it here: a smaller limit would otherwise drop songs the listener still has.
+    // WP2 step 3: a vector made since the run (a song played to the end, a preview compared) counts in this re-rank.
+    const vectors = new Map(pool.ctx.vectors);
+    for (const sv of [...(pool.ctx.seeds as unknown as Dict[]), ...pool.cands]) {
+      const k = String(sv['key'] ?? '');
+      if (!k || vectors.has(k)) continue;
+      const did = sv['dz_preview_id'] || sv['dz_id'] || (sv['provider'] === 'deezer' ? sv['platform_id'] : null);
+      const v = this.store.vectorGet(songVectorKey(k), A.MODEL_ID, A.PREPROCESS_ID) ?? (did ? this.store.vectorGet(`deezer:${did}`, A.MODEL_ID, A.PREPROCESS_ID) : null);
+      if (v) vectors.set(k, Float64Array.from(v));
+    }
     const ctx: E.Context = {
       ...pool.ctx,
+      vectors,
       // ARTIST-VARIETY-001: the pool's own songs are the queue; counting them as already waiting would cap them out.
       artistLoad: undefined,
       // ALGO-MANAGER-001: the algorithm active NOW ranks the pool, over the run's own engine base.
