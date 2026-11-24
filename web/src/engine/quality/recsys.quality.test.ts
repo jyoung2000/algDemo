@@ -44,10 +44,13 @@ describe('A1/A4 (WP1): a re-rank only reorders', () => {
     const { api, store } = await open();
     await run(api);
     const queue = queueOf(store);
-    const pool = (store.get<{ cands: Dict[] }>('last_pool')?.cands ?? []).length;
     expect(queue.length).toBe(10);
-    // The pool holds more than the queue, so a re-rank that ranked the whole pool would add rows (plan: 43 vs 10).
-    expect(pool).toBeGreaterThan(queue.length);
+    // The plan's "pool 43 vs queue 10" precondition (A1) no longer describes the code: WP2 stores the pool as the queue
+    // rows plus this run's chosen rows, and keeps the non-chosen candidates on a separate `bench` (pool-carry.ts).
+    // The guard that matters now is that a re-rank cannot pull a bench row into the queue, so the bench must exist.
+    const bench = store.get<{ bench?: Dict[] }>('last_pool')?.bench ?? [];
+    expect(bench.length).toBeGreaterThan(0);
+    const benchKeys = new Set(bench.map((c) => c['key']));
     // A4: two rows heard in an earlier session (not in the page's `exclude`) score higher; they must not push unheard
     // rows of the same artist out.
     for (const [i, x] of queue.slice(0, 2).entries()) {
@@ -60,6 +63,8 @@ describe('A1/A4 (WP1): a re-rank only reorders', () => {
     const droppedUnheard = queue.slice(2).filter((x) => !returned.has(x.track.key));
     expect(added.length).toBe(0);
     expect(droppedUnheard.length).toBe(0);
+    expect(out.length).toBe(queue.length);
+    expect(out.filter((x) => benchKeys.has(x.track.key)).length).toBe(0);
   });
 
   it('mergeRerank keeps exact membership of the queue', async () => {
@@ -75,7 +80,7 @@ describe('A1/A4 (WP1): a re-rank only reorders', () => {
 
 describe('A2 (WP2): evidence survives a top-up', () => {
   // NOT LANDED (WP2): the carried row is the cleaned UI track, which has no provenance, so its provider factor is gone.
-  it.fails('a row carried over by a top-up keeps its provenance and its provider factor', async () => {
+  it('a row carried over by a top-up keeps its provenance and its provider factor', async () => {
     const { api, store } = await open();
     await run(api);
     const carried = queueOf(store).find((x) => typeof x.factors['provider'] === 'number')!;
