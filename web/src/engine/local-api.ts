@@ -2411,8 +2411,14 @@ export class LocalApi {
       taste2: v2 ? this.taste2() : null,
       now: new Date(),
     };
-    const cands = pool.cands.filter((c) => !exclude.has(String(c['key'])));
-    const chosen = E.select(E.scoreAll(cands as never, ctx), ctx);
+    // WP1 (plan 2026-11-24, A1/A4): a re-rank orders only the songs the queue holds now. Pool rows that were never
+    // chosen stay out, and every queued row comes back (orderAll has no artist cap or tier quota). Queue rows with no
+    // pool row are not returned; the page's mergeRerank keeps them where they are (SHUFFLE-STAY-001).
+    const queued = new Set(((this.store.get<Dict>('last_result')?.['items'] ?? []) as { track?: Dict }[]).map((it) => String(it.track?.['key'] ?? '')));
+    queued.delete('');
+    // No stored queue (an old install, or a pool restored on its own): rank the pool; the page still ignores rows it never queued.
+    const cands = pool.cands.filter((c) => (queued.size === 0 || queued.has(String(c['key']))) && !exclude.has(String(c['key'])));
+    const chosen = E.orderAll(E.scoreAll(cands as never, ctx), ctx);
     const out = this.serialise(chosen, ctx, 'live', pool.job) as Dict;
     out['taste'] = tasteSummary(ctx.taste);
     out['pool'] = pool.cands.length;
@@ -2582,8 +2588,10 @@ export class LocalApi {
     // stored, a late thirty-second note for the same listen is the same listen, not a second one.
     if (onRadio && kind === 'qualified' && this.store.hasFeedback(`${eventId}:full`.slice(0, 80))) return ok({ recorded: false, duplicate: true });
     // REMOVE-FOREVER-001: a like or a star (save) takes back an earlier removal, so the song may come back.
-    if (kind === 'like') this.store.removeFeedback(key, ['dislike', 'hide']);
-    if (kind === 'save') this.store.removeFeedback(key, ['hide']);
+    const takenBack = kind === 'like' ? this.store.removeFeedback(key, ['dislike', 'hide']) : kind === 'save' ? this.store.removeFeedback(key, ['hide']) : 0;
+    // REMOVE-FOREVER-001 + WP1: taking a removal back is an explicit membership change, so the song returns to the
+    // saved queue here (a re-rank itself only reorders the queue and never adds a song).
+    if (takenBack > 0) await this.restoreRemoved(String(key));
     if (kind === 'dislike') this.store.removeFeedback(key, ['like']);
     const artist = (t['artists'] as string[] | undefined)?.[0]?.toLowerCase() ?? '';
     // v2 telemetry: optional, validated, stored alongside the event (old callers simply omit it).
@@ -2620,6 +2628,18 @@ export class LocalApi {
       if (last && rest.length !== items.length) await this.store.put('last_result', { ...last, items: rest.map((x, i) => ({ ...x, rank: i + 1 })), count: rest.length });
     }
     return ok({ recorded: added, duplicate: !added });
+  }
+
+  /** Put a song whose removal was taken back into the saved queue again, from the pool, at the end. */
+  private async restoreRemoved(key: string): Promise<void> {
+    const last = this.store.get<Dict>('last_result');
+    if (!last) return;
+    const items = (last['items'] ?? []) as Dict[];
+    if (items.some((x) => String((x['track'] as Dict | undefined)?.['key']) === key)) return;
+    const cand = (this.pool ?? this.restorePool())?.cands.find((c) => String(c['key']) === key);
+    if (!cand) return;
+    const rest = [...items, { track: cleanTrack(cand as never), rank: items.length + 1, reasons: [], playback: {} }];
+    await this.store.put('last_result', { ...last, items: rest, count: rest.length });
   }
 
   /** Import a parsed history file: pre-validated events from engine/import.ts, original timestamps kept. */
