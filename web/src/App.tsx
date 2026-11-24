@@ -1155,10 +1155,10 @@ export function App() {
   // retry re-sends the SAME id and the store's dedupe actually catches it.
   const refreshTaste = () => api.feedbackState().then((r) => setTaste(r.taste ?? null), () => undefined);
 
-  const onListen = (kind: 'complete' | 'skip' | 'replay', t: Track, listened: number, meta: ListenTelemetry) => {
+  const onListen = (kind: 'complete' | 'skip' | 'partial' | 'replay', t: Track, listened: number, meta: ListenTelemetry) => {
     const sample = Boolean(result?.sample);
     // SHUFFLE-ONCE-001: heard now is heard for good, whichever list it was heard from.
-    if ((kind === 'complete' || kind === 'skip') && !heardOnRecord.has(t.key)) setHeardOnRecord((h) => new Set(h).add(t.key));
+    if ((kind === 'complete' || kind === 'skip' || kind === 'partial') && !heardOnRecord.has(t.key)) setHeardOnRecord((h) => new Set(h).add(t.key));
     const seq = ++rerankSeq.current;
     const eventId = `${kind}:${t.key.slice(0, 40)}:${meta.instance}`.slice(0, 80);
     void api
@@ -1192,7 +1192,7 @@ export function App() {
         // Listening is the other way to discover. The engine decides whether the list is actually
         // running low and answers job:null otherwise, so a finished song usually costs nothing.
         // QUEUE-KEEP-DISCOVER-001: a skipped song counts too, so skipping through the queue still keeps it growing.
-        if (sample || !result || (kind !== 'complete' && kind !== 'skip')) return;
+        if (sample || !result || (kind !== 'complete' && kind !== 'skip' && kind !== 'partial')) return;
         return api
           // When the song was started from a saved list, the engine applies that list's stricter
           // rule instead of the queue's: nothing new until everything in the list has been played.

@@ -156,7 +156,7 @@ const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb
 /** How many songs one discovery run adds to the list: the user's choice in Settings. */
 export const QUEUE_SIZE_MIN = 5;
 export const QUEUE_SIZE_MAX = 60;
-const FEEDBACK_KINDS = new Set(['qualified', 'like', 'dislike', 'hide', 'save', 'replay', 'complete', 'skip', 'unlike', 'unsave', 'undislike', 'unhide']);
+const FEEDBACK_KINDS = new Set(['qualified', 'like', 'dislike', 'hide', 'save', 'replay', 'complete', 'skip', 'partial', 'unlike', 'unsave', 'undislike', 'unhide']);
 /** PLAYLIST-QUEUE-001 store keys: the list now in the queue, the queue it replaced, the seed window. */
 const QUEUE_PLAYLIST_KEY = 'queue_playlist';
 /** Songs saved lists were made with (ALBUM-OPEN-001), by key, so a list made from an album shows every song. */
@@ -2582,7 +2582,7 @@ export class LocalApi {
     const eventId = String(body['event_id'] ?? '').slice(0, 80);
     if (!eventId) return fail(400, 'event_id required (used to deduplicate)');
     const listened = body['listened'] ?? null;
-    if (['complete', 'skip', 'replay'].includes(kind) && (listened === null || !(Number(listened) >= 0 && Number(listened) <= 3600))) return fail(400, 'playback events need the listened duration');
+    if (['complete', 'skip', 'partial', 'replay'].includes(kind) && (listened === null || !(Number(listened) >= 0 && Number(listened) <= 3600))) return fail(400, 'playback events need the listened duration');
     // RADIO-TASTE-001: a radio programme is not a song; whatever reports it, nothing is learned from it.
     if (t['kind'] === 'radio-programme' && FEEDBACK_KINDS.has(kind)) return ok({ recorded: false, duplicate: false });
     const onRadio = body['medium'] === 'radio';
@@ -2943,7 +2943,8 @@ export class LocalApi {
   /** Every song the listener has actually finished, which is what gates a list's own discovery. */
   /** QUEUE-HEARD-001: songs the listener has heard at least once: finished or skipped, in any session. */
   private heardKeys(): Set<string> {
-    return new Set(this.store.feedback().filter((r) => r.kind === 'complete' || r.kind === 'skip').map((r) => r.key));
+    // WP3: a partial listen (Next pressed mid-song) is heard too.
+    return new Set(this.store.feedback().filter((r) => r.kind === 'complete' || r.kind === 'skip' || r.kind === 'partial').map((r) => r.key));
   }
 
   private playedKeys(): Set<string> {

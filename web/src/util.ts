@@ -371,6 +371,23 @@ export function qualifiesCompletion(medium: 'full' | 'preview', coverage: number
   return coverage >= 20;
 }
 
+/**
+ * WP3 (plan 2026-11-24, A3/M6): what a Next press means, from how much of the song was really heard.
+ * - complete: at least COMPLETE_S heard and the completion share reached (a Next press near the end is a listen);
+ * - skip: from SKIP_MIN_S up to the early-skip limit: 12 s for a preview, else a quarter of the song clamped to
+ *   12..30 s, else 30 s when the length is unknown (the mood's own early-skip rule, never narrower than before);
+ * - partial: anything else from SKIP_MIN_S up (counts as heard, teaches no taste);
+ * - null: under SKIP_MIN_S.
+ * This classifies a listen only; it never moves playback on early (the next song still waits for the real end).
+ */
+export function classifyNext(listened: number, coverage: number, duration: number | null, medium: 'full' | 'preview'): 'complete' | 'skip' | 'partial' | null {
+  if (!(listened >= SKIP_MIN_S)) return null;
+  if (listened >= COMPLETE_S && qualifiesCompletion(medium, coverage, duration)) return 'complete';
+  const known = duration !== null && Number.isFinite(duration) && duration > 0;
+  const limit = medium === 'preview' ? SKIP_MAX_S : known ? Math.min(30, Math.max(SKIP_MAX_S, 0.25 * duration!)) : 30;
+  return listened < limit ? 'skip' : 'partial';
+}
+
 export function classNames(...xs: (string | false | null | undefined)[]): string {
   return xs.filter(Boolean).join(' ');
 }

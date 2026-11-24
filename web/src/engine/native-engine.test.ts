@@ -85,10 +85,10 @@ describe('what a song the engine played teaches', () => {
     expect(listenFromEvent(event('end', 19000, 25000))).toBeNull();
   });
 
-  it('a Next press after a few seconds is a skip; a very early or a late one is not', () => {
+  it('a Next press after a few seconds is a skip; a very early one is nothing; a later one is partial (WP3, A3)', () => {
     expect(listenFromEvent(event('next', 5000))).toMatchObject({ kind: 'skip', listened: 5 });
     expect(listenFromEvent(event('next', 1000))).toBeNull();
-    expect(listenFromEvent(event('next', 60000))).toBeNull();
+    expect(listenFromEvent(event('next', 60000))).toMatchObject({ kind: 'partial', listened: 60 });
     expect(listenFromEvent(event('prev', 5000))).toBeNull();
   });
 

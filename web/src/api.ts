@@ -619,7 +619,7 @@ export interface PlaylistSummary {
 
 export type PlaylistAction = 'create' | 'rename' | 'delete' | 'add' | 'remove' | 'set' | 'save_album';
 
-export type FeedbackKind = 'qualified' | 'like' | 'dislike' | 'hide' | 'save' | 'replay' | 'complete' | 'skip' | 'unlike' | 'unsave' | 'undislike' | 'unhide';
+export type FeedbackKind = 'qualified' | 'like' | 'dislike' | 'hide' | 'save' | 'replay' | 'complete' | 'skip' | 'partial' | 'unlike' | 'unsave' | 'undislike' | 'unhide';
 
 export class ApiError extends Error {
   constructor(

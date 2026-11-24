@@ -9,7 +9,7 @@
  *
  * Elsewhere (the Windows app, a browser) `engineAvailable()` is false and none of this runs.
  */
-import { COMPLETE_S, SKIP_MAX_S, SKIP_MIN_S, qualifiesCompletion } from '../util';
+import { COMPLETE_S, classifyNext, qualifiesCompletion } from '../util';
 import { songFromTrack, type NativeSong } from './media-native';
 import type { Track } from '../api';
 
@@ -151,13 +151,17 @@ export function markEngineEvent(seq: number): boolean {
  * every frame it rendered, so `heardMs` is time listened (a rewind is counted again); coverage is
  * capped at the song's length.
  */
-export function listenFromEvent(ev: EngineEvent): { kind: 'complete' | 'skip'; listened: number; coverage: number; duration: number | null } | null {
+export function listenFromEvent(ev: EngineEvent): { kind: 'complete' | 'skip' | 'partial'; listened: number; coverage: number; duration: number | null } | null {
   const listened = Math.max(0, ev.from.heardMs) / 1000;
   const duration = ev.from.durationMs > 0 ? Math.round(ev.from.durationMs / 1000) : null;
   const coverage = duration !== null ? Math.min(listened, ev.from.durationMs / 1000) : listened;
   if (ev.cause === 'end' || ev.cause === 'blend' || ev.cause === 'repeat') {
     return listened >= COMPLETE_S && qualifiesCompletion('full', coverage, duration) ? { kind: 'complete', listened, coverage, duration } : null;
   }
-  if (ev.cause === 'next' && listened >= SKIP_MIN_S && listened < SKIP_MAX_S) return { kind: 'skip', listened, coverage, duration };
+  // WP3 (A3): same classification as the page's Next button.
+  if (ev.cause === 'next') {
+    const kind = classifyNext(listened, coverage, duration, 'full');
+    return kind ? { kind, listened, coverage, duration } : null;
+  }
   return null;
 }

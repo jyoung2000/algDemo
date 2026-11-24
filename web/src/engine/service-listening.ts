@@ -14,7 +14,7 @@ import { listenFromEvent, type EngineEvent } from './native-engine';
 
 export interface ListeningDeps<S extends { id: string } = { id: string; [k: string]: unknown }> {
   findTrack(key: string): Promise<Track | null> | Track | null;
-  feedback(kind: 'complete' | 'skip', track: Track, extra: { event_id: string; listened: number; duration?: number; coverage: number; medium: string; origin: string }): Promise<unknown>;
+  feedback(kind: 'complete' | 'skip' | 'partial', track: Track, extra: { event_id: string; listened: number; duration?: number; coverage: number; medium: string; origin: string }): Promise<unknown>;
   recommend(o: { event_id: string; exclude: string[] }): Promise<{ job: string | null; reason?: string }>;
   job(id: string): Promise<{ done: boolean; error?: string | null }>;
   last(): Promise<{ items: { track: Track }[] } | null>;

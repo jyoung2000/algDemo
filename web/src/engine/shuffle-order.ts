@@ -94,7 +94,7 @@ export function restoreOrder(items: RecItem[], keys: readonly string[]): RecItem
  */
 export function heardIn(state: Record<string, Partial<Record<string, boolean>> | undefined>): Set<string> {
   const out = new Set<string>();
-  for (const [k, v] of Object.entries(state)) if (v?.['complete'] || v?.['skip']) out.add(k);
+  for (const [k, v] of Object.entries(state)) if (v?.['complete'] || v?.['skip'] || v?.['partial']) out.add(k);
   return out;
 }
 

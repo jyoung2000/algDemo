@@ -32,7 +32,7 @@ import { songSources } from './engine/song-sources';
 import { clearResume, writeResume } from './engine/resume';
 import { type DeckId } from './engine/audio-bus';
 import { PreviewMixer } from './engine/preview-mixer';
-import { COMPLETE_S, ListenMeter, PROVIDER_LABEL, SKIP_MAX_S, SKIP_MIN_S, artistOf, classNames, fmtDuration, isSilent, qualifiesCompletion, consumeRepeat, type RepeatMode } from './util';
+import { COMPLETE_S, ListenMeter, PROVIDER_LABEL, artistOf, classifyNext, classNames, fmtDuration, isSilent, qualifiesCompletion, consumeRepeat, type RepeatMode } from './util';
 
 export interface Playing {
   track: Track;
@@ -80,7 +80,7 @@ interface Props {
   /** Only real, observed listening: a preview played to its end, or skipped by the user after a short listen.
    *  `meta.instance` is one nonce per loaded playback, so a duplicated end-callback cannot double-record;
    *  a second end of the same instance (loop) arrives as 'replay', later loops are not events at all. */
-  onListen: (kind: 'complete' | 'skip' | 'replay', track: Track, listened: number, meta: ListenTelemetry) => void;
+  onListen: (kind: 'complete' | 'skip' | 'partial' | 'replay', track: Track, listened: number, meta: ListenTelemetry) => void;
   onWheel: (dir: 1 | -1) => void;
   onSelect: () => void;
   onMenu: () => void;
@@ -809,13 +809,13 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
     // The listener chose to move on: whatever was cued or blending is no longer what comes next.
     mixer.current?.cancel();
     const l = meter.current.listened;
-    if (playing && hasSound && !ended.current && l >= SKIP_MIN_S && l < SKIP_MAX_S)
-      onListen('skip', playing.track, l, {
-        instance: instance.current,
-        medium: mode === 'full' || mode === 'local' ? 'full' : 'preview',
-        duration: dur > 0 ? Math.round(dur) : playing.track.duration ?? null,
-        coverage: meter.current.coverage,
-      });
+    // WP3 (A3): every way a Next press ends a song is recorded (skip / partial / complete), not only 2..12 s.
+    if (playing && hasSound && !ended.current) {
+      const medium = mode === 'full' || mode === 'local' ? 'full' : 'preview';
+      const duration = dur > 0 ? Math.round(dur) : playing.track.duration ?? null;
+      const kind = classifyNext(l, meter.current.coverage, duration, medium);
+      if (kind) onListen(kind, playing.track, l, { instance: instance.current, medium, duration, coverage: meter.current.coverage });
+    }
     onNext();
   };
   // SHUFFLE-ONCE-001: a song found or made ready after the last one played out starts by itself, unless the listener has

@@ -69,7 +69,7 @@ export function heardTest(rows: readonly Row[]): (t: Song) => boolean {
   const keys = new Set<string>();
   const names = new Set<string>();
   for (const r of rows) {
-    if (r.kind !== 'complete' && r.kind !== 'skip') continue;
+    if (r.kind !== 'complete' && r.kind !== 'skip' && r.kind !== 'partial') continue;
     keys.add(r.key);
     const n = nameOf(r.track as Song | null);
     if (n) names.add(n);

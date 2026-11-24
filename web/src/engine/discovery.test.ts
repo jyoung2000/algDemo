@@ -50,6 +50,7 @@ describe('DISCOVERY-001: one maximum for each search or listening batch', () => 
   });
   it('the page asks after a skip as well as after a finished song', () => {
     const app = readFileSync(resolve(process.cwd(), 'src', 'App.tsx'), 'utf8');
-    expect(app).toMatch(/if \(sample \|\| !result \|\| \(kind !== 'complete' && kind !== 'skip'\)\) return;/);
+    // WP3 (A3): a Next press mid-song (partial) asks as well.
+    expect(app).toMatch(/if \(sample \|\| !result \|\| \(kind !== 'complete' && kind !== 'skip' && kind !== 'partial'\)\) return;/);
   });
 });

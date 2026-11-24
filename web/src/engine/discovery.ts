@@ -41,5 +41,6 @@ export function needsListeningDiscovery(
   remaining: number,
 ): boolean {
   // QUEUE-KEEP-DISCOVER-001: a skip is listening too; skipping through a queue must not leave it to run dry.
-  return enabled && (kind === 'complete' || kind === 'skip') && inList && remaining <= LISTENING_LOW_WATER;
+  // WP3 (A3): a Next press mid-song (partial) is listening as well.
+  return enabled && (kind === 'complete' || kind === 'skip' || kind === 'partial') && inList && remaining <= LISTENING_LOW_WATER;
 }
