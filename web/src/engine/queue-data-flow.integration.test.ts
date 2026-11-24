@@ -190,3 +190,27 @@ describe('a top-up on mobile data is small', () => {
     expect(total(out.result['transfer'])).toBeGreaterThan(7_500_000);
   });
 });
+
+// ARTIST-VARIETY-001 (owner, 2026-11-24): "only kept getting slayr music". Every top-up took up to two songs from the
+// artist just heard, on top of the ones already waiting, so one artist piled up in the queue.
+describe('top-ups do not pile one artist up in the queue', () => {
+  it('songs by one artist still waiting stay at two or fewer, top-up after top-up', { timeout: 240_000 }, async () => {
+    const { api, store } = await open({ metered: false });
+    await api.handle('PUT', '/api/settings', { queue_size: 6 });
+    for (const s of STARS) await api.handle('POST', '/api/fav-artists', { op: 'add', artist: { name: s.name } });
+    const heard = new Set<string>();
+    const waitingBy = (artist: string) => queue(store).filter((t) => !heard.has(t.key) && t.artists[0] === artist).length;
+    let topUps = 0;
+    for (let i = 0; i < 6; i++) {
+      // The listener hears one song by Seedy (or the starting song), the rest of the queue waits.
+      const next = queue(store).find((t) => !heard.has(t.key) && t.artists[0] === 'Seedy') ?? SEED;
+      const id = await hear(api, next);
+      heard.add(next.key);
+      const out = await topUp(api, id);
+      if (out.started) topUps++;
+      expect(out.error).toBeNull();
+      expect(waitingBy('Seedy'), `after listen ${i + 1}: ${queue(store).filter((t) => !heard.has(t.key)).map((t) => t.artists[0]).join(', ')}`).toBeLessThanOrEqual(2);
+    }
+    expect(topUps).toBeGreaterThan(1);
+  });
+});

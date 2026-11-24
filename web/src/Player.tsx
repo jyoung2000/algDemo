@@ -138,6 +138,9 @@ type Mode = 'full' | 'local' | 'preview' | 'embed' | 'none';
  * A song with no YouTube Music version falls back to its 30-second Deezer preview in an <audio>
  * element. SoundCloud songs play in SoundCloud's widget, whose progress and volume Airwave cannot reach.
  */
+/** SHUFFLE-ONCE-001: how long a played-out song waits for a next one to carry on by itself. */
+const WAIT_NEXT_MS = 30 * 60_000;
+
 export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, repeat, cacheGb = 1, actions, onShuffle, onRepeat, onRepeatConsumed, onPrev, onNext, onListen, onWheel, onSelect, onMenu, onPickUpNext, onOpenArtist, onPausedChange }: Props) {
   // Two decks, because a crossfade needs both songs audible at once: the outgoing song keeps
   // playing on its own element while the incoming one starts on the other. Both elements live for
@@ -176,6 +179,11 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
   const yt = useRef<YTPlayer | null>(null);
   const [ytReady, setYtReady] = useState(false);
   const ended = useRef(false);
+  /**
+   * SHUFFLE-ONCE-001 (owner, 2026-11-24): the song that played out with no next song to go to (every song in the queue
+   * heard, the next one still downloading or still being found). The player carries on by itself once there is one.
+   */
+  const waitingAfter = useRef<{ key: string; at: number } | null>(null);
   /** Playhead the resume point was last written at, so `timeupdate` does not write four times a second. */
   const savedAt = useRef(0);
   /**
@@ -791,7 +799,10 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       setDeck(blended.deck);
     }
     if (canNext) onNext();
-    else if (blended) mixer.current?.cancel();
+    else {
+      if (blended) mixer.current?.cancel();
+      else if (endedKey) waitingAfter.current = { key: endedKey, at: Date.now() };
+    }
   };
 
   const next = () => {
@@ -807,6 +818,16 @@ export function Player({ playing, upNext, docked, canPrev, canNext, shuffle, rep
       });
     onNext();
   };
+  // SHUFFLE-ONCE-001: a song found or made ready after the last one played out starts by itself, unless the listener has
+  // picked something meanwhile or it has been more than half an hour.
+  useEffect(() => {
+    const w = waitingAfter.current;
+    if (!w) return;
+    if (w.key !== key || Date.now() - w.at > WAIT_NEXT_MS) { waitingAfter.current = null; return; }
+    if (!canNext || !ended.current) return;
+    waitingAfter.current = null;
+    onNext();
+  }, [canNext, key]);
   // PLAYER-SWIPE-001: on the phone's player, swipe the song left for the next one, right for the previous.
   const swipe = usePlayerSwipe({ onNext: next, onPrev, canNext, canPrev, enabled: Boolean(docked && playing) });
 

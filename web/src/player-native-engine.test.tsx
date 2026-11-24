@@ -202,6 +202,33 @@ it('when a song plays out with nothing cued, the page chooses what follows', asy
   expect(ops('play')).toHaveLength(1);
 });
 
+// SHUFFLE-ONCE-001 (owner, 2026-11-24): with every song in the queue heard, the shuffle does not play one again; it waits
+// for a new one. When a song is found (or finishes downloading) the player carries on by itself.
+it('when a song plays out with no next song yet, the next one plays as soon as there is one', async () => {
+  readyUrls.set('one', SRC_ONE);
+  held.add(SRC_ONE);
+  const view = render(createElement(Player, { ...props, canNext: false, playing: song('one') }));
+  await settle();
+  await report({ playing: false, ended: true, positionMs: 180000, event: { seq: 2, cause: 'end', advanced: false, from: { id: 'one', heardMs: 180000, durationMs: 180000 } } });
+  expect(props.onNext).not.toHaveBeenCalled();
+  view.rerender(createElement(Player, { ...props, canNext: true, upNext: upNext('two'), playing: song('one') }));
+  await settle();
+  expect(props.onNext).toHaveBeenCalledTimes(1);
+});
+
+it('does not jump ahead by itself when the listener has picked a song meanwhile', async () => {
+  readyUrls.set('one', SRC_ONE); readyUrls.set('two', SRC_TWO);
+  held.add(SRC_ONE); held.add(SRC_TWO);
+  const view = render(createElement(Player, { ...props, canNext: false, playing: song('one') }));
+  await settle();
+  await report({ playing: false, ended: true, positionMs: 180000, event: { seq: 2, cause: 'end', advanced: false, from: { id: 'one', heardMs: 180000, durationMs: 180000 } } });
+  view.rerender(createElement(Player, { ...props, canNext: false, playing: song('two') }));
+  await settle();
+  view.rerender(createElement(Player, { ...props, canNext: true, upNext: upNext('three'), playing: song('two') }));
+  await settle();
+  expect(props.onNext).not.toHaveBeenCalled();
+});
+
 /**
  * REPEAT-COUNT-001: 1 and 2 are EXTRA whole plays. An engine that stops at the end and waits for
  * the page (Windows) is restarted by the page, which is then the one that counts a replay down.

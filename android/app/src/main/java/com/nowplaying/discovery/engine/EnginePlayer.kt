@@ -154,7 +154,7 @@ class EnginePlayer(
   /** A queue entry: the song, and the id it was chosen under (a playlist-scoped car id keeps its context). */
   data class Entry(val song: MediaHub.Song, val mediaId: String = song.id)
 
-  private val queue = PlayQueue<Entry>(keyOf = { it.mediaId }, isPlayable = { it.song.source != null && it.song.ready })
+  private val queue = PlayQueue<Entry>(keyOf = { it.mediaId }, isPlayable = { it.song.source != null && it.song.ready }, heardBefore = { it.song.heard })
   private val repeatSync = RepeatSync()
   private var repeatFromPage = false
   private var playWhenReady = false
@@ -311,7 +311,7 @@ class EnginePlayer(
    * as an extra entry if it is not in the list (a search result) — and a chosen song that was
    * waiting for its file starts once the file is here.
    */
-  fun libraryChanged(list: List<MediaHub.Song>, shuffle: Boolean, repeat: Int) {
+  fun libraryChanged(list: List<MediaHub.Song>, shuffle: Boolean, repeat: Int, once: Boolean = false) {
     if (radioLive) return
     if (pageLive && list.isNotEmpty()) {
       val current = queue.current
@@ -323,6 +323,7 @@ class EnginePlayer(
         else -> queue.set(entries + current, entries.size)
       }
       queue.shuffle = shuffle
+      queue.playsOnce = once
       val chosen = repeatSync.fromPage(repeat)
       if (chosen != null) { if (chosen != repeatMode()) applyRepeat(chosen, fromPage = true) }
       else resendRepeatToPage() // it still shows a value the service has since changed: say so again

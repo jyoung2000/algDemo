@@ -378,4 +378,41 @@ class PlayQueueTest {
     assertEquals(emptyList<String>(), q.roundAhead())
     assertTrue(!q.arrangeRound(listOf("c", "b")))
   }
+
+  // SHUFFLE-ONCE-001 (owner, 2026-11-24): "shuffle should only play a song once before finding a new song". A song the
+  // page marks as heard before (the now playing queue's songs heard in any session) is not shuffled to again, and the
+  // shuffle never starts another round over heard songs: it stops and waits for a new one.
+  private data class H(val key: String, val heard: Boolean = false)
+  private fun onceQueue(vararg s: H, seed: Int = 7) = PlayQueue<H>({ it.key }, { true }, Random(seed), heardBefore = { it.heard })
+    .apply { shuffle = true; playsOnce = true; set(s.toList(), 0) }
+
+  @Test fun shuffleSkipsSongsHeardBefore() {
+    val q = onceQueue(H("a"), H("b", heard = true), H("c"), H("d", heard = true))
+    val played = mutableListOf(q.items[q.index].key)
+    while (true) { val i = q.advance(pressed = false) ?: break; played += q.items[i].key }
+    assertEquals(listOf("a", "c"), played.sorted())
+  }
+
+  @Test fun shuffleNeverStartsAnotherRoundOverHeardSongsEvenOnNext() {
+    val q = onceQueue(H("a"), H("b"))
+    assertEquals(1, q.advance(pressed = false))
+    assertNull("Next does not wrap round to a song just heard", q.advance(pressed = true))
+    assertNull(q.peekNextPressed())
+    assertNull(q.peekAfterEnd())
+  }
+
+  @Test fun aNewSongArrivingAfterTheEndIsTheNextOne() {
+    val q = onceQueue(H("a"), H("b"))
+    q.advance(pressed = false)
+    assertNull(q.advance(pressed = true))
+    q.set(listOf(H("a"), H("b"), H("e")), 1)
+    assertEquals(2, q.peekAfterEnd())
+    assertEquals(2, q.advance(pressed = false))
+  }
+
+  @Test fun withoutHeardMarksAListStillGoesRoundOnNext() {
+    val q = PlayQueue<H>({ it.key }, { true }, Random(7)).apply { shuffle = true; set(listOf(H("a"), H("b")), 0) }
+    q.advance(pressed = false)
+    assertTrue("a saved list keeps its rounds", q.advance(pressed = true) != null)
+  }
 }

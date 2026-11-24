@@ -6,6 +6,7 @@
  */
 import type { RecItem } from '../api';
 import { moodShufflePick } from './mood-shuffle';
+import { rowArtist } from './artist-variety';
 
 export interface ShuffleMoodFit { fit: ReadonlyMap<string, number>; confidence: number; adventurous: number }
 export interface ArrangeShuffleOpts {
@@ -37,10 +38,20 @@ export function arrangeShuffle(items: RecItem[], o: ArrangeShuffleOpts): { items
     // custom discovery carry it too, and putting them first left a whole Discover list unshuffled.)
     const pool = [...coming];
     order = [];
+    // ARTIST-VARIETY-001 (owner, 2026-11-24): the draw skips the artist just drawn (the song playing first) while
+    // another artist is left, so one artist's songs are spread through the order instead of bunched together.
+    let last = current ? rowArtist(current.track) : '';
     while (pool.length) {
+      const others = last ? pool.filter((x) => rowArtist(x.track) !== last) : pool;
+      // An artist holding half of what is left goes now (when it may), or its songs end up together at the end.
+      const count = new Map<string, number>();
+      for (const x of others) count.set(rowArtist(x.track), (count.get(rowArtist(x.track)) ?? 0) + 1);
+      const [top, n] = [...count].sort((a, b) => b[1] - a[1])[0] ?? ['', 0];
+      const from = n * 2 >= pool.length && n < others.length ? others.filter((x) => rowArtist(x.track) === top) : others.length ? others : pool;
       const pick = o.mood && o.mood.confidence > 0
-        ? moodShufflePick(pool, key, o.mood.fit, { adventurous: o.mood.adventurous, confidence: o.mood.confidence, rand: o.rand })
-        : pool[Math.min(pool.length - 1, Math.floor(o.rand() * pool.length))]!;
+        ? moodShufflePick(from, key, o.mood.fit, { adventurous: o.mood.adventurous, confidence: o.mood.confidence, rand: o.rand })
+        : from[Math.min(from.length - 1, Math.floor(o.rand() * from.length))]!;
+      last = rowArtist(pick.track);
       pool.splice(pool.indexOf(pick), 1);
       order.push(key(pick));
     }
@@ -74,4 +85,44 @@ export function restoreOrder(items: RecItem[], keys: readonly string[]): RecItem
   const known = items.filter((x) => at.has(x.track.key)).sort((a, b) => at.get(a.track.key)! - at.get(b.track.key)!);
   const later = items.filter((x) => !at.has(x.track.key));
   return [...known, ...later].map((x, i) => (x.rank === i + 1 ? x : { ...x, rank: i + 1 }));
+}
+
+/**
+ * SHUFFLE-ONCE-001 (owner, 2026-11-24): the songs on record as heard, finished or skipped, from the engine's feedback
+ * state. The queue's shuffle does not come back to them.
+ */
+export function heardIn(state: Record<string, Partial<Record<string, boolean>> | undefined>): Set<string> {
+  const out = new Set<string>();
+  for (const [k, v] of Object.entries(state)) if (v?.['complete'] || v?.['skip']) out.add(k);
+  return out;
+}
+
+/** This round's heard songs and those on record, as one set. */
+export function unionHeard(round: ReadonlySet<string>, record: ReadonlySet<string>): ReadonlySet<string> {
+  if (!record.size) return round;
+  const all = new Set(record);
+  for (const k of round) all.add(k);
+  return all;
+}
+
+/**
+ * SHUFFLE-ONCE-001: every song that started playing in the now playing queue, kept on this device, newest last. A song
+ * left mid-way (the app closed, a quick skip the engine does not count as heard) is still heard for the shuffle.
+ */
+export const QUEUE_STARTED_KEY = 'airwave.queue-started';
+const QUEUE_STARTED_MAX = 3000;
+
+export function startedOnRecord(): Set<string> {
+  try {
+    const v = JSON.parse(localStorage.getItem(QUEUE_STARTED_KEY) ?? '[]') as unknown;
+    return new Set(Array.isArray(v) ? v.filter((k): k is string => typeof k === 'string') : []);
+  } catch { return new Set(); }
+}
+
+export function rememberStarted(key: string): void {
+  try {
+    const keys = [...startedOnRecord()].filter((k) => k !== key);
+    keys.push(key);
+    localStorage.setItem(QUEUE_STARTED_KEY, JSON.stringify(keys.slice(-QUEUE_STARTED_MAX)));
+  } catch { /* storage full or blocked: this session's round still holds it */ }
 }

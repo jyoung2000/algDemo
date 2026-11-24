@@ -67,6 +67,7 @@ import { Job, Pipeline, pmap, type Embedder } from './pipeline';
 import { FAV_ARTISTS_KEY, FAV_PER_RUN, addFav, favMap, favSeed, normaliseFav, normaliseFavs, removeFav, type FavArtist } from './fav-artists';
 import { referenceSize, sizeFit, smallScene } from './artist-size';
 import { coldReason, coldStarters, type ColdStarter } from './cold-start';
+import { artistLoad } from './artist-variety';
 import { FLOW_KEY, dryReason, flowPick, flowState, heardTest } from './queue-data-flow';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
@@ -2082,6 +2083,10 @@ export class LocalApi {
     // The list as it stands. A batch adds to it; lowering the limit never shortens it.
     const previous = (this.store.get<Dict>('last_result')?.['items'] ?? []) as { track: Dict }[];
     const held = [...(this.store.seeds() as Dict[]), ...previous.map((x) => x.track)];
+    // ARTIST-VARIETY-001: the songs by each artist already waiting in the queue, and in the last few listens, count
+    // against the per-artist cap, so batch after batch cannot pile one artist up.
+    const listens = this.store.feedback().filter((r) => r.kind === 'complete' || r.kind === 'skip');
+    const load = artistLoad(previous, new Set(listens.map((r) => r.key)));
     const limit = Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize);
     const merge = (batch: Dict): Dict => {
       // QUEUE-ADD-001: append to the queue as it stands now, so a song the listener added while this
@@ -2173,7 +2178,7 @@ export class LocalApi {
           const relMapQ = new Map([...relPartial].filter(([, v]) => v.size));
           const ctxQ: E.Context = {
             seeds: seedViews as never, vectors: new Map(), relatedArtists: relMapQ, feedback: fb, impressions: imps,
-            settings: es2, now: new Date(), cfg, taste, rankV2: v2, taste2,
+            settings: es2, now: new Date(), cfg, taste, rankV2: v2, taste2, artistLoad: load,
           };
           const quickChosen = E.select(E.scoreAll(newDiscoveryTracks(quick, held).filter(unheard) as never, ctxQ), ctxQ);
           if (quickChosen.length) {
@@ -2234,7 +2239,7 @@ export class LocalApi {
         if (v) vectors.set(sv['key'], Float64Array.from(v));
       }
       const relMap = new Map([...related].filter(([, v]) => v.size));
-      const ctx: E.Context = { seeds: seedViews as never, vectors, relatedArtists: relMap, feedback: fb, impressions: imps, settings: es, now: new Date(), cfg, taste, rankV2: v2, taste2 };
+      const ctx: E.Context = { seeds: seedViews as never, vectors, relatedArtists: relMap, feedback: fb, impressions: imps, settings: es, now: new Date(), cfg, taste, rankV2: v2, taste2, artistLoad: load };
       let scored = E.scoreAll(cands as never, ctx);
       let chosen = E.select(scored, ctx);
       // ARTIST-SIZE-001: the leading songs' artists are sized and the list is ranked again with their fit.
@@ -2395,6 +2400,8 @@ export class LocalApi {
     // must not trim it here: a smaller limit would otherwise drop songs the listener still has.
     const ctx: E.Context = {
       ...pool.ctx,
+      // ARTIST-VARIETY-001: the pool's own songs are the queue; counting them as already waiting would cap them out.
+      artistLoad: undefined,
       // ALGO-MANAGER-001: the algorithm active NOW ranks the pool, over the run's own engine base.
       cfg: { ...engineFromSettings(settings, cfg), queueSize: Math.max(pool.cands.length, 1) },
       feedback: v2 ? E.withSavedAlbums(E.buildFeedback2(this.store.feedback() as never, unixNow(), cfg), this.savedAlbumKeys()) : E.buildFeedback(this.store.feedback() as never, unixNow(), cfg),

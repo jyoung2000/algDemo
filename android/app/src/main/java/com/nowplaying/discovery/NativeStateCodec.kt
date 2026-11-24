@@ -99,6 +99,7 @@ object NativeStateCodec {
     .put("durationMs", if (s.durationMs > 0) s.durationMs else -1)
     .put("ready", s.ready).put("source", s.source ?: JSONObject.NULL)
     .put("kinds", JSONArray(s.kinds.sorted()))
+    .apply { if (s.heard) put("heard", true) }
 
   /** The saved song back, its link kept only if [sourceAllowed] still allows it. Readiness is the saved
    *  claim; the engine re-checks the file (Downloads.localFile) before it ever plays it. */
@@ -116,6 +117,7 @@ object NativeStateCodec {
       ready = o.optBoolean("ready", false) && source != null,
       source = source,
       kinds = o.optJSONArray("kinds")?.let { k -> (0 until k.length()).map { k.optString(it) }.filter { it.isNotEmpty() }.toSet() } ?: emptySet(),
+      heard = o.optBoolean("heard", false),
     )
   }
 

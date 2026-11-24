@@ -14,7 +14,7 @@ vi.mock('./api', async (orig) => {
 });
 const track = (key: string, title: string) => ({ key, title, artists: ['Test artist'], provider: 'deezer', platform_id: key, tags: [] } as unknown as Track);
 const item = (key: string, title: string) => ({ track: track(key, title), rank: 1, reasons: [], playback: { kind: 'none' }, characteristics: {} } as unknown as RecItem);
-const bad = item('bad', 'Unwanted song'), good = item('good', 'Better song');
+const bad = item('bad', 'Unwanted song'), good = item('good', 'Better song'), third = item('third', 'Third song');
 const result = { items: [bad, good], count: 2, asked: 2, phase: 'final', sources: {}, transfer: {} } as unknown as RecResult;
 afterEach(cleanup);
 beforeEach(() => {
@@ -58,4 +58,103 @@ describe('explicit dislike immediately teaches the current queue', () => {
     await waitFor(() => expect(api.rerank).toHaveBeenCalled());
     await waitFor(() => expect(api.feedbackState).toHaveBeenCalledTimes(2));
   });
+});
+
+// REMOVE-X-001 (owner, 2026-11-24: "removing songs / the x button doesnt work"): the engine keeps a song already
+// played in its answer (the history is protected), so the row used to stay, painted red. The X always takes it out.
+describe('the X takes a song out of the queue even when the engine still holds it', () => {
+  it('removes a row the re-rank answer still contains', async () => {
+    vi.mocked(api.rerank).mockResolvedValue({ ...result, items: [bad, good], taste: null } as never);
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Dislike Unwanted song and remove it from the queue' }));
+    await waitFor(() => expect(api.rerank).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByText('Unwanted song')).toBeNull());
+    expect(screen.queryByRole('button', { name: 'Undo dislike of Unwanted song' })).toBeNull();
+    expect(screen.getByText('Better song')).toBeTruthy();
+  });
+  it('removes the row at once, before the engine has answered', async () => {
+    vi.mocked(api.rerank).mockReturnValue(new Promise(() => {}) as never);
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Dislike Unwanted song and remove it from the queue' }));
+    await waitFor(() => expect(api.feedback).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByText('Unwanted song')).toBeNull());
+  });
+  it('taking out the song playing moves on to the next one', async () => {
+    const playable = (x: RecItem) => ({ ...x, playback: { kind: 'preview', preview: `https://cdn.test/${x.track.key}.mp3`, open: [] } } as unknown as RecItem);
+    const both = { ...result, items: [playable(bad), playable(good)] } as unknown as RecResult;
+    vi.mocked(api.last).mockResolvedValue(both);
+    vi.mocked(api.rerank).mockResolvedValue({ ...both, taste: null } as never);
+    const { container } = render(<App />);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Play Unwanted song' }))[0]!);
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')?.textContent).toContain('Unwanted song'));
+    fireEvent.click(screen.getByRole('button', { name: 'Dislike Unwanted song and remove it from the queue' }));
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')?.textContent).toContain('Better song'));
+    expect(screen.queryByText('Unwanted song', { selector: 'ol.recs *' })).toBeNull();
+  });  it('taking out the song playing moves on to the next one, through the confirm dialog', async () => {
+    const playable = (x: RecItem) => ({ ...x, playback: { kind: 'preview', preview: `https://cdn.test/${x.track.key}.mp3`, open: [] } } as unknown as RecItem);
+    const both = { ...result, items: [playable(bad), playable(good)] } as unknown as RecResult;
+    vi.mocked(api.last).mockResolvedValue(both);
+    vi.mocked(api.rerank).mockResolvedValue({ ...both, taste: null } as never);
+    localStorage.removeItem('airwave:confirm-remove');
+    const { container } = render(<App />);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Play Unwanted song' }))[0]!);
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')?.textContent).toContain('Unwanted song'));
+    fireEvent.click(screen.getByRole('button', { name: 'Dislike Unwanted song and remove it from the queue' }));
+    fireEvent.click(await waitFor(() => { const b = document.querySelector('.confirm-remove__btn--danger'); expect(b).toBeTruthy(); return b!; }));
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')?.textContent).toContain('Better song'));
+    expect(screen.queryByText('Unwanted song', { selector: 'ol.recs *' })).toBeNull();
+  });  it('taking out the last song playing goes back to the first one ready', async () => {
+    const playable = (x: RecItem) => ({ ...x, playback: { kind: 'preview', preview: `https://cdn.test/${x.track.key}.mp3`, open: [] } } as unknown as RecItem);
+    const both = { ...result, items: [playable(good), playable(bad)] } as unknown as RecResult;
+    vi.mocked(api.last).mockResolvedValue(both);
+    vi.mocked(api.rerank).mockResolvedValue({ ...both, taste: null } as never);
+    localStorage.removeItem('airwave:confirm-remove');
+    const { container } = render(<App />);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Play Unwanted song' }))[0]!);
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')?.textContent).toContain('Unwanted song'));
+    fireEvent.click(screen.getByRole('button', { name: 'Dislike Unwanted song and remove it from the queue' }));
+    fireEvent.click(await waitFor(() => { const b = document.querySelector('.confirm-remove__btn--danger'); expect(b).toBeTruthy(); return b!; }));
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')?.textContent).toContain('Better song'));
+    expect(screen.queryByText('Unwanted song', { selector: 'ol.recs *' })).toBeNull();
+  });  it('taking out the only song playing stops it', async () => {
+    const playable = (x: RecItem) => ({ ...x, playback: { kind: 'preview', preview: `https://cdn.test/${x.track.key}.mp3`, open: [] } } as unknown as RecItem);
+    const both = { ...result, items: [playable(bad)] } as unknown as RecResult;
+    vi.mocked(api.last).mockResolvedValue(both);
+    vi.mocked(api.rerank).mockResolvedValue({ ...both, taste: null } as never);
+    localStorage.removeItem('airwave:confirm-remove');
+    const { container } = render(<App />);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Play Unwanted song' }))[0]!);
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')?.textContent).toContain('Unwanted song'));
+    fireEvent.click(screen.getByRole('button', { name: 'Dislike Unwanted song and remove it from the queue' }));
+    fireEvent.click(await waitFor(() => { const b = document.querySelector('.confirm-remove__btn--danger'); expect(b).toBeTruthy(); return b!; }));
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')).toBeNull());
+    expect(container.querySelector('audio:not([paused])') === null || [...container.querySelectorAll('audio')].every((a) => a.paused)).toBe(true);
+  });  it('taking out a song in the middle plays the one after it, not the first', async () => {
+    const playable = (x: RecItem) => ({ ...x, playback: { kind: 'preview', preview: `https://cdn.test/${x.track.key}.mp3`, open: [] } } as unknown as RecItem);
+    const both = { ...result, items: [playable(good), playable(bad), playable(third)] } as unknown as RecResult;
+    vi.mocked(api.last).mockResolvedValue(both);
+    vi.mocked(api.rerank).mockResolvedValue({ ...both, taste: null } as never);
+    localStorage.removeItem('airwave:confirm-remove');
+    const { container } = render(<App />);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Play Unwanted song' }))[0]!);
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')?.textContent).toContain('Unwanted song'));
+    fireEvent.click(screen.getByRole('button', { name: 'Dislike Unwanted song and remove it from the queue' }));
+    fireEvent.click(await waitFor(() => { const b = document.querySelector('.confirm-remove__btn--danger'); expect(b).toBeTruthy(); return b!; }));
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')?.textContent).toContain('Third song'));
+    expect(screen.queryByText('Unwanted song', { selector: 'ol.recs *' })).toBeNull();
+  });  it('taking out the only song playing stops it', async () => {
+    const playable = (x: RecItem) => ({ ...x, playback: { kind: 'preview', preview: `https://cdn.test/${x.track.key}.mp3`, open: [] } } as unknown as RecItem);
+    const both = { ...result, items: [playable(bad)] } as unknown as RecResult;
+    vi.mocked(api.last).mockResolvedValue(both);
+    vi.mocked(api.rerank).mockResolvedValue({ ...both, taste: null } as never);
+    localStorage.removeItem('airwave:confirm-remove');
+    const { container } = render(<App />);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Play Unwanted song' }))[0]!);
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')?.textContent).toContain('Unwanted song'));
+    fireEvent.click(screen.getByRole('button', { name: 'Dislike Unwanted song and remove it from the queue' }));
+    fireEvent.click(await waitFor(() => { const b = document.querySelector('.confirm-remove__btn--danger'); expect(b).toBeTruthy(); return b!; }));
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')).toBeNull());
+    expect(container.querySelector('audio:not([paused])') === null || [...container.querySelectorAll('audio')].every((a) => a.paused)).toBe(true);
+  });
+
 });

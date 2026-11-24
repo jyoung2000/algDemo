@@ -26,6 +26,8 @@ export interface NativeSong {
   source?: string | null;
   /** CAR-SEARCH-TYPES-001: what kind of result a car search song is, for the car's icons. */
   kinds?: CarKind[];
+  /** SHUFFLE-ONCE-001: a queue song heard before; the queue's shuffle does not play it again. */
+  heard?: boolean;
 }
 
 /** CAR-SEARCH-TYPES-001: the kinds the car's search icons narrow to. */
@@ -80,6 +82,8 @@ export interface NativeState {
   /** CAR-ACTIONS-001: the song now playing is starred (liked) / disliked, for the car's buttons. */
   liked: boolean;
   disliked: boolean;
+  /** SHUFFLE-ONCE-001: the queue is the now playing queue under shuffle: each song plays once, no new round. */
+  once?: boolean;
 }
 
 /** CAR-ACTIONS-001: the judgements the car's Star and Dislike buttons can send. */

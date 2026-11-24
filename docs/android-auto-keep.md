@@ -12,12 +12,32 @@ Short answer, two ways, neither needing the computer again:
 - **For good, through Google Play:** install jPlay from your own Google Play internal testing track
   ("The Google Play way"). This is the only thing that makes Google Play itself recognise jPlay.
 
-## How sure this is
+## Measured on the owner's phone, 23 November 2026
 
-- **[Inferred]** means: read from a public decompile of Android Auto 17.9's app validator. It was
-  not measured on the owner's phone or in the owner's car, and another Android Auto version may differ.
-- **[Measured]** means: observed in this work, on the emulator `emulator-5562` only.
-- Nothing in this guide was tested in a real car. The check in "How to check it worked" is the test.
+Galaxy S23 Ultra, Android Auto 18.0, jPlay 0.20.14 then 0.20.15, projected from the phone to Google's
+desktop head unit set to identify as an ordinary car (not as Google's developer head unit).
+
+| Unknown sources | How jPlay was installed | In the car? |
+| --- | --- | --- |
+| On (it was already on) | From the computer, with Google Play's name | Yes |
+| On | From the computer, plain, no installer name | Yes |
+| **Off** | From the computer, with Google Play's name | **No**: `Package DENIED; failed all other checks [com.nowplaying.discovery]` |
+
+- **The switch decides. Google Play's name on the install does nothing.** With the switch off the
+  "Play" install was refused; with it on, a plain install was accepted.
+- Turning the switch back on does not bring jPlay back until the car reconnects.
+- With the switch on, jPlay stayed through: Android Auto restarted, the car reconnected, jPlay
+  force-stopped, and a connect with the phone's screen off. Seven checks on 0.20.15, listed every time.
+- jPlay vanishing **with the switch on** was not reproduced. The only way it was made to vanish was
+  the switch being off.
+- Not tested: a real car, wireless Android Auto, a phone restart, several days passing, an Android
+  Auto update, and an update installed by tapping the APK on the phone (the plain computer install is
+  the nearest thing tested).
+
+## How sure the rest is
+
+- **[Inferred]** means: read from a public decompile of Android Auto's app validator, not measured.
+- **[Measured]** means: observed in this work; the section above is the phone, anything else the emulator.
 
 ## Why jPlay disappears
 
@@ -39,10 +59,8 @@ What was measured:
 - **[Measured, your phone, 2026-11-23, jPlay 0.20.14, Android Auto 18.0]** the phone records
   `installerPackageName=com.android.vending` and `initiatingPackageName=com.android.shell`: Google
   Play's name only, started by the computer. Exactly the case in step 1.
-- **[Not measured]** whether **Unknown sources** is on in your Android Auto, and which check dropped
-  jPlay after the car restarted. The phone's log held no `CAR.VALIDATOR` line when it was read.
-  "Works once, gone after a restart" fits a remembered answer (step 2) that is thrown away when
-  Android Auto starts again, with the switch off; that is a reading of the code, not an observation.
+- **[Not measured]** which check dropped jPlay after your car restarted. If it happens again, look
+  at the switch first: if it is off, that is the cause.
 - **[Earlier work notes, emulator]** with the switch off, Android Auto logged `Package DENIED; failed
   all other checks [com.nowplaying.discovery]`. The emulator's Google Play check never runs, so it
   cannot show what a real phone does.
@@ -63,9 +81,10 @@ What was measured:
 6. Go back, open **Customize launcher** and make sure **jPlay** is ticked.
 7. Reconnect the car (unplug and plug in, or turn the car off and on).
 
-The computer is still the way to put a *new version* of jPlay on the phone. It is no longer needed
-for jPlay to stay in the car. The `-i com.android.vending` part of the install command is not needed
-once Unknown sources is on **[Inferred]**.
+The computer is not needed for jPlay to stay in the car, and the `-i com.android.vending` part of
+the install command is not needed while Unknown sources is on **[Measured, see the table]**. A new
+version can be installed by opening its APK on the phone **[Inferred: the same check applies; the
+tap install itself was not tested]**.
 
 ## How to check it worked
 

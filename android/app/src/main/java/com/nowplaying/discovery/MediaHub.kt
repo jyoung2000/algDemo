@@ -50,6 +50,8 @@ object MediaHub {
     val source: String? = null,
     /** CAR-SEARCH-TYPES-001: the kinds the page found this song to be (single/album/feature/lyrics). */
     val kinds: Set<String> = emptySet(),
+    /** SHUFFLE-ONCE-001: the page heard this queue song before; the queue's shuffle does not play it again. */
+    val heard: Boolean = false,
   )
 
   /** A browsable folder in the Android Auto tree: the now playing queue, one playlist, or one album
@@ -87,6 +89,8 @@ object MediaHub {
     /** CAR-ACTIONS-001: the page's Star (like) and Dislike state for [mediaId]. */
     val liked: Boolean = false,
     val disliked: Boolean = false,
+    /** SHUFFLE-ONCE-001: the queue is the now playing queue under shuffle, whose songs play once. */
+    val once: Boolean = false,
   )
 
   const val C_TIME_UNSET: Long = Long.MIN_VALUE + 1 // mirrors androidx.media3.common.C.TIME_UNSET
@@ -780,6 +784,7 @@ object MediaHub {
       reportedAt = android.os.SystemClock.elapsedRealtime(),
       liked = o.optBoolean("liked", false),
       disliked = o.optBoolean("disliked", false),
+      once = o.optBoolean("once", false),
     )
   }
 
@@ -802,6 +807,7 @@ object MediaHub {
           ready = o.optBoolean("ready", false),
           source = o.optStringOrNull("source")?.takeIf { o.optBoolean("ready", false) && Downloads.urlAllowed(it) },
           kinds = o.optJSONArray("kinds")?.let { k -> (0 until k.length()).mapNotNull { k.optString(it).takeIf { s -> s in CarSearch.KINDS } }.toSet() } ?: emptySet(),
+          heard = o.optBoolean("heard", false),
         ),
       )
     }

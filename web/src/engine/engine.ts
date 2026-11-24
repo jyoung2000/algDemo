@@ -496,6 +496,11 @@ export interface Context {
    * sizeFit, 0.05-1). Absent, or 1, changes nothing; it only ever lowers a score.
    */
   artistFit?: ((c: Track) => number) | undefined;
+  /**
+   * ARTIST-VARIETY-001: songs by each artist (primaryArtist) already in the queue still to play, or just heard. They
+   * count against maxPerArtist, so batch after batch cannot pile one artist up. Absent changes nothing.
+   */
+  artistLoad?: Readonly<Record<string, number>> | undefined;
 }
 
 export function dot(a: Float64Array, b: Float64Array): number {
@@ -786,7 +791,7 @@ export function select(scored: Scored[], ctx: Context): Scored[] {
     pools[k]!.sort((x, y) => y.final - y.exposurePenalty - (x.final - x.exposurePenalty) || (x.track.key < y.track.key ? -1 : x.track.key > y.track.key ? 1 : 0));
   }
   const chosen: Scored[] = [];
-  const perArtist: Record<string, number> = {};
+  const perArtist: Record<string, number> = { ...(ctx.artistLoad ?? {}) };
   const perSeed: Record<string, number> = {};
   const seeds = ctx.seeds.map((s) => s.key);
   const emphOf = (s: Track) => Math.max(0.1, Number(s.emphasis ?? 1.0));

@@ -180,7 +180,7 @@ object EngineHub {
 
   private fun replayLibrary(p: EnginePlayer) {
     val s = MediaHub.state
-    p.libraryChanged(s.queue, s.shuffle, s.repeat)
+    p.libraryChanged(s.queue, s.shuffle, s.repeat, s.once)
   }
 
   /** Forget [pg] if it is still the page (a newer Activity may already have attached its own). */
@@ -212,7 +212,7 @@ object EngineHub {
   /** The page pushed its list/library through MediaHub: let the player follow it. */
   fun libraryChanged() = main.post {
     val s = MediaHub.state
-    player?.libraryChanged(s.queue, s.shuffle, s.repeat)
+    player?.libraryChanged(s.queue, s.shuffle, s.repeat, s.once)
   }
 
   private fun dispatch(p: EnginePlayer, cmd: JSONObject) {

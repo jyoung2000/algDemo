@@ -114,7 +114,7 @@ describe('the Discover queue uses it', () => {
   const app = readFileSync(resolve(process.cwd(), 'src', 'App.tsx'), 'utf8');
   it('arranges the queue whenever shuffle, the list, the song playing or a new round changes', () => {
     expect(app).toMatch(/SHUFFLE-ORDER-001[\s\S]{0,1200}arrangeShuffle\(result\.items, \{/);
-    expect(app).toMatch(/\}, \[discoverShuffle, result\?\.items, playingKey, shuffleEpoch, readySignature, hidden\]\);/);
+    expect(app).toMatch(/\}, \[discoverShuffle, result\?\.items, playingKey, shuffleEpoch, readySignature, hidden, heardOnRecord\]\);/);
   });
   it('playback follows the shown order, and the mood does not re-order a shuffled queue', () => {
     expect(app).toMatch(/inOrder: discoverShuffle/);

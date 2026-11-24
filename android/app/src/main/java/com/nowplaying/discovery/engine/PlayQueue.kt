@@ -17,7 +17,21 @@ class PlayQueue<T>(
   private val keyOf: (T) -> String,
   private val isPlayable: (T) -> Boolean,
   private val random: Random = Random.Default,
+  /**
+   * SHUFFLE-ONCE-001 (owner, 2026-11-24: "shuffle should only play a song once before finding a new song"): a song the
+   * page marks as heard before (the now playing queue's songs finished or skipped in any session). Under shuffle such a
+   * song is never chosen again, and while the list holds any, no new round starts over heard songs: the queue stops and
+   * waits for a new song. A list with no such marks (a saved playlist) keeps its rounds.
+   */
+  private val heardBefore: (T) -> Boolean = { false },
 ) {
+  /**
+   * SHUFFLE-ONCE-001: the list is the now playing queue, whose songs play once under shuffle (the page says so, and a
+   * list whose songs carry heard marks is one too, so a queue restored without the page keeps the rule).
+   */
+  var playsOnce = false
+  private val once: Boolean get() = shuffle && (playsOnce || items.any(heardBefore))
+  private fun fresh(i: Int): Boolean = isPlayable(items[i]) && !heardBefore(items[i])
   /** ONE is the old id for infinite song repeat; ALL survives only for legacy saved states. */
   enum class Repeat { OFF, ONE, ALL, ONCE, TWICE }
 
@@ -237,8 +251,8 @@ class PlayQueue<T>(
   /** The next playable index and whether reaching it crosses into the next round. */
   private fun findNext(wrap: Boolean): Pair<Int, Boolean>? {
     if (shuffle) {
-      order.firstOrNull { isPlayable(items[it]) && keyOf(items[it]) !in heard }?.let { return it to false }
-      if (!wrap) return null
+      order.firstOrNull { fresh(it) && keyOf(items[it]) !in heard }?.let { return it to false }
+      if (!wrap || once) return null
       // Readiness and explicit selection can change which song really closes the round.
       val next = nextRound.firstOrNull { it != index && isPlayable(items[it]) }
         ?: nextRound.firstOrNull { isPlayable(items[it]) }
