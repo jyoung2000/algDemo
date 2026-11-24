@@ -2415,7 +2415,10 @@ export class LocalApi {
     // chosen stay out, and every queued row comes back (orderAll has no artist cap or tier quota). Queue rows with no
     // pool row are not returned; the page's mergeRerank keeps them where they are (SHUFFLE-STAY-001).
     const stored = this.store.get<Dict>('last_result');
-    const queued = new Set(((stored?.['items'] ?? []) as { track?: Dict }[]).map((it) => String(it.track?.['key'] ?? '')));
+    // WP1 step 4 (A8): found rows (Find similar, custom discovery; old stored rows marked added + custom/sound_match)
+    // are movable but never re-scored, so they are not candidates here; mergeRerank keeps them in place.
+    const isFound = (it: Dict) => Boolean(it['found']) || Boolean(it['custom']) || 'sound_match' in it;
+    const queued = new Set(((stored?.['items'] ?? []) as Dict[]).filter((it) => !isFound(it)).map((it) => String((it['track'] as Dict | undefined)?.['key'] ?? '')));
     queued.delete('');
     // No stored queue at all (an old install, or a pool restored on its own): rank the pool; the page still ignores rows
     // it never queued. A stored queue that is empty ranks nothing.
@@ -2640,7 +2643,7 @@ export class LocalApi {
     if (items.some((x) => String((x['track'] as Dict | undefined)?.['key']) === key)) return;
     const cand = (this.pool ?? this.restorePool())?.cands.find((c) => String(c['key']) === key);
     if (!cand) return;
-    const rest = [...items, { track: cleanTrack(cand as never), rank: items.length + 1, reasons: [], playback: {} }];
+    const rest = [...items, { track: cleanTrack(cand as never), rank: items.length + 1, reasons: [], playback: playbackFor(cand as never) }];
     await this.store.put('last_result', { ...last, items: rest, count: rest.length });
   }
 
