@@ -63,6 +63,8 @@ class CarActionButtonsTest {
     CarFeedback.init(ctx)
     CarFeedback.resetForTests()
     for (i in 1..4) storeTone(i)
+    // CAR-X-001: a disliked song leaves the native queue; each test starts from the four tones again.
+    main { com.nowplaying.discovery.engine.EngineHub.forgetQueueForTests() }
   }
 
   @After fun tearDown() {
@@ -168,6 +170,50 @@ class CarActionButtonsTest {
     assertEquals("dislike", sent[0].getString("kind"))
     try { until("a disliked song is skipped") { title(c) == "Action test tone 3" } }
     catch (e: AssertionError) { throw AssertionError("${e.message}; now playing ${title(c)}; buttons ${names(c)}; queue ${main { c.queue.orEmpty().map { it.description.title.toString() } }}; sent ${sent.map { it.toString() }}") }
+  }
+
+  /** CAR-X-001 (owner, 2026-11-24): "ensure the X button works on android auto", wherever the song sits in the list. */
+  @Test fun dislikeOnTheLastSongMovesOnAndTakesItOut() {
+    MediaHub.setCommandSink(sink)
+    main { seed() }
+    val c = connect()
+    playTone(c, 4)
+    until("dislike button") { "Dislike" in names(c) }
+    press(c, ".DISLIKE")
+    try { until("the last song is left for another") { title(c) != "Action test tone 4" && title(c) != null } }
+    catch (e: AssertionError) { throw AssertionError("${e.message}; now playing ${title(c)}; queue ${main { c.queue.orEmpty().map { it.description.title.toString() } }}") }
+    until("the disliked song is out of the car's queue") { main { c.queue.orEmpty().none { it.description.title.toString() == "Action test tone 4" } } }
+  }
+
+  @Test fun dislikeUnderShuffleMovesOnWhereverTheSongSits() {
+    MediaHub.setCommandSink(sink)
+    main { seed() }
+    val c = connect()
+    playTone(c, 1)
+    until("shuffle button") { "Shuffle off" in names(c) }
+    press(c, ".SHUFFLE")
+    until("shuffle on") { "Shuffle on" in names(c) }
+    for (gone in listOf(4, 3)) {
+      main { c.transportControls.playFromMediaId("act-tone-$gone", null) }
+      until("tone $gone plays") { title(c) == "Action test tone $gone" }
+      until("dislike button") { "Dislike" in names(c) }
+      press(c, ".DISLIKE")
+      until("tone $gone is left") { title(c) != "Action test tone $gone" && title(c) != null }
+    }
+  }
+
+  @Test fun dislikeWithNothingElseToPlayPausesAndSaysSo() {
+    MediaHub.setCommandSink(sink)
+    main {
+      val s = JSONArray().put(songs().getJSONObject(0))
+      MediaHub.apply(JSONObject().put("state", JSONObject().put("queue", s)).put("library", JSONObject().put("songs", s)))
+    }
+    val c = connect()
+    playTone(c, 1)
+    until("playing") { main { c.playbackState?.state } == PlaybackState.STATE_PLAYING }
+    until("dislike button") { "Dislike" in names(c) }
+    press(c, ".DISLIKE")
+    until("the disliked song stops") { main { c.playbackState?.state } != PlaybackState.STATE_PLAYING }
   }
 
   @Test fun shuffleButtonTogglesTheSessionShuffleMode() {

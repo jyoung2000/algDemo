@@ -29,19 +29,22 @@ for (const surface of ['search', 'queue', 'player'] as const) {
       expect(paths(button())).not.toContain(GLYPH_PATHS['thumb-up']);
       expect(paths(button())).not.toContain(GLYPH_PATHS.check);
     });
-    it('shows heart AND check when saved, even if not currently liked', () => {
+    // HEART-NO-TICK-001 (owner, 2026-11-24): "Remove the check box near the heart icon". A playlist save shows only
+    // in the button's name; the heart stands alone.
+    it('shows the heart alone when saved, and says so in its name', () => {
       render(view([list([t.key])], false));
       expect(paths(button())).toContain(GLYPH_PATHS.heart);
-      expect(paths(button())).toContain(GLYPH_PATHS.check);
+      expect(paths(button())).not.toContain(GLYPH_PATHS.check);
       expect(button().getAttribute('aria-label')).toMatch(/saved to a playlist/i);
     });
-    it('updates immediately when added and when removed from the last playlist', () => {
+    it('updates its name at once when added and when removed from the last playlist', () => {
       const { rerender } = render(view([list([])]));
-      expect(paths(button())).not.toContain(GLYPH_PATHS.check);
+      expect(button().getAttribute('aria-label')).not.toMatch(/saved to a playlist/i);
       rerender(view([list([t.key])]));
-      expect(paths(button())).toContain(GLYPH_PATHS.check);
-      rerender(view([list([])]));
+      expect(button().getAttribute('aria-label')).toMatch(/saved to a playlist/i);
       expect(paths(button())).not.toContain(GLYPH_PATHS.check);
+      rerender(view([list([])]));
+      expect(button().getAttribute('aria-label')).not.toMatch(/saved to a playlist/i);
     });
     it('does not show a check for another song or an album-only save', () => {
       render(view([list(['other-song']), list([t.key], true)]));

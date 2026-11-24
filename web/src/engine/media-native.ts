@@ -99,6 +99,8 @@ export interface MediaHandlers {
   seek?: (positionMs: number) => void;
   /** Play a specific library song by its track key (an Android Auto tap, or a resolved voice query). */
   playId?: (id: string) => void;
+  /** CAR-X-001: the car's X took this song (the one the car plays) out; drop it and play the next one. */
+  leave?: (id: string) => void;
   /** Play the queue item at this index. */
   playIndex?: (index: number) => void;
   /** A raw search query (voice), when the native side could not resolve it to a song itself. */
@@ -379,6 +381,7 @@ export function installMediaCommands(): void {
       case 'prev': handlers.prev?.(); break;
       case 'seek': handlers.seek?.(Math.max(0, Number(cmd.positionMs) || 0)); break;
       case 'playId': if (cmd.id) handlers.playId?.(String(cmd.id)); break;
+      case 'leave': if (typeof cmd.id === 'string' && cmd.id && cmd.id.length <= 500) handlers.leave?.(cmd.id); break;
       case 'playIndex': handlers.playIndex?.(Math.max(0, Number(cmd.index) || 0)); break;
       case 'search': handlers.search?.(String(cmd.query ?? '')); break;
       case 'catalogSearch': {

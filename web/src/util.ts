@@ -1,4 +1,5 @@
 import { downloadsAvailable } from './engine/downloads';
+import { rowArtist, runArtist } from './engine/artist-variety';
 import { familyIdentity, genreIdentity, subIdentity, type GenreIdentity } from './engine/genre-identity';
 import { styleCore } from './engine/genre-fill';
 import { moodShufflePick, type ShuffleMood } from './engine/mood-shuffle';
@@ -173,7 +174,11 @@ export function stepQueue(
   fromKey: string | null,
   dir: 1 | -1,
   hidden: Set<string>,
-  o: { shuffle: boolean; repeat: RepeatMode; heard: ReadonlySet<string>; rand?: () => number; ready?: (track: Track) => boolean; prefer?: ReadonlyMap<string, number>; mood?: ShuffleMood | null; inOrder?: boolean },
+  o: {
+    shuffle: boolean; repeat: RepeatMode; heard: ReadonlySet<string>; rand?: () => number; ready?: (track: Track) => boolean; prefer?: ReadonlyMap<string, number>; mood?: ShuffleMood | null; inOrder?: boolean;
+    /** ARTIST-RUN-001: artist credits of the songs played, oldest first (the Discover queue's shuffle only). */
+    recentArtists?: readonly string[];
+  },
 ): QueueStep | null {
   const playable = items.filter((x) => !hidden.has(x.track.key) && canPlayHere(x.playback));
   /**
@@ -198,8 +203,16 @@ export function stepQueue(
     const from = best(all);
     return from[Math.min(from.length - 1, Math.floor(rand() * from.length))]!;
   };
+  // ARTIST-RUN-001: after MAX_ARTIST_RUN songs in a row by one artist, the shuffle's next song is by another one
+  // whenever the list holds one to choose.
+  const run = o.shuffle && o.recentArtists ? runArtist(o.recentArtists) : '';
+  const breakRun = (xs: RecItem[]) => {
+    if (!run) return xs;
+    const others = xs.filter((x) => rowArtist(x.track) !== run);
+    return others.length ? others : xs;
+  };
   if (o.shuffle && dir === 1) {
-    const fresh = choosable.filter((x) => x.track.key !== fromKey && !o.heard.has(x.track.key));
+    const fresh = breakRun(choosable.filter((x) => x.track.key !== fromKey && !o.heard.has(x.track.key)));
     if (fresh.length) {
       // SHUFFLE-ORDER-001: in queue order the list IS the decision; a pick remembered from before must not override it.
       const kept = !o.inOrder && shuffleNext && shuffleNext.from === fromKey && shuffleNext.heard === o.heard && !shuffleNext.wrapped ? fresh.find((x) => x.track.key === shuffleNext!.key) : undefined;
@@ -210,7 +223,7 @@ export function stepQueue(
     if (o.repeat !== 'all') return null;
     const others = choosable.filter((x) => x.track.key !== fromKey);
     if (!others.length && !choosable.length) return null;
-    const pool = others.length ? others : choosable;
+    const pool = breakRun(others.length ? others : choosable);
     const kept = !o.inOrder && shuffleNext && shuffleNext.from === fromKey && shuffleNext.heard === o.heard && shuffleNext.wrapped ? pool.find(x => x.track.key === shuffleNext!.key) : undefined;
     const item = kept ?? pick(pool);
     shuffleNext = { from: fromKey, key: item.track.key, heard: o.heard, wrapped: true };

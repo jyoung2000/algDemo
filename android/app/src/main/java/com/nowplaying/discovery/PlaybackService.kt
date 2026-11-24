@@ -1058,7 +1058,8 @@ class PlaybackService : MediaLibraryService() {
           val already = CarFeedback.state(id).second
           CarFeedback.submit(id, if (already) "undislike" else "dislike")
           // Not for me: move on, as the car's other music apps do. Undoing a dislike stays put.
-          if (!already && player.hasNextMediaItem()) player.seekToNext()
+          // CAR-X-001 (owner, 2026-11-24): wherever the song sits, not only when Media3 sees a next item.
+          if (!already && !player.leaveSong(id) { CarFeedback.state(it.id).second }) tellDriver("Nothing else is ready to play yet")
           if (!already) moodNudge(id, "dislike")
         }
         ACTION_STAR_ARTISTS -> {

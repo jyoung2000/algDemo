@@ -33,3 +33,19 @@ export function artistLoad(
 export function rowArtist(t: { artists?: readonly string[] | null; artist?: string | null }): string {
   return primaryArtist({ artists: t.artists?.length ? [...t.artists] : t.artist ? [t.artist] : [] });
 }
+
+/**
+ * ARTIST-RUN-001 (owner, 2026-11-24): "On shuffle ensure the same artist cant be played more than 4 times in a row on
+ * the discover tab if the discover / now playing queue has multiple artist".
+ */
+export const MAX_ARTIST_RUN = 4;
+
+/**
+ * The artist (as the engine names it) of the last MAX_ARTIST_RUN plays when they were all by one artist, else ''.
+ * [recent] holds the artist credits of the songs played, oldest first.
+ */
+export function runArtist(recent: readonly string[]): string {
+  if (recent.length < MAX_ARTIST_RUN) return '';
+  const last = recent.slice(-MAX_ARTIST_RUN).map((a) => primaryArtist({ artists: [a] }));
+  return last[0] && last.every((a) => a === last[0]) ? last[0] : '';
+}

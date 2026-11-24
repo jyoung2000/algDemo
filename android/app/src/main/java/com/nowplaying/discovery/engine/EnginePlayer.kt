@@ -154,7 +154,7 @@ class EnginePlayer(
   /** A queue entry: the song, and the id it was chosen under (a playlist-scoped car id keeps its context). */
   data class Entry(val song: MediaHub.Song, val mediaId: String = song.id)
 
-  private val queue = PlayQueue<Entry>(keyOf = { it.mediaId }, isPlayable = { it.song.source != null && it.song.ready }, heardBefore = { it.song.heard })
+  private val queue = PlayQueue<Entry>(keyOf = { it.mediaId }, isPlayable = { it.song.source != null && it.song.ready }, heardBefore = { it.song.heard }, artistOf = { it.song.artist })
   private val repeatSync = RepeatSync()
   private var repeatFromPage = false
   private var playWhenReady = false
@@ -722,6 +722,35 @@ class EnginePlayer(
     log(if (forward) "next" else "prev", heard)
     loadCurrent(0, chosen = false)
   }
+
+  /**
+   * CAR-X-001 (owner, 2026-11-24: "ensure the X button works on android auto"): the car's X took song [id] out while it
+   * plays. With the phone page in charge the page drops it and plays the next one; otherwise the queue does
+   * ([PlayQueue.leave], skipping songs [avoid] turns down). Media3's own Next was not enough: it does nothing for the
+   * last song of the list, under shuffle too. Returns false when nothing can follow: the song is paused instead.
+   */
+  fun leaveSong(id: String, avoid: (MediaHub.Song) -> Boolean): Boolean {
+    val cur = queue.current ?: return false
+    if (cur.song.id != id && cur.mediaId != id) return false
+    if (pageLive) { page?.command(JSONObject().put("type", "leave").put("id", cur.song.id)); Log.i(TAG, "leave ${id.take(60)}: page"); return true }
+    val heard = heardNow()
+    val size = queue.items.size
+    if (queue.leave(cur.mediaId, avoid = { avoid(it.song) }, canFetch = { it.song.source != null }) == null) {
+      Log.i(TAG, "leave ${id.take(60)}: nothing to follow in $size (heard ${queue.items.count { it.song.heard }}, ready ${queue.items.count { it.song.ready }}, once=${queue.playsOnce})")
+      changePlayWhenReady(false)
+      return false
+    }
+    Log.i(TAG, "leave ${id.take(60)}: now ${queue.current?.song?.id?.take(60)} (ready=${queue.current?.song?.ready})")
+    cue = null
+    cueFor = null
+    nativeChange()
+    log("next", heard)
+    loadCurrent(0, chosen = queue.current?.song?.ready != true) // a song still to fetch waits for its file
+    return true
+  }
+
+  /** Tests only: start the next test from an empty queue (CAR-X-001 tests take songs out of it). */
+  internal fun forgetQueueForTests() { queue.set(emptyList(), -1); invalidateState() }
 
   /** Make [song] current: in the queue if it is there, appended otherwise (a cue from outside the list). */
   private fun moveTo(song: MediaHub.Song): Boolean {

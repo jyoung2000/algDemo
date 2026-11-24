@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { App } from './App';
+import { installMediaCommands } from './engine/media-native';
 import { api, type RecItem, type RecResult, type Track } from './api';
 vi.mock('./api', async (orig) => {
   const actual = await orig<typeof import('./api')>();
@@ -157,4 +158,38 @@ describe('the X takes a song out of the queue even when the engine still holds i
     expect(container.querySelector('audio:not([paused])') === null || [...container.querySelectorAll('audio')].every((a) => a.paused)).toBe(true);
   });
 
+});
+
+// CAR-X-001 (owner, 2026-11-24): "ensure the X button works on android auto". The car names the song it is playing
+// (which the page may not know); that song leaves the list and the one after it plays. The car's dislike alone never
+// moves the music: the car's service already moved it.
+describe('the car X', () => {
+  beforeEach(() => { (window as unknown as { AirwaveNative?: unknown }).AirwaveNative = { media: vi.fn() }; installMediaCommands(); });
+  afterEach(() => { delete (window as unknown as { AirwaveNative?: unknown }).AirwaveNative; });
+  const playable = (x: RecItem) => ({ ...x, playback: { kind: 'preview', preview: `https://cdn.test/${x.track.key}.mp3`, open: [] } } as unknown as RecItem);
+  const cmd = (o: unknown) => ((window as unknown as Record<string, (j: string) => void>)['__awMediaCmd'])!(JSON.stringify(o));
+  it('takes out the song the car plays and plays the one after it, even when the page shows another', async () => {
+    const all = { ...result, items: [playable(good), playable(bad), playable(third)] } as unknown as RecResult;
+    vi.mocked(api.last).mockResolvedValue(all);
+    vi.mocked(api.rerank).mockResolvedValue({ ...all, taste: null } as never);
+    const { container } = render(<App />);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Play Better song' }))[0]!);
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')?.textContent).toContain('Better song'));
+    await act(async () => { cmd({ type: 'leave', id: 'bad' }); });
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')?.textContent).toContain('Third song'));
+    expect(screen.queryByText('Unwanted song', { selector: 'ol.recs *' })).toBeNull();
+  });
+  it('a dislike from the car teaches but does not move the song', async () => {
+    const all = { ...result, items: [playable(bad), playable(good), playable(third)] } as unknown as RecResult;
+    vi.mocked(api.last).mockResolvedValue(all);
+    vi.mocked(api.rerank).mockResolvedValue({ ...all, taste: null } as never);
+    const { container } = render(<App />);
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Play Unwanted song' }))[0]!);
+    await waitFor(() => expect(container.querySelector('ol.recs > li.is-playing')?.textContent).toContain('Unwanted song'));
+    await act(async () => { cmd({ type: 'feedback', id: 'bad', kind: 'dislike' }); });
+    await waitFor(() => expect(api.feedback).toHaveBeenCalledWith('dislike', expect.objectContaining({ key: 'bad' }), expect.anything()));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(container.querySelector('ol.recs > li.is-playing')).toBeNull();
+    expect(container.querySelector('.player, .np, .dock')?.textContent ?? '').toContain('Unwanted song');
+  });
 });

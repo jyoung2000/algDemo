@@ -90,25 +90,17 @@ describe('the held-on-device mark sits on the artwork, never on Play (ROW-CHECK-
   });
 });
 
-describe('the playlist tick does not push the star off centre (ROW-CHECK-001)', () => {
-  it('keeps the star as the only thing the button centres', () => {
-    const { container } = render(<SongStar saved />);
-    const star = container.querySelector('.song-star')!;
-    expect(star.querySelectorAll('svg').length).toBe(2);
-    expect(star.querySelector('.song-star__check')).not.toBeNull();
-    const tick = rule('song-star.css', '.song-star__check');
-    // Out of the flow: the star stays where it is in a row with no tick.
-    expect(tick).toMatch(/position: absolute;/);
-    expect(rule('song-star.css', '.song-star')).toMatch(/position: relative;/);
-  });
-
-  it('draws the tick small enough to stay inside a 36px round button', () => {
-    const tick = rule('song-star.css', '.song-star__check');
-    const left = Number(/left: calc\(100% - (\d+)px\);/.exec(tick)?.[1] ?? NaN);
-    const size = Number(/width: (\d+)px;/.exec(tick)?.[1] ?? NaN);
-    // The star is 14px, centred: its right edge is 7px from the middle of an 18px-radius button.
-    expect(7 - left + size).toBeLessThanOrEqual(16);
-    expect(size).toBeGreaterThanOrEqual(9);
+// HEART-NO-TICK-001 (owner, 2026-11-24): "Remove the check box near the heart icon". The heart stands alone; a song
+// saved to a playlist says so in the button's name and tooltip only.
+describe('the heart has no playlist tick (HEART-NO-TICK-001)', () => {
+  it('draws only the heart, saved or not', () => {
+    for (const saved of [true, false]) {
+      const { container, unmount } = render(<SongStar saved={saved} />);
+      const star = container.querySelector('.song-star')!;
+      expect(star.querySelectorAll('svg').length).toBe(1);
+      expect(star.querySelector('.song-star__check')).toBeNull();
+      unmount();
+    }
   });
 });
 

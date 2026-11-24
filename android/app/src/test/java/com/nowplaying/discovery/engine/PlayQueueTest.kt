@@ -415,4 +415,88 @@ class PlayQueueTest {
     q.advance(pressed = false)
     assertTrue("a saved list keeps its rounds", q.advance(pressed = true) != null)
   }
+
+  // CAR-X-001 (owner, 2026-11-24): "ensure the X button works on android auto". The car's X takes the song playing out
+  // of the queue and moves on to another song, whatever its place in the list; with nothing left to move to it says so.
+  private fun plain(vararg k: String, shuffle: Boolean = false, at: Int = 0) =
+    PlayQueue<H>({ it.key }, { true }, Random(3)).apply { this.shuffle = shuffle; set(k.map { H(it) }, at) }
+
+  @Test fun theXInTheMiddlePlaysTheOneAfterAndTheSongIsGone() {
+    val q = plain("a", "b", "c", at = 1)
+    val i = q.leave("b")
+    assertEquals("c", i?.let { q.items[it].key })
+    assertEquals(listOf("a", "c"), q.items.map { it.key })
+    assertEquals("c", q.current?.key)
+  }
+
+  @Test fun theXOnTheLastSongGoesBackToTheFirst() {
+    val q = plain("a", "b", "c", at = 2)
+    assertEquals("a", q.leave("c")?.let { q.items[it].key })
+    assertEquals(listOf("a", "b"), q.items.map { it.key })
+  }
+
+  @Test fun theXUnderShuffleMovesOnWhereverTheSongSits() {
+    for (start in 0..3) {
+      val q = plain("a", "b", "c", "d", shuffle = true, at = start)
+      val gone = q.current!!.key
+      val i = q.leave(gone) ?: throw AssertionError("nothing after $gone")
+      assertTrue(q.items[i].key != gone)
+      assertTrue(q.items.none { it.key == gone })
+    }
+  }
+
+  @Test fun theXSkipsSongsTheListenerAlsoTurnedDown() {
+    val q = plain("a", "b", "c", at = 0)
+    assertEquals("c", q.leave("a", avoid = { it.key == "b" })?.let { q.items[it].key })
+  }
+
+  @Test fun theXWithOnlyHeardSongsLeftUnderOnceHasNothingToPlay() {
+    val q = onceQueue(H("a"), H("b", heard = true), H("c", heard = true))
+    assertNull(q.leave("a"))
+    assertEquals("the song stays until something can follow it", "a", q.current?.key)
+  }
+
+  @Test fun theXIsOnlyForTheSongPlaying() {
+    val q = plain("a", "b", at = 0)
+    assertNull(q.leave("b"))
+    assertEquals(listOf("a", "b"), q.items.map { it.key })
+  }
+
+  // ARTIST-RUN-001 (owner, 2026-11-24): "On shuffle ensure the same artist cant be played more than 4 times in a row on
+  // the discover tab if the discover / now playing queue has multiple artist". The car playing on alone keeps it too.
+  private data class A(val key: String, val artist: String)
+  private fun runQueue(vararg s: A, playsOnce: Boolean = true) =
+    PlayQueue<A>({ it.key }, { true }, Random(11), artistOf = { it.artist }).apply { shuffle = true; this.playsOnce = playsOnce; set(s.toList(), 0) }
+
+  @Test fun neverMoreThanFourInARowByOneArtistWhileAnotherIsLeft() {
+    val songs = (1..9).map { A("s$it", if (it % 3 == 0) "Slayr feat. Someone" else "SLAYR") } + listOf(A("k1", "Ken Carson"), A("k2", "Ken Carson"))
+    for (seed in 0 until 25) {
+      val q = PlayQueue<A>({ it.key }, { true }, Random(seed), artistOf = { it.artist }).apply { shuffle = true; playsOnce = true; set(songs, 0) }
+      val played = mutableListOf(q.items[q.index].artist)
+      while (true) { val i = q.advance(pressed = true) ?: break; played += q.items[i].artist }
+      val norm = played.map { PlayQueue.artistKey(it) }
+      val firstKen = norm.indexOfFirst { it == "ken carson" }
+      // Up to the last Ken Carson song, no run of five.
+      val lastKen = norm.indexOfLast { it == "ken carson" }
+      var run = 0
+      for (i in 0..lastKen) { run = if (i > 0 && norm[i] == norm[i - 1]) run + 1 else 1; assertTrue("seed $seed: $norm", run <= 4) }
+      assertTrue(firstKen >= 0)
+      assertEquals(11, played.size)
+    }
+  }
+
+  @Test fun oneArtistAloneStillPlaysOn() {
+    val q = runQueue(*(1..6).map { A("s$it", "Slayr") }.toTypedArray())
+    var n = 1
+    while (q.advance(pressed = true) != null) n++
+    assertEquals(6, n)
+  }
+
+  @Test fun theXMovesToASongStillToFetchWhenNothingIsDownloaded() {
+    data class F(val key: String, val ready: Boolean)
+    val q = PlayQueue<F>({ it.key }, { it.ready }, Random(3)).apply { set(listOf(F("a", true), F("b", false), F("c", false)), 0) }
+    assertNull("nothing ready and no fetch allowed", q.leave("a"))
+    assertEquals("b", q.leave("a", canFetch = { true })?.let { q.items[it].key })
+    assertEquals(listOf("b", "c"), q.items.map { it.key })
+  }
 }

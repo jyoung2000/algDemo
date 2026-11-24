@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { Track, RecItem, RecResult } from './api';
 import { api } from './api';
 import { App } from './App';
 import { resetShuffleNextForTests } from './util';
+import { installMediaCommands } from './engine/media-native';
 
 const tracks = ['a', 'b', 'c', 'd'].map(key => ({ key, title: key.toUpperCase(), artists: ['Test'], provider: 'deezer', platform_id: key, preview: `/fixture/${key}`, tags: [] } as unknown as Track));
 const rows = tracks.map((track, i) => ({ track, rank: i + 1, reasons: [], playback: { preview: track.preview, embed: null, open: [] }, characteristics: {} } as unknown as RecItem));
@@ -90,5 +91,23 @@ describe('SHUFFLE-ONCE-001: the queue shuffle plays a song once', () => {
     click('Saved p a');
     await waitFor(() => expect(current()).toBe('a'));
     click('Fixture Next'); expect(current()).toBe('b');
+  });
+});
+
+// CAR-X-001 (owner, 2026-11-24): "ensure the X button works on android auto". With no other song downloaded yet the X
+// still moves on (the next song fetches and starts); it only stops the song when there is no other song at all.
+describe('CAR-X-001: the X moves on even before the next song is downloaded', () => {
+  beforeEach(() => { (window as unknown as { AirwaveNative?: unknown }).AirwaveNative = { media: vi.fn() }; installMediaCommands(); });
+  afterEach(() => { delete (window as unknown as { AirwaveNative?: unknown }).AirwaveNative; });
+  it('the car X on the only downloaded song plays a song still to download', async () => {
+    shell.on = true; shell.ready.add('a');
+    vi.mocked(api.feedbackState).mockResolvedValue({ state: {}, events: 0, taste: null } as never);
+    render(<App />);
+    await screen.findByRole('button', { name: 'Queue a' });
+    await new Promise((r) => setTimeout(r, 0));
+    click('Queue a'); expect(current()).toBe('a');
+    await act(async () => { ((window as unknown as Record<string, (j: string) => void>)['__awMediaCmd'])!(JSON.stringify({ type: 'leave', id: 'a' })); });
+    await waitFor(() => expect(current()).not.toBe('a'));
+    expect(current()).not.toBe('-');
   });
 });

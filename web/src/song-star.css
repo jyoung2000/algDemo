@@ -1,6 +1,5 @@
 .song-star {
-  /* ROW-CHECK-001: the star is the only thing the button centres. The playlist tick hangs off its lower
-     right corner, out of the flow; beside the star it pushed the star 6px left of every other row's. */
+  /* The heart is the only thing the button centres (ROW-CHECK-001); the playlist tick is gone (HEART-NO-TICK-001). */
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -9,11 +8,3 @@
   line-height: 1;
 }
 .song-star > svg { flex-shrink: 0; }
-.song-star__check {
-  position: absolute;
-  left: calc(100% - 3px);
-  bottom: -3px;
-  width: 9px;
-  height: 9px;
-  color: var(--accent, currentColor);
-}

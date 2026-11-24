@@ -183,6 +183,9 @@ object EngineHub {
     p.libraryChanged(s.queue, s.shuffle, s.repeat, s.once)
   }
 
+  /** Tests only: an empty native queue, so a test that took songs out does not shape the next one. */
+  internal fun forgetQueueForTests() { player?.forgetQueueForTests() }
+
   /** Forget [pg] if it is still the page (a newer Activity may already have attached its own). */
   fun detachPage(pg: EnginePlayer.Page) = main.post { if (page === pg) { page = null; player?.page = null } }
 

@@ -24,7 +24,26 @@ class PlayQueue<T>(
    * waits for a new song. A list with no such marks (a saved playlist) keeps its rounds.
    */
   private val heardBefore: (T) -> Boolean = { false },
+  /** ARTIST-RUN-001: the artist credit of a song, for the four-in-a-row limit of the now playing queue's shuffle. */
+  private val artistOf: (T) -> String = { "" },
 ) {
+  /** ARTIST-RUN-001: the artists (artistKey) of the last songs made current, oldest first. */
+  private val playedArtists = ArrayDeque<String>()
+  private var lastPlayedKey: String? = null
+  private fun played(i: Int) {
+    // One song is one play, however many paths (set, select, advance) make it current.
+    val key = keyOf(items[i])
+    if (key == lastPlayedKey) return
+    lastPlayedKey = key
+    playedArtists.addLast(artistKey(artistOf(items[i])))
+    while (playedArtists.size > MAX_ARTIST_RUN) playedArtists.removeFirst()
+  }
+  /** The artist of the last MAX_ARTIST_RUN songs when they were all by one artist, else "". */
+  private fun runArtist(): String {
+    if (playedArtists.size < MAX_ARTIST_RUN) return ""
+    val a = playedArtists.first()
+    return if (a.isNotEmpty() && playedArtists.all { it == a }) a else ""
+  }
   /**
    * SHUFFLE-ONCE-001: the list is the now playing queue, whose songs play once under shuffle (the page says so, and a
    * list whose songs carry heard marks is one too, so a queue restored without the page keeps the rule).
@@ -125,6 +144,7 @@ class PlayQueue<T>(
     version++
     this.items = items
     index = if (items.isEmpty()) -1 else startIndex.coerceIn(0, items.size - 1)
+    if (index >= 0) played(index)
     if (oldKey != null && current?.let(keyOf) != oldKey && (repeat == Repeat.ONCE || repeat == Repeat.TWICE)) repeat = Repeat.OFF
     if (items.isEmpty()) {
       heard.clear()
@@ -182,6 +202,7 @@ class PlayQueue<T>(
     }
     heard += keyOf(items[i])
     index = i
+    played(i)
     version++
     return true
   }
@@ -232,10 +253,37 @@ class PlayQueue<T>(
     if (pressed && i != index && (repeat == Repeat.ONCE || repeat == Repeat.TWICE)) repeat = Repeat.OFF
     if (wrapped) commitRound(i)
     index = i
+    played(i)
     version++
     // Tracked in order mode too, so switching shuffle on mid-list keeps those songs played.
     heard += keyOf(items[i])
     return i
+  }
+
+  /**
+   * CAR-X-001 (owner, 2026-11-24: "ensure the X button works on android auto"): take the song playing ([key]) out of the
+   * queue and make another current: the one Next would play, else the first playable one after it in the list
+   * (wrapping), never one [avoid] turns down nor, when the list plays once, one already heard. Returns the new index,
+   * or null (nothing changed) when [key] is not the song playing or nothing can follow it.
+   */
+  fun leave(key: String, avoid: (T) -> Boolean = { false }, canFetch: (T) -> Boolean = { false }): Int? {
+    val at = index
+    if (at < 0 || keyOf(items[at]) != key) return null
+    fun open(i: Int) = i != at && !avoid(items[i]) && !(once && (heardBefore(items[i]) || keyOf(items[i]) in heard))
+    fun usable(i: Int) = open(i) && isPlayable(items[i])
+    val after = (1 until items.size).map { (at + it) % items.size }
+    // With nothing held yet, a song that can still be fetched (it starts once its file is here), as a car pick does.
+    val next = findNext(wrap = false)?.first?.takeIf(::usable)
+      ?: after.firstOrNull(::usable)
+      ?: after.firstOrNull { open(it) && canFetch(items[it]) }
+      ?: return null
+    val nextKey = keyOf(items[next])
+    val rest = items.filterIndexed { i, _ -> i != at }
+    set(rest, rest.indexOfFirst { keyOf(it) == nextKey })
+    if (current?.let(keyOf) != nextKey) select(nextKey) else played(index)
+    heard += nextKey
+    version++
+    return index.takeIf { it >= 0 }
   }
 
   /** Commit what [peekPrevious] said. */
@@ -251,7 +299,11 @@ class PlayQueue<T>(
   /** The next playable index and whether reaching it crosses into the next round. */
   private fun findNext(wrap: Boolean): Pair<Int, Boolean>? {
     if (shuffle) {
-      order.firstOrNull { fresh(it) && keyOf(items[it]) !in heard }?.let { return it to false }
+      // ARTIST-RUN-001 (owner, 2026-11-24): the now playing queue never plays one artist more than four times in a row
+      // while another artist's song is left to play.
+      val run = if (once) runArtist() else ""
+      val open = order.filter { fresh(it) && keyOf(items[it]) !in heard }
+      (open.firstOrNull { run.isEmpty() || artistKey(artistOf(items[it])) != run } ?: open.firstOrNull())?.let { return it to false }
       if (!wrap || once) return null
       // Readiness and explicit selection can change which song really closes the round.
       val next = nextRound.firstOrNull { it != index && isPlayable(items[it]) }
@@ -303,5 +355,13 @@ class PlayQueue<T>(
     val r = all.shuffled(random).toMutableList()
     if (r.size > 1 && r.first() == avoidFirst) r.add(r.removeAt(0))
     return r
+  }
+
+  companion object {
+    /** ARTIST-RUN-001: no more songs than this in a row by one artist (the now playing queue's shuffle). */
+    const val MAX_ARTIST_RUN = 4
+    private val SPLIT = Regex(",|&|\\s+(?:feat\\.?|ft\\.?|featuring|with|x)\\s+", RegexOption.IGNORE_CASE)
+    /** The first-named artist of a credit, as one key however it is spelt ("SLAYR feat. X" and "Slayr" match). */
+    fun artistKey(credit: String): String = credit.split(SPLIT).first().trim().lowercase()
   }
 }

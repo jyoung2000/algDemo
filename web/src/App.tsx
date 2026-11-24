@@ -31,6 +31,7 @@ import { savedTracks, playbackRows, preparationTracks, contextRows, addTargetOf,
 import { runCarSimilar } from './engine/car-similar';
 import { captureRows, moodMovable, pinNext, placeMood, playMoodMove } from './engine/mood-apply';
 import { arrangeShuffle, heardIn, rememberStarted, restoreOrder, startedOnRecord, unionHeard } from './engine/shuffle-order';
+import { MAX_ARTIST_RUN } from './engine/artist-variety';
 import { phoneWait } from './engine/native-http';
 import { favArtistsStore } from './fav-artists-store';
 import { CAR_NEW_LIST, CAR_NEW_LIST_NAME, PHONE_LIST, artistNamesOf, decodeCarAlbumId, decodePlaylistMediaId, mediaNativeAvailable, pickCarContext, pushMediaLibrary, pushMediaState, pushMediaTracks, setMediaHandlers, songFromTrack } from './engine/media-native';
@@ -192,6 +193,8 @@ export function App() {
   // to them; a saved list keeps its own rounds.
   const [heardOnRecord, setHeardOnRecord] = useState<ReadonlySet<string>>(() => startedOnRecord());
   const historyRef = useRef<string[]>([]);
+  /** ARTIST-RUN-001: the artist credits of the songs played, oldest first (the newest few are all it needs). */
+  const artistRunRef = useRef<string[]>([]);
   const [saved, setSaved] = useState<SavedItem[] | null>(null);
   /** The listener's saved lists. Loaded with Saved and refreshed by every list edit. */
   const [lists, setListsRaw] = useState<PlaylistSummary[]>([]);
@@ -618,6 +621,7 @@ export function App() {
       if (!heardOnRecord.has(it.track.key)) setHeardOnRecord((h) => new Set(h).add(it.track.key));
     }
     if (!o?.back) historyRef.current = [...historyRef.current.slice(-199), it.track.key];
+    if (!o?.back) artistRunRef.current = [...artistRunRef.current.slice(-(MAX_ARTIST_RUN - 1)), it.track.artists?.[0] ?? it.track.artist ?? ''];
     setPlaying({ track: it.track, playback: it.playback });
     setFocusKey(it.track.key);
   };
@@ -775,7 +779,9 @@ export function App() {
   // SHUFFLE-ORDER-001: in the Discover queue the shuffled order is in the list itself, and playback walks it.
   const discoverShuffle = shuffle && playingContext === null && !result?.sample;
   discoverShuffleRef.current = discoverShuffle;
-  const queueOpts = { shuffle, repeat, heard: heardNow(), ready: stepReady, inOrder: discoverShuffle, mood: discoverShuffle ? null : moodShuffle, prefer: !discoverShuffle && moodOn && shuffle && !moodShuffle ? moodPreferRef.current ?? undefined : undefined };
+  // ARTIST-RUN-001 (owner, 2026-11-24): the Discover queue's shuffle never plays one artist more than four times in a row
+  // while another artist's song is there to play.
+  const queueOpts = { shuffle, repeat, heard: heardNow(), ready: stepReady, inOrder: discoverShuffle, recentArtists: discoverShuffle ? artistRunRef.current : undefined, mood: discoverShuffle ? null : moodShuffle, prefer: !discoverShuffle && moodOn && shuffle && !moodShuffle ? moodPreferRef.current ?? undefined : undefined };
   const nextStep = stepQueue(activeItems, inQueue ? playingKey : null, 1, hidden, queueOpts);
   const back = shuffle ? historyBack(historyRef.current, playingKey, stepReady ? activeItems.filter(x => stepReady(x.track)) : activeItems, hidden) : null;
   const prevStep = shuffle ? (back ? { item: back.item, wrapped: false } : null) : inQueue ? stepQueue(activeItems, playingKey, -1, hidden, queueOpts) : null;
@@ -1035,7 +1041,14 @@ export function App() {
       feedback: (id, kind, carTrack) => {
         const t = trackById(id) ?? (playing?.track.key === id ? playing.track : undefined) ?? onAirSong(id) ?? carTrack;
         if (!t) return;
-        learnFeedback(t, kind).catch((e) => flash(`Could not save that: ${(e as Error).message}`));
+        learnFeedback(t, kind, { fromCar: true }).catch((e) => flash(`Could not save that: ${(e as Error).message}`));
+      },
+      // CAR-X-001 (owner, 2026-11-24): "ensure the X button works on android auto". The car's X: the song it is playing
+      // leaves the queue at once and the next one plays, wherever the song sits (the page may not know it is playing).
+      leave: (id) => {
+        const k = trackById(id)?.key ?? id;
+        setHidden((h) => new Set(h).add(k));
+        leaveSong(k);
       },
       // ARTIST-FAV-CAR-001: the car's Star the artist button stars every artist of the song (the active algorithm's list).
       starArtists: async (id, credit, carTrack) => {
@@ -1254,8 +1267,27 @@ export function App() {
   // ---------------------------------------------------------------- feedback
   const feedbackPending = useRef(new Set<string>());
 
+  /**
+   * REMOVE-X-001 / CAR-X-001: song [k] is taken out while it plays. The next one plays: from the song's own place (it
+   * must still be in the list to have one; it is never the answer), else the first one ready in the list; with none,
+   * the song stops. Used by the app's X and by the car's X (which names the song the car is playing).
+   */
+  const leaveSong = (k: string) => {
+    const gone = new Set(hidden).add(k);
+    const fromHere = stepQueue(activeItems, activeItems.some((x) => x.track.key === k) ? k : null, 1, hidden, queueOpts);
+    const after = (fromHere && fromHere.item.track.key !== k ? fromHere : null)
+      ?? stepQueue(activeItems.filter((x) => x.track.key !== k), null, 1, gone, queueOpts);
+    if (after && (!stepReady || stepReady(after.item.track))) { play(after.item, { newRound: after.wrapped, keepList: true }); return; }
+    // CAR-X-001: nothing downloaded yet to move to: the next song in the list still plays (it fetches, then starts), so
+    // the X never leaves the removed song playing. Only with no other song at all does it stop.
+    const fetchable = stepQueue(activeItems, activeItems.some((x) => x.track.key === k) ? k : null, 1, gone, { ...queueOpts, ready: undefined })
+      ?? stepQueue(activeItems.filter((x) => x.track.key !== k), null, 1, gone, { ...queueOpts, ready: undefined });
+    if (fetchable && fetchable.item.track.key !== k) { play(fetchable.item, { newRound: fetchable.wrapped, keepList: true }); return; }
+    startTokenRef.current++; engineSend({ op: 'pause' }); setPlaying(null);
+  };
+
   /** Explicit judgements teach the same live ranker as listening, without another provider run. */
-  const learnFeedback = async (track: Track, kind: FeedbackKind) => {
+  const learnFeedback = async (track: Track, kind: FeedbackKind, o?: { fromCar?: boolean }) => {
     const k = track.key;
     if (feedbackPending.current.has(k)) return;
     feedbackPending.current.add(k);
@@ -1277,17 +1309,9 @@ export function App() {
       // at once and for this list, played or not. The engine keeps songs already played in its answer (the history is
       // protected), so leaving the removal to the re-rank kept every heard song in the queue, painted red.
       if (kind === 'hide' || kind === 'dislike') setHidden((h) => new Set(h).add(k));
-      // The song playing is the one taken out: the next one plays now, as the car's dislike does. When it was the
-      // last song ready, the first one ready in the list plays; with none, the removed song stops.
-      if (kind === 'dislike' && playing?.track.key === k) {
-        // Step from the song's own place (it must still be in the list to have one); it is never the answer.
-        const gone = new Set(hidden).add(k);
-        const fromHere = stepQueue(activeItems, inQueue ? k : null, 1, hidden, queueOpts);
-        const after = (fromHere && fromHere.item.track.key !== k ? fromHere : null)
-          ?? stepQueue(activeItems.filter((x) => x.track.key !== k), null, 1, gone, queueOpts);
-        if (after && (!stepReady || stepReady(after.item.track))) play(after.item, { newRound: after.wrapped, keepList: true });
-        else { startTokenRef.current++; engineSend({ op: 'pause' }); setPlaying(null); }
-      }
+      // The song playing is the one taken out: the next one plays now. The car moves on by itself (CAR-X-001: its
+      // service asks with a `leave` command), so a dislike from the car never moves the song twice.
+      if (kind === 'dislike' && !o?.fromCar && playing?.track.key === k) leaveSong(k);
       if (kind === 'hide' || kind === 'dislike') {
         // REMOVE-FOREVER-001: the app's own downloaded copy goes too (a copy kept in the Music folder stays).
         const cachedAt = downloadsAvailable() ? queueAudio.sourceHint(track) : null;
