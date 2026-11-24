@@ -66,6 +66,7 @@ describe('the add button', () => {
     const prev = [addedRow(t('a')), addedRow(t('n')), { ...addedRow(t('b')), added: false }];
     const next = [{ ...addedRow(t('z')), added: false }, { ...addedRow(t('b')), added: false }];
     const merged = mergeRerank(prev, next, new Set(['a']));
-    expect(merged.map((x) => x.track.key)).toEqual(['a', 'n', 'z', 'b']);
+    // WP1: z was never in the queue, so the re-rank cannot add it.
+    expect(merged.map((x) => x.track.key)).toEqual(['a', 'n', 'b']);
   });
 });

@@ -502,14 +502,28 @@ export function describeTaste(t?: TasteSummary | null): string {
 }
 
 /**
- * The queue after a live re-rank: songs already played stay where they were (in order), the rest is
- * the new ranking, and ranks are renumbered so the list reads 1..n.
+ * The queue after a live re-rank. WP1 (plan 2026-11-24, A1/A4/A8) and SHUFFLE-STAY-001 (owner, 2026-11-24): "the song
+ * should stay in the queue but the song shouldnt be played again if other songs in the queue havent been played once".
+ * A re-rank only REORDERS: the result holds exactly the keys of `prev`. Played rows, hand-added rows (QUEUE-ADD-001)
+ * and rows the re-rank did not return keep their index; the re-ranked rows fill the remaining slots in the new order.
+ * Returned rows that are not in `prev` are ignored (membership changes only by an explicit add/remove or a discovery batch).
  */
 export function mergeRerank(prev: RecItem[], next: RecItem[], played: ReadonlySet<string>): RecItem[] {
-  // QUEUE-ADD-001: a song the listener added stays where they put it; the ranking never saw it.
-  const kept = prev.filter((x) => played.has(x.track.key) || x.added);
-  const keptKeys = new Set(kept.map((x) => x.track.key));
-  return [...kept, ...next.filter((x) => !keptKeys.has(x.track.key))].map((x, i) => ({ ...x, rank: i + 1 }));
+  const fixed = (x: RecItem) => played.has(x.track.key) || Boolean(x.added);
+  const movable = new Map(prev.filter((x) => !fixed(x)).map((x) => [x.track.key, x] as const));
+  const ranked: RecItem[] = [];
+  const seen = new Set<string>();
+  for (const x of next) {
+    const was = movable.get(x.track.key);
+    if (!was || seen.has(x.track.key)) continue;
+    seen.add(x.track.key);
+    // The engine's row brings the new score and reasons; the queue's own marks on the row stay.
+    ranked.push({ ...was, ...x, ...(was.found ? { found: was.found } : {}) });
+  }
+  let n = 0;
+  return prev
+    .map((x) => (!fixed(x) && seen.has(x.track.key) ? ranked[n++]! : x))
+    .map((x, i) => (x.rank === i + 1 ? x : { ...x, rank: i + 1 }));
 }
 
 const songsN = (n: number) => `${n} new song${n === 1 ? '' : 's'}`;

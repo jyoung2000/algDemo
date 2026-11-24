@@ -69,12 +69,24 @@ describe('ListenMeter: actual time and unique content coverage', () => {
 });
 
 describe('mergeRerank', () => {
-  it('keeps played songs first, drops duplicates, renumbers', () => {
+  // WP1 (plan 2026-11-24, A1/A4) + SHUFFLE-STAY-001: a re-rank only reorders. It never adds a row, never drops one.
+  it('reorders only the movable rows, in their own slots; adds nothing and drops nothing', () => {
+    const prev = [item('a', 1), item('b', 2), item('c', 3), item('d', 4), item('e', 5)];
+    const next = [item('x', 1), item('e', 2), item('c', 3)];
+    const out = mergeRerank(prev, next, new Set(['a']));
+    expect(out.map((x) => x.track.key)).toEqual(['a', 'b', 'e', 'd', 'c']);
+    expect(out.map((x) => x.rank)).toEqual([1, 2, 3, 4, 5]);
+  });
+  it('keeps the song playing and heard songs in the queue when the ranking leaves them out', () => {
     const prev = [item('a', 1), item('b', 2), item('c', 3)];
-    const next = [item('d', 1), item('b', 2), item('c', 3)];
-    const out = mergeRerank(prev, next, new Set(['a', 'b']));
-    expect(out.map((x) => x.track.key)).toEqual(['a', 'b', 'd', 'c']);
-    expect(out.map((x) => x.rank)).toEqual([1, 2, 3, 4]);
+    const out = mergeRerank(prev, [item('c', 1)], new Set(['b']));
+    expect(out.map((x) => x.track.key).sort()).toEqual(['a', 'b', 'c']);
+    expect(out[1]!.track.key).toBe('b');
+  });
+  it('a hand-added row keeps its index', () => {
+    const prev = [item('a', 1), { ...item('n', 2), added: true }, item('b', 3), item('c', 4)];
+    const out = mergeRerank(prev, [item('c', 1), item('b', 2), item('a', 3)], new Set());
+    expect(out.map((x) => x.track.key)).toEqual(['c', 'n', 'b', 'a']);
   });
 });
 

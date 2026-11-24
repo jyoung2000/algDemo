@@ -286,6 +286,8 @@ export interface RecItem {
   characteristics?: Characteristics;
   /** QUEUE-ADD-001: the listener added this song to the queue themselves. */
   added?: boolean;
+  /** WP1 (A8): found by Find similar or a custom discovery; movable by mood and shuffle, never re-scored. */
+  found?: 'similar' | 'custom';
 }
 
 export interface AudioStats {
