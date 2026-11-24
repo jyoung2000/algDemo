@@ -523,9 +523,8 @@ class EnginePlayer(
     val have = queue.items.map { it.mediaId }.toSet()
     val add = songs.filter { it.id !in have }.map { Entry(MediaHub.sourced(it)) }
     if (add.isEmpty()) return 0
-    val keep = queue.current?.mediaId
-    val next = queue.items + add
-    queue.set(next, next.indexOfFirst { it.mediaId == keep }.coerceAtLeast(0))
+    // WP7-APPEND-001: the queue spaces them away from the same artist instead of piling them on the end.
+    queue.insertSpaced(add)
     nativeChange()
     prepareNext()
     invalidateState(); emitSoon()
