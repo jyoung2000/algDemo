@@ -27,14 +27,31 @@ object RadioCatalog {
   const val FAVOURITES = "radio/favourites"
   const val AZ = "radio/az/0"
   const val ALL = "radio/all"
+  // RADIO-AZ-ALL-001 (owner, 2026-11-24): '#' holds every name the Latin alphabet cannot index (other scripts,
+  // symbols, punctuation); digits have their own folder, so no station in the directory is left without a home.
   val LETTERS = ('A'..'Z').map { it.toString() } + "#"
   val NUMBERS = (0..9).map { it.toString() }
+  const val NUMBERS_FOLDER = "radio/numbers"
   fun initial(name: String): String = RadioNames.initial(name)
+  /** The car's A-Z tree: stations in order, then one folder per initial, then the numbers folder. */
+  fun allFolders(): List<String> = listOf(AZ) + LETTERS.map { "radio/letter/$it/0" } + NUMBERS_FOLDER
+  fun numberFolders(): List<String> = NUMBERS.map { "radio/letter/$it/0" }
+  /** The initial and page of a letter folder id, or null when the id is not one (never trust a browse id). */
+  fun letterFolder(id: String): Pair<String, Int>? {
+    val parts = id.split('/')
+    if (parts.size != 4 || parts[0] != "radio" || parts[1] != "letter") return null
+    val letter = parts[2].takeIf { it in LETTERS || it in NUMBERS } ?: return null
+    val offset = parts[3].toIntOrNull()?.takeIf { it in 0..1_000_000 } ?: return null
+    return letter to offset
+  }
 
   data class StationPage(val stations: List<Station>, val nextOffset: Int?)
   const val SEARCH = "radio/search"
   const val STATION_PREFIX = "radio/station/"
   const val PAGE_SIZE = 100
+  /** RADIO-AZ-ALL-001: rows per directory request, and rows scanned per car page, when browsing by initial. */
+  const val INITIAL_BATCH = 500
+  const val INITIAL_BUDGET = 4000
   const val MAX_FAVOURITES = 500
   private const val PREFS = "airwave-radio"
   private const val KEY = "favourites"
@@ -99,7 +116,7 @@ object RadioCatalog {
   }
 
   internal fun rows(array: JSONArray, limit: Int = PAGE_SIZE): List<Station> = (0 until minOf(array.length(), limit)).mapNotNull { array.optJSONObject(it)?.let(::normalize) }.distinctBy { it.id }
-  internal fun sorted(rows: List<Station>): List<Station> = rows.sortedWith(compareBy({ it.name.lowercase(Locale.ROOT) }, { it.id }))
+  internal fun sorted(rows: List<Station>): List<Station> = rows.sortedWith(compareBy({ RadioNames.sortKey(it.name) }, { it.id }))
   fun addListener(listener: () -> Unit) { listeners += listener }
   fun removeListener(listener: () -> Unit) { listeners -= listener }
   fun isFavourite(stationId: String): Boolean = favouriteRows.any { it.id == stationId }
@@ -235,6 +252,12 @@ object RadioCatalog {
     rememberStations(JSONArray(result.stations.map { it.json() }))
     result
   }
+  /** RADIO-AZ-ALL-001: a bounded page of the whole world in alphabetical order, with the directory's own "more". */
+  fun azStations(ctx: Context, offset: Int): ListenableFuture<StationPage> = async {
+    val page = directory.azPage(offset)
+    rememberStations(JSONArray(page.stations.map { it.json() }))
+    page
+  }
   /* --------------------------------------------------------------- CAR-RADIO-FILTERS-001 */
   private const val FILTERS_KEY = "car-filters"
   private const val PLACES_KEY = "places"
@@ -356,23 +379,39 @@ internal class RadioDirectory(private val fetch: (String) -> String) {
   private fun read(path: String): List<RadioCatalog.Station> = RadioCatalog.sorted(RadioCatalog.rows(readRaw(path)))
   /** A directory answer in the directory's own order (filtered car lists keep "most listened-to first"). */
   fun raw(path: String): JSONArray { require(path.startsWith("/json/stations/search?") && path.length <= 2000) { "Invalid directory search" }; return readRaw(path) }
+  // RADIO-AZ-ALL-001 (owner, 2026-11-24): Radio Browser filters names by substring only, so an initial is picked out
+  // locally. A batch holding no match for this initial must not end the letter — the scan runs a bounded budget of raw
+  // rows per car page and hands back an honest raw cursor, so every station in the world is reachable page by page.
   fun letterPage(letter: String, offset: Int): RadioCatalog.StationPage {
     require(letter in RadioCatalog.LETTERS + RadioCatalog.NUMBERS && offset in 0..1_000_000) { "Invalid station initial or page" }
-    val out = mutableListOf<RadioCatalog.Station>(); val seen = mutableSetOf<String>(); var cursor = offset
-    repeat(2) {
+    val out = mutableListOf<RadioCatalog.Station>(); val seen = mutableSetOf<String>()
+    var cursor = offset; var scanned = 0
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(12)
+    while (scanned < RadioCatalog.INITIAL_BUDGET) {
       val q = if (letter == "#") "" else "&name=$letter"
-      val raw = readRaw("/json/stations/search?hidebroken=true&order=name&reverse=false&limit=120&offset=$cursor$q")
-      val size = minOf(raw.length(), 120)
+      val raw = try { readRaw("/json/stations/search?hidebroken=true&order=name&reverse=false&limit=${RadioCatalog.INITIAL_BATCH}&offset=$cursor$q") }
+      // A batch that fails keeps what this page already found and resumes there, rather than skipping those stations.
+      catch (e: Exception) { if (scanned == 0) throw e else return RadioCatalog.StationPage(RadioCatalog.sorted(out), cursor.takeIf { it <= 1_000_000 }) }
+      val size = raw.length()
       for (index in 0 until size) {
         val station = raw.optJSONObject(index)?.let(RadioCatalog::normalize) ?: continue
         if (!RadioNames.matchesInitial(station.name, letter) || !seen.add(station.id)) continue
         out += station
-        if (out.size == 100) return RadioCatalog.StationPage(RadioCatalog.sorted(out), if (index + 1 < size || size == 120) cursor + index + 1 else null)
+        if (out.size == RadioCatalog.PAGE_SIZE) return RadioCatalog.StationPage(RadioCatalog.sorted(out), if (index + 1 < size || size == RadioCatalog.INITIAL_BATCH) cursor + index + 1 else null)
       }
-      cursor += size
-      if (size < 120) return RadioCatalog.StationPage(RadioCatalog.sorted(out), null)
+      cursor += size; scanned += size
+      if (size < RadioCatalog.INITIAL_BATCH) return RadioCatalog.StationPage(RadioCatalog.sorted(out), null)
+      if (System.nanoTime() >= deadline) break
     }
     return RadioCatalog.StationPage(RadioCatalog.sorted(out), cursor.takeIf { it <= 1_000_000 })
+  }
+  /** RADIO-AZ-ALL-001: one page of the plain A-Z list, with "More" offered whenever the directory itself has more. */
+  fun azPage(offset: Int): RadioCatalog.StationPage {
+    require(offset in 0..1_000_000) { "Invalid radio page" }
+    val raw = readRaw("/json/stations/search?hidebroken=true&order=name&reverse=false&limit=${RadioCatalog.PAGE_SIZE}&offset=$offset")
+    val size = raw.length()
+    val stations = RadioCatalog.sorted((0 until size).mapNotNull { raw.optJSONObject(it)?.let(RadioCatalog::normalize) }.distinctBy { it.id })
+    return RadioCatalog.StationPage(stations, (offset + size).takeIf { size == RadioCatalog.PAGE_SIZE && it <= 1_000_000 })
   }
   fun stations(query: String, offset: Int): List<RadioCatalog.Station> {
     require(offset in 0..1_000_000 && query.length <= 100) { "Invalid station search" }

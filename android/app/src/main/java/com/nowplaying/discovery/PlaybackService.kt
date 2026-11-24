@@ -698,11 +698,16 @@ class PlaybackService : MediaLibraryService() {
 
   private fun radioFolder(id: String): MediaItem? = filterFolder(id) ?: when (id) {
     RadioCatalog.ROOT -> folderItem(id, "Radio", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "World radio and favourite stations")
-    RadioCatalog.ALL -> folderItem(id, "All stations", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Browse stations by initial: A–Z and #")
+    RadioCatalog.ALL -> folderItem(id, "All stations", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Browse stations by initial: A–Z, # and 0–9")
     RadioCatalog.FAVOURITES -> folderItem(id, "Favourite stations", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Shared with your phone")
     RadioCatalog.SEARCH -> folderItem(id, "Search stations", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Tap the search button, or say radio KEXP")
-    else -> if (id.matches(Regex("radio/letter/[A-Z0-9#]/[0-9]{1,7}"))) folderItem(id, id.split('/')[2].let { if (it == "#") "Numbers 0–9" else it }, MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Stations beginning with this initial")
-    else if (id.matches(Regex("radio/az/[0-9]{1,7}"))) folderItem(id, "Stations A–Z", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "World stations in alphabetical order") else null
+    // RADIO-AZ-ALL-001 (owner, 2026-11-24): numbers have their own folder, and '#' is the home of every name the
+    // Latin alphabet cannot index, so the car tree reaches the whole world without dumping it into one node.
+    RadioCatalog.NUMBERS_FOLDER -> folderItem(id, "Numbers 0–9", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Stations whose names begin with a number")
+    else -> RadioCatalog.letterFolder(id)?.let { (letter, _) ->
+      if (letter == "#") folderItem(id, "#", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Names in other scripts and symbols")
+      else folderItem(id, letter, MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "Stations beginning with this initial")
+    } ?: if (id.matches(Regex("radio/az/[0-9]{1,7}"))) folderItem(id, "Stations A–Z", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, "World stations in alphabetical order") else null
   }
 
   private fun radioResults(words: String): ListenableFuture<List<MediaItem>> = Futures.catching(
@@ -720,14 +725,16 @@ class PlaybackService : MediaLibraryService() {
     id == CarRadioFilters.LANGUAGE -> Futures.immediateFuture(languageRows(RadioCatalog.carFilters(this)))
     CarRadioFilters.isSetRow(id) -> setFilter(id)
     id.startsWith(CarRadioFilters.STATIONS) -> filteredStationRows(id.removePrefix(CarRadioFilters.STATIONS).toInt())
-    id == RadioCatalog.ALL -> Futures.immediateFuture(listOfNotNull(radioFolder(RadioCatalog.AZ)) + RadioCatalog.LETTERS.mapNotNull { radioFolder("radio/letter/$it/0") })
-    id == "radio/letter/#/0" -> Futures.immediateFuture(RadioCatalog.NUMBERS.mapNotNull { radioFolder("radio/letter/$it/0") })
+    id == RadioCatalog.ALL -> Futures.immediateFuture(RadioCatalog.allFolders().mapNotNull(::radioFolder))
+    id == RadioCatalog.NUMBERS_FOLDER -> Futures.immediateFuture(RadioCatalog.numberFolders().mapNotNull(::radioFolder))
     id.startsWith("radio/letter/") -> {
-      val parts = id.split('/'); val letter = parts.getOrNull(2).orEmpty(); val offset = parts.getOrNull(3)?.toIntOrNull()
-      if (offset == null || offset !in 0..1_000_000 || letter !in RadioCatalog.LETTERS + RadioCatalog.NUMBERS) Futures.immediateFailedFuture(IllegalArgumentException("Invalid station initial or page"))
-      else Futures.transform(RadioCatalog.letterStations(this, letter, offset), { found ->
+      val folder = RadioCatalog.letterFolder(id)
+      if (folder == null) Futures.immediateFailedFuture(IllegalArgumentException("Invalid station initial or page"))
+      else Futures.transform(RadioCatalog.letterStations(this, folder.first, folder.second), { found ->
         val stations = found?.stations.orEmpty().map(RadioCatalog::item)
-        stations + if (found?.nextOffset != null) listOf(folderItem("radio/letter/$letter/${found.nextOffset}", "More $letter stations", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED))
+        // RADIO-AZ-ALL-001: a bounded page plus a next-page folder; an empty page still offers the next one, because
+        // the stations for this initial may sit deeper in the directory than this page reached.
+        stations + if (found?.nextOffset != null) listOf(folderItem("radio/letter/${folder.first}/${found.nextOffset}", if (folder.first == "#") "More stations" else "More ${folder.first} stations", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED))
           else if (stations.isEmpty()) listOf(note("No stations with this initial", "Choose another initial or search")) else emptyList()
       }, MoreExecutors.directExecutor())
     }
@@ -741,9 +748,11 @@ class PlaybackService : MediaLibraryService() {
     else -> {
       val offset = id.removePrefix("radio/az/").toIntOrNull()
       if (offset == null || offset !in 0..1_000_000) Futures.immediateFailedFuture(IllegalArgumentException("Invalid radio page"))
-      else Futures.transform(RadioCatalog.stations(this, offset = offset), { rows ->
-        val stations = rows.orEmpty().map(RadioCatalog::item)
-        stations + if (rows.orEmpty().isNotEmpty() && offset <= 999900) listOf(folderItem("radio/az/${offset + RadioCatalog.PAGE_SIZE}", "More stations A–Z", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED))
+      // RADIO-AZ-ALL-001: "More stations A–Z" follows the directory's own answer, so the list runs to the real end
+      // and a page of unplayable rows no longer reads as the end of the world's stations.
+      else Futures.transform(RadioCatalog.azStations(this, offset), { page ->
+        val stations = page?.stations.orEmpty().map(RadioCatalog::item)
+        stations + if (page?.nextOffset != null) listOf(folderItem("radio/az/${page.nextOffset}", "More stations A–Z", MediaMetadata.MEDIA_TYPE_FOLDER_MIXED))
         else if (stations.isEmpty()) listOf(note("End of stations", "Go back or search for a station")) else emptyList()
       }, MoreExecutors.directExecutor())
     }

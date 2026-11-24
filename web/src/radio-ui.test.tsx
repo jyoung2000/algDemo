@@ -38,7 +38,7 @@ describe('world radio browse and favourites (RADIO-001)', () => {
     await type('107');await flush();expect(f.search).toHaveBeenLastCalledWith(expect.objectContaining({query:'107',letter:''}));
     expect(host.querySelector('.radio-station h2')?.textContent).toContain('107.5 WGCI');
     await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Show alphabet index"]')!.click());await flush();
-    expect(host.querySelector('[aria-label="Station alphabet"]')?.querySelectorAll('button')).toHaveLength(28);
+    expect(host.querySelector('[aria-label="Station alphabet"]')?.querySelectorAll('button')).toHaveLength(29);
   });
 
   it('applies the same alphabet to favourites without showing nonmatching pinned stations', async () => {
@@ -64,7 +64,7 @@ describe('world radio browse and favourites (RADIO-001)', () => {
     await mount(); expect(host.querySelector('[aria-label="Station sections"]')?.textContent).toContain('All stations');
     expect(host.querySelector('[aria-label="Station sections"]')?.textContent).not.toContain('Worldwide');
     const alphabet = host.querySelector('[aria-label="Station alphabet"]')!; expect(alphabet).not.toBeNull();
-    expect(alphabet.querySelectorAll('button')).toHaveLength(28);
+    expect(alphabet.querySelectorAll('button')).toHaveLength(29);
     await act(async()=> (alphabet.querySelector('[aria-label="Stations beginning with K"]') as HTMLButtonElement).click()); await flush();
     expect(f.search).toHaveBeenLastCalledWith(expect.objectContaining({letter:'K',offset:0}));
     expect(alphabet.querySelector('[aria-label="Stations beginning with K"]')?.getAttribute('aria-pressed')).toBe('true');

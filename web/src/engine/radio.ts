@@ -67,8 +67,14 @@ export type RadioRequest = (url: string) => Promise<string>;
 export interface RadioSearch { query?: string; country?: string; language?: string; tag?: string; letter?: string; offset?: number;
   /** RADIO-PLACES-001: the listener's chosen places; when any are given they replace `country`. */
   places?: readonly RadioPlace[] }
-export const STATION_LETTERS = ['', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'] as const;
+// RADIO-AZ-ALL-001 (owner, 2026-11-24): every station in the directory has an initial here. '#' holds the names the
+// Latin alphabet cannot index — other scripts, symbols, punctuation — so no station is left out of the A-Z browse.
+export const STATION_LETTERS = ['', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ', '#'] as const;
 export const STATION_NUMBERS = ['', ...'0123456789'] as const;
+/** RADIO-AZ-ALL-001: rows asked for per directory request, and rows scanned per page, when browsing by initial.
+ * Radio Browser only filters names by substring, so an initial is found locally; the scan must be allowed to run
+ * past batches that hold no match (names in other scripts sit at the far end of a 53,000-station directory). */
+export const STATION_SCAN_BATCH = 1000, STATION_SCAN_BUDGET = 4000;
 const foldedStationName = (name: string) => name.normalize('NFKD').replace(/\p{M}/gu, '').toUpperCase();
 const stationCalls = (name: string): string[] => [...foldedStationName(name).matchAll(/(?:^|[^A-Z])([WK][A-Z]{2,3})(?=$|[^A-Z])/g)].map(m => m[1]!);
 /** Frequency/number aliases come from the real name, never a fabricated dial mapping. */
@@ -98,6 +104,12 @@ export function stationInitial(name: string): string {
   const call = stationCalls(name)[0]; if (call) return call[0]!;
   const brand = foldedStationName(name.trimStart()).replace(/^[^\p{L}]+/u, '').replace(/^(?:FM|AM|HD)\b[\s:-]*/, '');
   const first = brand.charAt(0); return /^[A-Z]$/.test(first) ? first : '#';
+}
+// RADIO-AZ-ALL-001 (owner, 2026-11-24): one order for the whole world — the name read as a reader reads it (case and
+// accents ignored, numbers in numeric order), with the station id breaking ties so paging never reshuffles a list.
+export function compareStations(a: RadioStation, b: RadioStation): number {
+  const byName = a.name.trim().localeCompare(b.name.trim(), 'en', { sensitivity: 'base', numeric: true });
+  return byName || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 }
 export function stationMatchesInitial(name: string, initial: string): boolean {
   return !initial || (/^[0-9]$/.test(initial) ? stationNumbers(name).some(n => n.startsWith(initial)) : stationInitial(name) === initial);
@@ -143,7 +155,11 @@ export class RadioDirectory {
     if (letter && !/^[A-Z0-9#]$/.test(letter)) throw new Error('Invalid station initial');
     let offset = Math.max(0, Math.floor(opts.offset || 0));
     const narrowed = !!letter || !!stationQueryParts(opts.query || '');
-    const limit = narrowed ? 120 : 24, visibleLimit = (stationQueryParts(opts.query || '')?.frequency?.length || 0) >= 2 ? 48 : 24, out: RadioStation[] = [], seen = new Set<string>();
+    // RADIO-AZ-ALL-001: browsing by initial scans a budget of raw rows per page, so a batch holding no match for this
+    // initial never ends the list; only the directory running out does.
+    const browsing = !!letter && !opts.query?.trim();
+    const limit = browsing ? STATION_SCAN_BATCH : narrowed ? 120 : 24, budget = browsing ? STATION_SCAN_BUDGET : narrowed ? 240 : 24;
+    const visibleLimit = (stationQueryParts(opts.query || '')?.frequency?.length || 0) >= 2 ? 48 : 24, out: RadioStation[] = [], seen = new Set<string>();
     if (narrowed && offset === 0) {
       const cached = [...this.namedMatches, ...[...this.aliases.values()].reverse()];
       for (const station of cached) {
@@ -155,14 +171,18 @@ export class RadioDirectory {
         seen.add(station.id); out.push(station);
       }
     }
-    for (let batch = 0; batch < (narrowed ? 2 : 1); batch++) {
+    for (let scanned = 0; scanned < budget;) {
       const q = new URLSearchParams({ hidebroken: 'true', order: narrowed ? 'name' : 'clickcount', reverse: narrowed ? 'false' : 'true', limit: String(limit), offset: String(offset) });
       const name = opts.query?.trim() ? stationQuerySource(opts.query) : letter === '#' ? '' : letter;
       if (name) q.set('name', name);
       if (opts.country) q.set('countrycode', opts.country);
       if (opts.language) q.set('language', opts.language);
       if (opts.tag) { q.set('tag', opts.tag); q.set('tagExact', 'true'); }
-      const data = await this.read(`/json/stations/search?${q}`);
+      // RADIO-AZ-ALL-001: a batch that fails keeps the stations already found and hands back its own offset, so
+      // "More stations" resumes exactly where the directory stopped answering instead of skipping those stations.
+      let data: unknown;
+      try { data = await this.read(`/json/stations/search?${q}`); }
+      catch (e) { if (!scanned) throw e; return { stations: out, nextOffset: offset }; }
       if (!Array.isArray(data)) throw new Error('The station directory returned an invalid page');
       for (let index = 0; index < data.length; index++) {
         const station = normalizeStation(data[index]);
@@ -173,7 +193,7 @@ export class RadioDirectory {
         if (stationQueryParts(opts.query || '')?.call) this.namedMatches = out.slice(0, 12);
         if (out.length === visibleLimit) return { stations: out, nextOffset: index + 1 < data.length || data.length === limit ? offset + index + 1 : null };
       }
-      offset += data.length;
+      offset += data.length; scanned += data.length;
       if (data.length < limit) return { stations: out, nextOffset: null };
     }
     return { stations: out, nextOffset: offset };

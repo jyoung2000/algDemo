@@ -39,15 +39,17 @@ class RadioCatalogTest {
   }
   @Test fun letterBrowseScansBeyondNonmatchingRowsWithAnHonestRawCursor() {
     val urls = mutableListOf<String>()
-    val d = RadioDirectory { u -> urls += u; if (u.contains("offset=0")) JSONArray((0..119).map { row("r$it", "Radio K") }).toString() else JSONArray().put(row("k", "KEXP")).toString() }
+    val batch = RadioCatalog.INITIAL_BATCH
+    val d = RadioDirectory { u -> urls += u; if (u.contains("offset=0")) JSONArray((0 until batch).map { row("r$it", "Radio K") }).toString() else JSONArray().put(row("k", "KEXP")).toString() }
     val page = d.letterPage("K", 0)
     assertEquals(listOf("KEXP"), page.stations.map { it.name }); assertNull(page.nextOffset)
-    assertEquals(2, urls.size); assertTrue(urls.last().contains("offset=120")); assertTrue(urls.first().contains("name=K"))
+    assertEquals(2, urls.size); assertTrue(urls.last().contains("offset=$batch")); assertTrue(urls.first().contains("name=K"))
   }
   @Test fun boundedEmptyLetterBatchDoesNotClaimThatNoStationsExist() {
-    var calls = 0; val d = RadioDirectory { calls++; JSONArray((0..119).map { row("r$it", "Radio K") }).toString() }
+    var calls = 0; val batch = RadioCatalog.INITIAL_BATCH
+    val d = RadioDirectory { calls++; JSONArray((0 until batch).map { row("r$it", "Radio K") }).toString() }
     val page = d.letterPage("K", 0)
-    assertTrue(page.stations.isEmpty()); assertEquals(240, page.nextOffset); assertEquals(2, calls)
+    assertTrue(page.stations.isEmpty()); assertEquals(RadioCatalog.INITIAL_BUDGET, page.nextOffset); assertEquals(RadioCatalog.INITIAL_BUDGET / batch, calls)
   }
 
   private fun row(id: String, name: String) = JSONObject().put("id", id).put("name", name).put("url", "https://streams.example/$id")

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { normalizeStation, parseBroadcast, freshBroadcast, heardCredit, stationLocation, RadioDirectory, MetadataPoller } from './radio';
+import { normalizeStation, parseBroadcast, freshBroadcast, heardCredit, stationLocation, RadioDirectory, MetadataPoller, STATION_SCAN_BATCH, STATION_SCAN_BUDGET } from './radio';
 const raw = { stationuuid: 'abc', name: 'Radio Test', url_resolved: 'https://stream.example.com/live', country: 'Canada', state: 'Quebec', language: 'French', tags: 'jazz,news', lastcheckok: 1, geo_lat: 45, geo_long: -73 };
 describe('world radio identity and metadata (RADIO-001)', () => {
   it('preserves real location, language and broadcaster URLs, rejects non-stream URLs', () => {
@@ -75,10 +75,10 @@ describe('station alphabet and directory cursors (RADIO-ALPHA-001)', () => {
   });
   it('queries the directory for a letter and advances through raw nonmatching rows, not just the displayed first page', async () => {
     const calls: URL[] = [];
-    const d = new RadioDirectory(async url => { const u = new URL(url); calls.push(u); const off = Number(u.searchParams.get('offset')); return JSON.stringify(off === 0 ? Array.from({length:120},(_,i)=>({...raw,stationuuid:`other-${i}`,name:`Radio k ${i}`})) : [{...raw,stationuuid:'k1',name:'KEXP'}]); });
+    const d = new RadioDirectory(async url => { const u = new URL(url); calls.push(u); const off = Number(u.searchParams.get('offset')); return JSON.stringify(off === 0 ? Array.from({length:STATION_SCAN_BATCH},(_,i)=>({...raw,stationuuid:`other-${i}`,name:`Radio k ${i}`})) : [{...raw,stationuuid:'k1',name:'KEXP'}]); });
     const page = await d.page({ letter:'K', country:'US', tag:'jazz' });
     expect(page.stations.map(s=>s.name)).toEqual(['KEXP']); expect(page.nextOffset).toBeNull();
-    expect(calls.map(u=>u.searchParams.get('offset'))).toEqual(['0','120']);
+    expect(calls.map(u=>u.searchParams.get('offset'))).toEqual(['0',String(STATION_SCAN_BATCH)]);
     expect(calls[0]!.searchParams.get('name')).toBe('K'); expect(calls[0]!.searchParams.get('countrycode')).toBe('US');
   });
   it('does not lose matching records when a raw batch contains more than one visible page', async () => {
@@ -90,8 +90,8 @@ describe('station alphabet and directory cursors (RADIO-ALPHA-001)', () => {
     expect(new Set([...one.stations,...two.stations].map(s=>s.id)).size).toBe(48);
   });
   it('keeps a raw cursor after a bounded empty scan, rather than falsely claiming there are no letter matches anywhere', async () => {
-    let calls=0;const d=new RadioDirectory(async()=>{calls++;return JSON.stringify(Array.from({length:120},(_,i)=>({...raw,stationuuid:`n${i}`,name:'Radio K'})))});
-    const page=await d.page({letter:'K'});expect(page.stations).toEqual([]);expect(page.nextOffset).toBe(240);expect(calls).toBe(2);
+    let calls=0;const d=new RadioDirectory(async()=>{calls++;return JSON.stringify(Array.from({length:STATION_SCAN_BATCH},(_,i)=>({...raw,stationuuid:`n${i}`,name:'Radio K'})))});
+    const page=await d.page({letter:'K'});expect(page.stations).toEqual([]);expect(page.nextOffset).toBe(STATION_SCAN_BUDGET);expect(calls).toBe(STATION_SCAN_BUDGET/STATION_SCAN_BATCH);
   });
 });
 

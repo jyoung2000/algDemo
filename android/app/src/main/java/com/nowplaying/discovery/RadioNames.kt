@@ -35,4 +35,7 @@ internal object RadioNames {
   }
   fun matchesInitial(name: String, initial: String): Boolean = initial.isBlank() ||
     if (initial.matches(Regex("[0-9]"))) numbers(name).any { it.startsWith(initial) } else RadioNames.initial(name) == initial
+  // RADIO-AZ-ALL-001 (owner, 2026-11-24): one worldwide order, the same as the web list — the name with case and
+  // accents folded away, so Énergie sits beside Energie; the caller adds the station id as the tiebreak.
+  fun sortKey(name: String): String = fold(name.trim())
 }

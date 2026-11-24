@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { STATION_LETTERS, STATION_NUMBERS, stationMatchesInitial, stationMatchesQuery, MetadataPoller, BackgroundRetry, freshBroadcast, stationLocation, type RadioStation, type Broadcast } from './engine/radio';
+import { STATION_LETTERS, STATION_NUMBERS, compareStations, stationMatchesInitial, stationMatchesQuery, MetadataPoller, BackgroundRetry, freshBroadcast, stationLocation, type RadioStation, type Broadcast } from './engine/radio';
 import { favouriteStations, saveFavouriteStations, matchSongBroadcast, radioDirectory, radioSession, stationMetadata, radioGeocode, shareRadioPlaces } from './engine/radio-client';
 import { readPlaces, savePlaces, stationInPlace, PLACES_MAX, type RadioPlace } from './engine/radio-places';
 import type { Track } from './api';
@@ -43,6 +43,8 @@ const LANGUAGE_CHOICES = ['english', 'spanish', 'french', 'german', 'italian', '
 const genreTone = (word: string) => genreIdentity(word)?.color ?? topicTone(word);
 /** RADIO-LIVE-001: a live tick re-asks any station whose answer is older than this (ticks are 20 s apart). */
 const RADIO_LIVE_MAX_AGE = 15000;
+/** RADIO-AZ-ALL-001: directory pages a lone initial may walk through by itself before it asks the listener to go on. */
+const AUTO_PAGES = 24;
 function readStars(): RadioStation[] { try { return JSON.parse(localStorage.getItem('airwave:radio-stations') || '[]') as RadioStation[]; } catch { return []; } }
 export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioStation) => void; onOpenArtist?: (t: RadioArtistTarget) => void; onPlaySong?: (t: Track) => void }) {
   const activeStation = useSyncExternalStore(radioSession.subscribe, () => radioSession.get().station);
@@ -107,13 +109,16 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
   const onAirIds = new Set(onAir.map(s => s.id));
   const matchingStars = stars.filter(s => stationMatchesInitial(s.name, letter) && stationMatchesQuery(s.name, query) && (chosen.length ? chosen.some(p => stationInPlace(s, p)) : !country || s.countryCode === country) && (!language || s.language.toLowerCase().includes(language.toLowerCase())) && (!tag || s.tags.includes(tag)));
   const listed = (saved ? matchingStars : [...new Map([...matchingStars, ...stations].map(s => [s.id, s])).values()]).filter(s => stationMatchesInitial(s.name, letter) && stationMatchesQuery(s.name, query));
-  if (letter) listed.sort((a, b) => a.name.localeCompare(b.name, 'en', { sensitivity: 'base', numeric: true }));
+  if (letter) listed.sort(compareStations); // RADIO-AZ-ALL-001: one worldwide order, accents and case folded, id breaks ties
   const shown = onAir.length ? [...onAir, ...listed.filter(s => !onAirIds.has(s.id))] : listed;
   useEffect(() => { let live = true; const read = () => { void favouriteStations().then(v => { if (live) setStars(v); }); }; read(); window.addEventListener('airwave-radio-favourites', read); return () => { live = false; window.removeEventListener('airwave-radio-favourites', read); }; }, []);
   useEffect(() => { let gone = false; void radioDirectory.countries().then(v => { if (!gone) setCountries(v.sort((a, b) => countryName(a.code).localeCompare(countryName(b.code)))); }).catch(() => {}); return () => { gone = true; }; }, []);
-  const load = async (offset: number) => {
+  const load = async (offset: number, steps = 0) => {
     const g = ++generation.current; lastRequested.current = offset; setBusy(true); setError('');
-    try { const result = await radioDirectory.page({ query, country: chosen.length ? '' : country, language, tag, letter, offset, places: chosen.length ? chosen : undefined }); if (g !== generation.current) return; const rows = result.stations; if (!query && !letter && !offset) browseRef.current = rows; /* RADIO-PLAYING-NOW-002: the stations for the listener's places */ setStations(was => offset ? [...new Map([...was, ...rows].map(s => [s.id, s])).values()] : rows); setHasMore(result.nextOffset !== null); setNextOffset(result.nextOffset); if (!offset) window.scrollTo?.({ top: 0 }); /* RADIO-TOP-001: a fresh directory page presents from the top; More stations keeps the reader's place */ }
+    try { const result = await radioDirectory.page({ query, country: chosen.length ? '' : country, language, tag, letter, offset, places: chosen.length ? chosen : undefined }); if (g !== generation.current) return; const rows = result.stations; if (!query && !letter && !offset) browseRef.current = rows; /* RADIO-PLAYING-NOW-002: the stations for the listener's places */ setStations(was => offset ? [...new Map([...was, ...rows].map(s => [s.id, s])).values()] : rows); setHasMore(result.nextOffset !== null); setNextOffset(result.nextOffset); if (!offset) window.scrollTo?.({ top: 0 }); /* RADIO-TOP-001: a fresh directory page presents from the top; More stations keeps the reader's place */
+      // RADIO-AZ-ALL-001: an initial whose stations sit deeper in the directory keeps looking by itself; the listener
+      // never faces an empty list with a "More stations" button under it.
+      if (!rows.length && result.nextOffset !== null && steps < AUTO_PAGES) return await load(result.nextOffset, steps + 1); }
     catch (e) { if (g === generation.current) setError(e instanceof Error ? e.message : 'Station directory unavailable. Try again.'); }
     finally { if (g === generation.current) setBusy(false); }
   };
@@ -291,9 +296,9 @@ export function Radio({ onTune, onOpenArtist, onPlaySong }: { onTune: (s: RadioS
     </div>
     <div className={`radio-alphabet${numericMode ? ' radio-alphabet--numbers' : ''}`} ref={indexRef} role="group" aria-label={numericMode ? 'Station numbers' : 'Station alphabet'}>
       {(numericMode ? STATION_NUMBERS : STATION_LETTERS).map(initial => <button key={initial || 'all'} type="button" className="radio-alphabet__letter" aria-pressed={letter === initial}
-        aria-label={initial ? `Stations beginning with ${initial}` : 'All station initials'}
+        aria-label={initial === '#' ? 'Stations in other scripts and symbols' : initial ? `Stations beginning with ${initial}` : 'All station initials'}
         onClick={() => setLetter(initial)}>{initial || 'All'}</button>)}
-      <button type="button" className="radio-alphabet__letter radio-alphabet__mode" aria-label={numericMode ? 'Show alphabet index' : 'Show number index'} onClick={() => { setLetter(''); setNumericMode(v => !v); }}>{numericMode ? 'ABC' : '#'}</button>
+      <button type="button" className="radio-alphabet__letter radio-alphabet__mode" aria-label={numericMode ? 'Show alphabet index' : 'Show number index'} onClick={() => { setLetter(''); setNumericMode(v => !v); }}>{numericMode ? 'ABC' : '0–9'}</button>
     </div>
     {error && <p role="alert" className="notice">{error} <button type="button" className="linkbtn" onClick={() => void load(lastRequested.current)}>Try again</button></p>}
     <div aria-busy={busy}>{busy && !shown.length ? <SkeletonList rows={6} label="Loading stations around the world…" art={ROW_COVER} /> : null}
