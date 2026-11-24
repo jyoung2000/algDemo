@@ -2414,10 +2414,12 @@ export class LocalApi {
     // WP1 (plan 2026-11-24, A1/A4): a re-rank orders only the songs the queue holds now. Pool rows that were never
     // chosen stay out, and every queued row comes back (orderAll has no artist cap or tier quota). Queue rows with no
     // pool row are not returned; the page's mergeRerank keeps them where they are (SHUFFLE-STAY-001).
-    const queued = new Set(((this.store.get<Dict>('last_result')?.['items'] ?? []) as { track?: Dict }[]).map((it) => String(it.track?.['key'] ?? '')));
+    const stored = this.store.get<Dict>('last_result');
+    const queued = new Set(((stored?.['items'] ?? []) as { track?: Dict }[]).map((it) => String(it.track?.['key'] ?? '')));
     queued.delete('');
-    // No stored queue (an old install, or a pool restored on its own): rank the pool; the page still ignores rows it never queued.
-    const cands = pool.cands.filter((c) => (queued.size === 0 || queued.has(String(c['key']))) && !exclude.has(String(c['key'])));
+    // No stored queue at all (an old install, or a pool restored on its own): rank the pool; the page still ignores rows
+    // it never queued. A stored queue that is empty ranks nothing.
+    const cands = pool.cands.filter((c) => (!stored || queued.has(String(c['key']))) && !exclude.has(String(c['key'])));
     const chosen = E.orderAll(E.scoreAll(cands as never, ctx), ctx);
     const out = this.serialise(chosen, ctx, 'live', pool.job) as Dict;
     out['taste'] = tasteSummary(ctx.taste);

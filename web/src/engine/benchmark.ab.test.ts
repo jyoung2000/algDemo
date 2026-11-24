@@ -5,6 +5,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import * as E from './engine';
 import * as G from './genres';
 import { buildTasteBlend } from './taste2';
@@ -20,7 +22,9 @@ const f = golden as unknown as {
   impressions: Record<string, number>;
 };
 
-const OUT = 'D:/MusicRecommendationLab/benchmarks/frozen-pool-ab.json';
+// WP0 step 2: output folder from JPLAY_BENCH_OUT, default the OS temp folder (no `D:` folder on Linux/cloud checkouts).
+const BENCH_DIR = process.env['JPLAY_BENCH_OUT'] || join(tmpdir(), 'jplay-bench');
+const OUT = join(BENCH_DIR, 'frozen-pool-ab.json');
 
 describe('frozen-pool A/B: v1 vs v2', () => {
   it('writes the comparison', () => {
@@ -92,7 +96,7 @@ describe('frozen-pool A/B: v1 vs v2', () => {
     const d1b = run(true, 0.5).map((x) => [x.track.key, x.final]);
     expect(d1a).toEqual(d1b);
 
-    mkdirSync('D:/MusicRecommendationLab/benchmarks', { recursive: true });
+    mkdirSync(BENCH_DIR, { recursive: true });
     writeFileSync(OUT, JSON.stringify(out, null, 2));
     expect((out['neutral'] as { v2: { size: number } }).v2.size).toBeGreaterThan(0);
   });
@@ -170,6 +174,7 @@ describe('frozen-pool A/B: v1 vs v2', () => {
     for (const m of scenario.corroboration.moved) if (m.v1 !== null && m.v2 !== null) expect(m.v2).toBeLessThanOrEqual(m.v1 + 2);
     // coverage recovers when audio is impossible
     expect(scenario.no_seed_vector_coverage.v2_mean_coverage).toBeGreaterThan(scenario.no_seed_vector_coverage.v1_mean_coverage);
-    writeFileSync('D:/MusicRecommendationLab/benchmarks/scenario-ab.json', JSON.stringify({ generated: new Date().toISOString(), ...scenario }, null, 2));
+    mkdirSync(BENCH_DIR, { recursive: true });
+    writeFileSync(join(BENCH_DIR, 'scenario-ab.json'), JSON.stringify({ generated: new Date().toISOString(), ...scenario }, null, 2));
   });
 });

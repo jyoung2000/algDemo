@@ -24,8 +24,8 @@ describe('added vs found (WP1, A8)', () => {
   });
   it('a re-rank moves a found row and keeps a hand-added row at the end', () => {
     const prev = [row('a'), row('s', { found: 'similar' }), row('b'), row('h', { added: true })];
-    const out = mergeRerank(prev, [row('b'), row('s'), row('a')], new Set());
-    expect(out.map((x) => x.track.key)).toEqual(['b', 's', 'a', 'h']);
-    expect(out[1]!.found).toBe('similar');
+    const out = mergeRerank(prev, [row('s'), row('b'), row('a')], new Set());
+    expect(out.map((x) => x.track.key)).toEqual(['s', 'b', 'a', 'h']);
+    expect(out[0]!.found).toBe('similar');
   });
 });

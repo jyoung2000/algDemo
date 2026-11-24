@@ -34,8 +34,9 @@ export function arrangeShuffle(items: RecItem[], o: ArrangeShuffleOpts): { items
   let order: string[];
   const known = o.reshuffle ? [] : o.order.filter((k) => byKey.has(k));
   if (!known.length) {
-    // A new order: every song to come in one weighted draw without replacement. (Not by `added`: songs found by a
-    // custom discovery carry it too, and putting them first left a whole Discover list unshuffled.)
+    // A new order: every song to come in one weighted draw without replacement. (Not by `added`: putting those first
+    // once left a whole Discover list unshuffled. Since WP1/A8 found rows carry `found`, and hand-added rows join the
+    // draw like any other song to come.)
     const pool = [...coming];
     order = [];
     // ARTIST-VARIETY-001 (owner, 2026-11-24): the draw skips the artist just drawn (the song playing first) while
