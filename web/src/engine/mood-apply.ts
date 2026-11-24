@@ -5,9 +5,19 @@
  */
 import type { RecItem } from '../api';
 
+/**
+ * WP1 (plan 2026-11-24, A8) / QUEUE-ADD-001: a row the listener added by hand is pinned. Find-similar and custom-discovery
+ * rows carry `found` instead and are movable. Old stored queues marked those `added` too: a row with `added` plus
+ * `custom: true` or a `sound_match` key is read as a found row.
+ */
+export function isPinned(x: RecItem): boolean {
+  const r = x as RecItem & { custom?: boolean; sound_match?: unknown };
+  return Boolean(x.added) && !x.found && !r.custom && !('sound_match' in r);
+}
+
 export function moodMovable(items: RecItem[], o: { currentKey: string | null; played: ReadonlySet<string>; hidden?: ReadonlySet<string> }): RecItem[] {
   const at = o.currentKey ? items.findIndex((x) => x.track.key === o.currentKey) : -1;
-  return items.filter((x, i) => i > at && !x.added && !o.played.has(x.track.key) && !o.hidden?.has(x.track.key) && x.track.key !== o.currentKey);
+  return items.filter((x, i) => i > at && !isPinned(x) && !o.played.has(x.track.key) && !o.hidden?.has(x.track.key) && x.track.key !== o.currentKey);
 }
 
 /** The list with the movable songs in `order`; every other row stays where it was. */

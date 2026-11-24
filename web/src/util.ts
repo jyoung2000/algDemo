@@ -3,6 +3,7 @@ import { rowArtist, runArtist } from './engine/artist-variety';
 import { familyIdentity, genreIdentity, subIdentity, type GenreIdentity } from './engine/genre-identity';
 import { styleCore } from './engine/genre-fill';
 import { moodShufflePick, type ShuffleMood } from './engine/mood-shuffle';
+import { isPinned } from './engine/mood-apply';
 import type { Characteristics, Playback, ProviderId, RecItem, Release, TasteSummary, Track } from './api';
 
 export const PROVIDER_LABEL: Record<string, string> = {
@@ -509,7 +510,7 @@ export function describeTaste(t?: TasteSummary | null): string {
  * Returned rows that are not in `prev` are ignored (membership changes only by an explicit add/remove or a discovery batch).
  */
 export function mergeRerank(prev: RecItem[], next: RecItem[], played: ReadonlySet<string>): RecItem[] {
-  const fixed = (x: RecItem) => played.has(x.track.key) || Boolean(x.added);
+  const fixed = (x: RecItem) => played.has(x.track.key) || isPinned(x);
   const movable = new Map(prev.filter((x) => !fixed(x)).map((x) => [x.track.key, x] as const));
   const ranked: RecItem[] = [];
   const seen = new Set<string>();

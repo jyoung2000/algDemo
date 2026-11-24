@@ -1772,7 +1772,7 @@ export class LocalApi {
           rank: before.length + i + 1, track: cleanTrack(track), score: round(pk.score, 3), coverage: 1, tier: 'related', evidence: 'moderate',
           reasons: [{ factor: 'custom', weight: round(pk.score, 3), text: pk.reason }],
           uncertainty: [], new_release: false, factors: { custom: round(pk.score, 3) }, weights: { custom: 1 },
-          sources: [String(track['provider'])], playback: playbackFor(track), characteristics: characteristicsOf(track, taste), added: true, custom: true,
+          sources: [String(track['provider'])], playback: playbackFor(track), characteristics: characteristicsOf(track, taste), found: 'custom', custom: true,
         };
       });
       const next = this.withKnownGenres({ ...current, phase: 'final', items: [...before, ...items], count: before.length + items.length, saved_at: unixNow() });
@@ -1836,7 +1836,7 @@ export class LocalApi {
         : `${match}% calibrated sound match to “${seedTitle}” (DCLAP audio vectors).` }],
       uncertainty: [], new_release: false, factors: unmeasured ? {} : { audio: match / 100 }, weights: unmeasured ? {} : { audio: 1 },
       sources: [String(track['provider'])], playback: playbackFor(track as Dict), characteristics: characteristicsOf(track as Dict, null),
-      added: true, sound_match: unmeasured ? null : match, ...(below ? { sound_below: true } : {}), ...(unmeasured ? { sound_unmeasured: true } : {}),
+      found: 'similar', sound_match: unmeasured ? null : match, ...(below ? { sound_below: true } : {}), ...(unmeasured ? { sound_unmeasured: true } : {}),
     }));
     const next = this.withKnownGenres({ ...current, phase: 'final', items: [...previous, ...freshItems], count: previous.length + freshItems.length, saved_at: unixNow() });
     // A list replacement or cancellation in mid-search cannot be undone by this late completion.
