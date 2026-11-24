@@ -62,3 +62,21 @@ describe('a new shuffle spreads the artists out (ARTIST-VARIETY-001)', () => {
     expect(r.order.sort()).toEqual(['1', '2', '3']);
   });
 });
+
+describe('orderAll: a re-rank orders every queued song (WP1, A1/A4)', () => {
+  const cands = [rel('slayr|a'), rel('slayr|b'), rel('slayr|c'), rel('slayr|d'), rel('ken carson|x'), rel('kankan|y')];
+  it('returns every row, past the per-artist cap and the queue size', () => {
+    const ctx = ctxOf();
+    const out = E.orderAll(E.scoreAll(cands, ctx), ctx);
+    expect(out.map((s) => s.track.key).sort()).toEqual(cands.map((c) => c.key).sort());
+    expect(E.select(E.scoreAll(cands, ctx), ctx).filter((s) => s.track.artists[0] === 'slayr').length).toBe(2);
+  });
+  it('is deterministic and puts the best-valued row first', () => {
+    const ctx = ctxOf();
+    const sc = E.scoreAll(cands, ctx);
+    const a = E.orderAll(sc, ctx).map((s) => s.track.key);
+    expect(E.orderAll([...sc].reverse(), ctx).map((s) => s.track.key)).toEqual(a);
+    const top = [...sc].sort((x, y) => y.final - y.exposurePenalty - (x.final - x.exposurePenalty) || (x.track.key < y.track.key ? -1 : 1))[0]!;
+    expect(a[0]).toBe(top.track.key);
+  });
+});

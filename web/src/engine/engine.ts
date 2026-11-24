@@ -847,6 +847,46 @@ export function select(scored: Scored[], ctx: Context): Scored[] {
   return chosen;
 }
 
+/**
+ * WP1 (plan 2026-11-24, A1/A4): order EVERY scored row for a re-rank of the existing queue. Same per-pick value as
+ * `select` (final - exposure - similarity to the last six + seed balance + fresh bonus) but no tier quotas, no
+ * per-artist cap and no early exit, so a re-rank can reorder the queue without dropping any of its songs.
+ * `select` itself is untouched (golden parity).
+ */
+export function orderAll(scored: Scored[], ctx: Context): Scored[] {
+  const left = [...scored];
+  const chosen: Scored[] = [];
+  const perSeed: Record<string, number> = {};
+  const seeds = ctx.seeds.map((s) => s.key);
+  const emphOf = (s: Track) => Math.max(0.1, Number(s.emphasis ?? 1.0));
+  const emphTotal = ctx.seeds.reduce((x, s) => x + emphOf(s), 0) || 1.0;
+  const seedShare: Record<string, number> = {};
+  for (const s of ctx.seeds) seedShare[s.key] = emphOf(s) / emphTotal;
+  const lam = 0.06 + 0.06 * Math.min(1.0, 2 * ctx.settings.adventurous);
+  while (left.length) {
+    let bi = 0;
+    let bestVal = -Infinity;
+    for (let i = 0; i < left.length; i++) {
+      const s = left[i]!;
+      let val = s.final - s.exposurePenalty;
+      if (chosen.length) val -= lam * Math.max(...chosen.slice(-6).map((r) => sim(s, r, ctx.vectors)));
+      if (s.bestSeed && seeds.length > 1) {
+        const expected = (seedShare[s.bestSeed] ?? 0) * (chosen.length + 1);
+        val += 0.06 * Math.max(-1.0, Math.min(1.0, expected - (perSeed[s.bestSeed] ?? 0)));
+      }
+      if (ctx.settings.fresh && s.newRelease) val += 0.15;
+      if (val > bestVal || (val === bestVal && s.track.key < left[bi]!.track.key)) {
+        bi = i;
+        bestVal = val;
+      }
+    }
+    const [s] = left.splice(bi, 1);
+    chosen.push(s!);
+    if (s!.bestSeed) perSeed[s!.bestSeed] = (perSeed[s!.bestSeed] ?? 0) + 1;
+  }
+  return chosen;
+}
+
 // ---------------------------------------------------------------------------------------------
 // explanations (only from factors that actually had evidence)
 // ---------------------------------------------------------------------------------------------
