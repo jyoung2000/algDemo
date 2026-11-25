@@ -98,4 +98,13 @@ describe('3.4 must not regress: the owner\u2019s mood example', () => {
     const off = plan.order.slice(0, 6).filter((k) => genreOf(k) === 'jazz' || genreOf(k) === 'rock');
     expect(off).toEqual([]);
   });
+  it('WP6: same on mood_plan v2 (the default setting): 0 off-mood songs in the next 6', () => {
+    const signals = [sig('hiphop90', 'like', NOW - 600), sig('electronic91', 'like', NOW - 300), sig('hiphop92', 'current', NOW, { listened: 0, duration: 200 })];
+    const mood = buildMood(signals, NOW, { plan: 'v2' });
+    const order = ['jazz', 'rock', 'hiphop', 'electronic'] as const;
+    const upcoming = Array.from({ length: 16 }, (_, i) => cand(`${order[i % 4]}${i}`));
+    const plan = moodOrder(upcoming, mood, 0.5, { version: 'v2' });
+    const off = plan.order.slice(0, 6).filter((k) => genreOf(k) === 'jazz' || genreOf(k) === 'rock');
+    expect(off).toEqual([]);
+  });
 });
