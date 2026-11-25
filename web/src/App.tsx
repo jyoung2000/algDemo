@@ -30,7 +30,7 @@ import { useQueueGenres } from './useQueueGenres';
 import { savedTracks, playbackRows, preparationTracks, contextRows, addTargetOf, addedRow, insertAfter, SEARCH_CONTEXT } from './engine/queue-context';
 import { runCarSimilar } from './engine/car-similar';
 import { captureRows, moodMovable, pinNext, placeMood, playMoodMove } from './engine/mood-apply';
-import { arrangeShuffle, heardIn, rememberStarted, restoreOrder, startedOnRecord, unionHeard } from './engine/shuffle-order';
+import { arrangeShuffle, forgetOrder, heardIn, keepOrder, keptOrder, newShuffleSeed, rememberStarted, restoreOrder, seededRand, startedOnRecord, unionHeard } from './engine/shuffle-order';
 import { MAX_ARTIST_RUN } from './engine/artist-variety';
 import { phoneWait } from './engine/native-http';
 import { favArtistsStore } from './fav-artists-store';
@@ -231,6 +231,10 @@ export function App() {
   // WP5 (S8): the mood fits the shown order was dealt with (null: dealt before any mood answer), and the mood answer
   // standing when the last active signal (star, dislike, Find similar) came; the next answer after it re-deals the tail.
   const shuffleDealtFitRef = useRef<ReadonlyMap<string, number> | null>(null);
+  // WP5 (plan step 5): the seed the shown order was drawn from, kept with it, so the order can be dealt again from a
+  // bug report; and whether the order kept on this device has already been looked for this session (step 4).
+  const shuffleSeedRef = useRef<number | null>(null);
+  const shuffleKeptRead = useRef(false);
   const activeSignalRef = useRef<{ fit: ReadonlyMap<string, number> | null } | null>(null);
   // An active signal counts once a newer mood answer than the one standing at the signal has arrived.
   const activeNow = (m: { fit: ReadonlyMap<string, number> } | null) => Boolean(m && activeSignalRef.current && activeSignalRef.current.fit !== m.fit);
@@ -841,18 +845,32 @@ export function App() {
       if (unshuffledRef.current) {
         const back = restoreOrder(result.items, unshuffledRef.current);
         unshuffledRef.current = null; shuffleOrderRef.current = []; shuffleEpochDone.current = -1; shuffleDealtFitRef.current = null;
+        // WP5 (plan step 4): shuffle off drops the kept order; turning it on again deals a new one.
+        shuffleSeedRef.current = null; forgetOrder();
         setResult((prev) => (prev && prev.items === result.items ? { ...prev, items: back } : prev));
       }
       return;
     }
     if (!unshuffledRef.current) unshuffledRef.current = result.items.map((x) => x.track.key);
-    const reshuffle = shuffleEpochDone.current !== shuffleEpoch;
+    let reshuffle = shuffleEpochDone.current !== shuffleEpoch;
+    // WP5 (plan step 4): a restart takes up the order kept on this device for this round again, while at least 60% of
+    // its keys are still in the queue (keptOrder). Below that the queue has moved on under it, and this round deals.
+    if (reshuffle && !shuffleKeptRead.current) {
+      shuffleKeptRead.current = true;
+      const kept = keptOrder(shuffleEpoch, new Set(result.items.map((x) => x.track.key)));
+      if (kept) { shuffleOrderRef.current = kept.order; shuffleSeedRef.current = kept.seed; reshuffle = false; }
+    }
     shuffleEpochDone.current = shuffleEpoch;
+    // WP5 (plan step 5): the draw comes from a generator seeded by the number kept with the order.
+    if (reshuffle || shuffleSeedRef.current === null) shuffleSeedRef.current = newShuffleSeed();
+    const seed = shuffleSeedRef.current;
     const fit = moodOn && moodFitState ? { fit: moodFitState.fit, confidence: moodFitState.confidence, adventurous: settings?.adventurous ?? 0.5 } : null;
-    const r = arrangeShuffle(result.items, { playingKey, heard: heardNow(), order: shuffleOrderRef.current, reshuffle, rand: Math.random, mood: fit, hidden, recentArtists: artistRunRef.current,
+    const r = arrangeShuffle(result.items, { playingKey, heard: heardNow(), order: shuffleOrderRef.current, reshuffle, rand: seededRand(seed), mood: fit, hidden, recentArtists: artistRunRef.current,
       ready: (x) => canPlayHere(x.playback) && (!stepReady || stepReady(x.track)), dealtFit: shuffleDealtFitRef.current, activeSignal: activeNow(fit) });
     shuffleOrderRef.current = r.order;
     shuffleDealtFitRef.current = r.dealtFit;
+    // WP5 (plan step 4): keep the order shown (with its round and its seed) for the next start.
+    keepOrder({ order: r.order, epoch: shuffleEpoch, seed });
     if (activeNow(fit)) activeSignalRef.current = null;
     if (r.items !== result.items) setResult((prev) => (prev && prev.items === result.items ? { ...prev, items: r.items } : prev));
     // eslint-disable-next-line react-hooks/exhaustive-deps

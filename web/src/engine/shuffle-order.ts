@@ -177,3 +177,63 @@ export function rememberStarted(key: string): void {
     localStorage.setItem(QUEUE_STARTED_KEY, JSON.stringify(keys.slice(-QUEUE_STARTED_MAX)));
   } catch { /* storage full or blocked: this session's round still holds it */ }
 }
+
+/**
+ * WP5 (plan step 4): the shuffled order of the songs to come, kept on this device, so a restart carries on with the
+ * order the listener was already shown instead of dealing a new one. Kept with the round it belongs to (`epoch`) and
+ * the seed it was drawn from (step 5).
+ */
+export const SHUFFLE_ORDER_KEY = 'airwave.shuffle-order';
+/** An order is taken up again only while this share of it is still in the queue; below that, deal fresh. */
+export const ORDER_KEEP_SHARE = 0.6;
+
+export interface KeptShuffleOrder { order: readonly string[]; epoch: number; seed: number }
+
+export function keepOrder(o: KeptShuffleOrder): void {
+  try { localStorage.setItem(SHUFFLE_ORDER_KEY, JSON.stringify({ order: [...o.order], epoch: o.epoch, seed: o.seed })); }
+  catch { /* storage full or blocked: this session still holds the order in memory */ }
+}
+
+/** Shuffle off, or a round that will never come back: nothing to take up again. */
+export function forgetOrder(): void {
+  try { localStorage.removeItem(SHUFFLE_ORDER_KEY); }
+  catch { /* nothing kept, nothing to drop */ }
+}
+
+/**
+ * WP5 (plan step 4): the kept order narrowed to the keys still in the queue, or null when there is nothing worth
+ * taking up: nothing kept, a damaged entry, another round (`epoch`), or fewer than ORDER_KEEP_SHARE of its keys left —
+ * the queue has moved on under it, so that round deals fresh.
+ */
+export function keptOrder(epoch: number, inQueue: ReadonlySet<string>): { order: string[]; seed: number } | null {
+  try {
+    const raw = localStorage.getItem(SHUFFLE_ORDER_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as Partial<KeptShuffleOrder> | null;
+    if (!v || !Array.isArray(v.order) || typeof v.epoch !== 'number' || typeof v.seed !== 'number') return null;
+    if (v.epoch !== epoch) return null;
+    const order = v.order.filter((k): k is string => typeof k === 'string');
+    if (!order.length) return null;
+    const left = order.filter((k) => inQueue.has(k));
+    if (left.length / order.length < ORDER_KEEP_SHARE) return null;
+    return { order: left, seed: v.seed };
+  } catch { return null; }
+}
+
+/**
+ * WP5 (plan step 5): the shuffle's draw comes from this generator, seeded by the number kept with the order, so an
+ * order in a bug report can be dealt again. A 32-bit LCG (Numerical Recipes): small, no imports, and the same answer
+ * on every device.
+ */
+export function seededRand(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+    return s / 2 ** 32;
+  };
+}
+
+/** A seed for a fresh order, kept with it. */
+export function newShuffleSeed(rand: () => number = Math.random): number {
+  return Math.floor(rand() * 2 ** 32) >>> 0;
+}
