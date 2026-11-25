@@ -47,10 +47,15 @@ describe('shuffle picks by the mood', () => {
     return count;
   };
   const share = (c: Record<string, number>, ks: string[]) => ks.reduce((t, k) => t + (c[k] ?? 0), 0) / 2000;
+  // WP5 (D3): the pull is capped at a best-to-worst ratio of 4 on the middle slider (it was e^6.5 ~ 665, measured
+  // 0.80+ / under 0.05 shares here); a song that fits now comes up about 4x as often as one that does not.
   it('songs that fit the mood come up far more often than ones that do not', () => {
     const c = draw(0.5);
-    expect(share(c, ['rap4', 'rap5'])).toBeGreaterThan(0.8);
-    expect(share(c, ['jazz1', 'jazz2', 'country1'])).toBeLessThan(0.05);
+    const per = (ks: string[]) => share(c, ks) / ks.length;
+    const ratio = per(['rap4', 'rap5']) / per(['jazz1', 'jazz2', 'country1']);
+    expect(ratio).toBeGreaterThan(3);
+    expect(ratio).toBeLessThan(5.5);
+    expect(share(c, ['rap4', 'rap5'])).toBeGreaterThan(0.55);
   });
   it('it is still a shuffle: every fitting song gets picked, not always the same one', () => {
     const c = draw(0.5);
@@ -61,7 +66,8 @@ describe('shuffle picks by the mood', () => {
     const familiar = share(draw(0), ['jazz1', 'jazz2', 'country1', 'country2', 'elec1']);
     const adventurous = share(draw(1), ['jazz1', 'jazz2', 'country1', 'country2', 'elec1']);
     expect(adventurous).toBeGreaterThan(familiar);
-    expect(share(draw(1), ['rap4', 'rap5'])).toBeGreaterThan(0.5);
+    // WP5 (D3): Adventurous is a ratio of 2, so fitting songs still beat an even shuffle (2 of 7 = 0.29).
+    expect(share(draw(1), ['rap4', 'rap5'])).toBeGreaterThan(0.4);
   });
   it('with no mood it is an even shuffle', () => {
     const rand = seeded(3);

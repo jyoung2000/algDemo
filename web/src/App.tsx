@@ -228,6 +228,12 @@ export function App() {
   const nextKeyRef = useRef<string | null>(null);
   // SHUFFLE-ORDER-001: the shuffled order of the songs to come, the round it belongs to, and the list's own order.
   const shuffleOrderRef = useRef<string[]>([]);
+  // WP5 (S8): the mood fits the shown order was dealt with (null: dealt before any mood answer), and the mood answer
+  // standing when the last active signal (star, dislike, Find similar) came; the next answer after it re-deals the tail.
+  const shuffleDealtFitRef = useRef<ReadonlyMap<string, number> | null>(null);
+  const activeSignalRef = useRef<{ fit: ReadonlyMap<string, number> | null } | null>(null);
+  // An active signal counts once a newer mood answer than the one standing at the signal has arrived.
+  const activeNow = (m: { fit: ReadonlyMap<string, number> } | null) => Boolean(m && activeSignalRef.current && activeSignalRef.current.fit !== m.fit);
   const [shuffleEpoch, setShuffleEpoch] = useState(0);
   const shuffleEpochDone = useRef(-1);
   const unshuffledRef = useRef<string[] | null>(null);
@@ -452,6 +458,7 @@ export function App() {
   /** Returns what it found (or why not), for a caller that is not showing the queue's status line. */
   const findSimilar = async (track: Track): Promise<string | null> => {
     if (similarRef.current) return null;
+    activeSignalRef.current = { fit: moodFitState?.fit ?? null };
     let said = '';
     const setSimilarStatus = (m: string) => { said = m; setSimilarStatusState(m); };
     similarRef.current = true; setSimilarBusy(true); setSimilarStatus(`Looking for songs that sound like “${track.title}” on all services…`);
@@ -833,7 +840,7 @@ export function App() {
     if (!discoverShuffle) {
       if (unshuffledRef.current) {
         const back = restoreOrder(result.items, unshuffledRef.current);
-        unshuffledRef.current = null; shuffleOrderRef.current = []; shuffleEpochDone.current = -1;
+        unshuffledRef.current = null; shuffleOrderRef.current = []; shuffleEpochDone.current = -1; shuffleDealtFitRef.current = null;
         setResult((prev) => (prev && prev.items === result.items ? { ...prev, items: back } : prev));
       }
       return;
@@ -843,11 +850,13 @@ export function App() {
     shuffleEpochDone.current = shuffleEpoch;
     const fit = moodOn && moodFitState ? { fit: moodFitState.fit, confidence: moodFitState.confidence, adventurous: settings?.adventurous ?? 0.5 } : null;
     const r = arrangeShuffle(result.items, { playingKey, heard: heardNow(), order: shuffleOrderRef.current, reshuffle, rand: Math.random, mood: fit, hidden, recentArtists: artistRunRef.current,
-      ready: (x) => canPlayHere(x.playback) && (!stepReady || stepReady(x.track)) });
+      ready: (x) => canPlayHere(x.playback) && (!stepReady || stepReady(x.track)), dealtFit: shuffleDealtFitRef.current, activeSignal: activeNow(fit) });
     shuffleOrderRef.current = r.order;
+    shuffleDealtFitRef.current = r.dealtFit;
+    if (activeNow(fit)) activeSignalRef.current = null;
     if (r.items !== result.items) setResult((prev) => (prev && prev.items === result.items ? { ...prev, items: r.items } : prev));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [discoverShuffle, result?.items, playingKey, shuffleEpoch, readySignature, hidden, heardOnRecord]);
+  }, [discoverShuffle, result?.items, playingKey, shuffleEpoch, readySignature, hidden, heardOnRecord, moodFitState]);
   /**
    * QUEUE-ADD-001: the search row's add button puts a song into what the listener is listening to: the
    * saved list being played from, the saved list in the queue (whose songs are starting songs, so the
@@ -1320,6 +1329,8 @@ export function App() {
       if (result?.sample) return;
       const seq = ++rerankSeq.current;
       // MOOD-QUEUE-001: a star or a dislike re-plans the songs to come for the mood.
+      // WP5 (S8): and is an active signal, so that next mood answer re-deals the shuffled tail.
+      if (kind === 'like' || kind === 'dislike') activeSignalRef.current = { fit: moodFitState?.fit ?? null };
       nudgeMood();
       await refreshTaste();
       if (!result) return;

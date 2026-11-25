@@ -152,21 +152,21 @@ describe('S1/S2 (WP5): a shuffle that leans on the mood', () => {
     return { on: on / n, off: off / n };
   };
 
-  // NOT LANDED (WP5): today the draw is nearly a sort (plan: 8.2 on-mood in the first 10).
-  it.fails('Discover shuffle, full mood, default slider: on-mood songs in the first 10 of 30 are within 4.0\u20135.5', () => {
+  // WP5 (D3, landed): measured 9.08 on-mood in the first 10 before the ratio cap (plan: 8.2); a nearly sorted draw.
+  it('Discover shuffle, full mood, default slider: on-mood songs in the first 10 of 30 are within 4.0\u20135.5', () => {
     const { on } = firstTen();
     expect(on).toBeGreaterThanOrEqual(4.0);
     expect(on).toBeLessThanOrEqual(5.5);
   });
 
-  // NOT LANDED (WP5): plan: 0.22 off-mood songs in the first 10.
-  it.fails('same: off-mood songs in the first 10 are at least 1.7', () => {
+  // WP5 (D3, landed): measured 0.041 off-mood songs in the first 10 before the ratio cap (plan: 0.22).
+  it('same: off-mood songs in the first 10 are at least 1.7', () => {
     expect(firstTen().off).toBeGreaterThanOrEqual(1.7);
   });
 
-  // NOT LANDED (WP5): the kept-order branch never reads the mood, so a star/dislike/Find similar never moves the order.
-  // The target is asserted on arrangeShuffle's kept-order path; if WP5 re-deals from App.tsx instead, point this there.
-  it.fails('an active signal re-deals the unheard tail of a shuffled order on the next mood answer', () => {
+  // WP5 (S8, landed): before, the kept-order branch never read the mood (measured: order unchanged). The re-deal lives
+  // in arrangeShuffle (owner decision); with no deal fits recorded this is the first-answer re-deal of plan step 3.
+  it('an active signal re-deals the unheard tail of a shuffled order on the next mood answer', () => {
     const drawn = fresh(items, seeded(47)).order;
     const turned = new Map(drawn.map((k, i) => [k, i < 6 ? 0 : 1] as const));
     const next = arrangeShuffle(items, { playingKey: null, heard: new Set(), order: drawn, reshuffle: false, rand: seeded(53), mood: { fit: turned, confidence: 1, adventurous: 0.5 } }).order;

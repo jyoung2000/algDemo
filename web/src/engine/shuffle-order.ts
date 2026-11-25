@@ -5,7 +5,7 @@
  * Playback walks that order (stepQueue `inOrder`), so the queue and the player never disagree.
  */
 import type { RecItem } from '../api';
-import { moodShufflePick } from './mood-shuffle';
+import { MOOD_FIT_UNKNOWN, moodShufflePick } from './mood-shuffle';
 import { rowArtist, runArtist, spreadInsert } from './artist-variety';
 
 export interface ShuffleMoodFit { fit: ReadonlyMap<string, number>; confidence: number; adventurous: number }
@@ -27,26 +27,32 @@ export interface ArrangeShuffleOpts {
    * songs heard this round in list order, then the song playing.
    */
   recentArtists?: readonly string[];
+  /**
+   * WP5 (S8): the fits the order shown was dealt with (what the last call returned as `dealtFit`). `null` or absent: it
+   * was dealt before any mood answer, and the first answer may re-deal its unheard tail once.
+   */
+  dealtFit?: ReadonlyMap<string, number> | null;
+  /** WP5 (S8): a star, dislike or Find similar since the order shown was dealt. A finished song alone never re-deals. */
+  activeSignal?: boolean;
 }
 
-export function arrangeShuffle(items: RecItem[], o: ArrangeShuffleOpts): { items: RecItem[]; order: string[] } {
+/** WP5 (S8): a re-deal is skipped when the fits over the tail moved less than this on average. */
+export const REDEAL_MIN_CHANGE = 0.15;
+
+export function arrangeShuffle(items: RecItem[], o: ArrangeShuffleOpts): { items: RecItem[]; order: string[]; dealtFit: ReadonlyMap<string, number> | null } {
   const key = (x: RecItem) => x.track.key;
   const current = o.playingKey ? items.find((x) => key(x) === o.playingKey) : undefined;
   const hiddenRows = items.filter((x) => x !== current && o.hidden?.has(key(x)));
   const history = items.filter((x) => x !== current && !o.hidden?.has(key(x)) && o.heard.has(key(x)));
   const coming = items.filter((x) => x !== current && !o.hidden?.has(key(x)) && !o.heard.has(key(x)));
   const byKey = new Map(coming.map((x) => [key(x), x] as const));
-  let order: string[];
-  const known = o.reshuffle ? [] : o.order.filter((k) => byKey.has(k));
-  if (!known.length) {
-    // A new order: every song to come in one weighted draw without replacement. (Not by `added`: putting those first
-    // once left a whole Discover list unshuffled. Since WP1/A8 found rows carry `found`, and hand-added rows join the
-    // draw like any other song to come.)
-    const pool = [...coming];
-    order = [];
+  const mood = o.mood && o.mood.confidence > 0 ? o.mood : null;
+  // One weighted draw without replacement of `rows`, after a song by `last`.
+  const deal = (rows: readonly RecItem[], last: string): string[] => {
+    const pool = [...rows];
+    const out: string[] = [];
     // ARTIST-VARIETY-001 (owner, 2026-11-24): the draw skips the artist just drawn (the song playing first) while
     // another artist is left, so one artist's songs are spread through the order instead of bunched together.
-    let last = current ? rowArtist(current.track) : '';
     while (pool.length) {
       const others = last ? pool.filter((x) => rowArtist(x.track) !== last) : pool;
       // An artist holding half of what is left goes now (when it may), or its songs end up together at the end.
@@ -54,13 +60,24 @@ export function arrangeShuffle(items: RecItem[], o: ArrangeShuffleOpts): { items
       for (const x of others) count.set(rowArtist(x.track), (count.get(rowArtist(x.track)) ?? 0) + 1);
       const [top, n] = [...count].sort((a, b) => b[1] - a[1])[0] ?? ['', 0];
       const from = n * 2 >= pool.length && n < others.length ? others.filter((x) => rowArtist(x.track) === top) : others.length ? others : pool;
-      const pick = o.mood && o.mood.confidence > 0
-        ? moodShufflePick(from, key, o.mood.fit, { adventurous: o.mood.adventurous, confidence: o.mood.confidence, rand: o.rand })
+      const pick = mood
+        ? moodShufflePick(from, key, mood.fit, { adventurous: mood.adventurous, confidence: mood.confidence, rand: o.rand })
         : from[Math.min(from.length - 1, Math.floor(o.rand() * from.length))]!;
       last = rowArtist(pick.track);
       pool.splice(pool.indexOf(pick), 1);
-      order.push(key(pick));
+      out.push(key(pick));
     }
+    return out;
+  };
+  let order: string[];
+  let dealtFit: ReadonlyMap<string, number> | null = o.dealtFit ?? null;
+  const known = o.reshuffle ? [] : o.order.filter((k) => byKey.has(k));
+  if (!known.length) {
+    // A new order: every song to come in one weighted draw without replacement. (Not by `added`: putting those first
+    // once left a whole Discover list unshuffled. Since WP1/A8 found rows carry `found`, and hand-added rows join the
+    // draw like any other song to come.)
+    order = deal(coming, current ? rowArtist(current.track) : '');
+    dealtFit = mood ? mood.fit : null;
   } else {
     // Keep the order shown; a song found since is mixed in behind the song already shown next. One the listener put
     // straight after the song playing (adding a song to the queue does that) plays next.
@@ -76,6 +93,23 @@ export function arrangeShuffle(items: RecItem[], o: ArrangeShuffleOpts): { items
       if (x === askedNext) order.unshift(key(x));
       else spreadInsert(order, key(x), artistOfKey, o.rand, order.length ? 1 : 0);
       have.add(key(x));
+    }
+    // WP5 (S8): re-deal the unheard tail when a mood answer follows an active signal (star, dislike, Find similar), or
+    // is the first answer for an order dealt before any. The song playing and the next two stay (they are committed:
+    // the player cues the next one); with nothing playing nothing is committed and the whole order is redrawn. Skipped
+    // when the fits over the tail moved less than REDEAL_MIN_CHANGE on average since the deal.
+    if (mood && (o.activeSignal || !o.dealtFit)) {
+      const keep = current ? Math.min(2, order.length) : 0;
+      const tail = order.slice(keep);
+      const before = o.dealtFit;
+      const fitOf = (m: ReadonlyMap<string, number> | null | undefined, k: string) => m?.get(k) ?? MOOD_FIT_UNKNOWN;
+      const change = tail.length ? tail.reduce((t, k) => t + Math.abs(fitOf(mood.fit, k) - fitOf(before, k)), 0) / tail.length : 0;
+      if (tail.length > 1 && change >= REDEAL_MIN_CHANGE) {
+        const last = keep ? artistOfKey(order[keep - 1]!) : current ? rowArtist(current.track) : '';
+        order = [...order.slice(0, keep), ...deal(tail.map((k) => byKey.get(k)!), last)];
+      }
+      // Either way the order now rests on this answer, so the first-answer re-deal is spent.
+      dealtFit = mood.fit;
     }
   }
   // The song shown next must be able to play now; one still downloading waits further down.
@@ -93,7 +127,7 @@ export function arrangeShuffle(items: RecItem[], o: ArrangeShuffleOpts): { items
   }
   const out = [...history, ...(current ? [current] : []), ...order.map((k) => byKey.get(k)!), ...hiddenRows];
   const same = out.length === items.length && out.every((x, i) => x === items[i]) && out.every((x, i) => x.rank === i + 1);
-  return { items: same ? items : out.map((x, i) => (x.rank === i + 1 ? x : { ...x, rank: i + 1 })), order };
+  return { items: same ? items : out.map((x, i) => (x.rank === i + 1 ? x : { ...x, rank: i + 1 })), order, dealtFit };
 }
 
 /** Shuffle off: the list in its own order again (`keys`); songs that arrived meanwhile follow in their places. */
