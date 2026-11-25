@@ -259,6 +259,8 @@ export interface TasteSummary {
 export interface MoodAnswer {
   order: string[];
   changed: boolean;
+  /** 0.20.19: the mood (re-plan or lead) moved rows, not only the run cap. Drives the mood note. */
+  mood?: boolean;
   moved: string[];
   gain?: number;
   leading: string[];
@@ -453,6 +455,10 @@ export interface Settings {
   mood_queue?: boolean;
   /** WP6: the mood plan ('v2' default: follows without locking in; 'v1': the old order, the rollback switch). */
   mood_plan?: 'v1' | 'v2';
+  /** 0.20.19: mood lead (option 1). On by default; false = off. */
+  mood_lead?: boolean;
+  /** 0.20.19: longest run of one main genre from row 13 on (option 2). 0 = off; 3, 5 or 8. Default 5. */
+  genre_run_limit?: number;
   /**
    * The ten-band equaliser (EQ-001), stored as the engine's own config shape. Previews only: see
    * `engine/audio-bus.ts` for why iframe playback can never be filtered.

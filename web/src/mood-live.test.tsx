@@ -25,7 +25,7 @@ beforeEach(() => {
   vi.mocked(api.last).mockResolvedValue(result);
   vi.mocked(api.settings).mockResolvedValue(null as never);
   vi.mocked(api.rerank).mockResolvedValue({ ...result, taste: null } as never);
-  vi.mocked(api.mood).mockResolvedValue({ order: ['rap', 'elec', 'jazz'], changed: true, moved: ['elec', 'jazz'], gain: 0.1, leading: ['Rap', 'Electronic'], confidence: 0.8 } as never);
+  vi.mocked(api.mood).mockResolvedValue({ order: ['rap', 'elec', 'jazz'], changed: true, moved: ['elec', 'jazz'], gain: 0.1, leading: ['Rap', 'Electronic'], confidence: 0.8, mood: true } as never);
 });
 
 describe('the listening mood re-arranges the now playing queue', () => {

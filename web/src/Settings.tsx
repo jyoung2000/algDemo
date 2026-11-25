@@ -274,6 +274,37 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFo
             most. Familiar keeps the queue close to your mood; Adventurous lets in more variety. Albums and saved
             playlists keep their order unless shuffle is on. The song playing and songs you added yourself never move.
           </p>
+          <label className="chk discovery-settings__toggle">
+            <input
+              type="checkbox"
+              checked={settings?.mood_lead ?? true}
+              disabled={settings?.mood_queue === false}
+              aria-describedby="mood-lead-help"
+              onChange={(e) => onSettings({ mood_lead: e.target.checked })}
+            />
+            <span className="box" aria-hidden="true" />
+            <span>Mood leads the queue</span>
+          </label>
+          <p className="note" id="mood-lead-help">
+            While you listen without starring, the first song that fits your mood may move to the front, two places at most.
+          </p>
+          <label className="discovery-settings__field">
+            <span>Longest run of one genre</span>
+            <select
+              value={settings?.genre_run_limit ?? 5}
+              disabled={settings?.mood_queue === false}
+              aria-describedby="genre-run-help"
+              onChange={(e) => onSettings({ genre_run_limit: Number(e.target.value) })}
+            >
+              <option value={0}>Off</option>
+              <option value={3}>3</option>
+              <option value={5}>5</option>
+              <option value={8}>8</option>
+            </select>
+          </label>
+          <p className="note" id="genre-run-help">
+            Applies from the 13th song on, so the first 12 never change. Off leaves the queue's genre order alone.
+          </p>
         </section>
         <FavArtistsSettings />
         <section className="discovery-settings" aria-labelledby="similar-h">

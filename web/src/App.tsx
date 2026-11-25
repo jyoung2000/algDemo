@@ -770,7 +770,8 @@ export function App() {
           if (!plan.changed) return;
           moodBefore.current = captureRows(document);
           setResult((prev) => (prev && !prev.sample ? { ...prev, items: pinNext(placeMood(prev.items, plan.order), playingKey, nextKeyRef.current) } : prev));
-          setMoodPulse((p) => ({ tick: (p?.tick ?? 0) + 1, leading: plan.leading, moved: plan.moved, at: Date.now() }));
+          // The note (and the move animation) only when the mood itself moved rows; a run-cap-only change stays silent.
+          if (plan.mood) setMoodPulse((p) => ({ tick: (p?.tick ?? 0) + 1, leading: plan.leading, moved: plan.moved, at: Date.now() }));
         }, () => undefined);
     }, 600);
     return () => window.clearTimeout(timer);

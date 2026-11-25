@@ -276,7 +276,7 @@ export interface MoodPlan {
  * `adventurous` 0..1 is the Familiar <-> Adventurous slider: Familiar holds the mood tightly,
  * Adventurous lets the engine's own exploration lead.
  */
-export interface MoodOrderOptions { plan?: number; minGain?: number; force?: boolean; shown?: string[]; version?: MoodPlanVersion; recentArtists?: readonly string[]; /** Setting: mood lead on/off. Off when omitted. */ lead?: boolean; /** Setting: genre run limit from row 13 on (3 / 5 / 8); 0 or omitted = off. */ runLimit?: number }
+export interface MoodOrderOptions { plan?: number; minGain?: number; force?: boolean; shown?: string[]; version?: MoodPlanVersion; recentArtists?: readonly string[]; /** Setting: mood lead. On when omitted (the 0.20.19 default); false = off. */ lead?: boolean; /** Setting: genre run limit from row 13 on (3 / 5 / 8); 0 = off. Defaults to MOOD.runCap (5) when omitted. */ runLimit?: number }
 
 /**
  * Option 2: no more than MOOD.runCap songs of one main genre in a row. Rows before index `fixed` (the planner's top
@@ -393,7 +393,7 @@ function moodOrderV1(upcoming: MoodCandidate[], mood: Mood, adventurous: number,
   const order = next.map((x) => x.c.key);
   const moved = order.filter((k, j) => refKeys[j] !== k);
   if (!moved.length || (!o.force && !leadMoved && gain < (o.minGain ?? MOOD.minGain))) return { order: refKeys, changed: false, moved: [], gain };
-  return { order, changed: true, moved, gain };
+  return { order, changed: true, moved, gain, mood: true };
 }
 
 /**
@@ -410,7 +410,7 @@ function moodOrderV2(upcoming: MoodCandidate[], mood: Mood, adventurous: number,
   const keys = upcoming.map((c) => c.key);
   const n = upcoming.length;
   // No mood to follow: the engine's order, with only the run cap applied (option 2).
-  if (n < 2 || (mood.pos.weight <= 0 && mood.neg.weight <= 0)) return capOnly(upcoming, o.runLimit ?? 0);
+  if (n < 2 || (mood.pos.weight <= 0 && mood.neg.weight <= 0)) return capOnly(upcoming, o.runLimit ?? MOOD.runCap);
   const a = Math.max(0, Math.min(1, adventurous));
   const plan = Math.min(n, o.plan ?? MOOD.plan);
   const lambda = mood.confidence * (0.65 - 0.3 * a);
@@ -490,9 +490,9 @@ function moodOrderV2(upcoming: MoodCandidate[], mood: Mood, adventurous: number,
   // cap then applies from row 13 on (index MOOD.plan), so the top 12 never change and a lead move inside them is exempt.
   const byKey = new Map(upcoming.map((c) => [c.key, c] as const));
   const clearlyBetter = moved.length > 0 && (!!o.force || leadMoved || gain >= bar);
-  const lead = !clearlyBetter && o.lead ? passiveLead(ref, refKeys, mood, threshold, o) : null;
-  const moodKeys = clearlyBetter ? order : (lead ?? refKeys);
-  const limit = o.runLimit ?? 0;
+  const leadKeys = !clearlyBetter && o.lead !== false ? passiveLead(ref, refKeys, mood, threshold, o) : null;
+  const moodKeys = clearlyBetter ? order : (leadKeys ?? refKeys);
+  const limit = o.runLimit ?? MOOD.runCap;
   const capped = limit > 0 ? capRuns(moodKeys, byKey, MOOD.plan, limit) : moodKeys;
   const cappedMoved = capped.filter((key, j) => refKeys[j] !== key);
   return { order: capped, changed: cappedMoved.length > 0, moved: cappedMoved, gain, mood: moodKeys.some((key, j) => refKeys[j] !== key) };
