@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { Budget, RESERVE_KEY, TOPUP_RUN_BYTES } from './budget';
 import { MemoryBackend, Store } from './store';
-import { FLOW_PER_DRY_RUN, FLOW_PER_RUN, cheapestFirst, dryReason, flowPick, flowState, heardTest } from './queue-data-flow';
+import { FLOW_PER_DRY_RUN, FLOW_PER_RUN, REST_DAYS, REST_STARRED_DAYS, cheapestFirst, discoveryHeardTest, dryReason, flowPick, flowState, heardTest, restingTest } from './queue-data-flow';
 
 const MB = 1_000_000;
 
@@ -101,5 +101,48 @@ describe('how much one top-up may read', () => {
   });
   it('on Wi-Fi the ceiling does not apply', async () => {
     expect((await open(false)).topUpCap(20 * MB)).toBe(20 * MB);
+  });
+});
+
+describe('WP8 / D1: a manual run rests songs heard lately; a top-up still never re-offers a heard song', () => {
+  const NOW = 1_800_000_000;
+  const DAY = 86_400;
+  const song = (n: number) => ({ key: `deezer:${n}`, title: `Song ${n}`, artists: ['A'] });
+  const heard = (n: number, daysAgo: number, kind = 'complete') => ({ kind, key: `deezer:${n}`, track: song(n), ts: NOW - daysAgo * DAY });
+  const star = (n: number, daysAgo = 100) => ({ kind: 'like', key: `deezer:${n}`, track: song(n), ts: NOW - daysAgo * DAY });
+
+  it('the windows are decision D1: thirty days, fourteen for a starred song', () => {
+    expect(REST_DAYS).toBe(30);
+    expect(REST_STARRED_DAYS).toBe(14);
+  });
+
+  it('heard 29 days ago rests (dropped); heard 31 days ago is offered again (kept)', () => {
+    const resting = restingTest([heard(1, 29), heard(2, 31, 'skip')], NOW);
+    expect(resting(song(1))).toBe(true);
+    expect(resting(song(2))).toBe(false);
+  });
+
+  it('a starred song heard 13 days ago rests; heard 15 days ago it is offered again', () => {
+    const resting = restingTest([star(1), heard(1, 13), star(2), heard(2, 15)], NOW);
+    expect(resting(song(1))).toBe(true);
+    expect(resting(song(2))).toBe(false);
+  });
+
+  it('the newest listen counts, and the same title by the same artist from another service is the same song', () => {
+    const resting = restingTest([heard(1, 300), heard(1, 2)], NOW);
+    expect(resting(song(1))).toBe(true);
+    expect(resting({ key: 'spotify:xyz', title: 'Song 1', artists: ['A'] })).toBe(true);
+    // A like alone, never played, is not a listen.
+    expect(restingTest([star(3, 1)], NOW)(song(3))).toBe(false);
+  });
+
+  it('an automatic top-up keeps its rule: a song heard at any time is never offered again', () => {
+    const rows = [heard(1, 400), heard(2, 31)];
+    const topUp = discoveryHeardTest('listening', rows, NOW);
+    expect(topUp(song(1))).toBe(true);
+    expect(topUp(song(2))).toBe(true);
+    const manual = discoveryHeardTest('search', rows, NOW);
+    expect(manual(song(1))).toBe(false);
+    expect(manual(song(2))).toBe(false);
   });
 });

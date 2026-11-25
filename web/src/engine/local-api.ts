@@ -69,7 +69,7 @@ import { FAV_ARTISTS_KEY, FAV_PER_RUN, addFav, favMap, favSeed, normaliseFav, no
 import { referenceSize, sizeFit, smallScene } from './artist-size';
 import { coldReason, coldStarters, type ColdStarter } from './cold-start';
 import { artistLoad, selectNeverDry, withRecentListens } from './artist-variety';
-import { FLOW_KEY, dryReason, flowPick, flowState, heardTest } from './queue-data-flow';
+import { FLOW_KEY, discoveryHeardTest, dryReason, flowPick, flowState } from './queue-data-flow';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
 import { Albums } from './albums';
@@ -2108,7 +2108,8 @@ export class LocalApi {
     /** NEXT-FAV-COLD-001: filled in below once the seedless run knows its starting artists. */
     let coldUsed: ColdStarter[] = [];
     // QUEUE-DATA-FLOW-001: a top-up never offers a song the listener has already finished or skipped.
-    const heardBefore = trigger === 'listening' ? heardTest(this.store.feedback() as never) : null;
+    // WP8 / D1: a manual run ('search') leaves out songs still resting (30 days, starred 14); a top-up never re-offers a heard song.
+    const heardBefore = discoveryHeardTest(trigger, this.store.feedback() as never, unixNow());
     const unheard = (t: Dict): boolean => !heardBefore || !heardBefore(t);
     try {
       const cfg = { ...engineFromSettings(settings), queueSize: Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize) };

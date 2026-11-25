@@ -77,6 +77,55 @@ export function heardTest(rows: readonly Row[]): (t: Song) => boolean {
   return (t) => keys.has(String(t.key ?? '')) || names.has(nameOf(t) || '\u0001');
 }
 
+/** WP8 / D1: how long a song heard in a manual run rests before it is offered again. */
+export const REST_DAYS = 30;
+/** WP8 / D1: a starred (liked or saved) song rests a shorter time. */
+export const REST_STARRED_DAYS = 14;
+const DAY_S = 86_400;
+const HEARD_KINDS = new Set(['complete', 'skip', 'partial']);
+
+/**
+ * WP8 / D1 (decision: "Rest 30 days; starred songs 14 days. Once per round stays absolute."): whether a song is
+ * resting, i.e. heard (finished, skipped or partly played) within the rest window before [now] (seconds). The
+ * newest listen counts, under its own key or as the same title by the same artist from another service. A song is
+ * starred while its newest like/save/unlike/unsave/dislike row is a like or save. Rows without a ts never rest.
+ */
+export function restingTest(rows: readonly (Row & { ts?: number })[], now: number): (t: Song) => boolean {
+  const lastKey = new Map<string, number>();
+  const lastName = new Map<string, number>();
+  const starKey = new Map<string, boolean>();
+  const starName = new Map<string, boolean>();
+  for (const r of rows) {
+    const n = nameOf(r.track as Song | null);
+    if (r.kind === 'like' || r.kind === 'save' || r.kind === 'unlike' || r.kind === 'unsave' || r.kind === 'dislike') {
+      const on = r.kind === 'like' || r.kind === 'save';
+      starKey.set(r.key, on);
+      if (n) starName.set(n, on);
+      continue;
+    }
+    if (!HEARD_KINDS.has(r.kind) || typeof r.ts !== 'number') continue;
+    lastKey.set(r.key, Math.max(lastKey.get(r.key) ?? -Infinity, r.ts));
+    if (n) lastName.set(n, Math.max(lastName.get(n) ?? -Infinity, r.ts));
+  }
+  return (t) => {
+    const k = String(t.key ?? '');
+    const n = nameOf(t);
+    const last = Math.max(lastKey.get(k) ?? -Infinity, n ? (lastName.get(n) ?? -Infinity) : -Infinity);
+    if (last === -Infinity) return false;
+    const starred = starKey.get(k) ?? (n ? starName.get(n) : undefined) ?? false;
+    return now - last < (starred ? REST_STARRED_DAYS : REST_DAYS) * DAY_S;
+  };
+}
+
+/**
+ * WP8 / D1: which heard songs a discovery run leaves out. An automatic top-up ('listening') keeps its rule from
+ * QUEUE-DATA-FLOW-001: a song heard at any time is never offered again. A manual run ('search') leaves out only
+ * the songs still resting. Once per round (SHUFFLE-ONCE-001) is separate and stays absolute.
+ */
+export function discoveryHeardTest(trigger: 'search' | 'listening', rows: readonly (Row & { ts?: number })[], now: number): (t: Song) => boolean {
+  return trigger === 'listening' ? heardTest(rows) : restingTest(rows, now);
+}
+
 /** YouTube Music's answers are by far the largest; on mobile data everything else is asked first. Order is kept within each group. */
 export function cheapestFirst<T extends { source: string }>(tasks: readonly T[]): T[] {
   const large = (t: T) => t.source.startsWith('ytmusic');

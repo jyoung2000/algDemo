@@ -313,6 +313,8 @@ export class Pipeline {
      * releases, the genre charts and the listener's own colour sources were cut away whole. Each
      * source now gives up its rows one round at a time, so no source is silenced by its position.
      */
+    /** WP8 / A7: whether a row is one of this run's starting songs under another title or catalogue. */
+    const isSeedRecording = (t: Dict): boolean => seeds.some((sd) => matchRecordings(sd as never, t as never).verdict === 'same');
     const mergeFrom = (res: Map<string, Map<string, Rel[]>>): Dict[] => {
       const merged = new Map<string, Dict>();
       const order: string[] = [];
@@ -329,6 +331,10 @@ export class Pipeline {
           lists.forEach((lst, si) => {
             if (i >= lst.length || taken >= cfg.perSourceCap) return;
             const [t, relation, via] = lst[i] as Rel;
+            // WP8 / A7: a row matchRecordings calls the same recording as a starting song is that song
+            // again (a remaster title, another catalogue's copy), not a find: it is dropped here, before
+            // it can take a per-source, per-seed search or mergedCap slot. An uncertain verdict is kept.
+            if (isSeedRecording(t)) return;
             if (relation === 'search_match') {
               if ((searchTaken[si] as number) >= SEARCH_MATCH_PER_SEED) return;
               searchTaken[si] = (searchTaken[si] as number) + 1;
