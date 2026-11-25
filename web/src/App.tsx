@@ -44,7 +44,9 @@ import { SettingsView } from './Settings';
 import { markSavedSettingsApplied, setEqConfig, setLocalMix, setMixSlider, setPlayThrough } from './audio-engine';
 import { PLAY_THROUGH_DEFAULT } from './engine/crossfade';
 import { dl, downloadsAvailable } from './engine/downloads';
-import { readResume } from './engine/resume';
+import { clearResume, readResume } from './engine/resume';
+import { clearStoppedAt, countPlay, writeStoppedAt } from './engine/session';
+import { beginFreshSession, clearQueueForSession, clearedKeys, readPlays, subtractCleared, unclearKey, writePlays } from './engine/session-state';
 import { PROVIDER_LABEL, QUEUE_SIZE_MAX, QUEUE_SIZE_MIN, addSeed, artistOf, canPlayHere, classNames, describeTaste, dropExpired, expiredKeysOf, fmtBytes, LIST_LOOK_MS, keepFocus, historyBack, listStart, mergeRerank, nextRepeat, playbackOfTrack, readyFilter, settledWithin, similarSummary, stepQueue, type RepeatMode } from './util';
 import { queueAudio } from './engine/queue-audio';
 import { CarCatalog } from './engine/car-catalog';
@@ -97,6 +99,9 @@ function writeFlag(key: string, value: string): void {
 type DetailPage = { kind: 'album'; target: AlbumTarget } | { kind: 'artist'; target: ArtistTarget };
 /** Pages kept for Back; going deeper than this forgets the oldest. */
 const MAX_PAGES = 12;
+
+// SESSION-RESET-001: the launch check runs once per page load, before any restore.
+const launchFresh = beginFreshSession(localStorage, Date.now());
 
 export function App() {
   const [tab, setTab] = useState<Tab>('discover');
@@ -292,12 +297,17 @@ export function App() {
         const f: Record<string, FeedbackFlags> = {};
         for (const [k, v] of Object.entries(fb.state)) f[k] = { like: v.like, dislike: v.dislike, hide: v.hide, save: v.save };
         setFlags(f);
-        setHeardOnRecord(unionHeard(heardIn(fb.state), startedOnRecord()));
+        setHeardOnRecord(subtractCleared(unionHeard(heardIn(fb.state), startedOnRecord()), clearedKeys(localStorage)));
         if (fb.taste) setTaste(fb.taste);
         setLoaded(true);
+        sessionReady.current = true;
+        // A launch counts as a stop as of now until audio starts, so a process killed while idle
+        // leaves this marker, not an older one, and a quick relaunch does not reset the session.
+        writeStoppedAt(localStorage, Date.now());
         // Where the listener was when the app last stopped (RESUME-001). Restored only in the
         // installed shells, where the song is a local file: the place is useless without the audio.
-        if (downloadsAvailable()) {
+        if (launchFresh) clearResume();
+        if (downloadsAvailable() && !launchFresh) {
           const point = readResume();
           if (point) setPlaying({ track: point.track, playback: point.playback, resumeAt: point.t });
         }
@@ -305,6 +315,11 @@ export function App() {
         api.last().then(
           (r) => {
             r.items.forEach((x) => shownRef.current.add(x.track.key));
+            // SESSION-RESET-001: a new session makes the queue's songs eligible for shuffle again.
+            if (launchFresh) {
+              clearQueueForSession(localStorage, r.items.map((x) => x.track.key));
+              setHeardOnRecord((h) => new Set(subtractCleared(h, clearedKeys(localStorage))));
+            }
             setResult((prev) => prev ?? r);
           },
           () => undefined,
@@ -624,6 +639,7 @@ export function App() {
     // Playing from the queue leaves any saved list behind, so the queue's own rule applies again.
     if (!o?.keepList) { playingListRef.current = null; enterPlayingContext(null); setAlbumPlaying(false); }
     playedRef.current.add(it.track.key);
+    countSong(it.track.key);
     if (o?.newRound) { heardRef.current = new Set(); setShuffleEpoch((n) => n + 1); }
     heardRef.current.add(it.track.key);
     // SHUFFLE-ONCE-001: a song started in the now playing queue is heard for good, even if the app closes mid-way.
@@ -639,6 +655,7 @@ export function App() {
   const previewTrack = (t: Track) => {
     if (t.provider === 'radio' && t.radio_station) { tune(t.radio_station); return; }
     if (radioSession.get().station) { void radioSession.stop().then(() => previewTrack(t)); return; }
+    countSong(t.key);
     startTokenRef.current++; cancelFiniteFor(t.key); setPlaying({ track: t, playback: playbackOfTrack(t) });
   };
   /** A radio song or artist name was clicked: leave the live stream and play the real catalogue song. */
@@ -984,6 +1001,22 @@ export function App() {
   const queueSongCount = useMemo(() => new Set(queueTracks.map((t) => t.key)).size, [queueTracks]);
   // TASTE-SPIN-001: the taste line's arrow turns while a song plays.
   const [songPlaying, setSongPlaying] = useState(false);
+  // SESSION-RESET-001: play counts per listening session, and the stop marker that starts the next one.
+  const [plays, setPlays] = useState<Record<string, number>>(() => readPlays(localStorage));
+  const sessionReady = useRef(false);
+  useEffect(() => { writePlays(localStorage, plays); }, [plays]);
+  const countSong = (key: string) => { unclearKey(localStorage, key); setPlays((p) => countPlay(p, key)); };
+  // Stop marker: written when audio stops, cleared when it starts. Skipped until the launch check has run,
+  // so a reopen cannot overwrite the old marker.
+  useEffect(() => {
+    if (!sessionReady.current) return;
+    if (songPlaying) clearStoppedAt(localStorage); else writeStoppedAt(localStorage, Date.now());
+  }, [songPlaying]);
+  useEffect(() => {
+    const onHide = () => { if (sessionReady.current && !songPlaying) writeStoppedAt(localStorage, Date.now()); };
+    window.addEventListener('pagehide', onHide);
+    return () => window.removeEventListener('pagehide', onHide);
+  }, [songPlaying]);
   // ROW-DL-KEPT-001: asked again each time one of the listener's own downloads finishes.
   const keptKeys = useKeptKeys(cacheTracks, dls.jobs.filter((j) => j.state === 'done').length);
   const queueCache = useCardCache(cacheTracks, keptKeys);
@@ -1405,14 +1438,21 @@ export function App() {
   // them to playlists; the playback service's engine saves those. Back in front, read the stars again. The lists
   // and Saved follow them (the effect above), so the phone shows what the car did and never hands the car an
   // older set of playlists.
+  const queueKeysRef = useRef<string[]>([]);
+  useEffect(() => { queueKeysRef.current = (result?.items ?? []).map((x) => x.track.key); }, [result]);
   useEffect(() => {
     const onShow = () => {
       if (document.visibilityState !== 'visible') return;
+      // SESSION-RESET-001: back after more than four minutes stopped is a new session.
+      if (beginFreshSession(localStorage, Date.now())) {
+        setPlays({});
+        clearQueueForSession(localStorage, queueKeysRef.current);
+      }
       api.feedbackState().then((fb) => {
         const f: Record<string, FeedbackFlags> = {};
         for (const [k, v] of Object.entries(fb.state)) f[k] = { like: v.like, dislike: v.dislike, hide: v.hide, save: v.save };
         setFlags(f);
-        setHeardOnRecord(unionHeard(heardIn(fb.state), startedOnRecord()));
+        setHeardOnRecord(subtractCleared(unionHeard(heardIn(fb.state), startedOnRecord()), clearedKeys(localStorage)));
         if (fb.taste) setTaste(fb.taste);
       }, () => undefined);
     };
@@ -1807,7 +1847,7 @@ export function App() {
                         <span>Queue re-arranged for your mood{moodPulse.leading.length ? `: ${moodPulse.leading.join(' · ')}` : ''}</span>
                       </p>
                     )}
-                    <Results
+                    <Results plays={plays}
                       seeds={visibleSeeds}
                       onRemoveSeed={(k) => saveSeeds(seeds.filter((s) => s.key !== k))}
                       onEmphasis={(k, e) => saveSeeds(seeds.map((s) => (s.key === k ? { ...s, emphasis: e } : s)))}
@@ -1860,7 +1900,7 @@ export function App() {
                       </button>
                     </div>
                   </div>
-                  <Results
+                  <Results plays={plays}
                     seeds={visibleSeeds}
                     onRemoveSeed={(k) => saveSeeds(seeds.filter((s) => s.key !== k))}
                     onEmphasis={(k, e) => saveSeeds(seeds.map((s) => (s.key === k ? { ...s, emphasis: e } : s)))}

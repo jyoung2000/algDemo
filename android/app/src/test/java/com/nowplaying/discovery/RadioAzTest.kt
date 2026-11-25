@@ -105,4 +105,14 @@ class RadioAzTest {
     val sorted = RadioCatalog.sorted(listOf(s("5", "zeta"), s("4", "Énergie"), s("3", "echo"), s("1", "Echo"), s("2", "ECHO"), s("6", "Energie")))
     assertEquals(listOf("1", "2", "3", "4", "6", "5"), sorted.map { it.id })
   }
+
+  /** RADIO-AZ-ALL-001: the plain A-Z browse asks the directory for no filter, so no request names hidebroken. */
+  @Test fun theAzBrowseAsksForNoFilter() {
+    val asked = mutableListOf<String>()
+    val d = RadioDirectory { url -> asked += url; "[]" }
+    d.azPage(0)
+    d.letterPage("A", 0)
+    assertTrue(asked.size >= 2)
+    assertTrue(asked.none { it.contains("hidebroken") })
+  }
 }

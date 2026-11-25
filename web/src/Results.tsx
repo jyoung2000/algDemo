@@ -1,4 +1,5 @@
 import { useRef, useState, type CSSProperties } from 'react';
+import { shadeStep } from './engine/session';
 import { Glyph, type GlyphName } from '@now-playing/aqua-ui/icons';
 import { SimilarGlyph } from './icons';
 import { Marquee } from './Marquee';
@@ -52,6 +53,8 @@ export interface FeedbackFlags {
 }
 
 interface Props {
+  /** Plays this listening session per song key: discovery rows darken a step per play. */
+  plays?: Record<string, number>;
   /** Starting songs: the first rows of the same list, removable and emphasisable. */
   seeds: Track[];
   onRemoveSeed: (key: string) => void;
@@ -85,7 +88,7 @@ interface Props {
  * diversified order; nothing here re-sorts it.
  * Arrow keys / j k move between rows; Enter plays; the row keeps focus when results refresh.
  */
-export function Results({ seeds, onRemoveSeed, onEmphasis, items: liveItems, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload, onSimilar, similarBusy, cacheOf, lists, onLists, onOpenAlbum, onOpenArtist }: Props) {
+export function Results({ seeds, onRemoveSeed, onEmphasis, items: liveItems, focusKey, playingKey, flags, onFocus, onPlay, onPlayTrack, onFeedback, onDownload, onSimilar, similarBusy, cacheOf, lists, onLists, onOpenAlbum, onOpenArtist, plays }: Props) {
   /** Which row's save menu is showing, by song key. Only one opens at a time. */
   const [saving, setSaving] = useState<string | null>(null);
   /**
@@ -243,6 +246,7 @@ export function Results({ seeds, onRemoveSeed, onEmphasis, items: liveItems, foc
             id={rowId(t.key)}
             className={classNames('rec', focusKey === t.key && 'is-focus', playingKey === t.key && 'is-playing', f.dislike && 'is-disliked')}
             data-dl={cache?.state}
+            data-plays={shadeStep(plays?.[t.key] ?? 0) || undefined}
             style={cache ? ({ '--dl': `${cache.progress}%` } as CSSProperties) : undefined}
             tabIndex={focusKey === t.key || (focusKey == null && i === 0) ? 0 : -1}
             aria-current={playingKey === t.key ? 'true' : undefined}

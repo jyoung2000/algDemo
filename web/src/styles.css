@@ -1330,6 +1330,10 @@ a.push {
 .rec.is-disliked {
   opacity: 0.55;
 }
+/* SESSION-RESET-001: a discovery row darkens a step per play this listening session; capped for legibility. */
+.rec[data-plays="1"]:not(.is-focus):not(.is-playing) { background: #f4f2ee; }
+.rec[data-plays="2"]:not(.is-focus):not(.is-playing) { background: #eae7e1; }
+.rec[data-plays="3"]:not(.is-focus):not(.is-playing) { background: #e0dcd5; }
 .rec__rank {
   grid-area: rank;
   /* Levelled with the cover and the title beside it, never with the whole multi-line row. */

@@ -389,7 +389,7 @@ internal class RadioDirectory(private val fetch: (String) -> String) {
     val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(12)
     while (scanned < RadioCatalog.INITIAL_BUDGET) {
       val q = if (letter == "#") "" else "&name=$letter"
-      val raw = try { readRaw("/json/stations/search?hidebroken=true&order=name&reverse=false&limit=${RadioCatalog.INITIAL_BATCH}&offset=$cursor$q") }
+      val raw = try { readRaw("/json/stations/search?order=name&reverse=false&limit=${RadioCatalog.INITIAL_BATCH}&offset=$cursor$q") }
       // A batch that fails keeps what this page already found and resumes there, rather than skipping those stations.
       catch (e: Exception) { if (scanned == 0) throw e else return RadioCatalog.StationPage(RadioCatalog.sorted(out), cursor.takeIf { it <= 1_000_000 }) }
       val size = raw.length()
@@ -408,7 +408,7 @@ internal class RadioDirectory(private val fetch: (String) -> String) {
   /** RADIO-AZ-ALL-001: one page of the plain A-Z list, with "More" offered whenever the directory itself has more. */
   fun azPage(offset: Int): RadioCatalog.StationPage {
     require(offset in 0..1_000_000) { "Invalid radio page" }
-    val raw = readRaw("/json/stations/search?hidebroken=true&order=name&reverse=false&limit=${RadioCatalog.PAGE_SIZE}&offset=$offset")
+    val raw = readRaw("/json/stations/search?order=name&reverse=false&limit=${RadioCatalog.PAGE_SIZE}&offset=$offset")
     val size = raw.length()
     val stations = RadioCatalog.sorted((0 until size).mapNotNull { raw.optJSONObject(it)?.let(RadioCatalog::normalize) }.distinctBy { it.id })
     return RadioCatalog.StationPage(stations, (offset + size).takeIf { size == RadioCatalog.PAGE_SIZE && it <= 1_000_000 })
