@@ -3,7 +3,8 @@
 // held the cap of two songs per artist for its own batch only, so batch after batch piled one artist up in the queue.
 import { describe, expect, it } from 'vitest';
 import * as E from './engine';
-import { artistLoad } from './artist-variety';
+import { artistLoad, selectNeverDry, spreadInsert, tooClose, withRecentListens } from './artist-variety';
+import { resetShuffleNextForTests, stepQueue } from '../util';
 import { arrangeShuffle } from './shuffle-order';
 import type { RecItem } from '../api';
 
@@ -78,5 +79,92 @@ describe('orderAll: a re-rank orders every queued song (WP1, A1/A4)', () => {
     expect(E.orderAll([...sc].reverse(), ctx).map((s) => s.track.key)).toEqual(a);
     const top = [...sc].sort((x, y) => y.final - y.exposurePenalty - (x.final - x.exposurePenalty) || (x.track.key < y.track.key ? -1 : 1))[0]!;
     expect(a[0]).toBe(top.track.key);
+  });
+});
+
+// WP4 (A5, S3, S4, M3): one artist-variety rule, used everywhere.
+const lcg = (seed: number) => { let x = seed >>> 0; return () => ((x = (x * 1664525 + 1013904223) >>> 0) / 2 ** 32); };
+describe('tooClose / spreadInsert (WP4, A5/S3)', () => {
+  it('tooClose looks only at the last [gap] artists', () => {
+    expect(tooClose(['a', 'b', 'c'], 'b', 2)).toBe(true);
+    expect(tooClose(['a', 'b', 'c'], 'a', 2)).toBe(false);
+    expect(tooClose(['a'], 'a', 0)).toBe(false);
+    expect(tooClose(['a'], '', 2)).toBe(false);
+  });
+  it('spreadInsert takes a slot whose neighbours are other artists, at [from] or later', () => {
+    for (let s = 0; s < 50; s++) {
+      const order = ['A1', 'B1', 'C1', 'A2', 'D1'];
+      const at = spreadInsert(order, 'A9', (k) => k[0]!, lcg(s), 1);
+      expect(at).toBeGreaterThanOrEqual(1);
+      expect(order[at - 1]![0]).not.toBe('A');
+      if (at + 1 < order.length) expect(order[at + 1]![0]).not.toBe('A');
+    }
+  });
+  it('spreadInsert uses any slot from [from] when every slot has that artist beside it', () => {
+    const order = ['A1', 'A2'];
+    const at = spreadInsert(order, 'A3', (k) => k[0]!, () => 0.99, 1);
+    expect(at).toBe(2);
+    expect(order).toEqual(['A1', 'A2', 'A3']);
+  });
+});
+
+describe('runJob artist load: songs waiting plus the last 10 listens, never dry (WP4, A5)', () => {
+  it('the load adds the artists of the last 10 listens only', () => {
+    const listens = [...Array.from({ length: 5 }, () => ({ artist: 'Old' })), ...Array.from({ length: 10 }, (_, i) => ({ artist: i % 2 ? 'Slayr' : 'Ken Carson' }))];
+    expect(withRecentListens({ slayr: 1 }, listens)).toEqual({ slayr: 6, 'ken carson': 5 });
+  });
+  it('a batch under 5 songs is chosen again without the recent listens', () => {
+    const calls: Record<string, number>[] = [];
+    const full = { a: 3 };
+    const waiting = {};
+    const out = selectNeverDry((l) => { calls.push({ ...l }); return l === full ? [1, 2] : [1, 2, 3, 4, 5, 6]; }, full, waiting);
+    expect(out).toHaveLength(6);
+    expect(calls).toEqual([{ a: 3 }, {}]);
+    expect(selectNeverDry(() => [1, 2, 3, 4, 5], full, waiting)).toHaveLength(5);
+  });
+  it('the escape is reachable: fewer than 10 artists, all in the recent listens, still fill the queue', () => {
+    const cands = [rel('slayr|a'), rel('slayr|b'), rel('slayr|c'), rel('ken carson|x'), rel('ken carson|y'), rel('kankan|z'), rel('kankan|w')];
+    const listens = Array.from({ length: 10 }, (_, i) => ({ artist: ['slayr', 'ken carson', 'kankan'][i % 3] }));
+    const waiting = {};
+    const full = withRecentListens(waiting, listens);
+    const choose = (l: Readonly<Record<string, number>>) => { const ctx = ctxOf({ artistLoad: { ...l } }); return E.select(E.scoreAll(cands, ctx), ctx); };
+    expect(choose(full).length).toBeLessThan(5);
+    expect(selectNeverDry(choose, full, waiting).length).toBeGreaterThanOrEqual(5);
+  });
+});
+
+describe('orderAll spaces artists (WP4, M3)', () => {
+  it('skips a row whose artist is one of the last two picked while another artist is available', () => {
+    const cands = [rel('slayr|a'), rel('slayr|b'), rel('slayr|c'), rel('slayr|d'), rel('ken carson|x'), rel('kankan|y')];
+    const ctx = ctxOf();
+    const out = E.orderAll(E.scoreAll(cands, ctx), ctx).map((s) => s.track.artists[0]!);
+    expect(out).toHaveLength(cands.length);
+    expect(new Set(out.slice(0, 3)).size).toBe(3);
+    for (let i = 0; i < out.length; i++) {
+      const lastTwo = out.slice(Math.max(0, i - 2), i);
+      if (!tooClose(lastTwo, out[i]!, 2)) continue;
+      // only when every row still to place was by one of the last two artists
+      expect(out.slice(i).every((a) => tooClose(lastTwo, a, 2))).toBe(true);
+    }
+  });
+});
+
+describe('arrangeShuffle shows the song the player takes (WP4, S4)', () => {
+  it('the row after the song playing is always the song stepQueue returns (400 random queues)', () => {
+    const rand = lcg(7);
+    for (let t = 0; t < 400; t++) {
+      resetShuffleNextForTests();
+      const n = 6 + Math.floor(rand() * 8);
+      const items: RecItem[] = Array.from({ length: n }, (_, i) => ({ track: { key: `k${t}-${i}`, title: 'x', artists: [rand() < 0.6 ? 'A' : `Artist ${Math.floor(rand() * 3)}`] }, rank: i + 1, reasons: [], playback: { preview: '/p', embed: null, open: [] } } as unknown as RecItem));
+      const heardN = 1 + Math.floor(rand() * (n - 2));
+      const heard = new Set(items.slice(0, heardN).map((x) => x.track.key));
+      const playing = items[heardN - 1]!.track.key;
+      const recent = items.slice(0, heardN).map((x) => (x.track.artists ?? [])[0]!);
+      const order = items.slice(heardN).map((x) => x.track.key).sort(() => rand() - 0.5);
+      const shown = arrangeShuffle(items, { playingKey: playing, heard, order, reshuffle: false, rand, recentArtists: recent }).items;
+      const at = shown.findIndex((x) => x.track.key === playing);
+      const step = stepQueue(shown, playing, 1, new Set(), { shuffle: true, repeat: 'off', heard, inOrder: true, recentArtists: recent, rand });
+      expect(step!.item.track.key).toBe(shown[at + 1]!.track.key);
+    }
   });
 });

@@ -84,8 +84,9 @@ describe('3.4 must not regress: once per round, and the committed next song', ()
 describe('S3/S4 (WP4): one artist-variety rule everywhere', () => {
   beforeEach(() => resetShuffleNextForTests());
 
-  // NOT LANDED (WP4): top-up songs are inserted at a random place with no artist check (plan: 90% of orders).
-  it.fails('top-ups put an artist back to back in at most 5% of shuffled orders (300 trials)', () => {
+  // WP4 (S3): top-up songs used to be inserted at a random place with no artist check (plan: 90% of orders; measured
+  // 87.7% over 300 trials before WP4). They now take a spaced slot (spreadInsert).
+  it('top-ups put an artist back to back in at most 5% of shuffled orders (300 trials)', () => {
     // 300 trials instead of the plan's 3,000 keeps this file fast; the expected share is far from the bound either way.
     const rand = seeded(37);
     let bad = 0;
@@ -100,8 +101,8 @@ describe('S3/S4 (WP4): one artist-variety rule everywhere', () => {
     expect(bad / trials).toBeLessThanOrEqual(0.05);
   });
 
-  // NOT LANDED (WP4): the list shows a5 next, but the four-in-a-row rule makes the player take b1 (plan S4).
-  it.fails('the row after the song playing is the song the player takes', () => {
+  // WP4 (S4): the list used to show a5 next while the four-in-a-row rule made the player take b1 (plan S4).
+  it('the row after the song playing is the song the player takes', () => {
     const items = [row('a1', 'A'), row('a2', 'A'), row('a3', 'A'), row('a4', 'A'), row('a5', 'A'), row('b1', 'B'), row('c1', 'C')];
     const heard = new Set(['a1', 'a2', 'a3', 'a4']);
     const shown = arrangeShuffle(items, { playingKey: 'a4', heard, order: ['a5', 'b1', 'c1'], reshuffle: false, rand: seeded(41) }).items;

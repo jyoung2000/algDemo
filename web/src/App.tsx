@@ -718,7 +718,7 @@ export function App() {
   const moodListScope = moodOn && playingContext !== null && playingContext !== SEARCH_CONTEXT && shuffle;
   /** A re-rank answer keeps the songs the mood had placed where they were until the mood answers again. */
   const keepMood = (xs: RecItem[]): RecItem[] => {
-    if (discoverShuffleRef.current) return arrangeShuffle(xs, { playingKey, heard: heardNow(), order: shuffleOrderRef.current, reshuffle: false, rand: Math.random, hidden }).items;
+    if (discoverShuffleRef.current) return arrangeShuffle(xs, { playingKey, heard: heardNow(), order: shuffleOrderRef.current, reshuffle: false, rand: Math.random, hidden, recentArtists: artistRunRef.current }).items;
     if (!moodQueueScope || !moodOrderRef.current.length) return xs;
     const movable = new Set(moodMovable(xs, { currentKey: playingKey, played: playedRef.current, hidden }).map((x) => x.track.key));
     return placeMood(xs, moodOrderRef.current.filter((k) => movable.has(k)));
@@ -842,7 +842,7 @@ export function App() {
     const reshuffle = shuffleEpochDone.current !== shuffleEpoch;
     shuffleEpochDone.current = shuffleEpoch;
     const fit = moodOn && moodFitState ? { fit: moodFitState.fit, confidence: moodFitState.confidence, adventurous: settings?.adventurous ?? 0.5 } : null;
-    const r = arrangeShuffle(result.items, { playingKey, heard: heardNow(), order: shuffleOrderRef.current, reshuffle, rand: Math.random, mood: fit, hidden,
+    const r = arrangeShuffle(result.items, { playingKey, heard: heardNow(), order: shuffleOrderRef.current, reshuffle, rand: Math.random, mood: fit, hidden, recentArtists: artistRunRef.current,
       ready: (x) => canPlayHere(x.playback) && (!stepReady || stepReady(x.track)) });
     shuffleOrderRef.current = r.order;
     if (r.items !== result.items) setResult((prev) => (prev && prev.items === result.items ? { ...prev, items: r.items } : prev));

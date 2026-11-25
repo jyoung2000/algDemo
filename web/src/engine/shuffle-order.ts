@@ -6,7 +6,7 @@
  */
 import type { RecItem } from '../api';
 import { moodShufflePick } from './mood-shuffle';
-import { rowArtist } from './artist-variety';
+import { rowArtist, runArtist, spreadInsert } from './artist-variety';
 
 export interface ShuffleMoodFit { fit: ReadonlyMap<string, number>; confidence: number; adventurous: number }
 export interface ArrangeShuffleOpts {
@@ -22,6 +22,11 @@ export interface ArrangeShuffleOpts {
   /** Songs that can play now; the first song to come must be one of them. */
   ready?: (x: RecItem) => boolean;
   hidden?: ReadonlySet<string>;
+  /**
+   * ARTIST-RUN-001 / WP4 (S4): artist credits of the songs played, oldest first (what stepQueue gets). Absent: the
+   * songs heard this round in list order, then the song playing.
+   */
+  recentArtists?: readonly string[];
 }
 
 export function arrangeShuffle(items: RecItem[], o: ArrangeShuffleOpts): { items: RecItem[]; order: string[] } {
@@ -63,16 +68,27 @@ export function arrangeShuffle(items: RecItem[], o: ArrangeShuffleOpts): { items
     const have = new Set(order);
     const at = current ? items.indexOf(current) : -1;
     const askedNext = at >= 0 ? items[at + 1] : undefined;
+    // WP4 (S3): a song found since takes a spaced slot (spreadInsert, the PlayQueue.kt spacedSlot twin): neighbours by
+    // other artists where there is one, never in front of the song already shown next.
+    const artistOfKey = (k: string) => rowArtist(byKey.get(k)!.track);
     for (const x of coming) {
       if (have.has(key(x))) continue;
       if (x === askedNext) order.unshift(key(x));
-      else order.splice(order.length ? 1 + Math.floor(o.rand() * order.length) : 0, 0, key(x));
+      else spreadInsert(order, key(x), artistOfKey, o.rand, order.length ? 1 : 0);
       have.add(key(x));
     }
   }
   // The song shown next must be able to play now; one still downloading waits further down.
   if (o.ready && order.length && !o.ready(byKey.get(order[0]!)!)) {
     const i = order.findIndex((k) => o.ready!(byKey.get(k)!));
+    if (i > 0) order.unshift(...order.splice(i, 1));
+  }
+  // WP4 (S4, ARTIST-RUN-001): the first song to come never makes a fifth in a row by one artist while a song by another
+  // (that can play now) is waiting, so under inOrder stepQueue's breakRun has nothing left to change and the row after
+  // the song playing is the song the player takes.
+  const run = runArtist(o.recentArtists ?? [...history, ...(current ? [current] : [])].map((x) => rowArtist(x.track)));
+  if (run && order.length && rowArtist(byKey.get(order[0]!)!.track) === run) {
+    const i = order.findIndex((k) => rowArtist(byKey.get(k)!.track) !== run && (!o.ready || o.ready(byKey.get(k)!)));
     if (i > 0) order.unshift(...order.splice(i, 1));
   }
   const out = [...history, ...(current ? [current] : []), ...order.map((k) => byKey.get(k)!), ...hiddenRows];

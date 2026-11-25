@@ -37,7 +37,7 @@ vi.mock('./Player', () => ({ Player: (p: { playing: { track: Track } | null; onN
   <button onClick={p.onShuffle}>Fixture Shuffle</button>
 </div> }));
 vi.mock('./SavedView', () => ({ SavedView: (p: { onPreview: (t: Track, id?: string) => void }) => <div>{['p', 'q'].flatMap(id => tracks.map(t => <button key={id + t.key} onClick={() => p.onPreview(t, id)}>Saved {id} {t.key}</button>))}</div> }));
-vi.mock('./Results', async orig => ({ ...await orig<typeof import('./Results')>(), Results: (p: { onPlay: (r: RecItem) => void }) => <div>{rows.map(r => <button key={r.track.key} onClick={() => p.onPlay(r)}>Queue {r.track.key}</button>)}</div> }));
+vi.mock('./Results', async orig => ({ ...await orig<typeof import('./Results')>(), Results: (p: { onPlay: (r: RecItem) => void; items?: RecItem[] }) => <div>{(p.items?.length ? p.items : rows).map(r => <button key={r.track.key} onClick={() => p.onPlay(r)}>Queue {r.track.key}</button>)}</div> }));
 vi.mock('./Search', async orig => ({ ...await orig<typeof import('./Search')>(), Search: (p: { onPreview: (t: Track, list: Track[]) => void }) => <div>{tracks.map(t => <button key={t.key} onClick={() => p.onPreview(t, tracks)}>Search {t.key}</button>)}</div> }));
 const current = () => screen.getByTestId('current').textContent;
 const click = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
@@ -91,6 +91,25 @@ describe('SHUFFLE-ONCE-001: the queue shuffle plays a song once', () => {
     click('Saved p a');
     await waitFor(() => expect(current()).toBe('a'));
     click('Fixture Next'); expect(current()).toBe('b');
+  });
+});
+
+// BUG1 regression guard (commit 3d689d5, SHUFFLE-STAY-001): with shuffle on, a song tapped in the middle of the list
+// stays in the queue after Next, and Next moves on to another song rather than coming back to it.
+describe('SHUFFLE-STAY-001: a tapped mid-list song stays queued after Next', () => {
+  it('tap c, press Next once: c is still in the list and is not the next pick', async () => {
+    vi.mocked(api.feedbackState).mockResolvedValue({ state: {}, events: 0, taste: null } as never);
+    render(<App />);
+    await waitFor(() => expect(api.feedbackState).toHaveBeenCalled());
+    await screen.findByRole('button', { name: 'Queue c' });
+    await new Promise((r) => setTimeout(r, 0));
+    click('Queue c'); expect(current()).toBe('c');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Fixture Next' }).hasAttribute('disabled')).toBe(false));
+    click('Fixture Next');
+    expect(current()).not.toBe('c');
+    expect(current()).not.toBe('-');
+    expect(screen.getByRole('button', { name: 'Queue c' })).toBeTruthy();
+    expect(screen.getByTestId('upnext').textContent!.split(',')).not.toContain('c');
   });
 });
 

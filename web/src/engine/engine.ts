@@ -11,6 +11,7 @@ import { TASTE_WEIGHT, tasteFit, type TasteProfile } from './taste';
 import { tasteFit2, type TasteBlend } from './taste2';
 import { SEED_GUESS_SOURCE, SOUND_GUESS_SOURCE } from './infer';
 import { albumKeyOf, cleanAlbumTitle, type AlbumOf } from './album-key';
+import { tooClose } from './artist-variety';
 
 export const SEED_FACTORS = ['audio', 'genre', 'artist', 'provider', 'tempo'] as const;
 export const GLOBAL_FACTORS = ['feedback', 'freshness', 'novelty'] as const;
@@ -864,10 +865,14 @@ export function orderAll(scored: Scored[], ctx: Context): Scored[] {
   for (const s of ctx.seeds) seedShare[s.key] = emphOf(s) / emphTotal;
   const lam = 0.06 + 0.06 * Math.min(1.0, 2 * ctx.settings.adventurous);
   while (left.length) {
-    let bi = 0;
+    // WP4 (M3): skip a row whose primary artist is one of the last two picked while another artist is available.
+    const lastTwo = chosen.slice(-2).map((r) => primaryArtist(r.track));
+    const spaced = left.some((s) => !tooClose(lastTwo, primaryArtist(s.track), 2));
+    let bi = -1;
     let bestVal = -Infinity;
     for (let i = 0; i < left.length; i++) {
       const s = left[i]!;
+      if (spaced && tooClose(lastTwo, primaryArtist(s.track), 2)) continue;
       let val = s.final - s.exposurePenalty;
       if (chosen.length) val -= lam * Math.max(...chosen.slice(-6).map((r) => sim(s, r, ctx.vectors)));
       if (s.bestSeed && seeds.length > 1) {
@@ -875,7 +880,7 @@ export function orderAll(scored: Scored[], ctx: Context): Scored[] {
         val += 0.06 * Math.max(-1.0, Math.min(1.0, expected - (perSeed[s.bestSeed] ?? 0)));
       }
       if (ctx.settings.fresh && s.newRelease) val += 0.15;
-      if (val > bestVal || (val === bestVal && s.track.key < left[bi]!.track.key)) {
+      if (bi < 0 || val > bestVal || (val === bestVal && s.track.key < left[bi]!.track.key)) {
         bi = i;
         bestVal = val;
       }

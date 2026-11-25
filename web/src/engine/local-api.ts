@@ -68,7 +68,7 @@ import { Job, Pipeline, pmap, type Embedder } from './pipeline';
 import { FAV_ARTISTS_KEY, FAV_PER_RUN, addFav, favMap, favSeed, normaliseFav, normaliseFavs, removeFav, type FavArtist } from './fav-artists';
 import { referenceSize, sizeFit, smallScene } from './artist-size';
 import { coldReason, coldStarters, type ColdStarter } from './cold-start';
-import { artistLoad } from './artist-variety';
+import { artistLoad, selectNeverDry, withRecentListens } from './artist-variety';
 import { FLOW_KEY, dryReason, flowPick, flowState, heardTest } from './queue-data-flow';
 import { SOURCE_LABELS, cleanTrack, playbackFor, round, type Dict } from './shape';
 import { AppleMusic } from './apple';
@@ -2087,7 +2087,12 @@ export class LocalApi {
     // ARTIST-VARIETY-001: the songs by each artist already waiting in the queue, and in the last few listens, count
     // against the per-artist cap, so batch after batch cannot pile one artist up.
     const listens = this.store.feedback().filter((r) => r.kind === 'complete' || r.kind === 'skip');
-    const load = artistLoad(previous, new Set(listens.map((r) => r.key)));
+    // WP4 (A5): the load is the songs waiting PLUS the artists of the last RECENT_LISTENS listens (newest last).
+    const waiting = artistLoad(previous, new Set(listens.map((r) => r.key)));
+    const load = withRecentListens(waiting, [...listens].sort((a, b) => a.ts - b.ts));
+    // WP4 (A5) never-dry escape (QUEUE-NEVER-DRY-001): a batch that would come back with fewer than NEVER_DRY_MIN songs
+    // is chosen again without the recent listens. select() itself is unchanged.
+    const choose = (sc: Parameters<typeof E.select>[0], c: E.Context) => selectNeverDry((l) => E.select(sc, { ...c, artistLoad: l }), load, waiting);
     const limit = Number(settings['queue_size'] ?? DEFAULT_ENGINE.queueSize);
     const merge = (batch: Dict): Dict => {
       // QUEUE-ADD-001: append to the queue as it stands now, so a song the listener added while this
@@ -2181,7 +2186,7 @@ export class LocalApi {
             seeds: seedViews as never, vectors: new Map(), relatedArtists: relMapQ, feedback: fb, impressions: imps,
             settings: es2, now: new Date(), cfg, taste, rankV2: v2, taste2, artistLoad: load,
           };
-          const quickChosen = E.select(E.scoreAll(newDiscoveryTracks(quick, held).filter(unheard) as never, ctxQ), ctxQ);
+          const quickChosen = choose(E.scoreAll(newDiscoveryTracks(quick, held).filter(unheard) as never, ctxQ), ctxQ);
           if (quickChosen.length) {
             job.result = merge(this.serialise(quickChosen, ctxQ, 'gathering', job));
             job.progress = `First ${quickChosen.length} songs found; still asking the other services`;
@@ -2242,12 +2247,12 @@ export class LocalApi {
       const relMap = new Map([...related].filter(([, v]) => v.size));
       const ctx: E.Context = { seeds: seedViews as never, vectors, relatedArtists: relMap, feedback: fb, impressions: imps, settings: es, now: new Date(), cfg, taste, rankV2: v2, taste2, artistLoad: load };
       let scored = E.scoreAll(cands as never, ctx);
-      let chosen = E.select(scored, ctx);
+      let chosen = choose(scored, ctx);
       // ARTIST-SIZE-001: the leading songs' artists are sized and the list is ranked again with their fit.
       if (sizeRef !== null) {
         job.progress = 'Matching artists of a similar size';
         const fit = await this.sizeFitFor(job, sizeRef, scored.slice(0, 60).map((x) => x.track as Dict));
-        if (fit) { ctx.artistFit = fit; scored = E.scoreAll(cands as never, ctx); chosen = E.select(scored, ctx); }
+        if (fit) { ctx.artistFit = fit; scored = E.scoreAll(cands as never, ctx); chosen = choose(scored, ctx); }
       }
       job.timings['metadata_ms'] = since();
       job.result = merge(this.serialise(chosen, ctx, 'metadata', job));
@@ -2358,13 +2363,13 @@ export class LocalApi {
       // asked for subgenres, so it was skipped. Ask again now that every song has its family.
       job.progress = 'Naming hip-hop subgenres';
       scored = E.scoreAll(cands as never, ctx);
-      chosen = E.select(scored, ctx);
+      chosen = choose(scored, ctx);
       // Ask about the songs the person will see, in ranked order, not the raw gathering order.
       const byKey = new Map(cands.map((c) => [String(c['key']), c]));
       const shown = chosen.map((x) => byKey.get(x.track.key)).filter((c): c is Dict => Boolean(c));
       await p.subgenresFromMusicBrainz(job, shown, 12);
       scored = E.scoreAll(cands as never, ctx);
-      chosen = E.select(scored, ctx);
+      chosen = choose(scored, ctx);
       job.timings['total_ms'] = since();
       job.result = merge(this.serialise(chosen, ctx, 'final', job));
       // The pool keeps every song the list holds, so a later re-rank can reorder all of them.
@@ -2432,7 +2437,7 @@ export class LocalApi {
       now: new Date(),
     };
     // WP1 (plan 2026-11-24, A1/A4): a re-rank orders only the songs the queue holds now. Pool rows that were never
-    // chosen stay out, and every queued row comes back (orderAll has no artist cap or tier quota). Queue rows with no
+    // chosen stay out, and every queued row comes back (orderAll has no artist cap or tier quota; WP4/M3 only spaces artists). Queue rows with no
     // pool row are not returned; the page's mergeRerank keeps them where they are (SHUFFLE-STAY-001).
     const stored = this.store.get<Dict>('last_result');
     // WP1 step 4 (A8): found rows (Find similar, custom discovery; old stored rows marked added + custom/sound_match)
