@@ -526,7 +526,8 @@ class PlaybackService : MediaLibraryService() {
 
   /** Runs the phone's sound match for the car's song; found songs join the end of the queue. */
   private fun findSimilar(id: String) {
-    if (similarBusy) return
+    // CAR-ACTIONS-EVERY-TIME-001: a second press while one runs is answered, not silently dropped.
+    if (similarBusy) { tellDriver("Still finding songs similar to this one."); return }
     similarBusy = true
     refreshCarButtons()
     tellDriver(CarSimilarText.looking(MediaHub.findSong(id)?.title))
@@ -1039,7 +1040,7 @@ class PlaybackService : MediaLibraryService() {
         // CAR-SIMILAR-ID-001 (owner, 2026-11-23): "sometimes the find similar songs ... buttons don't work".
         // A playlist row's media id carries its list ("playlist/<id>/track/<key>") and the radio's starts
         // with "radio:"; the page knows neither. currentSongId() is the song as the page names it.
-        ACTION_SIMILAR -> findSimilar(currentSongId() ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE)))
+        ACTION_SIMILAR -> findSimilar(currentSongId() ?: run { tellDriver("Play a song first, then press Find similar."); return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE)) })
         ACTION_STAR -> {
           val id = currentSongId() ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_INVALID_STATE))
           // CAR-HEART-ALWAYS-001 (owner, 2026-11-23): "hearting a song doesnt bring up the playlist sub menu like

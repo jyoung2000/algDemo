@@ -30,6 +30,8 @@ object RadioNative {
   /** RADIO-SHUFFLE-001: with shuffle on, car/phone skips tune a RANDOM other station of the tuned
    * list. It survives station switches (each one is a new Session) and resets when radio ends. */
   @Volatile var shuffle: Boolean = false
+    // RADIO-SHUFFLE-NO-REPEAT-001: turning shuffle on or off starts a new round of unplayed stations.
+    set(on) { if (field != on) RadioCatalog.resetShuffle(session?.station); field = on }
   private val metadata = java.util.concurrent.ConcurrentHashMap<String, JSONObject>()
   fun publicAddress(a: InetAddress): Boolean {
     if (a !is Inet4Address || a.isAnyLocalAddress || a.isLoopbackAddress || a.isLinkLocalAddress || a.isSiteLocalAddress || a.isMulticastAddress) return false
@@ -166,6 +168,7 @@ object RadioNative {
         cmd.optJSONArray("stations")?.let { RadioCatalog.rememberStations(it) }
         val s = start(ctx, cmd)
         RadioCatalog.selectContext(s.station)
+        RadioCatalog.markPlayed(s.station)
         return snapshot(s)
       }
       // One favourites store for the phone page, the car browse tree and the station star action.

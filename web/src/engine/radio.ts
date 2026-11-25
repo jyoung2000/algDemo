@@ -128,6 +128,20 @@ export class RadioDirectory {
   constructor(private request: RadioRequest) {}
   async read(path: string): Promise<unknown> { let last: unknown; for (const host of DIRECTORY_SERVERS) { try { return JSON.parse(await this.request(host + path)); } catch (e) { last = e; } } throw last; }
   async search(opts: RadioSearch = {}): Promise<RadioStation[]> { return (await this.page(opts)).stations; }
+  /** RADIO-SHUFFLE-NO-REPEAT-001: how many stations the directory holds (cached), for a random A-Z page. */
+  private worldTotal = 0;
+  async worldCount(): Promise<number> {
+    if (this.worldTotal > 0) return this.worldTotal;
+    try { const n = Number((await this.read('/json/stats') as { stations?: unknown } | null)?.stations); if (Number.isFinite(n) && n > 0) return (this.worldTotal = Math.floor(n)); } catch { /* directory down: an estimate */ }
+    return 40000;
+  }
+  /** A random page of every station in the world by name, with no filter, for shuffle to draw new stations from. */
+  async worldPage(rnd: () => number = Math.random): Promise<RadioStation[]> {
+    const total = Math.min(await this.worldCount(), 1_000_000);
+    const q = new URLSearchParams({ order: 'name', reverse: 'false', limit: '100', offset: String(Math.floor(rnd() * Math.max(1, total - 100))) });
+    const data = await this.read(`/json/stations/search?${q}`);
+    return (Array.isArray(data) ? data : []).map((row) => normalizeStation(row as Record<string, unknown>)).filter((s): s is RadioStation => !!s);
+  }
   /** RADIO-ALL-STATIONS-001: iHeart answers, never fatal; the list stands on Radio Browser when iHeart is down. */
   private async iheart(url: string): Promise<string> { try { return await this.request(url); } catch { return ''; } }
   private async iheartNear(p: RadioPlace): Promise<IheartStation[]> {
@@ -396,6 +410,13 @@ export function radioClock(seconds: number | null): string {
  * RADIO-UI-005: shuffle across stations picks any OTHER station, uniformly; -1 when there is no
  * other station to go to. Pure so both the phone player and tests share one rule.
  */
+/** RADIO-SHUFFLE-NO-REPEAT-001 (owner, 2026-11-25): a random station that is neither on air nor already played this
+ * shuffle round; null when none is left, so the caller loads more of the directory. */
+export function pickUnseenStation(pool: readonly RadioStation[], seen: ReadonlySet<string>, current: string | undefined, rnd: () => number): RadioStation | null {
+  const ids = new Set<string>();
+  const open = pool.filter((s) => { if (s.id === current || seen.has(s.id) || ids.has(s.id)) return false; ids.add(s.id); return true; });
+  return open.length ? open[Math.min(open.length - 1, Math.max(0, Math.floor(rnd() * open.length)))] ?? null : null;
+}
 export function pickShuffleIndex(length: number, current: number, rnd: () => number): number {
   if (length < 2) return -1;
   let n = Math.floor(rnd() * (length - 1)); if (n < 0) n = 0; if (n >= length - 1) n = length - 2;

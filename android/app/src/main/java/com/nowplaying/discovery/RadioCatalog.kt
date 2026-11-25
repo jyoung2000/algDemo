@@ -186,7 +186,43 @@ object RadioCatalog {
       if (previous == null) retainContext.remove() else retainContext.set(previous)
     }
   }
-  fun canSkip(stationId: String): Boolean = selected.size > 1 && selected.any { it.id == stationId }
+  /** RADIO-SHUFFLE-NO-REPEAT-001 (owner, 2026-11-25): "shuffle on radio shouldnt repeat stations and shuffle should be
+   * able to load new stations". Stations tuned since shuffle went on are not drawn again; when the tuned list has no
+   * other unplayed station, a random page of the whole directory (A-Z, no filter) joins the draw. */
+  private val shuffleSeen = LinkedHashSet<String>()
+  private val world = LinkedHashMap<String, Station>()
+  @Volatile private var worldTotal = 0
+  @Synchronized fun markPlayed(stationId: String) {
+    shuffleSeen.remove(stationId); shuffleSeen.add(stationId)
+    while (shuffleSeen.size > 5000) shuffleSeen.remove(shuffleSeen.first())
+  }
+  @Synchronized fun resetShuffle(current: String?) { shuffleSeen.clear(); world.clear(); current?.let { shuffleSeen.add(it) } }
+  @Synchronized private fun unseenOther(stationId: String, random: kotlin.random.Random): Station? {
+    val pool = (selected + world.values).distinctBy { it.id }.filter { it.id != stationId && it.id !in shuffleSeen }
+    return if (pool.isEmpty()) null else pool[random.nextInt(pool.size)]
+  }
+  @Synchronized private fun addWorld(page: List<Station>) {
+    for (st in page) { world[st.id] = st; known[st.id] = st }
+    while (world.size > 2000) world.remove(world.keys.first())
+    while (known.size > 2000) known.remove(known.keys.first())
+  }
+  /** Network: only on a catalogue worker. */
+  private fun worldPage(): List<Station> {
+    val total = worldTotal.takeIf { it > 0 } ?: directory.worldCount().also { worldTotal = it }
+    return directory.worldPage(kotlin.random.Random.Default.nextInt(0, maxOf(1, minOf(total, 1_000_000) - PAGE_SIZE)))
+  }
+  private fun shuffleTarget(current: String): Station? {
+    unseenOther(current, kotlin.random.Random.Default)?.let { return it }
+    repeat(3) {
+      runCatching { worldPage() }.getOrNull()?.let(::addWorld)
+      unseenOther(current, kotlin.random.Random.Default)?.let { return it }
+    }
+    // Every station drawn (or the directory is down): a new round, still never the station on air.
+    synchronized(this) { shuffleSeen.clear(); shuffleSeen.add(current) }
+    return unseenOther(current, kotlin.random.Random.Default)
+  }
+  @Synchronized fun canSkip(stationId: String, shuffle: Boolean = false): Boolean =
+    (selected.size > 1 && selected.any { it.id == stationId }) || (shuffle && (selected.any { it.id != stationId } || world.isNotEmpty() || selected.isNotEmpty()))
   fun adjacent(stationId: String, dir: Int): Station? {
     val list = selected
     val at = list.indexOfFirst { it.id == stationId }
@@ -196,11 +232,8 @@ object RadioCatalog {
   /** RADIO-SHUFFLE-001: a uniformly random OTHER station of the tuned list; null when there is no
    * other (fewer than two stations, or the tuned station is not in its list), as ordered skips. */
   fun randomOther(stationId: String, random: kotlin.random.Random = kotlin.random.Random.Default): Station? {
-    val list = selected
-    val at = list.indexOfFirst { it.id == stationId }
-    if (at < 0 || list.size < 2) return null
-    val others = list.filterIndexed { i, _ -> i != at }
-    return others[random.nextInt(others.size)]
+    if (selected.none { it.id == stationId } && synchronized(this) { !world.containsKey(stationId) }) return null
+    return unseenOther(stationId, random)
   }
 
   /** Called only on a catalogue worker; cold ids are resolved by UUID, not by an Activity map. */
@@ -336,8 +369,10 @@ object RadioCatalog {
   fun skip(ctx: Context, dir: Int): ListenableFuture<JSONObject> = async {
     synchronized(tuning) {
       val current = RadioNative.session?.station ?: error("No radio station is playing")
-      val station = (if (RadioNative.shuffle) randomOther(current) else null)
+      val station = (if (RadioNative.shuffle) shuffleTarget(current) else null)
         ?: adjacent(current, dir) ?: error("No other station in this list")
+      // RADIO-CAR-SKIP-001: one line per press, so a skip on the car can be checked against what was tuned.
+      runCatching { android.util.Log.i("jPlayRadio", "skip dir=$dir shuffle=${RadioNative.shuffle} from=$current to=${station.id} ${station.name}") }
       start(ctx, station)
     }
   }
@@ -420,6 +455,19 @@ internal class RadioDirectory(private val fetch: (String) -> String) {
     val found = read("/json/stations/search?hidebroken=true&$ordering&limit=100&offset=$offset" +
       if (query.isBlank()) "" else "&name=" + URLEncoder.encode(RadioNames.source(query), "UTF-8"))
     return if (alias == null) found else found.filter { RadioNames.matchesQuery(it.name, query) }
+  }
+  /** RADIO-SHUFFLE-NO-REPEAT-001: how many stations the directory holds, so shuffle can open a random A-Z page. */
+  fun worldCount(): Int {
+    for (mirror in mirrors) {
+      val n = runCatching { JSONObject(fetch("$mirror/json/stats")).optInt("stations", 0) }.getOrDefault(0)
+      if (n > 0) return n
+    }
+    return 40_000
+  }
+  /** A page of every station in the world by name, with no filter (RADIO-AZ-ALL-001's whole directory). */
+  fun worldPage(offset: Int): List<RadioCatalog.Station> {
+    require(offset in 0..1_000_000) { "Invalid station offset" }
+    return RadioCatalog.rows(readRaw("/json/stations/search?order=name&reverse=false&limit=100&offset=$offset"))
   }
   fun byId(id: String): RadioCatalog.Station? {
     RadioIheart.byIdUrl(id)?.let { url -> return RadioIheart.parse(fetch(url)).firstOrNull { it.id == id } }

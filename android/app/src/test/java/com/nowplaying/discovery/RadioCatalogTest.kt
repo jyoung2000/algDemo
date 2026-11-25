@@ -164,6 +164,27 @@ class RadioCatalogTest {
     } finally { RadioCatalog.selectContext("missing-radio-test-context") }
   }
 
+  @Test fun shuffleDoesNotRepeatAStationUntilEveryOtherOneWasPlayed() {
+    // RADIO-SHUFFLE-NO-REPEAT-001 (owner, 2026-11-25): "shuffle on radio shouldnt repeat stations".
+    RadioCatalog.rememberStations(JSONArray().put(row("nr-a", "Alpha")).put(row("nr-b", "Beta")).put(row("nr-c", "Chi")).put(row("nr-d", "Delta")).put(row("nr-e", "Echo")))
+    RadioCatalog.selectContext("nr-a")
+    try {
+      repeat(20) { round ->
+        RadioCatalog.resetShuffle("nr-a")
+        val random = kotlin.random.Random(round)
+        var on = "nr-a"
+        val played = mutableListOf<String>()
+        repeat(4) {
+          val next = RadioCatalog.randomOther(on, random)!!.id
+          RadioCatalog.markPlayed(next); played += next; on = next
+        }
+        assertEquals("four skips reach the four other stations once each: $played", setOf("nr-b", "nr-c", "nr-d", "nr-e"), played.toSet())
+        assertNull("with every station played the list itself offers no repeat", RadioCatalog.randomOther(on, random))
+      }
+      assertTrue("shuffle keeps Next available", RadioCatalog.canSkip("nr-a", shuffle = true))
+    } finally { RadioCatalog.resetShuffle(null); RadioCatalog.selectContext("missing-radio-test-context") }
+  }
+
   @Test fun shuffledSkipHasNoTargetWithoutAnotherStationInTheList() {
     RadioCatalog.rememberStations(JSONArray().put(row("sh-solo", "Solo")))
     RadioCatalog.selectContext("sh-solo")

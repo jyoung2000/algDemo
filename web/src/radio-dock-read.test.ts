@@ -21,10 +21,10 @@ describe('the phone radio player\u2019s words are readable and whole', () => {
     expect(rule('.np.radio-player .radio-player__tags')).toMatch(/min-height:22px/);
     expect(rule('.np.radio-player .radio-player__identity small')).toMatch(/font-size:12px; line-height:17px/);
   });
-  it('wraps a long title, artist or place instead of cutting it with dots', () => {
+  it('keeps a long title, artist or place on one gliding line instead of stacking or cutting it with dots (RADIO-INLINE-MARQUEE-001)', () => {
     for (const sel of ['.np.radio-player .radio-player__titleline strong', '.np.radio-player .radio-player__song',
       '.np.radio-player .radio-player__identity > span:not(.radio-live):not(.radio-player__tags)', '.np.radio-player .radio-player__identity small']) {
-      expect(rule(sel), sel).toMatch(/white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere/);
+      expect(rule(sel), sel).toMatch(/white-space:nowrap; overflow:hidden; text-overflow:clip; min-width:0/);
     }
     expect(phone).not.toMatch(/text-overflow:ellipsis|display:none|visibility:hidden/);
   });
@@ -46,5 +46,18 @@ describe('a starred station\u2019s heart is white on blue', () => {
     expect(rows).toContain("ul.radio-stations .radio-station__actions.song-actions .iconbtn[aria-pressed='true']");
     expect(on.split(',').map((s) => s.trim())).toContain(rowStar);
     expect(block).toContain(`${rowStar}:hover:not(:disabled)`);
+  });
+});
+
+describe('RADIO-INLINE-MARQUEE-001: the radio player\u2019s words glide instead of stacking', () => {
+  const tsx = readFileSync(new URL('./RadioPlayer.tsx', import.meta.url), 'utf8');
+  it('puts the title, the artists with the station, and the place each in a Marquee', () => {
+    expect(tsx).toMatch(/<strong title=\{[^}]*\}><Marquee>/);
+    expect(tsx).toContain('<span className="radio-player__credit"><Marquee>');
+    expect(tsx).toContain('<b className="radio-player__station">{s.name}</b></Marquee></span>');
+    expect(tsx).toContain('<small><Marquee>{stationLocation(s)}');
+  });
+  it('never lets the phone player wrap a line', () => {
+    expect(phone).not.toMatch(/white-space:normal/);
   });
 });

@@ -298,15 +298,18 @@ button.radio-live--behind { color:#8a5a00; text-decoration:underline; text-under
    the live badge, the title, the artist and station, the place and the genres each have a line of their own at a
    readable size, and a long one wraps instead of being cut with dots; the station's heart sits beside the title. The bar, and the single row of controls, stay
    as they were (RADIO-DOCK-SIZE-001), so the player is as tall as its words need and no taller. */
+/* RADIO-INLINE-MARQUEE-001 (owner, 2026-11-25): "ensure the radio player labels and sub layers are inline and marquis,
+   sometimes the radio player is really tall since the text stacks". The title, the artists with the station, and the
+   place are one line each that glides when too long (Marquee), so a long title never makes the player taller. */
 @media (max-width:760px) {
  .np.radio-player .radio-player__main { height:auto; align-items:flex-start; }
  .np.radio-player .radio-player__identity { grid-template-rows:none; grid-auto-rows:auto; row-gap:2px; align-items:start; }
  .np.radio-player .radio-live { grid-area:auto / 1; line-height:15px; }
- .np.radio-player .radio-player__titleline strong { grid-area:auto / 1; font-size:16px; line-height:22px; white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
- .np.radio-player .radio-player__song { line-height:22px; white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
- .np.radio-player .radio-player__identity > span:not(.radio-live):not(.radio-player__tags) { grid-area:auto / 1 / auto / 3; max-width:100%; font-size:13px; line-height:18px; white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
- .np.radio-player .radio-player__artist { font-size:inherit; line-height:18px; white-space:normal; text-align:left; }
- .np.radio-player .radio-player__identity small { grid-area:auto / 1 / auto / 3; justify-self:start; max-width:100%; font-size:12px; line-height:17px; text-align:left; white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
+ .np.radio-player .radio-player__titleline strong { grid-area:auto / 1; font-size:16px; line-height:22px; white-space:nowrap; overflow:hidden; text-overflow:clip; min-width:0; }
+ .np.radio-player .radio-player__song { line-height:22px; white-space:nowrap; overflow:hidden; text-overflow:clip; min-width:0; }
+ .np.radio-player .radio-player__identity > span:not(.radio-live):not(.radio-player__tags) { grid-area:auto / 1 / auto / 3; max-width:100%; font-size:13px; line-height:18px; white-space:nowrap; overflow:hidden; text-overflow:clip; min-width:0; }
+ .np.radio-player .radio-player__artist { font-size:inherit; line-height:18px; white-space:nowrap; text-align:left; }
+ .np.radio-player .radio-player__identity small { grid-area:auto / 1 / auto / 3; justify-self:start; max-width:100%; font-size:12px; line-height:17px; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:clip; min-width:0; }
  /* The genres use the whole width of the player (the words keep clear of Stop above; this line is below it), so three
     ordinary tags show whole; only a longer run glides (TAG-STRIP-001). */
  .np.radio-player .radio-player__tags { grid-area:auto / 1 / auto / 3; justify-self:start; max-width:calc(100% + 36px); margin-right:-36px; height:auto; min-height:22px; margin-top:2px; overflow:visible; align-items:center; }
@@ -341,3 +344,5 @@ ul.radio-stations .radio-station__actions.song-actions .iconbtn.radio-station__s
  .np.radio-player .radio-player__actions .radio-player__playlist,
  .np.radio-player .radio-player__actions .radio-player__download { flex:0 0 44px; width:44px; min-width:44px; height:44px; }
 }
+.radio-player__station { font-weight:600; }
+.radio-player__credit .mq, .radio-player__identity small .mq, .radio-player__titleline strong .mq { display:block; max-width:100%; }

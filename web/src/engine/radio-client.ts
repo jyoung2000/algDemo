@@ -1,6 +1,6 @@
 import { api, type Characteristics, type Track } from '../api';
 import { fold, parseTitle } from './identity';
-import { RadioDirectory, parseBroadcast, freshBroadcast, heardCredit, pickShuffleIndex, radioItemClock, carRadioClock, icySongStart, songStartFromFingerprint, type Broadcast, type RadioStation } from './radio';
+import { RadioDirectory, pickUnseenStation, parseBroadcast, freshBroadcast, heardCredit, radioItemClock, carRadioClock, icySongStart, songStartFromFingerprint, type Broadcast, type RadioStation } from './radio';
 import { publisherBroadcast, icecastBroadcast } from './radio-feeds';
 import { geocodePlace, type RadioPlace } from './radio-places';
 import { normaliseRadioArtist, radioArtistKey, radioSongFits } from './radio-artist';
@@ -128,18 +128,44 @@ class RadioSession {
   setStations(stations: RadioStation[]) { this.stationList = stations; }
   canSkip(dir: 1 | -1): boolean {
     const i = this.stationList.findIndex(s => s.id === this.value.station?.id);
-    if (this.value.shuffle) return this.stationList.length > 1 && i >= 0;
+    if (this.value.shuffle) return !!this.value.station && (this.stationList.some(s => s.id !== this.value.station?.id) || this.worldPool.length > 0 || i >= 0);
     return i >= 0 && i + dir >= 0 && i + dir < this.stationList.length;
   }
   /** RADIO-UI-005: with shuffle on, Next/Previous tune a random OTHER station from the tuned list. */
   async skip(dir: 1 | -1) {
-    const i = this.stationList.findIndex(s => s.id === this.value.station?.id);
-    const next = this.value.shuffle ? this.stationList[pickShuffleIndex(this.stationList.length, i, Math.random)] : this.stationList[i + dir];
-    if (next) await this.start(next);
+    const current = this.value.station?.id;
+    if (!this.value.shuffle) {
+      const i = this.stationList.findIndex(s => s.id === current);
+      const next = this.stationList[i + dir];
+      if (next) await this.start(next);
+      return;
+    }
+    // RADIO-SHUFFLE-NO-REPEAT-001 (owner, 2026-11-25): no station twice in a shuffle round; when the list is used up,
+    // new stations come from a random page of the whole directory (A-Z, no filter). Only when even that fails does a
+    // new round start, and never on the station on air.
+    if (current) this.shuffleSeen.add(current);
+    const pick = () => pickUnseenStation([...this.stationList, ...this.worldPool], this.shuffleSeen, current, Math.random);
+    let next = pick();
+    for (let tries = 0; !next && tries < 3; tries++) {
+      try {
+        const page = await radioDirectory.worldPage();
+        const ids = new Set(this.worldPool.map(s => s.id));
+        this.worldPool = [...this.worldPool, ...page.filter(s => !ids.has(s.id))].slice(-2000);
+      } catch { /* directory down: try again, then a new round */ }
+      next = pick();
+    }
+    if (!next) { this.shuffleSeen = new Set(current ? [current] : []); next = pick(); }
+    if (!next) return;
+    this.shuffleSeen.add(next.id);
+    await this.start(next);
   }
+  /** RADIO-SHUFFLE-NO-REPEAT-001: stations played this shuffle round, and the directory stations loaded for it. */
+  private shuffleSeen = new Set<string>();
+  private worldPool: RadioStation[] = [];
   /** Shared with the native layer so Android Auto's shuffle button and the phone button agree. */
   private shuffleSync = 0;
   async setShuffle(on: boolean) {
+    if (on !== this.value.shuffle) { this.shuffleSeen = new Set(this.value.station ? [this.value.station.id] : []); this.worldPool = []; }
     this.put({ shuffle: on });
     if (!this.value.snapshot) return;
     // A state poll already in flight still carries the OLD flag; don't let it undo this toggle.

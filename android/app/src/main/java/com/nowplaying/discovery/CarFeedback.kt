@@ -81,8 +81,9 @@ object CarFeedback {
     // CAR-ANSWERABLE-001 (owner, 2026-11-23): ask a surface that can answer and wait for it to say it
     // saved them. With nothing listening the press is kept for the app, and the caller says so.
     val track = MediaHub.radioTrack?.takeIf { MediaHub.radioSong?.id == songId }
-    MediaHub.starArtists(songId, credit, track)?.let { return it }
-    enqueue(withRadioTrack(JSONObject().put("type", "starArtists").put("id", songId).put("artist", credit), songId))
+    val keep: () -> Unit = { enqueue(withRadioTrack(JSONObject().put("type", "starArtists").put("id", songId).put("artist", credit), songId)) }
+    MediaHub.starArtists(songId, credit, track, keep = keep)?.let { return it }
+    keep()
     return null
   }
 

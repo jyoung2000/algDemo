@@ -618,7 +618,7 @@ class EnginePlayer(
   private fun radioCommands(): Player.Commands {
     val station = com.nowplaying.discovery.RadioNative.session?.station
     val builder = COMMANDS.buildUpon().removeAll(Player.COMMAND_SEEK_FORWARD, Player.COMMAND_SET_REPEAT_MODE)
-    if (station == null || !RadioCatalog.canSkip(station)) {
+    if (station == null || !RadioCatalog.canSkip(station, com.nowplaying.discovery.RadioNative.shuffle)) {
       builder.removeAll(Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM, Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
     }
     return builder.build()

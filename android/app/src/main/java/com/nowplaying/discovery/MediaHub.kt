@@ -116,6 +116,8 @@ object MediaHub {
   fun setPageVisible(s: (JSONObject) -> Unit, visible: Boolean) {
     if (sink !== s) return
     pageVisible = visible
+    // CAR-ACTIONS-EVERY-TIME-001: a hidden page may never answer; after a moment its car presses go to the service engine.
+    if (!visible) main.postDelayed({ rerouteHidden() }, 3000)
     if (visible) main.post { synchronized(catalogLock) { pendingSearches.keys.toList() }.forEach(::dispatchCatalogSearch) }
     // CAR-SAVE-HIDDEN-001: back in front, the page takes what the car pressed while nothing could save it.
     if (visible && pageAnswering) CarFeedback.flush()
@@ -618,25 +620,59 @@ object MediaHub {
    * service's own engine; the songs it adds are at the end of the now playing list, as on the phone.
    */
   fun findSimilar(id: String, timeoutMs: Long = 200000): ListenableFuture<SimilarAnswer> {
-    // CAR-ANSWERABLE-001 (owner, 2026-11-23): "sometimes the find similar songs ... buttons don't work".
-    // The fallback used to be the page itself even when it was hidden and could not answer, so the press
-    // disappeared into the timeout. Only a surface that can answer is asked; otherwise say so at once.
-    val page = sink?.takeIf { pageVisible && pageAnswering }
-    val target = page ?: catalogSink?.takeIf { catalogReady }
-      ?: return Futures.immediateFailedFuture(IllegalStateException("Open jPlay on your phone to find similar songs"))
+    // CAR-ACTIONS-EVERY-TIME-001 (owner, 2026-11-25): "ensure the find similar songs button and favorite artist work
+    // everytime on android auto". A press while the service's engine was still starting failed at once ("Open jPlay"),
+    // and one sent to a page that then went to the background waited out the whole timeout. Now the press waits for a
+    // surface that can answer, and one the hidden page has not answered moves to the service's engine.
+    if (sink == null && catalogSink == null) return Futures.immediateFailedFuture(IllegalStateException("Open jPlay on your phone to find similar songs"))
     val requestId = UUID.randomUUID().toString()
     val future = SettableFuture.create<SimilarAnswer>()
     synchronized(catalogLock) { pendingSimilar[requestId] = future }
     main.postDelayed({
+      synchronized(catalogLock) { reroutable.remove(requestId) }
       synchronized(catalogLock) { pendingSimilar.remove(requestId) }?.setException(TimeoutException("Finding similar songs took too long"))
     }, timeoutMs.coerceIn(50, 300000))
-    try {
-      target(JSONObject().put("type", "findSimilar").put("requestId", requestId).put("id", id))
-    } catch (e: Exception) {
-      synchronized(catalogLock) { pendingSimilar.remove(requestId) }
-      future.setException(e)
+    sendWhenAnswerable(requestId, JSONObject().put("type", "findSimilar").put("requestId", requestId).put("id", id), ANSWER_WAIT_MS) { why ->
+      synchronized(catalogLock) { pendingSimilar.remove(requestId) }?.setException(IllegalStateException(why ?: "Open jPlay on your phone to find similar songs"))
     }
     return future
+  }
+
+  /** CAR-ACTIONS-EVERY-TIME-001: how long a car press waits for the page or the service's engine to be able to answer. */
+  internal const val ANSWER_WAIT_MS = 25_000L
+  /** CAR-ACTIONS-EVERY-TIME-001: a car press in flight: what was sent, and to which surface. */
+  private class Reroute(val cmd: JSONObject, @Volatile var via: String)
+  private val reroutable = LinkedHashMap<String, Reroute>()
+  /** The surface that can answer a car press now: the page in front when it answers, else the service's engine. */
+  private fun answerer(): Pair<(JSONObject) -> Unit, String>? =
+    sink?.takeIf { pageVisible && pageAnswering }?.let { it to "page" } ?: catalogSink?.takeIf { catalogReady }?.let { it to "catalog" }
+
+  private fun sendWhenAnswerable(requestId: String, cmd: JSONObject, waitMs: Long, gaveUp: (String?) -> Unit) {
+    synchronized(catalogLock) {
+      reroutable[requestId] = Reroute(cmd, "")
+      while (reroutable.size > 32) reroutable.remove(reroutable.keys.first())
+    }
+    val until = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(waitMs)
+    fun attempt() {
+      if (synchronized(catalogLock) { !reroutable.containsKey(requestId) }) return // answered or timed out meanwhile
+      val found = answerer()
+      if (found == null) {
+        if (System.nanoTime() < until) main.postDelayed({ attempt() }, 250)
+        else { synchronized(catalogLock) { reroutable.remove(requestId) }; gaveUp(null) }
+        return
+      }
+      synchronized(catalogLock) { reroutable[requestId]?.via = found.second }
+      try { found.first(cmd) } catch (e: Exception) { synchronized(catalogLock) { reroutable.remove(requestId) }; gaveUp(e.message) }
+    }
+    if (Looper.myLooper() == Looper.getMainLooper()) attempt() else main.post { attempt() }
+  }
+
+  /** CAR-ACTIONS-EVERY-TIME-001: presses the page took and has not answered since it went to the background. */
+  private fun rerouteHidden() {
+    if (pageVisible) return
+    val engine = catalogSink?.takeIf { catalogReady } ?: return
+    val moved = synchronized(catalogLock) { reroutable.values.filter { it.via == "page" && it.cmd.optString("type") == "starArtists" }.onEach { it.via = "catalog" }.map { it.cmd } }
+    moved.forEach { runCatching { engine(it) } }
   }
 
   /** ARTIST-FAV-CAR-001: the artists a press actually starred, as the page or the engine saved them. */
@@ -649,27 +685,28 @@ object MediaHub {
    * saved either way. Now only a surface that can answer is asked, and it says when it has saved; the
    * caller tells the driver the truth. No surface at all: the caller keeps it for the app (CarFeedback).
    */
-  fun starArtists(id: String, credit: String, track: JSONObject?, timeoutMs: Long = 10000): ListenableFuture<ArtistAnswer>? {
-    val target = sink?.takeIf { pageVisible && pageAnswering } ?: catalogSink?.takeIf { catalogReady } ?: return null
+  fun starArtists(id: String, credit: String, track: JSONObject?, timeoutMs: Long = 30000, keep: (() -> Unit)? = null): ListenableFuture<ArtistAnswer>? {
+    // CAR-ACTIONS-EVERY-TIME-001: wait for a surface while one starts instead of dropping the press; a press nothing
+    // could take within the wait is kept for the app (keep) and the caller says so.
+    if (sink == null && catalogSink == null) return null
     val requestId = UUID.randomUUID().toString()
     val future = SettableFuture.create<ArtistAnswer>()
     synchronized(catalogLock) { pendingArtists[requestId] = future }
     main.postDelayed({
+      synchronized(catalogLock) { reroutable.remove(requestId) }
       synchronized(catalogLock) { pendingArtists.remove(requestId) }?.setException(TimeoutException("Starring the artist took too long"))
     }, timeoutMs.coerceIn(50, 60000))
-    try {
-      val cmd = JSONObject().put("type", "starArtists").put("requestId", requestId).put("id", id).put("artist", credit)
-      if (track != null) cmd.put("track", track)
-      target(cmd)
-    } catch (e: Exception) {
-      synchronized(catalogLock) { pendingArtists.remove(requestId) }
-      future.setException(e)
+    val cmd = JSONObject().put("type", "starArtists").put("requestId", requestId).put("id", id).put("artist", credit)
+    if (track != null) cmd.put("track", track)
+    sendWhenAnswerable(requestId, cmd, minOf(ANSWER_WAIT_MS, timeoutMs.coerceIn(50, 60000) - 2000).coerceAtLeast(50)) { why ->
+      keep?.invoke()
+      synchronized(catalogLock) { pendingArtists.remove(requestId) }?.setException(IllegalStateException(why ?: "Kept for when jPlay opens"))
     }
     return future
   }
 
   private fun acceptArtistsReply(reply: JSONObject) {
-    val future = synchronized(catalogLock) { pendingArtists.remove(reply.optString("requestId")) } ?: return
+    val future = synchronized(catalogLock) { reroutable.remove(reply.optString("requestId")); pendingArtists.remove(reply.optString("requestId")) } ?: return
     val error = reply.optString("error")
     if (error.isNotBlank()) { future.setException(IllegalStateException(error.take(200))); return }
     val names = reply.optJSONArray("names")
@@ -716,7 +753,7 @@ object MediaHub {
   }
 
   private fun acceptSimilarReply(reply: JSONObject) {
-    val future = synchronized(catalogLock) { pendingSimilar.remove(reply.optString("requestId")) } ?: return
+    val future = synchronized(catalogLock) { reroutable.remove(reply.optString("requestId")); pendingSimilar.remove(reply.optString("requestId")) } ?: return
     val error = reply.optString("error")
     if (error.isNotBlank()) { future.setException(IllegalStateException(error.take(200))); return }
     val songs = parseSongs(reply.optJSONArray("songs") ?: JSONArray()).distinctBy { it.id }.take(10)
