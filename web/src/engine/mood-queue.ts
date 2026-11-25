@@ -15,6 +15,7 @@
  *    so a tiny score change never shuffles the list.
  * This module is pure: callers own what is movable (played, current, hand-added songs never are).
  */
+import { tooClose } from './artist-variety';
 import { cosine, DIM } from './audio';
 import { calibrateAudio } from './engine';
 import { familyIdentity, genreIdentity, subIdentity, type GenreIdentity } from './genre-identity';
@@ -48,7 +49,14 @@ export interface MoodCandidate {
   key: string;
   tags: MoodTags;
   vector: ArrayLike<number> | null;
+  /** WP6 (M3 via WP4's helper): the artist, as the engine names it, for spacing in the plan. */
+  artist?: string;
+  /** WP6 (M1): the engine's score for the row; v2's base term is its percentile in the list. */
+  score?: number | null;
 }
+
+/** WP6: the mood plan version. 'v2' (the default setting) follows without locking in; 'v1' is the old order. */
+export type MoodPlanVersion = 'v1' | 'v2';
 
 export const MOOD = {
   window: 32,
@@ -63,6 +71,16 @@ export const MOOD = {
   dislikePenalty: 0.3,
   /** Two stars of one song inside this many seconds are one signal. */
   repeatS: 30,
+  /** WP6 (M2, D2): seconds of the song playing before it counts in full. */
+  rampS: 45,
+  /** WP6 (M1): moved keys LocalApi remembers for the finished-song discount. */
+  movedKeep: 64,
+  /** WP6 (M3): artist gap inside the plan (WP4's tooClose). */
+  artistGap: 3,
+  /** WP6 (M1, D4): variety share of the plan at Familiar / middle / Adventurous, with only passive listening. */
+  variety: [0.1, 0.2, 0.35],
+  /** WP6 (M1): extra hysteresis for passive-only listening: bar = minGain x (1 + passiveBar x passive part). */
+  passiveBar: 2,
 } as const;
 
 // MOOD-NOW-001 (owner, 2026-11-19): the song playing now is what the listener is in the mood for, so it
@@ -75,6 +93,23 @@ export function signalWeight(s: Pick<MoodSignal, 'kind' | 'listened' | 'duration
   const heard = s.listened ?? 0;
   const quarter = s.duration && s.duration > 0 ? s.duration * 0.25 : Infinity;
   return heard < 30 && heard < quarter ? WEIGHT.skip : 0;
+}
+
+/** WP6 (M2, D2): the song playing weighs 1 at second 0 and 3 once 45 s are heard. */
+export function currentWeight(heardS: number | null | undefined): number {
+  const h = Number.isFinite(heardS as number) ? Math.max(0, heardS as number) : 0;
+  return 1 + 2 * Math.min(1, h / MOOD.rampS);
+}
+
+/** WP6 (M1): active evidence (star, Find similar, replay) vs passive (finished, playing). */
+const ACTIVE: ReadonlySet<MoodKind> = new Set<MoodKind>(['like', 'similar', 'replay']);
+
+/** WP6 (M1, D4): ε = base(a) × (1 − 0.75 × activeShare); base 0.10 / 0.20 / 0.35, linear between the slider's ends and middle. */
+export function varietyShare(adventurous: number, activeShare: number): number {
+  const a = Math.max(0, Math.min(1, adventurous));
+  const [lo, mid, hi] = MOOD.variety;
+  const base = a <= 0.5 ? lo + (mid - lo) * (a / 0.5) : mid + (hi - mid) * ((a - 0.5) / 0.5);
+  return base * (1 - 0.75 * Math.max(0, Math.min(1, activeShare)));
 }
 
 /** The mood's genres, words and sound, for what the listener liked and, separately, what they did not. */
@@ -91,14 +126,26 @@ export interface Mood {
   confidence: number;
   /** For the screen: the leading broad genres, strongest first. */
   leading: string[];
+  /** WP6: which plan built it (v1 = the old weights and confidence). */
+  version?: MoodPlanVersion;
+  /** WP6 (M1): decayed active / passive positive weight, and the active part of the positive weight. */
+  active?: number;
+  passive?: number;
+  activeShare?: number;
 }
 
 const side = (): Side => ({ mains: new Map(), subs: new Map(), protos: [], weight: 0 });
 const add = (m: Map<string, number>, k: string, w: number) => m.set(k, (m.get(k) ?? 0) + w);
 const realVector = (v: ArrayLike<number> | null | undefined): v is ArrayLike<number> => Boolean(v && v.length === DIM);
 
-/** Builds the mood from signals; anything older than 90 minutes or past the newest 32 is ignored. */
-export function buildMood(signals: MoodSignal[], nowS: number): Mood {
+/**
+ * Builds the mood from signals; anything older than 90 minutes or past the newest 32 is ignored.
+ * WP6 (M1, M2): with `plan: 'v2'` the song playing ramps 1 -> 3 over its first 45 s (`listened`), a finished song
+ * whose key is in `moved` (the mood moved it) counts 1 instead of 2, and confidence = min(1, (active + 0.5 x passive) / 6).
+ * Without options the old (v1) weights and confidence hold.
+ */
+export function buildMood(signals: MoodSignal[], nowS: number, o: { plan?: MoodPlanVersion; moved?: ReadonlySet<string> } = {}): Mood {
+  const v2 = o.plan === 'v2';
   const recent = signals
     .filter((s) => s.ts <= nowS + 60 && nowS - s.ts <= MOOD.maxAgeS)
     .sort((a, b) => b.ts - a.ts);
@@ -117,12 +164,17 @@ export function buildMood(signals: MoodSignal[], nowS: number): Mood {
   }
   const pos = side();
   const neg = side();
+  let active = 0;
+  let passive = 0;
   for (const s of kept) {
-    const w0 = signalWeight(s);
+    let w0 = signalWeight(s);
+    if (v2 && s.kind === 'current') w0 = currentWeight(s.listened);
+    if (v2 && s.kind === 'complete' && o.moved?.has(s.key)) w0 = 1;
     if (!w0) continue;
     const w = Math.abs(w0) * Math.pow(0.5, Math.max(0, nowS - s.ts) / MOOD.halfLifeS);
     const into = w0 > 0 ? pos : neg;
     into.weight += w;
+    if (w0 > 0) { if (ACTIVE.has(s.kind)) active += w; else passive += w; }
     for (const g of s.tags.mains) add(into.mains, g, w);
     for (const g of s.tags.subs) add(into.subs, g, w);
     if (realVector(s.vector)) into.protos.push({ v: s.vector, w });
@@ -136,7 +188,8 @@ export function buildMood(signals: MoodSignal[], nowS: number): Mood {
   const ranked = [...pos.subs.entries()].filter(([k]) => labels[k]).sort((a, b) => b[1] - a[1]);
   const mainsFirst = [...ranked.filter(([k]) => k.startsWith('genre:')), ...ranked.filter(([k]) => !k.startsWith('genre:'))];
   const leading = [...new Set(mainsFirst.map(([k]) => labels[k]!))].slice(0, 2);
-  return { pos, neg, confidence: Math.min(1, pos.weight / 6), leading };
+  const confidence = v2 ? Math.min(1, (active + 0.5 * passive) / 6) : Math.min(1, pos.weight / 6);
+  return { pos, neg, confidence, leading, version: v2 ? 'v2' : 'v1', active, passive, activeShare: active + passive > 0 ? active / (active + passive) : 0 };
 }
 
 /** 0..1: how well the tags line up with one side, against that side's strongest tag. */
@@ -177,9 +230,15 @@ export function moodMatch(c: MoodCandidate, mood: Mood): { m: number | null; d: 
   const m = mood.pos.weight > 0
     ? blend([[affinity(c.tags.mains, mood.pos.mains), 0.4], [affinity(c.tags.subs, mood.pos.subs), 0.25], [soundAffinity(c.vector, mood.pos), 0.35]])
     : null;
-  const d = mood.neg.weight > 0
-    ? blend([[affinity(c.tags.mains, mood.neg.mains), 0.15], [affinity(c.tags.subs, mood.neg.subs), 0.2], [soundAffinity(c.vector, mood.neg), 0.65]]) ?? 0
-    : 0;
+  let d = 0;
+  if (mood.neg.weight > 0) {
+    const sound = soundAffinity(c.vector, mood.neg);
+    const tags = blend([[affinity(c.tags.mains, mood.neg.mains), 0.15], [affinity(c.tags.subs, mood.neg.subs), 0.2]]);
+    // WP6 (M5): without the sound term the tag match is not stretched to the full penalty: it counts half.
+    d = mood.version === 'v2' && sound === null
+      ? (tags ?? 0) * 0.5
+      : blend([[affinity(c.tags.mains, mood.neg.mains), 0.15], [affinity(c.tags.subs, mood.neg.subs), 0.2], [sound, 0.65]]) ?? 0;
+  }
   return { m, d: Math.max(0, Math.min(1, d)) };
 }
 
@@ -199,7 +258,14 @@ export interface MoodPlan {
  * `adventurous` 0..1 is the Familiar <-> Adventurous slider: Familiar holds the mood tightly,
  * Adventurous lets the engine's own exploration lead.
  */
-export function moodOrder(upcoming: MoodCandidate[], mood: Mood, adventurous: number, o: { plan?: number; minGain?: number; force?: boolean; shown?: string[] } = {}): MoodPlan {
+export interface MoodOrderOptions { plan?: number; minGain?: number; force?: boolean; shown?: string[]; version?: MoodPlanVersion; recentArtists?: readonly string[] }
+
+export function moodOrder(upcoming: MoodCandidate[], mood: Mood, adventurous: number, o: MoodOrderOptions = {}): MoodPlan {
+  return (o.version ?? mood.version) === 'v2' ? moodOrderV2(upcoming, mood, adventurous, o) : moodOrderV1(upcoming, mood, adventurous, o);
+}
+
+/** The pre-WP6 order (mood_plan 'v1'): unchanged. */
+function moodOrderV1(upcoming: MoodCandidate[], mood: Mood, adventurous: number, o: MoodOrderOptions): MoodPlan {
   const keys = upcoming.map((c) => c.key);
   const same: MoodPlan = { order: keys, changed: false, moved: [], gain: 0 };
   const n = upcoming.length;
@@ -254,6 +320,132 @@ export function moodOrder(upcoming: MoodCandidate[], mood: Mood, adventurous: nu
   const moved = order.filter((k, j) => refKeys[j] !== k);
   if (!moved.length || (!o.force && !leadMoved && gain < (o.minGain ?? MOOD.minGain))) return { order: refKeys, changed: false, moved: [], gain };
   return { order, changed: true, moved, gain };
+}
+
+/**
+ * WP6 (M1, M2, M5, D4): the order that follows without locking in.
+ *  - b is the row's ENGINE score percentile (`score`), so the mood's own previous order does not feed back; the row's
+ *    current place (`shown`) is only the hysteresis reference. Rows without a score fall back to their list place.
+ *  - round(plan x ε) places keep the engine's best-scored rows whatever their fit (never one with dislike match >= 0.5),
+ *    spread from place 4 onward.
+ *  - the lead rule holds only with active evidence (a star, Find similar, a replay): passive listening leans, it does
+ *    not hold.
+ *  - artists are kept MOOD.artistGap apart inside the plan with WP4's tooClose.
+ */
+function moodOrderV2(upcoming: MoodCandidate[], mood: Mood, adventurous: number, o: MoodOrderOptions): MoodPlan {
+  const keys = upcoming.map((c) => c.key);
+  const same: MoodPlan = { order: keys, changed: false, moved: [], gain: 0 };
+  const n = upcoming.length;
+  if (n < 2 || (mood.pos.weight <= 0 && mood.neg.weight <= 0)) return same;
+  const a = Math.max(0, Math.min(1, adventurous));
+  const plan = Math.min(n, o.plan ?? MOOD.plan);
+  const lambda = mood.confidence * (0.65 - 0.3 * a);
+  const threshold = 0.65 - 0.3 * a;
+  const span = Math.max(n - 1, 2 * MOOD.plan);
+  const b = scorePercentile(upcoming, span);
+  const scored = upcoming.map((c, i) => {
+    const { m, d } = moodMatch(c, mood);
+    const s = (1 - lambda) * b[i]! + lambda * (m ?? b[i]!) - MOOD.dislikePenalty * d;
+    return { c, i, s, m, d, b: b[i]! };
+  });
+  const byScore = [...scored].sort((x, y) => y.s - x.s || y.b - x.b || x.i - y.i);
+  const at = new Map((o.shown ?? []).map((k, j) => [k, j] as const));
+  const ref = o.shown ? [...scored].sort((x, y) => (at.get(x.c.key) ?? n + x.i) - (at.get(y.c.key) ?? n + y.i)) : scored;
+  const refKeys = ref.map((x) => x.c.key);
+  // Variety places (D4): how many, and where (spread over places 4..plan).
+  const lead = Math.min(MOOD.lead, plan);
+  const k = plan > lead ? Math.min(plan - lead, Math.round(plan * varietyShare(a, mood.activeShare ?? 0))) : 0;
+  const fitN = plan - k;
+  const picked: typeof scored = [];
+  const taken = new Set<number>();
+  // Variety rows are reserved first: the engine's best-scored rows (never a dislike match >= 0.5), so the same rows
+  // stay reserved from one plan to the next until they are heard.
+  const variety = [...scored].sort((x, y) => y.b - x.b || x.i - y.i).filter((x) => x.d < 0.5).slice(0, k);
+  for (const x of variety) taken.add(x.i);
+  let leadMoved = false;
+  if (mood.confidence >= 0.5 && (mood.active ?? 0) > 0) {
+    const fitsNow = ref.slice(0, lead).filter((x) => x.m !== null && x.m >= threshold).length;
+    for (const x of byScore) {
+      if (picked.length >= lead) break;
+      if (!taken.has(x.i) && x.m !== null && x.m >= threshold) { picked.push(x); taken.add(x.i); }
+    }
+    leadMoved = picked.length > fitsNow;
+  }
+  for (const x of byScore) {
+    if (picked.length >= fitN) break;
+    if (!taken.has(x.i)) { picked.push(x); taken.add(x.i); }
+  }
+  // WP4 helper (M3): keep one artist's songs MOOD.artistGap apart inside the fitted part of the plan.
+  const spaced = spaceArtists(picked, o.recentArtists ?? []);
+  // A variety row already on screen inside the plan keeps its shown place (it moves up as songs play, so it is heard);
+  // a new one takes the next free spread slot from place 4 onward.
+  const slots = varietySlots(variety.length, lead, plan);
+  const place = new Map<number, (typeof scored)[number]>();
+  const fresh: typeof scored = [];
+  for (const x of variety) {
+    const j = refKeys.indexOf(x.c.key);
+    if (o.shown && j >= 0 && j < plan && !place.has(j)) place.set(j, x); else fresh.push(x);
+  }
+  for (const x of fresh) {
+    const j = slots.find((q) => !place.has(q)) ?? Array.from({ length: plan }, (_, q) => q).reverse().find((q) => q >= lead && !place.has(q));
+    if (j !== undefined) place.set(j, x);
+  }
+  const planned: typeof scored = [];
+  const fill = [...spaced];
+  for (let j = 0; planned.length < spaced.length + place.size; j++) {
+    const v = place.get(j);
+    if (v) planned.push(v); else if (fill.length) planned.push(fill.shift()!); else break;
+  }
+  for (const v of [...place.entries()].sort((x, y) => x[0] - y[0]).map((e) => e[1])) if (!planned.includes(v)) planned.push(v);
+  // Rows past the plan keep their shown order: only the plan is re-planned (fewer rows moved, M1).
+  const rest = ref.filter((x) => !taken.has(x.i));
+  const next = [...planned, ...rest];
+  const value = (list: typeof scored) => list.slice(0, plan).reduce((t, x, j) => t + x.s / (1 + j), 0);
+  let norm = 0;
+  for (let j = 0; j < plan; j++) norm += 1 / (1 + j);
+  const gain = (value(next) - value(ref)) / norm;
+  const order = next.map((x) => x.c.key);
+  const moved = order.filter((key, j) => refKeys[j] !== key);
+  // Passive listening leans: the less of the positive weight is active, the clearer the gain must be (x1 active .. x3
+  // passive), so a passive session is not re-arranged on every small shift (M1: rows moved).
+  // Dislikes are active evidence here too: only a session of plays alone gets the higher bar.
+  const act = (mood.active ?? 0) + mood.neg.weight;
+  const activity = act + (mood.passive ?? 0) > 0 ? act / (act + (mood.passive ?? 0)) : 0;
+  const bar = (o.minGain ?? MOOD.minGain) * (1 + MOOD.passiveBar * (1 - activity));
+  if (!moved.length || (!o.force && !leadMoved && gain < bar)) return { order: refKeys, changed: false, moved: [], gain };
+  return { order, changed: true, moved, gain };
+}
+
+/** WP6 (M1): b = 1 - rank / span, rank = rows scored higher (+ half the ties); list place when no row has a score. */
+export function scorePercentile(cands: readonly Pick<MoodCandidate, 'score'>[], span = Math.max(cands.length - 1, 2 * MOOD.plan)): number[] {
+  const has = cands.some((c) => typeof c.score === 'number' && Number.isFinite(c.score));
+  const v = cands.map((c, i) => (has ? (typeof c.score === 'number' && Number.isFinite(c.score) ? c.score : -Infinity) : -i));
+  return v.map((x) => {
+    let higher = 0;
+    let ties = 0;
+    for (const y of v) { if (y > x) higher++; else if (y === x) ties++; }
+    return 1 - (higher + (ties - 1) / 2) / span;
+  });
+}
+
+/** WP6 (D4): the plan indices of [k] variety rows, spread evenly from place lead+1 (index [lead]) to the plan's end. */
+export function varietySlots(k: number, lead: number, plan: number): number[] {
+  const room = plan - lead;
+  return Array.from({ length: k }, (_, j) => lead + Math.floor(((j + 1) * room) / (k + 1)));
+}
+
+function spaceArtists<T extends { c: MoodCandidate }>(list: T[], recent: readonly string[]): T[] {
+  const pool = [...list];
+  const out: T[] = [];
+  const seen = [...recent];
+  while (pool.length) {
+    let j = pool.findIndex((x) => !tooClose(seen, x.c.artist ?? '', MOOD.artistGap));
+    if (j < 0) j = 0;
+    const [x] = pool.splice(j, 1);
+    out.push(x!);
+    seen.push(x!.c.artist ?? '');
+  }
+  return out;
 }
 
 /** Broad genre and finer genre words of a song, from the characteristics the listing shows. */

@@ -734,6 +734,16 @@ export function App() {
     const movable = new Set(moodMovable(xs, { currentKey: playingKey, played: playedRef.current, hidden }).map((x) => x.track.key));
     return placeMood(xs, moodOrderRef.current.filter((k) => movable.has(k)));
   };
+  // WP6 (M2, D2): when the song playing started, so the mood can ramp it over its first 45 s; re-ask the mood at 45 s.
+  // Wall-clock since the song started (a pause counts too): an approximation of the seconds heard.
+  const moodSongStart = useRef(Date.now());
+  useEffect(() => {
+    moodSongStart.current = Date.now();
+    if (!playingKey) return;
+    const t = window.setTimeout(() => nudgeMood(), 45_000);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playingKey]);
   useEffect(() => {
     if (!moodQueueScope && !moodListScope) { moodPreferRef.current = null; moodOrderRef.current = []; setMoodFitState(null); return; }
     const rows = moodQueueScope ? (result?.items ?? []) : activeItems;
@@ -743,11 +753,13 @@ export function App() {
     const keys = movable.map((x) => x.track.key);
     const shownNow = moodOrderRef.current.filter((k) => keys.includes(k));
     const timer = window.setTimeout(() => {
-      const cur = playing ? { track: playing.track, characteristics: rows.find((x) => x.track.key === playingKey)?.characteristics ?? null } : undefined;
+      const heard = Math.max(0, Math.round((Date.now() - moodSongStart.current) / 1000));
+      const cur = playing ? { track: playing.track, characteristics: rows.find((x) => x.track.key === playingKey)?.characteristics ?? null, heard } : undefined;
       // Every song the shuffle may pick from is scored too (hand-added ones, a list's songs), never moved.
       const score = activeItems.filter((x) => !keys.includes(x.track.key) && x.track.key !== playingKey && !hidden.has(x.track.key)).slice(0, 400)
         .map((x) => ({ track: x.track, characteristics: x.characteristics ?? null }));
-      api.mood({ upcoming: movable.map((x) => ({ track: x.track, characteristics: x.characteristics ?? null })), score, shown: shownNow.length ? shownNow : keys, current: cur })
+      // WP6 (M1): each row's engine score, so the mood's base term is the engine's view, not the list place.
+      api.mood({ upcoming: movable.map((x) => ({ track: x.track, characteristics: x.characteristics ?? null, score: typeof x.score === 'number' ? x.score : null })), score, shown: shownNow.length ? shownNow : keys, current: cur })
         .then((plan) => {
           if (seq !== moodSeq.current || plan.off) return;
           setMoodLead({ leading: plan.leading ?? [], confidence: plan.confidence ?? 0 });

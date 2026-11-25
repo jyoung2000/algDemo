@@ -8,7 +8,7 @@ import * as A from './audio';
 import { isSimilarityPercent, selectSimilar, soundMatch, SIMILAR_DEFAULT, SIMILAR_FLOOR, SIMILAR_LIMIT, type SoundHit, type SoundTrack } from './similar-sound';
 import { customOutcome, normaliseCriteria, runCustomDiscovery, songIdOf, type CandidateTrack, type CustomCriteria, type CustomPorts } from './custom-discovery';
 import { genreIdentity } from './genre-identity';
-import { MOOD, buildMood, moodFit, moodOrder, moodTags, type MoodCandidate, type MoodKind, type MoodSignal } from './mood-queue';
+import { MOOD, buildMood, moodFit, moodOrder, moodTags, type MoodCandidate, type MoodKind, type MoodPlanVersion, type MoodSignal } from './mood-queue';
 /** CAR-MOOD-001: the presses the car may send with a mood question. */
 const CAR_MOOD_KINDS = new Set(['like', 'dislike', 'similar', 'complete', 'skip']);
 import type { Track as NativeTrack } from './track';
@@ -1511,6 +1511,8 @@ export class LocalApi {
     if ('fresh' in body) cur['fresh'] = Boolean(body['fresh']);
     if ('adventurous' in body) cur['adventurous'] = Math.min(1, Math.max(0, Number(body['adventurous'])));
     for (const k of ['audio', 'sample_mode', 'rank_v2', 'discover_while_listening', 'mood_queue']) if (k in body) cur[k] = Boolean(body[k]);
+    // WP6: the mood plan's rollback switch ('v1' = the old order).
+    if ('mood_plan' in body) cur['mood_plan'] = body['mood_plan'] === 'v1' ? 'v1' : 'v2';
     if ('daily_mb' in body) cur['daily_mb'] = Math.min(2000, Math.max(5, Number(body['daily_mb'])));
     if ('request_mb' in body) cur['request_mb'] = Math.min(200, Math.max(2, Number(body['request_mb'])));
     if ('similar_percent' in body) {
@@ -2466,6 +2468,10 @@ export class LocalApi {
   }
 
   private moodLogNow: Dict[] | null = null;
+  /** WP6 (M1): the keys the mood moved in its recent plans, newest last (at most MOOD.movedKeep = 64). */
+  private moodMoved: string[] = [];
+  /** For tests: the moved keys the finished-song discount reads. */
+  moodMovedForTest(): string[] { return [...this.moodMoved]; }
   private moodLog(): Dict[] { return [...(this.moodLogNow ?? this.store.get<Dict[]>('mood_log') ?? [])]; }
 
   /**
@@ -2531,15 +2537,24 @@ export class LocalApi {
     const signals = this.moodSignals(now, tagsOf);
     const cur = body['current'] as Dict | undefined;
     const curTrack = cur?.['track'] as Dict | undefined;
-    if (curTrack?.['key']) signals.push({ key: String(curTrack['key']), kind: 'current', ts: now, tags: tagsOf(curTrack, cur?.['characteristics'] as Dict | undefined), vector: this.moodVector(curTrack) });
-    const mood = buildMood(signals, now);
+    // WP6 (M2, D2): the page sends the seconds of the song playing heard so far (`current.heard`); v2 ramps on it.
+    const heard = Number(cur?.['heard']);
+    if (curTrack?.['key']) signals.push({ key: String(curTrack['key']), kind: 'current', ts: now, tags: tagsOf(curTrack, cur?.['characteristics'] as Dict | undefined), vector: this.moodVector(curTrack), listened: Number.isFinite(heard) ? heard : 0 });
+    // WP6 (setting mood_plan, default 'v2'): 'v1' is the old order, one switch away.
+    const version: MoodPlanVersion = settings['mood_plan'] === 'v1' ? 'v1' : 'v2';
+    const mood = buildMood(signals, now, { plan: version, moved: new Set(this.moodMoved) });
     const cands: MoodCandidate[] = list.map((u) => {
       const t = u['track'] as Dict;
-      return { key: String(t['key']), tags: tagsOf(t, u['characteristics'] as Dict | undefined), vector: this.moodVector(t) };
+      const score = Number(u['score']);
+      const artists = t['artists'];
+      const artist = Array.isArray(artists) && artists.length ? String(artists[0]) : typeof t['artist'] === 'string' ? (t['artist'] as string) : '';
+      return { key: String(t['key']), tags: tagsOf(t, u['characteristics'] as Dict | undefined), vector: this.moodVector(t), artist, score: u['score'] != null && Number.isFinite(score) ? score : null };
     });
     const shown = Array.isArray(body['shown']) ? (body['shown'] as unknown[]).map(String).slice(0, 500) : undefined;
     const adventurous = Number(settings['adventurous'] ?? 0.5);
-    const plan = moodOrder(cands, mood, Number.isFinite(adventurous) ? adventurous : 0.5, { shown });
+    const plan = moodOrder(cands, mood, Number.isFinite(adventurous) ? adventurous : 0.5, { shown, version });
+    // WP6 (M1): a finished song the mood moved in a recent plan counts 1 instead of 2.
+    if (plan.changed) this.moodMoved = [...this.moodMoved.filter((k) => !plan.moved.includes(k)), ...plan.moved].slice(-MOOD.movedKeep);
     // MOOD-SHUFFLE-001: how well each song fits, for the shuffle's weighted pick. `score` adds songs that
     // may not move (hand-added, or a list played in shuffle) but are still picked from.
     const extra = (Array.isArray(body['score']) ? (body['score'] as Dict[]) : []).slice(0, 500)

@@ -50,12 +50,20 @@ describe('POST /api/mood answers how well every song fits the mood', () => {
 });
 
 describe('the song playing now shapes the queue at once (MOOD-NOW-001)', () => {
+  // WP6 (D2): this is the v1 behaviour (the song playing is full evidence from second 0); kept on mood_plan 'v1'.
   it('with nothing finished yet, a rap song playing brings the rap songs ahead of smooth jazz', async () => {
-    const { api } = await open();
+    const { api } = await open({ mood_plan: 'v1' });
     const upcoming = [jazz(1), jazz(2), country(1), song('rap-a', 'rap'), song('rap-b', 'rap')];
     const plan = (await api.handle('POST', '/api/mood', { upcoming: upcoming.map((track) => ({ track })), current: { track: rapNow } })).body as Plan;
     expect(plan.changed).toBe(true);
     expect(plan.order.slice(0, 2).sort()).toEqual(['rap-a', 'rap-b']);
+  });
+  // WP6 (M2, D2) on v2: at second 0 the song playing alone does not re-arrange the queue.
+  it('v2: at second 0 the song playing alone does not re-arrange the queue', async () => {
+    const { api } = await open();
+    const upcoming = [jazz(1), jazz(2), country(1), song('rap-a', 'rap'), song('rap-b', 'rap')];
+    const plan = (await api.handle('POST', '/api/mood', { upcoming: upcoming.map((track) => ({ track })), current: { track: rapNow, heard: 0 } })).body as Plan;
+    expect(plan.changed).toBe(false);
   });
 });
 

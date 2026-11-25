@@ -252,6 +252,22 @@ export function SettingsView({ settings, onSettings, onReset, onResetTaste, onFo
             <span className="box" aria-hidden="true" />
             <span>Follow my listening mood</span>
           </label>
+          {/* WP6 (rollback switch): mood_plan 'v2' (default) follows without locking in; off = the old 'v1' order. */}
+          <label className="chk discovery-settings__toggle">
+            <input
+              type="checkbox"
+              checked={(settings?.mood_plan ?? 'v2') !== 'v1'}
+              disabled={settings?.mood_queue === false}
+              aria-describedby="mood-plan-help"
+              onChange={(e) => onSettings({ mood_plan: e.target.checked ? 'v2' : 'v1' })}
+            />
+            <span className="box" aria-hidden="true" />
+            <span>Let the mood lean, not lock in</span>
+          </label>
+          <p className="note" id="mood-plan-help">
+            Passive listening leans the queue instead of holding it to one genre, and leaves some room for variety. Turn
+            off to go back to the previous mood order.
+          </p>
           <p className="note" id="mood-queue-help">
             Re-arrange the songs still to come in your now playing queue, here and in Android Auto, to match what you
             are listening to now: its genre, subgenre and sound. Starring a song, Find similar sound and dislikes count

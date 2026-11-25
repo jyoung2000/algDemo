@@ -451,6 +451,8 @@ export interface Settings {
   discover_while_listening?: boolean;
   /** MOOD-QUEUE-001: the now playing queue follows the listening mood (default on). */
   mood_queue?: boolean;
+  /** WP6: the mood plan ('v2' default: follows without locking in; 'v1': the old order, the rollback switch). */
+  mood_plan?: 'v1' | 'v2';
   /**
    * The ten-band equaliser (EQ-001), stored as the engine's own config shape. Previews only: see
    * `engine/audio-bus.ts` for why iframe playback can never be filtered.
@@ -806,7 +808,8 @@ export const api = {
   queueGenres: () => call<{ items: { key: string; tags: Track['tags']; characteristics: Characteristics }[]; left: number; spent?: boolean; /** ALLOWANCE-ARCH-001: when paused look-ups resume by themselves (unix seconds). */ resumes_at?: number }>('/api/queue/genres', { method: 'POST', body: json({}) }),
   rerank: (exclude: string[]) => call<RerankResult>('/api/rerank', { method: 'POST', body: json({ exclude }) }),
   /** MOOD-QUEUE-001: the order the movable songs still to come should play in for the listening mood. */
-  mood: (body: { upcoming: { track: Track; characteristics?: Characteristics | null }[]; score?: { track: Track; characteristics?: Characteristics | null }[]; shown?: string[]; current?: { track: Track; characteristics?: Characteristics | null }; signal?: { track: Track; kind: 'like' | 'dislike' | 'similar' | 'complete' | 'skip' } }) =>
+  // WP6: `upcoming[].score` is the engine's score (v2's base term); `current.heard` the seconds of it heard (D2 ramp).
+  mood: (body: { upcoming: { track: Track; characteristics?: Characteristics | null; score?: number | null }[]; score?: { track: Track; characteristics?: Characteristics | null }[]; shown?: string[]; current?: { track: Track; characteristics?: Characteristics | null; heard?: number }; signal?: { track: Track; kind: 'like' | 'dislike' | 'similar' | 'complete' | 'skip' } }) =>
     call<MoodAnswer>('/api/mood', { method: 'POST', body: json(body) }),
   profile: () => call<Profile>('/api/profile'),
 };
