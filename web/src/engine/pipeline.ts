@@ -77,6 +77,14 @@ export async function pmap<T, R>(items: readonly T[], limit: number, fn: (x: T, 
 }
 
 type Rel = [Dict, string, string | null]; // track, relation, via
+
+/**
+ * WP8 / A7: how many catalogue-search rows one seed may keep. Apple's and Spotify's searches for the
+ * seed's own "artist title" answer from the same catalogue the seed came from - mostly versions of
+ * that very recording - and the relation does not count as relatedness, so a full 40 rows each only
+ * crowds out the lists that do. Ten per seed is plenty to pick up the other platforms' copies.
+ */
+export const SEARCH_MATCH_PER_SEED = 10;
 /** matchRecordings' verdict for an exact title and artist where one side has no duration (identity.ts). */
 const NO_LENGTH = 'no duration to compare';
 /** Whether a provider or a listener, rather than a guess of ours, has named this song's genre. */
@@ -209,12 +217,14 @@ export class Pipeline {
         add('ytmusic-radio', s, async () => rel(await this.ytm.radio(vid, perSeed + 1, c), 'radio'));
       }
       // Apple's catalogue is searched by the seed's own title and artist (the iTunes search is keyless and cached).
+      // WP8 / A7: asked for no more than the seed may keep, so the bytes are not fetched to be dropped.
+      const searchWant = Math.min(perSeed, SEARCH_MATCH_PER_SEED);
       const term = [s['artists']?.[0], s['title']].filter(Boolean).join(' ');
-      if (term.trim()) add('apple-search', s, async () => rel(await this.apple.search(term, perSeed, c), 'search_match'));
+      if (term.trim()) add('apple-search', s, async () => rel(await this.apple.search(term, searchWant, c), 'search_match'));
       // Spotify, through the anonymous web-player search on every platform (spotDL as the Windows
       // fallback). A failure just leaves this source empty.
       const spotify = this.spotifySearch;
-      if (term.trim() && spotify) add('spotify-search', s, async () => rel(await spotify(term, perSeed), 'search_match'));
+      if (term.trim() && spotify) add('spotify-search', s, async () => rel(await spotify(term, searchWant), 'search_match'));
       if (s['provider'] === 'soundcloud') {
         add('soundcloud-recommended', s, async () => rel(await this.sc.related(s as never, Math.min(perSeed, 20), c), 'sc_recommended'));
       }
@@ -293,22 +303,53 @@ export class Pipeline {
       map.set(r.source, bySeed);
       bySeed.set(r.seedKey, [...(bySeed.get(r.seedKey) ?? []), ...r.out]);
     };
-    /** Round-robin merge of a result map; builds fresh copies, so it is safe to run on partial state. */
+    /**
+     * Round-robin merge of a result map; builds fresh copies, so it is safe to run on partial state.
+     *
+     * WP8 / A6: the cut down to `mergedCap` goes round-robin across the sources, not down the task
+     * list. Merging one source at a time and slicing the tail off afterwards let the handful of
+     * sources asked first (YouTube Music's two lists and the keyless catalogue searches for the
+     * seed's own "artist title") fill the whole cap, so Deezer's related artists, its recent
+     * releases, the genre charts and the listener's own colour sources were cut away whole. Each
+     * source now gives up its rows one round at a time, so no source is silenced by its position.
+     */
     const mergeFrom = (res: Map<string, Map<string, Rel[]>>): Dict[] => {
       const merged = new Map<string, Dict>();
       const order: string[] = [];
+      // Per source: the rows that survive the per-source cap, already round-robin across the seeds.
+      const bySource: { rows: { t: Dict; prov: Dict }[] }[] = [];
       for (const [source, bySeed] of res) {
         const lists = seeds.map((s) => bySeed.get(String(s['key'])) ?? []);
+        const rows: { t: Dict; prov: Dict }[] = [];
+        // WP8 / A7: the catalogue search for a seed's own "artist title" mostly turns up the same
+        // recording again and is not relatedness, so it keeps a fixed share per seed and no more.
+        const searchTaken = seeds.map(() => 0);
         let taken = 0;
         for (let i = 0; taken < cfg.perSourceCap && lists.some((l) => i < l.length); i++) {
           lists.forEach((lst, si) => {
-            if (i < lst.length && taken < cfg.perSourceCap) {
-              const [t, relation, via] = lst[i] as Rel;
-              if (relation === 'related_artist_top') relatedNames.get(String((seeds[si] as Dict)['key']))?.add(fold(String((t['artists'] as string[])[0] ?? '')));
-              this.merge(merged, order, t, { seed: (seeds[si] as Dict)['key'], relation, rank: i, source, via });
-              taken += 1;
+            if (i >= lst.length || taken >= cfg.perSourceCap) return;
+            const [t, relation, via] = lst[i] as Rel;
+            if (relation === 'search_match') {
+              if ((searchTaken[si] as number) >= SEARCH_MATCH_PER_SEED) return;
+              searchTaken[si] = (searchTaken[si] as number) + 1;
             }
+            if (relation === 'related_artist_top') relatedNames.get(String((seeds[si] as Dict)['key']))?.add(fold(String((t['artists'] as string[])[0] ?? '')));
+            rows.push({ t, prov: { seed: (seeds[si] as Dict)['key'], relation, rank: i, source, via } });
+            taken += 1;
           });
+        }
+        bySource.push({ rows });
+      }
+      // The cap itself, taken a round at a time across the sources. A row that merges into a song
+      // already held costs nothing; only a song kept in the queue counts against the cap.
+      let kept = 0;
+      for (let i = 0; kept < cfg.mergedCap && bySource.some((s) => i < s.rows.length); i++) {
+        for (const s of bySource) {
+          const r = s.rows[i];
+          if (!r || kept >= cfg.mergedCap) continue;
+          const before = order.length;
+          this.merge(merged, order, r.t, r.prov);
+          if (order.length > before && r.t['kind'] !== 'video') kept += 1;
         }
       }
       // user uploads / mixes are not songs
