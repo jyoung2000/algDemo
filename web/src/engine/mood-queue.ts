@@ -73,6 +73,8 @@ export const MOOD = {
   repeatS: 30,
   /** WP6 (M2, D2): seconds of the song playing before it counts in full. */
   rampS: 45,
+  /** Option 2: at most this many songs of one main genre in a row. */
+  runCap: 5,
   /** WP6 (M1): moved keys LocalApi remembers for the finished-song discount. */
   movedKeep: 64,
   /** WP6 (M3): artist gap inside the plan (WP4's tooClose). */
@@ -260,6 +262,62 @@ export interface MoodPlan {
  */
 export interface MoodOrderOptions { plan?: number; minGain?: number; force?: boolean; shown?: string[]; version?: MoodPlanVersion; recentArtists?: readonly string[] }
 
+/**
+ * Option 2: no more than MOOD.runCap songs of one main genre in a row. Rows before index `fixed` (the planner's top
+ * rows, owner decision) never move. Each step swaps an over-cap song with a different-genre song at or after `fixed`,
+ * whichever swap lowers the total overshoot most (a swap moves two rows, however far apart). A song without a genre
+ * never forms a run.
+ */
+export function capRuns(order: string[], byKey: Map<string, MoodCandidate>, fixed = 0): string[] {
+  const out = [...order];
+  const cap = MOOD.runCap;
+  const genre = (k: string | undefined): string | null => (k === undefined ? null : byKey.get(k)?.tags.mains[0] ?? null);
+  // Songs past the cap, counted inside their run. Zero means every run is within the cap.
+  const excess = (seq: string[]): number => {
+    let total = 0;
+    let run = 0;
+    let prev: string | null = null;
+    for (const k of seq) {
+      const g = genre(k);
+      run = g !== null && g === prev ? run + 1 : g !== null ? 1 : 0;
+      prev = g;
+      if (run > cap) total++;
+    }
+    return total;
+  };
+  // Local search: swap one song of an over-cap run (never the head) with a different-genre song (never the head).
+  // Each accepted swap strictly lowers the excess, so the loop ends; the nearest partner wins a tie.
+  for (let guard = 0; guard < out.length && excess(out) > 0; guard++) {
+    const block = new Array<number>(out.length).fill(1);
+    for (let i = 1; i < out.length; i++) if (genre(out[i]) !== null && genre(out[i]) === genre(out[i - 1])) block[i] = block[i - 1]! + 1;
+    for (let i = out.length - 2; i >= 0; i--) if (genre(out[i]) !== null && genre(out[i]) === genre(out[i + 1]) && block[i + 1]! > block[i]!) block[i] = block[i + 1]!;
+    const base = excess(out);
+    let best: { c: number; p: number; q: number } | null = null;
+    for (let p = Math.max(1, fixed); p < out.length; p++) {
+      const x = genre(out[p]);
+      if (!x || block[p]! <= cap) continue;
+      for (let q = Math.max(1, fixed); q < out.length; q++) {
+        if (q === p || genre(out[q]) === x) continue;
+        [out[p], out[q]] = [out[q]!, out[p]!];
+        const c = excess(out);
+        [out[p], out[q]] = [out[q]!, out[p]!];
+        if (c < base && (!best || c < best.c || (c === best.c && Math.abs(q - p) < Math.abs(best.q - best.p)))) best = { c, p, q };
+      }
+    }
+    if (!best) break;
+    [out[best.p], out[best.q]] = [out[best.q]!, out[best.p]!];
+  }
+  return out;
+}
+
+/** Option 2 with no mood weight: the engine's order, changed only when the run cap moves a song. */
+function capOnly(upcoming: MoodCandidate[]): MoodPlan {
+  const keys = upcoming.map((c) => c.key);
+  const capped = capRuns(keys, new Map(upcoming.map((c) => [c.key, c] as const)), MOOD.plan);
+  const moved = capped.filter((key, j) => keys[j] !== key);
+  return { order: moved.length ? capped : keys, changed: moved.length > 0, moved, gain: 0 };
+}
+
 export function moodOrder(upcoming: MoodCandidate[], mood: Mood, adventurous: number, o: MoodOrderOptions = {}): MoodPlan {
   return (o.version ?? mood.version) === 'v2' ? moodOrderV2(upcoming, mood, adventurous, o) : moodOrderV1(upcoming, mood, adventurous, o);
 }
@@ -334,9 +392,9 @@ function moodOrderV1(upcoming: MoodCandidate[], mood: Mood, adventurous: number,
  */
 function moodOrderV2(upcoming: MoodCandidate[], mood: Mood, adventurous: number, o: MoodOrderOptions): MoodPlan {
   const keys = upcoming.map((c) => c.key);
-  const same: MoodPlan = { order: keys, changed: false, moved: [], gain: 0 };
   const n = upcoming.length;
-  if (n < 2 || (mood.pos.weight <= 0 && mood.neg.weight <= 0)) return same;
+  // No mood to follow: the engine's order, with only the run cap applied (option 2).
+  if (n < 2 || (mood.pos.weight <= 0 && mood.neg.weight <= 0)) return capOnly(upcoming);
   const a = Math.max(0, Math.min(1, adventurous));
   const plan = Math.min(n, o.plan ?? MOOD.plan);
   const lambda = mood.confidence * (0.65 - 0.3 * a);
@@ -412,8 +470,13 @@ function moodOrderV2(upcoming: MoodCandidate[], mood: Mood, adventurous: number,
   const act = (mood.active ?? 0) + mood.neg.weight;
   const activity = act + (mood.passive ?? 0) > 0 ? act / (act + (mood.passive ?? 0)) : 0;
   const bar = (o.minGain ?? MOOD.minGain) * (1 + MOOD.passiveBar * (1 - activity));
-  if (!moved.length || (!o.force && !leadMoved && gain < bar)) return { order: refKeys, changed: false, moved: [], gain };
-  return { order, changed: true, moved, gain };
+  // Option 2: the run cap applies to whichever order is chosen, even when the plan is not clearly better.
+  const byKey = new Map(upcoming.map((c) => [c.key, c] as const));
+  const chosen = !moved.length || (!o.force && !leadMoved && gain < bar) ? refKeys : order;
+  const capped = capRuns(chosen, byKey, plan);
+  const cappedMoved = capped.filter((key, j) => refKeys[j] !== key);
+  if (!cappedMoved.length) return { order: refKeys, changed: false, moved: [], gain };
+  return { order: capped, changed: true, moved: cappedMoved, gain };
 }
 
 /** WP6 (M1): b = 1 - rank / span, rank = rows scored higher (+ half the ties); list place when no row has a score. */
