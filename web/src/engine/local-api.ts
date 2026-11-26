@@ -1658,6 +1658,7 @@ export class LocalApi {
     const settings = this.settings();
     const listening = body['trigger'] === 'listening';
     let moodLead: string[] | undefined;
+    let moodStarts = false;
     let lane: Lane = 'interactive';
     if (listening) {
       const guard = this.listeningGuard(body, settings);
@@ -1665,6 +1666,16 @@ export class LocalApi {
       seeds = guard.seeds;
       moodLead = guard.mood;
       lane = guard.lane;
+    } else {
+      // MOOD-DEFAULT-001: an ordinary Discover run leads with songs that fit the current mood; the listener's own
+      // starting songs follow. No clear mood (or an explicit mood_queue opt-out) leaves the run as it was.
+      const mood = this.moodStartSeeds(settings);
+      if (mood) {
+        const keys = new Set(mood.seeds.map((t) => String(t['key'])));
+        seeds = [...mood.seeds, ...seeds.filter((s) => !keys.has(String(s['key'])))];
+        moodLead = mood.leading;
+        moodStarts = true;
+      }
     }
     // ARTIST-FAV-001: starred artists are starting points of their own, so they alone are enough to discover from.
     // NEXT-FAV-COLD-001 (owner, 2026-11-23): "the find my new favorite button should work without a starting song
@@ -1680,7 +1691,7 @@ export class LocalApi {
     this.jobs.set(job.id, job);
     this.currentJob = job.id;
     for (const [k, j] of this.jobs) if (j.done && unixNow() - j.started > 900) this.jobs.delete(k);
-    void this.runJob(job, seeds, settings, listening ? 'listening' : 'search', lane);
+    void this.runJob(job, seeds, settings, listening ? 'listening' : 'search', lane, moodStarts);
     return ok(moodLead ? { job: job.id, mood: moodLead } : { job: job.id });
   }
 
@@ -2032,7 +2043,12 @@ export class LocalApi {
     const a = Number(settings['adventurous'] ?? 0.5);
     const bar = 0.65 - 0.3 * Math.max(0, Math.min(1, Number.isFinite(a) ? a : 0.5));
     if (left.filter((x) => (fit[String(x.track['key'])] ?? 0) >= bar).length >= MOOD.lead) return null;
-    // The songs the mood rests on: starred, Find similar, finished and replayed, newest first.
+    const seeds = this.moodSeedRows(now);
+    return seeds.length ? { seeds, leading: mood.leading } : null;
+  }
+
+  /** The songs the mood rests on: starred, Find similar, finished and replayed, newest first (at most 3). */
+  private moodSeedRows(now: number): Dict[] {
     const strong = new Set(['like', 'save', 'similar', 'complete', 'replay']);
     const seeds: Dict[] = [];
     const rows = [
@@ -2043,6 +2059,21 @@ export class LocalApi {
       if (seeds.length >= 3) break;
       if (!seeds.some((t) => t['key'] === r.track['key'])) seeds.push(r.track);
     }
+    return seeds;
+  }
+
+  /**
+   * MOOD-DEFAULT-001 (owner, 2026-11-25): an ordinary Discover run starts from the listener's current mood. Returns
+   * the mood's songs to start from, or null when mood-based listening is off (an explicit opt-out) or the mood is
+   * not yet clear (confidence below 0.5, or no mood songs to go on).
+   */
+  private moodStartSeeds(settings: Dict): { seeds: Dict[]; leading: string[] } | null {
+    if (settings['mood_queue'] === false) return null;
+    const now = unixNow();
+    const tagsOf = (t: Dict) => moodTags(characteristicsOf(t, null) as never);
+    const mood = buildMood(this.moodSignals(now, tagsOf), now);
+    if (mood.confidence < 0.5) return null;
+    const seeds = this.moodSeedRows(now);
     return seeds.length ? { seeds, leading: mood.leading } : null;
   }
 
@@ -2082,7 +2113,7 @@ export class LocalApi {
     };
   }
 
-  private async runJob(job: Job, seeds: Dict[], settings: Dict, trigger: 'search' | 'listening' = 'search', lane: Lane = trigger === 'listening' ? 'background' : 'interactive'): Promise<void> {
+  private async runJob(job: Job, seeds: Dict[], settings: Dict, trigger: 'search' | 'listening' = 'search', lane: Lane = trigger === 'listening' ? 'background' : 'interactive', moodStarts = false): Promise<void> {
     const p = this.pipeline;
     const t0 = performance.now();
     const since = () => Math.round(performance.now() - t0);
@@ -2142,7 +2173,8 @@ export class LocalApi {
       // related artists), on every Find my next favorite run with no Customize options needed.
       // NEXT-FAV-COLD-001: with no starting song the run's starting points are the listener's stars, the artists
       // their listening says they like, and their taste map's colours — in that order, run-only.
-      const cold = topUp || seeds.length ? [] : this.coldStarters(FAV_PER_RUN);
+      // MOOD-DEFAULT-001: mood seeds lead an ordinary Discover run; the listening/taste starters still feed it.
+      const cold = topUp || (seeds.length > 0 && !moodStarts) ? [] : this.coldStarters(FAV_PER_RUN);
       coldUsed = cold;
       const asFav = (cs: ColdStarter): FavArtist => this.favArtists().find((f) => fold(f.name) === fold(cs.name)) ?? { name: cs.name, deezerId: null, fans: null, picture: null, pageId: null, addedAt: 0 };
       // QUEUE-DATA-FLOW-001 (owner, 2026-11-23): "the discovery engine doesnt continously find new songs ... you

@@ -130,6 +130,8 @@ export interface MediaHandlers {
   findSimilar?: (id: string) => Promise<{ added: number; minimum: number; reason: string; songs: NativeSong[] }>;
   /** CAR-MOOD-001: the mood order of the car's movable songs (media ids), with the phone app closed. */
   moodOrder?: (req: { current: string | null; upcoming: string[]; signal: { id: string; kind: string } | null }) => Promise<{ order: string[]; moved: string[]; changed: boolean; leading: string[] }>;
+  /** MOOD-DEFAULT-CAR-001: the car's "Discover for my mood": one Discover run from the listening mood; new songs go to the queue's end. */
+  discoverMood?: () => Promise<{ added: number; leading: string[]; reason: string; songs: NativeSong[] }>;
 }
 
 type NativeMedia = { media?: (json: string) => void };
@@ -243,6 +245,8 @@ export function pushMediaLibrary(songs: NativeSong[], playlists: NativeFolder[] 
 
 function send(payload: { state: NativeState; library?: { songs: NativeSong[]; playlists?: NativeFolder[] }; search?: { requestId: string; query: string; songs: NativeSong[]; albums?: NativeAlbum[]; play?: string; error?: string }; identify?: { requestId: string; songs: NativeSong[]; error?: string };
   similar?: { requestId: string; id: string; added: number; minimum?: number; reason?: string; songs: NativeSong[]; error?: string };
+  /** MOOD-DEFAULT-CAR-001: the answer to the car's "Discover for my mood". */
+  moodDiscover?: { requestId: string; added: number; leading: string[]; reason?: string; songs: NativeSong[]; error?: string };
   mood?: { requestId: string; order: string[]; moved: string[]; changed: boolean; leading: string[]; error?: string };
   /** CAR-ANSWERABLE-001: which artists the car's Star the artist press really saved, or why none did. */
   starArtists?: { requestId: string; id: string; names: string[]; error?: string } }): void {
@@ -429,6 +433,20 @@ export function installMediaCommands(): void {
             send({ state: lastState, similar: { requestId, id, added: out.added, minimum: out.minimum, reason: out.reason, songs: out.songs.slice(0, 10) } });
           } catch (e) {
             send({ state: lastState, similar: { requestId, id, added: 0, songs: [], error: String((e as Error)?.message ?? 'Could not find similar songs').slice(0, 200) } });
+          }
+        })();
+        break;
+      }
+      case 'discoverMood': {
+        const requestId = String(cmd.requestId ?? '');
+        if (!requestId || requestId.length > 100) break;
+        void (async () => {
+          try {
+            if (!handlers.discoverMood) throw new Error('Open jPlay on your phone to discover for your mood.');
+            const out = await handlers.discoverMood();
+            send({ state: lastState, moodDiscover: { requestId, added: out.added, leading: out.leading.slice(0, 3), reason: out.reason, songs: out.songs.slice(0, 50) } });
+          } catch (e) {
+            send({ state: lastState, moodDiscover: { requestId, added: 0, leading: [], songs: [], error: String((e as Error)?.message ?? 'Could not discover for your mood').slice(0, 200) } });
           }
         })();
         break;

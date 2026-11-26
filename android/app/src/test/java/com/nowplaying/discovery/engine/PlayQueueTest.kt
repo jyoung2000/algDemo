@@ -2,6 +2,7 @@ package com.nowplaying.discovery.engine
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -237,7 +238,7 @@ class PlayQueueTest {
     q.repeat = PlayQueue.Repeat.OFF
     assertNull(q.peekAfterEnd())
     assertNull(q.advance(false))
-    assertEquals(0, q.advance(true))
+    assertNull("shuffle never starts a new round with repeat off", q.advance(true))
   }
 
   @Test fun noReadySongsStopAndASingleReadySongCanRepeat() {
@@ -410,10 +411,17 @@ class PlayQueueTest {
     assertEquals(2, q.advance(pressed = false))
   }
 
-  @Test fun withoutHeardMarksAListStillGoesRoundOnNext() {
-    val q = PlayQueue<H>({ it.key }, { true }, Random(7)).apply { shuffle = true; set(listOf(H("a"), H("b")), 0) }
-    q.advance(pressed = false)
-    assertTrue("a saved list keeps its rounds", q.advance(pressed = true) != null)
+  @Test fun shuffleNeverReplaysAnyQueueSongBeforeAllSongsHavePlayed() {
+    for (seed in 0 until 200) {
+      val q = PlayQueue<H>({ it.key }, { true }, Random(seed)).apply { shuffle = true; set(listOf(H("a"), H("b"), H("c")), 0) }
+      val played = linkedSetOf(q.current!!.key)
+      repeat(2) {
+        val next = q.advance(pressed = true) ?: error("unheard song must remain")
+        assertTrue("seed $seed repeated ${q.items[next].key} after $played", played.add(q.items[next].key))
+      }
+      assertEquals(setOf("a", "b", "c"), played)
+      assertNull("shuffle with repeat off waits when this round is exhausted", q.advance(pressed = true))
+    }
   }
 
   // CAR-X-001 (owner, 2026-11-24): "ensure the X button works on android auto". The car's X takes the song playing out
@@ -448,6 +456,22 @@ class PlayQueueTest {
   @Test fun theXSkipsSongsTheListenerAlsoTurnedDown() {
     val q = plain("a", "b", "c", at = 0)
     assertEquals("c", q.leave("a", avoid = { it.key == "b" })?.let { q.items[it].key })
+  }
+
+  /**
+   * CAR-X-001 vs AA-SHUFFLE-ONCE-001: X removes the song playing, so it must always be possible to leave it.
+   * A round that has used up its songs may not trap the car on a song the listener just turned down - that is
+   * what a page "heard before" mark is for, and this is not one.
+   */
+  @Test fun theXAlwaysLeavesADislikedSongEvenWhenTheRoundIsUsedUp() {
+    for (start in 0..3) {
+      val q = plain("a", "b", "c", "d", shuffle = true, at = start)
+      while (q.advance(pressed = true) != null) Unit // play the round out
+      val gone = q.current!!.key
+      val i = q.leave(gone) ?: throw AssertionError("start $start: X could not leave $gone")
+      assertTrue("start $start: the disliked song must go", q.items.none { it.key == gone })
+      assertTrue("start $start: something else must play", q.items[i].key != gone)
+    }
   }
 
   @Test fun theXWithOnlyHeardSongsLeftUnderOnceHasNothingToPlay() {
@@ -615,5 +639,24 @@ class PlayQueueTest {
     assertEquals(2, q.advance(pressed = false))
     assertEquals("Previous plays a2 again: a fourth Alpha", 1, q.previous())
     assertEquals("a fifth Alpha in a row while Beta is left", 4, q.advance(pressed = false))
+  }
+
+  // Car path: the list is set (a car tap), then shuffle is turned on, then Next is pressed. Every song must be reached.
+  @Test fun carTapThenShuffleNextReachesEverySongOnce() {
+    for (seed in 0 until 60) {
+      for (shuffleFirst in listOf(false, true)) {
+        val q = PlayQueue<S>({ it.key }, { it.ready }, Random(seed))
+        if (shuffleFirst) q.shuffle = true
+        q.set(listOf(S("q1"), S("q2"), S("q3")), 0)
+        q.shuffle = true
+        val played = mutableListOf(q.items[q.index].key)
+        repeat(2) {
+          val i = q.advance(pressed = true)
+          assertNotNull("seed $seed shuffleFirst=$shuffleFirst: Next found nothing after $played", i)
+          played += q.items[i!!].key
+        }
+        assertEquals("seed $seed shuffleFirst=$shuffleFirst", setOf("q1", "q2", "q3"), played.toSet())
+      }
+    }
   }
 }

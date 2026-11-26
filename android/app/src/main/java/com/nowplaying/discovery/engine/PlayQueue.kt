@@ -26,19 +26,27 @@ class PlayQueue<T>(
   /**
    * SHUFFLE-ONCE-001 (owner, 2026-11-24: "shuffle should only play a song once before finding a new song"): a song the
    * page marks as heard before (the now playing queue's songs finished or skipped in any session). Under shuffle such a
-   * song is never chosen again, and while the list holds any, no new round starts over heard songs: the queue stops and
-   * waits for a new song. A list with no such marks (a saved playlist) keeps its rounds.
+   * song is held back for the first round. AA-SHUFFLE-ONCE-001 (owner, 2026-11-25: "Shuffle on android auto replayed
+   * songs that were already played in the queue"): every shuffled list, page-fed or car-fed, plays each song once; with
+   * repeat off it then waits (Next included) instead of drawing a new round over songs already played.
    */
   private val heardBefore: (T) -> Boolean = { false },
   /** ARTIST-RUN-001: the artist credit of a song, for the four-in-a-row limit of the now playing queue's shuffle. */
   private val artistOf: (T) -> String = { "" },
+  /**
+   * AA-SHUFFLE-ONCE-001: the song itself, apart from the id it was chosen under. The same song reaches the
+   * queue under different ids - scoped `list|song` from a car browse, plain `song.id` from a page push - and a
+   * round must count it once however it arrived, or a library refresh mid-round replays songs already played.
+   * [keyOf] still addresses entries for callers (select, remove, media3); this decides what counts as played.
+   */
+  private val identityOf: (T) -> String = keyOf,
 ) {
   /** ARTIST-RUN-001: the artists (artistKey) of the last songs made current, oldest first. */
   private val playedArtists = ArrayDeque<String>()
   private var lastPlayedKey: String? = null
   private fun played(i: Int) {
     // One song is one play, however many paths (set, select, advance) make it current.
-    val key = keyOf(items[i])
+    val key = identityOf(items[i])
     if (key == lastPlayedKey) return
     lastPlayedKey = key
     playedArtists.addLast(artistKey(artistOf(items[i])))
@@ -61,7 +69,8 @@ class PlayQueue<T>(
       // WP7-ORDER-001: whose order applies has changed; the round is not restarted.
       if (shuffle) rebuildOrder()
     }
-  private val once: Boolean get() = shuffle && (playsOnce || items.any(heardBefore))
+  /** AA-SHUFFLE-ONCE-001: shuffle always plays each song once per round; only repeat all opens another round. */
+  private val once: Boolean get() = shuffle
   /**
    * WP7-ORDER-001: the page's now playing queue arrives already shuffled by the page, so the queue plays it in the
    * list's order instead of drawing its own. A saved list (no page saying it plays once) keeps the native shuffle.
@@ -74,7 +83,7 @@ class PlayQueue<T>(
    */
   private var firstRound = true
   /** SHUFFLE-STAY-001: this song has had its turn in this round, so another song goes first. It stays in [items]. */
-  private fun playedThisRound(i: Int): Boolean = keyOf(items[i]) in heard || (firstRound && heardBefore(items[i]))
+  private fun playedThisRound(i: Int): Boolean = identityOf(items[i]) in heard || (firstRound && heardBefore(items[i]))
   /** ONE is the old id for infinite song repeat; ALL survives only for legacy saved states. */
   enum class Repeat { OFF, ONE, ALL, ONCE, TWICE }
 
@@ -121,7 +130,7 @@ class PlayQueue<T>(
 
   fun control(): Control = Control(
     index, repeat, shuffle,
-    order.map { keyOf(items[it]) }, nextRound.map { keyOf(items[it]) }, heard.toList(),
+    order.map { identityOf(items[it]) }, nextRound.map { identityOf(items[it]) }, heard.toList(),
   )
 
   /**
@@ -138,7 +147,7 @@ class PlayQueue<T>(
     version++
     if (items.isEmpty()) { order = emptyList(); nextRound = emptyList(); return }
     val byKey = HashMap<String, Int>()
-    items.indices.forEach { byKey.putIfAbsent(keyOf(items[it]), it) }
+    items.indices.forEach { byKey.putIfAbsent(identityOf(items[it]), it) }
     fun remap(keys: List<String>): List<Int> {
       val seen = HashSet<Int>()
       val kept = keys.mapNotNull { byKey[it] }.filter { seen.add(it) }
@@ -148,7 +157,7 @@ class PlayQueue<T>(
     order = if (c.shuffle) remap(c.order) else items.indices.toList()
     nextRound = if (c.shuffle) remap(c.nextRound) else items.indices.toList()
     heard += c.heard
-    current?.let { heard += keyOf(it) }
+    current?.let { heard += identityOf(it) }
   }
 
   /** This round's play order (indices into [items]); under shuffle the current song comes first. */
@@ -162,14 +171,14 @@ class PlayQueue<T>(
 
   fun set(items: List<T>, startIndex: Int) {
     val old = this.items
-    val oldKey = current?.let(keyOf)
-    val oldOrder = order.map { keyOf(old[it]) }
-    val oldNext = nextRound.map { keyOf(old[it]) }
+    val oldKey = current?.let(identityOf)
+    val oldOrder = order.map { identityOf(old[it]) }
+    val oldNext = nextRound.map { identityOf(old[it]) }
     version++
     this.items = items
     index = if (items.isEmpty()) -1 else startIndex.coerceIn(0, items.size - 1)
     if (index >= 0) played(index)
-    if (oldKey != null && current?.let(keyOf) != oldKey && (repeat == Repeat.ONCE || repeat == Repeat.TWICE)) repeat = Repeat.OFF
+    if (oldKey != null && current?.let(identityOf) != oldKey && (repeat == Repeat.ONCE || repeat == Repeat.TWICE)) repeat = Repeat.OFF
     if (items.isEmpty()) {
       heard.clear()
       order = emptyList()
@@ -188,16 +197,16 @@ class PlayQueue<T>(
       return
     }
     // Preserve random order by identity, not position. Only genuinely new keys need a draw.
-    val byKey = items.indices.associateBy { keyOf(items[it]) }
+    val byKey = items.indices.associateBy { identityOf(items[it]) }
     fun remap(keys: List<String>): List<Int> {
       val kept = keys.mapNotNull { byKey[it] }
       val known = keys.toHashSet()
-      return kept + items.indices.filter { keyOf(items[it]) !in known }.shuffled(random)
+      return kept + items.indices.filter { identityOf(items[it]) !in known }.shuffled(random)
     }
     order = remap(oldOrder)
     nextRound = remap(oldNext)
     // set() also serves page loads and controller choices, not only library pushes.
-    if (current?.let(keyOf) != oldKey) {
+    if (current?.let(identityOf) != oldKey) {
       val chosen = index
       index = byKey[oldKey] ?: -1
       select(chosen)
@@ -225,7 +234,7 @@ class PlayQueue<T>(
       val next = findNext(wrap = true)
       if (next?.first == i && next.second) commitRound(i)
     }
-    heard += keyOf(items[i])
+    heard += identityOf(items[i])
     index = i
     played(i)
     version++
@@ -239,15 +248,17 @@ class PlayQueue<T>(
    */
   fun roundAhead(): List<String> {
     if (!shuffle) return emptyList()
-    return order.map { keyOf(items[it]) }.filter { it !in heard && it != current?.let(keyOf) }
+    return order.filter { identityOf(items[it]) !in heard && it != index }.map { keyOf(items[it]) }
   }
 
   fun arrangeRound(keys: List<String>): Boolean {
     if (!shuffle) return false
     val rank = HashMap<String, Int>()
     keys.forEachIndexed { i, k -> rank.putIfAbsent(k, i) }
-    val now = current?.let(keyOf)
-    val slots = order.indices.filter { val k = keyOf(items[order[it]]); k in rank && k !in heard && k != now }
+    val slots = order.indices.filter {
+      val e = items[order[it]]
+      keyOf(e) in rank && identityOf(e) !in heard && order[it] != index
+    }
     if (slots.size < 2) return false
     val sorted = slots.map { order[it] }.sortedBy { rank[keyOf(items[it])] }
     val next = order.toMutableList()
@@ -281,7 +292,7 @@ class PlayQueue<T>(
     played(i)
     version++
     // Tracked in order mode too, so switching shuffle on mid-list keeps those songs played.
-    heard += keyOf(items[i])
+    heard += identityOf(items[i])
     return i
   }
 
@@ -296,17 +307,24 @@ class PlayQueue<T>(
     if (at < 0 || keyOf(items[at]) != key) return null
     fun open(i: Int) = i != at && !avoid(items[i]) && !(once && playedThisRound(i))
     fun usable(i: Int) = open(i) && isPlayable(items[i])
+    // CAR-X-001 vs AA-SHUFFLE-ONCE-001: X takes the song playing out of the queue, so there must always be a
+    // way off it. When a shuffled round has used up its songs, a song already played this round is a better
+    // answer than staying on a song the listener just turned down. A page "heard before" mark still holds:
+    // those songs the owner asked never to come back in the first round.
+    fun again(i: Int) = i != at && !avoid(items[i]) && !(firstRound && heardBefore(items[i]))
     val after = (1 until items.size).map { (at + it) % items.size }
     // With nothing held yet, a song that can still be fetched (it starts once its file is here), as a car pick does.
     val next = findNext(wrap = false)?.first?.takeIf(::usable)
       ?: after.firstOrNull(::usable)
       ?: after.firstOrNull { open(it) && canFetch(items[it]) }
+      ?: after.firstOrNull { again(it) && isPlayable(items[it]) }
+      ?: after.firstOrNull { again(it) && canFetch(items[it]) }
       ?: return null
     val nextKey = keyOf(items[next])
     val rest = items.filterIndexed { i, _ -> i != at }
     set(rest, rest.indexOfFirst { keyOf(it) == nextKey })
     if (current?.let(keyOf) != nextKey) select(nextKey) else played(index)
-    heard += nextKey
+    current?.let { heard += identityOf(it) }
     version++
     return index.takeIf { it >= 0 }
   }
@@ -352,7 +370,7 @@ class PlayQueue<T>(
     if (i != index && (repeat == Repeat.ONCE || repeat == Repeat.TWICE)) repeat = Repeat.OFF
     index = i
     version++
-    heard += keyOf(items[i])
+    heard += identityOf(items[i])
     // ARTIST-RUN-001: Previous plays a song, so it counts towards the four-in-a-row limit like any other play.
     played(i)
     return i
@@ -407,14 +425,14 @@ class PlayQueue<T>(
       index >= 0 -> listOf(index) + all.filter { it != index }.shuffled(random)
       else -> all.shuffled(random)
     }
-    current?.let { heard += keyOf(it) }
+    current?.let { heard += identityOf(it) }
     nextRound = drawRound(avoidFirst = order.lastOrNull() ?: -1)
   }
 
   /** Same list when at least half of the smaller list is shared (edits keep it, a new playlist does not). */
   private fun sameList(old: List<T>, new: List<T>): Boolean {
-    val a = old.mapTo(HashSet(), keyOf)
-    val b = new.mapTo(HashSet(), keyOf)
+    val a = old.mapTo(HashSet(), identityOf)
+    val b = new.mapTo(HashSet(), identityOf)
     val shared = b.count { it in a }
     return shared * 2 >= minOf(a.size, b.size)
   }

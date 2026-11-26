@@ -554,6 +554,53 @@ class PlaybackService : MediaLibraryService() {
     }, MoreExecutors.directExecutor())
   }
 
+  /** MOOD-DEFAULT-CAR-001: Playlists > Discover for my mood. */
+  private fun moodDiscoverRow(): MediaItem = asRow(folderItem(CarMoodDiscover.ID, if (moodDiscoverBusy) "Discovering for my mood\u2026" else "Discover for my mood",
+    MediaMetadata.MEDIA_TYPE_FOLDER_MIXED, CarMoodDiscover.subtitle(EngineHub.carMood(), moodDiscoverBusy)))
+  @Volatile private var moodDiscoverBusy = false
+  @Volatile private var moodDiscoverAnswer: Pair<Long, String>? = null
+
+  /** Opening the row: starts a run unless one is running or has just answered, and lists what is happening. */
+  private fun moodDiscoverOpened(): List<MediaItem> {
+    val shown = moodDiscoverAnswer?.takeIf { android.os.SystemClock.elapsedRealtime() - it.first < CarMoodDiscover.SHOW_ANSWER_MS }
+    if (moodDiscoverBusy) return listOf(note("Finding songs for your mood\u2026", "They join the end of your now playing queue"))
+    if (shown != null) return listOf(note(shown.second, "Go back and open again to discover more"))
+    startMoodDiscover()
+    return listOf(note("Finding songs for your mood\u2026", "They join the end of your now playing queue"))
+  }
+
+  private fun startMoodDiscover() {
+    if (moodDiscoverBusy) return
+    moodDiscoverBusy = true
+    mainHandler.post { session?.notifyChildrenChanged(FOLDER_PLAYLISTS, 8, null) }
+    tellDriver("Finding songs for your mood\u2026")
+    Futures.addCallback(MediaHub.discoverMood(), object : FutureCallback<MediaHub.MoodDiscoverAnswer> {
+      override fun onSuccess(a: MediaHub.MoodDiscoverAnswer) {
+        mainHandler.post {
+          // The page's own queue already holds the songs; appendFound only fills the service engine's queue.
+          val appended = if (a.songs.isNotEmpty()) player.appendFound(a.songs) else 0
+          val added = if (a.added > 0) a.added else appended
+          android.util.Log.i("AirwaveCar", "mood discover: ${a.songs.size} songs, appended $appended, added $added, leading ${a.leading}")
+          finishMoodDiscover(CarMoodDiscover.answerText(added, a.leading, a.reason))
+        }
+      }
+      override fun onFailure(t: Throwable) {
+        mainHandler.post {
+          android.util.Log.i("AirwaveCar", "mood discover failed: ${t.message}")
+          finishMoodDiscover(t.message?.take(200) ?: "Could not discover for your mood")
+        }
+      }
+    }, MoreExecutors.directExecutor())
+  }
+
+  private fun finishMoodDiscover(text: String) {
+    moodDiscoverBusy = false
+    moodDiscoverAnswer = android.os.SystemClock.elapsedRealtime() to text
+    tellDriver(text)
+    session?.notifyChildrenChanged(FOLDER_PLAYLISTS, 8, null)
+    session?.notifyChildrenChanged(CarMoodDiscover.ID, 1, null)
+  }
+
   /**
    * A short message the car shows over the player (a toast); playback is not affected. The car's toast
    * is one or two lines, so only the first sentence of a longer reason is sent.
@@ -1122,6 +1169,10 @@ class PlaybackService : MediaLibraryService() {
         }, MoreExecutors.directExecutor())
       }
       radioSearchUntil = 0
+      // MOOD-DEFAULT-CAR-001: Playlists > Discover for my mood. Opening it starts a run; its answer shows as a note.
+      if (parentId == CarMoodDiscover.ID) {
+        return Futures.immediateFuture(LibraryResult.ofItemList(ImmutableList.copyOf(page(moodDiscoverOpened(), page, pageSize)), params))
+      }
       // CAR-SETTINGS-001: Playlists > Sound & discovery settings. A set row applies its choice and shows its list again.
       if (CarSettings.isSettings(parentId)) {
         val kids = settingsChildren(parentId) ?: return Futures.immediateFuture(LibraryResult.ofError(SessionError.ERROR_BAD_VALUE))
@@ -1174,6 +1225,7 @@ class PlaybackService : MediaLibraryService() {
         parentId == FOLDER_SONGS -> MediaHub.songs.map { songItem(it) }
         parentId == FOLDER_PLAYLISTS -> listOfNotNull(
           settingsFolder(),
+          moodDiscoverRow(),
           phoneFolder(),
           if (MediaHub.savedAlbums().isNotEmpty()) folderItem(FOLDER_ALBUMS, "Albums", MediaMetadata.MEDIA_TYPE_FOLDER_ALBUMS, "Your saved albums") else null,
         ) + MediaHub.savedLists().map {
@@ -1209,6 +1261,7 @@ class PlaybackService : MediaLibraryService() {
     ): ListenableFuture<LibraryResult<MediaItem>> {
       radioFolder(mediaId)?.let { return Futures.immediateFuture(LibraryResult.ofItem(it, null)) }
       settingsItem(mediaId)?.let { return Futures.immediateFuture(LibraryResult.ofItem(it, null)) }
+      if (mediaId == CarMoodDiscover.ID) return Futures.immediateFuture(LibraryResult.ofItem(moodDiscoverRow(), null))
       RadioCatalog.stationId(mediaId)?.let { id ->
         return Futures.catching(Futures.transform(RadioCatalog.async { RadioCatalog.resolve(this@PlaybackService, id) }, { station ->
           if (station == null) LibraryResult.ofError(SessionError.ERROR_BAD_VALUE) else LibraryResult.ofItem(RadioCatalog.item(station), null)

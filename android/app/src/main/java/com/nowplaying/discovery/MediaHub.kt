@@ -203,6 +203,7 @@ object MediaHub {
     json.optJSONObject("identify")?.let { acceptIdentifyReply(it) }
     json.optJSONObject("similar")?.let { acceptSimilarReply(it) }
     json.optJSONObject("mood")?.let { acceptMoodReply(it) }
+    json.optJSONObject("moodDiscover")?.let { acceptMoodDiscoverReply(it) }
     json.optJSONObject("starArtists")?.let { acceptArtistsReply(it) }
   }
 
@@ -227,6 +228,7 @@ object MediaHub {
     json.optJSONObject("search")?.let { acceptCatalogReply(it) }
     json.optJSONObject("identify")?.let { acceptIdentifyReply(it) }
     json.optJSONObject("similar")?.let { acceptSimilarReply(it) }
+    json.optJSONObject("moodDiscover")?.let { acceptMoodDiscoverReply(it) }
     json.optJSONObject("starArtists")?.let { acceptArtistsReply(it) }
     // CAR-ACTIONS-001: judgements made in the car while no page could answer go to it now that it
     // can, once it holds a library to find their songs in.
@@ -636,6 +638,38 @@ object MediaHub {
       synchronized(catalogLock) { pendingSimilar.remove(requestId) }?.setException(IllegalStateException(why ?: "Open jPlay on your phone to find similar songs"))
     }
     return future
+  }
+
+  /** MOOD-DEFAULT-CAR-001: what one car "Discover for my mood" run added. */
+  data class MoodDiscoverAnswer(val added: Int, val leading: List<String>, val reason: String, val songs: List<Song>)
+  private val pendingMoodDiscover = LinkedHashMap<String, SettableFuture<MoodDiscoverAnswer>>()
+
+  /**
+   * MOOD-DEFAULT-CAR-001: ask the page in front (else the service's engine) for one Discover run from the listening
+   * mood. Waits for a surface that can answer, as Find similar does (CAR-ACTIONS-EVERY-TIME-001).
+   */
+  fun discoverMood(timeoutMs: Long = 200000): ListenableFuture<MoodDiscoverAnswer> {
+    if (sink == null && catalogSink == null) return Futures.immediateFailedFuture(IllegalStateException("Open jPlay on your phone to discover for your mood"))
+    val requestId = UUID.randomUUID().toString()
+    val future = SettableFuture.create<MoodDiscoverAnswer>()
+    synchronized(catalogLock) { pendingMoodDiscover[requestId] = future }
+    main.postDelayed({
+      synchronized(catalogLock) { reroutable.remove(requestId) }
+      synchronized(catalogLock) { pendingMoodDiscover.remove(requestId) }?.setException(TimeoutException("Discovering took too long. The songs will join your queue when it finishes"))
+    }, timeoutMs.coerceIn(50, 300000))
+    sendWhenAnswerable(requestId, JSONObject().put("type", "discoverMood").put("requestId", requestId), ANSWER_WAIT_MS) { why ->
+      synchronized(catalogLock) { pendingMoodDiscover.remove(requestId) }?.setException(IllegalStateException(why ?: "Open jPlay on your phone to discover for your mood"))
+    }
+    return future
+  }
+
+  private fun acceptMoodDiscoverReply(reply: JSONObject) {
+    val future = synchronized(catalogLock) { reroutable.remove(reply.optString("requestId")); pendingMoodDiscover.remove(reply.optString("requestId")) } ?: return
+    val error = reply.optString("error")
+    if (error.isNotBlank()) { future.setException(IllegalStateException(error.take(200))); return }
+    val songs = parseSongs(reply.optJSONArray("songs") ?: JSONArray()).distinctBy { it.id }.take(50)
+    val leading = reply.optJSONArray("leading")?.let { a -> (0 until a.length()).mapNotNull { a.optString(it).takeIf { s -> s.isNotBlank() } } }.orEmpty().take(3)
+    future.set(MoodDiscoverAnswer(reply.optInt("added", songs.size), leading, reply.optString("reason").take(200), songs))
   }
 
   /** CAR-ACTIONS-EVERY-TIME-001: how long a car press waits for the page or the service's engine to be able to answer. */

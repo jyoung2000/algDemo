@@ -154,7 +154,9 @@ class EnginePlayer(
   /** A queue entry: the song, and the id it was chosen under (a playlist-scoped car id keeps its context). */
   data class Entry(val song: MediaHub.Song, val mediaId: String = song.id)
 
-  private val queue = PlayQueue<Entry>(keyOf = { it.mediaId }, isPlayable = { it.song.source != null && it.song.ready }, heardBefore = { it.song.heard }, artistOf = { it.song.artist })
+  // AA-SHUFFLE-ONCE-001: addressed by mediaId (media3, page commands), counted as played by the song itself,
+  // so the same song arriving scoped from a car browse and plain from a page push is one play, not two.
+  private val queue = PlayQueue<Entry>(keyOf = { it.mediaId }, isPlayable = { it.song.source != null && it.song.ready }, heardBefore = { it.song.heard }, artistOf = { it.song.artist }, identityOf = { it.song.id })
   private val repeatSync = RepeatSync()
   private var repeatFromPage = false
   private var playWhenReady = false
@@ -624,6 +626,8 @@ class EnginePlayer(
     return builder.build()
   }
 
+  /** SHUFFLE-STAY-001: the index the controller guessed for its last seek (diagnostics only). */
+  @Volatile private var lastSeekIndex = -1
   override fun handleSeek(mediaItemIndex: Int, positionMs: Long, seekCommand: Int): ListenableFuture<*> {
     if (radioLive) {
       when (seekCommand) {
@@ -635,6 +639,7 @@ class EnginePlayer(
       }
       return Futures.immediateVoidFuture()
     }
+    lastSeekIndex = mediaItemIndex
     when (seekCommand) {
       Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> skip(forward = true)
       Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> {
@@ -716,7 +721,15 @@ class EnginePlayer(
       forward -> queue.advance(pressed = true) != null
       else -> queue.previous() != null
     }
-    if (!moved) { if (!forward) pageSeek(0); return }
+    if (!moved) {
+      // SHUFFLE-STAY-001: say why a press found nothing, so a stalled car Next can be told from a missing file.
+      if (forward) Log.i(TAG, "next: nothing to follow ${from?.take(60)} at ${queue.index} (shuffle=${queue.shuffle}, once=${queue.playsOnce}, repeat=${queue.repeat}) " +
+        queue.items.joinToString { "${it.song.id.take(40)}[r=${it.song.ready},h=${it.song.heard},s=${it.song.source != null}]" })
+      if (!forward) pageSeek(0)
+      return
+    }
+    // SHUFFLE-STAY-001: each press, from and to, so a controller's guessed index can be told from the engine's move.
+    Log.i(TAG, "${if (forward) "next" else "prev"}: ${from?.take(60)} -> ${queue.current?.song?.id?.take(60)} at ${queue.index} (shuffle=${queue.shuffle}, mediaIndex=$lastSeekIndex)")
     nativeChange()
     log(if (forward) "next" else "prev", heard)
     loadCurrent(0, chosen = false)
@@ -735,7 +748,8 @@ class EnginePlayer(
     val heard = heardNow()
     val size = queue.items.size
     if (queue.leave(cur.mediaId, avoid = { avoid(it.song) }, canFetch = { it.song.source != null }) == null) {
-      Log.i(TAG, "leave ${id.take(60)}: nothing to follow in $size (heard ${queue.items.count { it.song.heard }}, ready ${queue.items.count { it.song.ready }}, once=${queue.playsOnce})")
+      Log.i(TAG, "leave ${id.take(60)}: nothing to follow in $size (heard ${queue.items.count { it.song.heard }}, ready ${queue.items.count { it.song.ready }}, playsOnce=${queue.playsOnce}, shuffle=${queue.shuffle}) " +
+        queue.items.joinToString { "${it.song.id.take(24)}[avoid=${avoid(it.song)},ready=${it.song.ready},src=${it.song.source != null},pageHeard=${it.song.heard}]" })
       changePlayWhenReady(false)
       return false
     }
@@ -831,7 +845,10 @@ class EnginePlayer(
             return@post
           }
           // Reached by advancing and not on the phone: skip it, as the page does.
-          if (queue.advance(pressed = true) != null && queue.current?.song?.id != song.id) { nativeChange(); loadCurrent(0, chosen = false) }
+          if (queue.advance(pressed = true) != null && queue.current?.song?.id != song.id) {
+            Log.i(TAG, "not on the phone, skipped: ${song.id.take(60)} -> ${queue.current?.song?.id?.take(60)} at ${queue.index}")
+            nativeChange(); loadCurrent(0, chosen = false)
+          }
           else {
             error = PlaybackException("“${song.title}” is not on this phone yet", null, PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND)
             invalidateState()

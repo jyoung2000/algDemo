@@ -14,6 +14,7 @@ import { CarCatalog } from './engine/car-catalog';
 import { openIdbBackend } from './engine/idb';
 import { LocalApi } from './engine/local-api';
 import { runCarSimilar } from './engine/car-similar';
+import { runCarMoodDiscover } from './engine/car-mood-discover';
 import { runCarMood } from './engine/car-mood';
 import { carFeedback, carPlaylistAdd, type CarSaveDeps } from './engine/car-saves';
 import { artistNamesOf, pushCarUnsaved, pushQueueTopUp, pushSourceUpdates, setMediaHandlers, songFromTrack } from './engine/media-native';
@@ -121,6 +122,7 @@ async function startService(n: FullBridge): Promise<void> {
     });
     w.__awServiceState = (json) => { cars.onState(json); listening.onState(json); };
     let similarBusy = false;
+    let moodDiscoverBusy = false;
     const carTrackFor = async (key: string) => (await api.last().catch(() => null))?.items.find((it) => it.track.key === key)?.track
       ?? catalog.find(key) ?? library.tracks.find((t) => t.key === key) ?? null;
     // CAR-SAVE-HIDDEN-001: the car's star and playlist choice are saved by this engine whenever the phone page is
@@ -162,6 +164,14 @@ async function startService(n: FullBridge): Promise<void> {
       },
       // CAR-SETTINGS-001: with the phone closed, the car's EQ / discovery / mood choice is saved by this engine.
       carSettings: (change) => { void applyCarSettings(change, { save: api.putSettings, send: engineSend }).catch(() => { /* resent on the next hello */ }); },
+      // MOOD-DEFAULT-CAR-001: with the phone closed, the car's "Discover for my mood" runs here, on the same engine.
+      discoverMood: async () => {
+        if (moodDiscoverBusy) throw new Error('Already discovering for your mood. Try again when that finishes.');
+        moodDiscoverBusy = true;
+        try {
+          return await runCarMoodDiscover({ recommend: () => api.recommend(), job: api.job, last: () => api.last().catch(() => null), song: carSong, wait: phoneWait });
+        } finally { moodDiscoverBusy = false; }
+      },
       // CAR-MOOD-001: with the phone closed, the car's queue follows the listening mood from this engine.
       // The queue's songs are looked up once per question (up to 500 of them), not one api.last() each.
       moodOrder: async (req) => {

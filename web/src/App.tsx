@@ -29,6 +29,7 @@ import { useKeptKeys } from './useKeptKeys';
 import { useQueueGenres } from './useQueueGenres';
 import { savedTracks, playbackRows, preparationTracks, contextRows, addTargetOf, addedRow, insertAfter, SEARCH_CONTEXT } from './engine/queue-context';
 import { runCarSimilar } from './engine/car-similar';
+import { runCarMoodDiscover } from './engine/car-mood-discover';
 import { captureRows, moodMovable, pinNext, placeMood, playMoodMove } from './engine/mood-apply';
 import { arrangeShuffle, forgetOrder, heardIn, keepOrder, keptOrder, newShuffleSeed, rememberStarted, restoreOrder, seededRand, startedOnRecord, unionHeard } from './engine/shuffle-order';
 import { MAX_ARTIST_RUN } from './engine/artist-variety';
@@ -139,6 +140,8 @@ export function App() {
   const [similarStatus, setSimilarStatus] = useState('');
   const setSimilarStatusState = setSimilarStatus;
   const similarRef = useRef(false);
+  /** MOOD-DEFAULT-CAR-001: a car "Discover for my mood" run is in flight. */
+  const moodDiscoverRef = useRef(false);
   /** SIMILAR-NOTICE-001: the Find similar card over every page, and the first song it added (for Show). */
   const [similarNote, setSimilarNote] = useState<SimilarNote | null>(null);
   const similarFirstNew = useRef<string | null>(null);
@@ -1177,6 +1180,17 @@ export function App() {
           setSimilarStatus(`Could not find similar songs: ${(e as Error).message}`);
           throw e;
         } finally { similarRef.current = false; setSimilarBusy(false); nudgeMood(); }
+      },
+      // MOOD-DEFAULT-CAR-001: the car's "Discover for my mood" runs the phone's own Discover run (mood-led by default).
+      discoverMood: async () => {
+        if (moodDiscoverRef.current) throw new Error('Already discovering for your mood. Try again when that finishes.');
+        moodDiscoverRef.current = true;
+        try {
+          return await runCarMoodDiscover({
+            recommend: () => api.recommend(), job: api.job, last: () => api.last().catch(() => null),
+            song: nativeSong, wait: phoneWait, onQueue: (q) => setResult(q as RecResult),
+          });
+        } finally { moodDiscoverRef.current = false; nudgeMood(); }
       },
       repeat: (mode) => {
         const target: RepeatMode = mode === 1 ? 'one' : mode === 3 ? 'once' : mode === 4 ? 'twice' : 'off';
