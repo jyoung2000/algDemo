@@ -389,8 +389,8 @@ class CarPickOnPlayerTest {
     assertTrue("an explicit empty list still clears them", MediaHub.playlists.isEmpty())
   }
 
-  /** A list that already holds the song says so instead of pretending to add it again. */
-  @Test fun aListThatAlreadyHoldsTheSongIsMarkedAndAddsNothing() {
+  /** CAR-NO-DUP-LIST-001: a list that already holds the song is not offered, so it cannot be picked. */
+  @Test fun aListThatAlreadyHoldsTheSongIsNotOfferedAndAddsNothing() {
     MediaHub.setCommandSink(sink)
     main { seed() }
     val c = connect()
@@ -398,10 +398,33 @@ class CarPickOnPlayerTest {
     until("tone 1 plays") { title(c) == "Pick test tone 1" }
     until("star button") { "Star" in names(c) }
     press(c, "Star")
-    until("Gym is marked as already holding it") { "Already in Gym" in names(c) }
-    press(c, "Already in Gym")
-    Thread.sleep(600)
-    assertTrue("nothing was added twice", ofType("playlistAdd").isEmpty())
+    until("the picker is up") { "Cancel" in names(c) }
+    assertTrue("Night drive is offered: ${names(c)}", "Add to Night drive" in names(c))
+    assertTrue("Gym holds the song and is not offered: ${names(c)}", names(c).none { it == "Add to Gym" || it == "Already in Gym" })
+    press(c, "Cancel")
+    until("the ordinary buttons come back") { names(c).none { it == "Cancel" } }
+    assertTrue("nothing was added", ofType("playlistAdd").isEmpty())
+  }
+
+  /** CAR-NO-DUP-LIST-001: a row the car showed before the song reached the list must not add it a second time. */
+  @Test fun aStalePickOfAListThatNowHoldsTheSongAddsNothing() {
+    CarPickList.listForTests = true
+    MediaHub.setCommandSink(sink)
+    main { seed() }
+    val c = connect()
+    playingInTheCar(c)
+    press(c, "Star")
+    until("the car is shown nothing playing") { state(c) == PlaybackState.STATE_NONE && title(c) == null }
+    val gymRow = children("songs").first { it.description.title.toString() == "Add to Gym" }
+    assertEquals("Gym holds one song before the phone adds the other", 1, main { MediaHub.playlist("pl-gym")?.songs?.size })
+    // The phone adds the song to Gym while the car still has the old row from before.
+    main { MediaHub.addToPlaylistNow("pl-gym", "pick-tone-2") }
+    assertEquals(2, main { MediaHub.playlist("pl-gym")?.songs?.size })
+    Thread.sleep(1200)
+    main { c.transportControls.playFromMediaId(gymRow.mediaId, null) }
+    Thread.sleep(800)
+    assertTrue("the stale row sent no second add", ofType("playlistAdd").isEmpty())
+    assertEquals("Gym still holds the song once", 2, main { MediaHub.playlist("pl-gym")?.songs?.size })
   }
 
   /** Cancel puts the player back without saving the song to anything. */
