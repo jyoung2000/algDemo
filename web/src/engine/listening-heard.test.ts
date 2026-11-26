@@ -61,3 +61,63 @@ describe('the listening top-up counts every song already heard', () => {
     expect(again.job).toBeNull();
   });
 });
+
+// AA-TOPUP-60-001 (owner, 2026-11-25): the car's queue finds more songs once 60% of its songs have been played for the
+// first time. A complete or partial play counts as a first play; a skip alone does not.
+const settleJobs = async (api: LocalApi) => {
+  for (let i = 0; i < 400; i++) {
+    const j = (api as unknown as { currentJob: string | null }).currentJob;
+    const job = j ? (api as unknown as { jobs: Map<string, { done: boolean }> }).jobs.get(j) : undefined;
+    if (!j || !job || job.done) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+};
+describe('AA-TOPUP-60-001: the queue tops up at 60% of its songs played for the first time', () => {
+  it('11 first plays of a 20-song queue is 55%: refused', async () => {
+    const { api } = await open(20);
+    for (let i = 0; i < 11; i++) await listen(api, 'complete', i, `complete:k${i}:a`);
+    const r = await topUp(api, 'complete:k10:a');
+    expect(r.job).toBeNull();
+    expect(r.reason).toMatch(/does not need more/);
+  });
+  it('12 first plays of a 20-song queue is 60%: admitted', async () => {
+    const { api } = await open(20);
+    for (let i = 0; i < 12; i++) await listen(api, 'complete', i, `complete:k${i}:a`);
+    const r = await topUp(api, 'complete:k11:a');
+    expect(r.reason).toBeUndefined();
+    expect(r.job).toBeTruthy();
+  });
+  it('skips are not first plays: 11 skipped songs and one finished song is 1 of 20, refused', async () => {
+    const { api } = await open(20);
+    for (let i = 0; i < 11; i++) await listen(api, 'skip', i, `skip:k${i}:a`);
+    await listen(api, 'complete', 11, 'complete:k11:a');
+    const r = await topUp(api, 'complete:k11:a');
+    expect(r.job).toBeNull();
+    expect(r.reason).toMatch(/does not need more/);
+  });
+  it('replays of one song are one first play, refused', async () => {
+    const { api } = await open(20);
+    for (let i = 0; i < 6; i++) await listen(api, 'complete', 0, `complete:k0:replay-${i}`);
+    const r = await topUp(api, 'complete:k0:replay-5');
+    expect(r.job).toBeNull();
+    expect(r.reason).toMatch(/does not need more/);
+  });
+  it('after a granted top-up, replays do not re-ask; the next new first play does', async () => {
+    const { api, store } = await open(20);
+    for (let i = 0; i < 12; i++) await listen(api, 'complete', i, `complete:k${i}:a`);
+    expect((await topUp(api, 'complete:k11:a')).job).toBeTruthy();
+    await settleJobs(api);
+    await listen(api, 'complete', 0, 'complete:k0:replay');
+    const again = await topUp(api, 'complete:k0:replay');
+    expect(again.job).toBeNull();
+    // Queue grows to 40 songs by the top-up; 12 heard is 30%, so the denominator is the whole queue.
+    await store.put('last_result', { phase: 'final', items: Array.from({ length: 40 }, (_, i) => row(i)), count: 40 });
+    await listen(api, 'complete', 12, 'complete:k12:grown');
+    expect((await topUp(api, 'complete:k12:grown')).job).toBeNull();
+    for (let i = 13; i < 23; i++) await listen(api, 'complete', i, `complete:k${i}:grown`);
+    expect((await topUp(api, 'complete:k22:grown')).job).toBeNull(); // 23 of 40 = 57.5%
+    await listen(api, 'complete', 23, 'complete:k23:grown');
+    const r = await topUp(api, 'complete:k23:grown'); // 24 of 40 = 60%, a new first play since the last top-up
+    expect(r.job).toBeTruthy();
+  });
+});

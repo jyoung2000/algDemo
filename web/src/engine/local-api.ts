@@ -153,6 +153,8 @@ const FEATURE_SLICE_MS = 2500;
 /** MOOD-DISCOVER-001: when the mood last asked for songs, and how often it may. */
 const MOOD_DISCOVERY_AT = 'mood_discovery_at';
 const MOOD_DISCOVERY_EVERY_S = 600;
+/** AA-TOPUP-60-001: the distinct-first-play count at the last 60% top-up; a top-up needs a new first play after it. */
+const TOPUP_HEARD_AT = 'topup_heard_at';
 const DEFAULT_SETTINGS = { fresh: false, adventurous: 0.5, audio: true, daily_mb: TRANSFER.daily / 1e6, request_mb: TRANSFER.perRequest / 1e6, sample_mode: false, queue_size: DEFAULT_ENGINE.queueSize, similar_percent: SIMILAR_DEFAULT, cache_gb: 1, dl_parallel: 0, preload_target: 'all' as 'all' | 'count', preload_count: 20, discover_while_listening: true, mood_queue: true, mood_lead: true, genre_run_limit: 5, rank_v2: true, eq: EQ_DEFAULTS, mix: 0, local_mix: true, play_through: PLAY_THROUGH_DEFAULT };
 /** How many songs one discovery run adds to the list: the user's choice in Settings. */
 export const QUEUE_SIZE_MIN = 5;
@@ -2000,8 +2002,11 @@ export class LocalApi {
     // MOOD-DISCOVER-001: a queue with songs left can still lack any that fit the listening mood; then the
     // mood's own songs seed a search (at most once every ten minutes, never for a saved list).
     const enabled = settings['discover_while_listening'] !== false;
-    const low = needsListeningDiscovery(enabled, String(event['kind'] ?? ''), inList, remaining);
-    const want = !low && !listId && enabled && inList && event['kind'] === 'complete' ? this.moodWantsMore(items, played, settings) : null;
+    const lowWater = needsListeningDiscovery(enabled, String(event['kind'] ?? ''), inList, remaining);
+    // AA-TOPUP-60-001 (owner, 2026-11-25): 60% of the queue's songs played for the first time tops it up too.
+    const share = !listId ? this.topUpShare(items, event, inList, enabled) : null;
+    const low = lowWater || share !== null;
+    const want = !lowWater && !listId && enabled && inList && event['kind'] === 'complete' ? this.moodWantsMore(items, played, settings) : null;
     if (!low && !want) return { skip: true, reason: 'The list does not need more songs yet.' };
     const active = this.currentJob ? this.jobs.get(this.currentJob) : null;
     if (active && !active.done) return { skip: true, reason: 'Discovery is already running.' };
@@ -2015,6 +2020,7 @@ export class LocalApi {
     const handled = (this.store.get<string[]>('discovery_events') ?? []) as string[];
     if (handled.includes(eventId)) return { skip: true, reason: 'Already discovered for this listen.' };
     void this.store.put('discovery_events', [...handled.slice(-99), eventId]);
+    if (share !== null) void this.store.put(TOPUP_HEARD_AT, share);
     // Follow what was actually heard as well as the original starting songs, without editing them:
     // the listener owns that list.
     const heard = (event['track'] ?? null) as Dict | null;
@@ -2025,6 +2031,23 @@ export class LocalApi {
       return { skip: false, seeds: [...first.filter((t, i) => first.findIndex((u) => u['key'] === t['key']) === i), ...seeds.filter((s) => !firstKeys.has(String(s['key'])))], mood: want.leading, lane: 'background' };
     }
     return { skip: false, seeds: heard ? [heard, ...seeds.filter((s) => s['key'] !== event['key'])] : seeds, lane: 'playback' };
+  }
+
+  /**
+   * AA-TOPUP-60-001: the number of distinct queue songs played for the first time (a complete or partial play; a skip
+   * is not a first play) when that reaches 60% of the queue and has moved past the last top-up's count. Null otherwise.
+   * A top-up that adds nothing waits for the next new first play, so it cannot repeat on replays.
+   */
+  private topUpShare(items: { track: Dict }[], event: Dict, inList: boolean, enabled: boolean): number | null {
+    if (!enabled || !inList) return null;
+    const kind = String(event['kind'] ?? '');
+    if (kind !== 'complete' && kind !== 'partial') return null;
+    const queue = new Set(items.map((x) => String(x?.track?.['key'] ?? '')).filter(Boolean));
+    if (!queue.size) return null;
+    const firstPlayed = new Set(this.store.feedback().filter((r) => (r.kind === 'complete' || r.kind === 'partial') && queue.has(r.key)).map((r) => r.key));
+    const heard = firstPlayed.size;
+    const askedAt = Number(this.store.get(TOPUP_HEARD_AT) ?? 0);
+    return heard > askedAt && heard * 100 >= queue.size * 60 ? heard : null;
   }
 
   /**

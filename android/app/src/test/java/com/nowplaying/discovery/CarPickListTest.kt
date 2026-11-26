@@ -15,10 +15,33 @@ class CarPickListTest {
     assertTrue(c.dropLast(1).none { it.holds })
   }
 
-  @Test fun aListThatAlreadyHoldsTheSongIsOfferedLast() {
+  // CAR-NO-DUP-LIST-001 (owner, 2026-11-26): "ensure on android auto songs that are hearted / starred cant be added
+  // to the same playlist". A playlist that already holds the song is not offered at all.
+  @Test fun aListThatAlreadyHoldsTheSongIsNotOffered() {
     val c = CarPickList.choices(lists, setOf("p1"))
-    assertEquals(listOf("Gym", "Sunday", "Night drive", "Cancel"), c.map { it.label })
-    assertTrue(c.first { it.listId == "p1" }.holds)
+    assertEquals(listOf("Gym", "Sunday", "Cancel"), c.map { it.label })
+    assertTrue(c.none { it.listId == "p1" })
+    assertTrue(c.none { it.holds })
+  }
+
+  @Test fun aSongInEveryPlaylistIsOfferedOnlyTheWayBack() {
+    val c = CarPickList.choices(lists, setOf("p1", "p2", "p3"))
+    assertEquals(listOf(""), c.map { it.listId })
+    assertEquals("\u201cSong\u201d starred: it is already in every playlist", CarPickList.hint("Song", c))
+    val rows = CarPickList.rows("Song", c)
+    assertEquals(listOf(CarPickList.CANCEL), rows.map { it.listId })
+    assertEquals("It is starred and already in every playlist.", rows[0].subtitle)
+    // Starred before: Remove star is still there, but no playlist and never "start one".
+    val again = CarPickList.choices(lists, setOf("p1", "p2", "p3"), starredBefore = true)
+    assertEquals(listOf(CarPickList.UNSTAR, ""), again.map { it.listId })
+    assertEquals("\u201cSong\u201d is already starred: it is already in every playlist", CarPickList.hint("Song", again, starredBefore = true))
+  }
+
+  /** A choice from a picker shown before the song was added (or a second tap) never adds it twice. */
+  @Test fun aStalePickOfAListThatHoldsTheSongIsRefused() {
+    assertTrue(CarPickList.mayAdd("p1", holding = emptySet()))
+    assertTrue(!CarPickList.mayAdd("p1", holding = setOf("p1")))
+    assertTrue(CarPickList.mayAdd("p2", holding = setOf("p1")))
   }
 
   // CAR-HEART-ALWAYS-001 (owner, 2026-11-23): "hearting a song doesnt bring up the playlist sub menu like desired".
@@ -31,9 +54,9 @@ class CarPickListTest {
 
   @Test fun aSongAlreadyStarredGetsThePickerWithRemoveStarInsteadOfLosingItsStar() {
     val c = CarPickList.choices(lists, setOf("p2"), starredBefore = true)
-    assertEquals(listOf("p1", "p3", "p2", CarPickList.UNSTAR, ""), c.map { it.listId })
+    assertEquals(listOf("p1", "p3", CarPickList.UNSTAR, ""), c.map { it.listId })
     assertEquals(
-      listOf("Add to Night drive", "Add to Sunday", "Already in Gym", "Remove star", "Cancel"),
+      listOf("Add to Night drive", "Add to Sunday", "Remove star", "Cancel"),
       c.map(CarPickList::buttonLabel),
     )
     assertEquals("\u201cSong\u201d is already starred: choose a playlist", CarPickList.hint("Song", c, starredBefore = true))
@@ -64,10 +87,10 @@ class CarPickListTest {
   @Test fun theCarsListNamesEveryPlaylistWithTheWayBackFirst() {
     val many = (1..9).map { "p$it" to "List $it" }
     val rows = CarPickList.rows("Rapture", CarPickList.choices(many, setOf("p2")))
-    assertEquals("the way back, then every playlist: none is left for a menu", 10, rows.size)
+    assertEquals("the way back, then every playlist the song is not in yet", 9, rows.size)
     assertEquals(CarPickList.Row(CarPickList.CANCEL, "Back to \u201cRapture\u201d", "It is starred. Pick a playlist below to add it too."), rows[0])
     assertEquals(CarPickList.Row("p1", "Add to List 1", "\u201cRapture\u201d"), rows[1])
-    assertEquals("a list that holds the song says so, last", CarPickList.Row("p2", "Already in List 2", "Tap to go back to the song"), rows.last())
+    assertTrue("the list that holds the song is not a row", rows.none { it.listId == "p2" })
   }
 
   @Test fun theCarsListOffersToStartAPlaylistAndToRemoveAStar() {

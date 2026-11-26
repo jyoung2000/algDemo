@@ -35,17 +35,25 @@ object CarPickList {
   const val UNSTAR = "airwave:unstar"
 
   /**
-   * The buttons for starring a song into [lists] (id to name, in the listener's own order), with the
-   * lists that already hold the song marked. A list the song is already in is offered last: the useful
-   * choices come first. With no lists the one choice is to start one. [starredBefore] adds "Remove
-   * star", because the heart no longer takes a star off by itself. Cancel is always last.
+   * The buttons for starring a song into [lists] (id to name, in the listener's own order). With no lists
+   * the one choice is to start one. [starredBefore] adds "Remove star", because the heart no longer takes
+   * a star off by itself. Cancel is always last.
+   *
+   * CAR-NO-DUP-LIST-001 (owner, 2026-11-26): "ensure on android auto songs that are hearted / starred cant be
+   * added to the same playlist". A list in [holding] (it already has the song) is not offered at all; it used
+   * to be offered last as "Already in ...". A song in every playlist gets only the way back (and Remove star).
    */
   fun choices(lists: List<Pair<String, String>>, holding: Set<String>, starredBefore: Boolean = false): List<Choice> {
-    val (free, held) = lists.map { (id, name) -> Choice(id, name.ifBlank { "Playlist" }, id in holding) }
-      .partition { !it.holds }
-    val offered = if (lists.isEmpty()) listOf(Choice(NEW_LIST, NEW_LIST_NAME, false)) else free + held
+    val free = lists.filter { (id, _) -> id !in holding }.map { (id, name) -> Choice(id, name.ifBlank { "Playlist" }, false) }
+    val offered = if (lists.isEmpty()) listOf(Choice(NEW_LIST, NEW_LIST_NAME, false)) else free
     return offered + (if (starredBefore) listOf(Choice(UNSTAR, "Remove star", false)) else emptyList()) + Choice("", "Cancel", false)
   }
+
+  /** CAR-NO-DUP-LIST-001: whether a pick of [listId] may add the song, given the lists already [holding] it. A stale picker or a second tap never adds twice. */
+  fun mayAdd(listId: String, holding: Set<String>): Boolean = listId !in holding
+
+  /** No playlist is offered and none can be started: the song is already in every one of them. */
+  private fun inEveryList(choices: List<Choice>): Boolean = choices.none { it.listId.isNotEmpty() && it.listId != UNSTAR && it.listId != CANCEL }
 
   /** The words on a choice's button. */
   fun buttonLabel(c: Choice): String = when {
@@ -65,6 +73,7 @@ object CarPickList {
     val song = songTitle?.takeIf { it.isNotBlank() }?.let { "\u201c${it.take(40)}\u201d" } ?: "This song"
     val state = if (starredBefore) "$song is already starred" else "$song starred"
     val lists = choices.filter { it.listId.isNotEmpty() && it.listId != UNSTAR }
+    if (lists.isEmpty()) return "$state: it is already in every playlist"
     if (lists.size == 1 && lists[0].listId == NEW_LIST) return "$state: start a playlist for it"
     val shown = minOf(lists.size, VISIBLE - 1)
     return if (lists.size > shown) "$state: choose a playlist, or open the menu for all ${lists.size}"
@@ -97,7 +106,8 @@ object CarPickList {
     val back = Row(
       CANCEL,
       if (song != null) "Back to $song" else "Back to the song",
-      "${if (starredBefore) "It was already starred" else "It is starred"}. Pick a playlist below to add it too.",
+      if (inEveryList(choices)) "${if (starredBefore) "It was already starred" else "It is starred"} and already in every playlist."
+      else "${if (starredBefore) "It was already starred" else "It is starred"}. Pick a playlist below to add it too.",
     )
     return listOf(back) + choices.filter { it.listId.isNotEmpty() }.map { c ->
       Row(

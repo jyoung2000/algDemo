@@ -109,9 +109,12 @@ class PlaybackService : MediaLibraryService() {
   /** CAR-PICK-ON-PLAYER-001: the lists offered for [songId], for the hint and the buttons alike. */
   private fun pickChoices(songId: String): List<CarPickList.Choice> = CarPickList.choices(
     MediaHub.playlists.filter { !it.album }.map { it.id to it.title },
-    MediaHub.playlists.filter { f -> f.songs.any { it.id == songId } }.map { it.id }.toSet(),
+    listsHolding(songId),
     starredBefore = pickUnstar,
   )
+  /** CAR-NO-DUP-LIST-001: the playlists that already hold [songId] (none of them is offered, and none takes it twice). */
+  private fun listsHolding(songId: String): Set<String> =
+    MediaHub.playlists.filter { f -> !f.album && f.songs.any { it.id == songId } }.map { it.id }.toSet()
   /** CAR-HEART-ALWAYS-001: the song was starred before the heart was pressed, so the picker offers "Remove star". */
   @Volatile private var pickUnstar = false
 
@@ -182,11 +185,15 @@ class PlaybackService : MediaLibraryService() {
       tellDriver("Star removed")
     } else if (listId == CarPickList.NEW_LIST && songId.isNotEmpty()) {
       // CAR-HEART-ALWAYS-001: no playlist yet, so the car starts one (the page makes it, once, by name).
-      CarFeedback.addToPlaylist(songId, listId)
-      tellDriver(CarPickList.added(CarPickList.NEW_LIST_NAME, false))
+      // CAR-NO-DUP-LIST-001: a "Car picks" made since the picker opened that already holds the song takes it no twice.
+      val picks = MediaHub.savedLists().firstOrNull { it.title == CarPickList.NEW_LIST_NAME }
+      val already = picks != null && !CarPickList.mayAdd(picks.id, listsHolding(songId))
+      if (!already) CarFeedback.addToPlaylist(songId, listId)
+      tellDriver(CarPickList.added(CarPickList.NEW_LIST_NAME, already))
     } else if (listId.isNotEmpty() && listId != CarPickList.CANCEL && songId.isNotEmpty()) {
       val list = MediaHub.playlist(listId)
-      val already = list?.songs?.any { it.id == songId } == true
+      // CAR-NO-DUP-LIST-001: checked again at the add, so a stale picker or a second tap never adds the song twice.
+      val already = !CarPickList.mayAdd(listId, listsHolding(songId))
       if (!already) CarFeedback.addToPlaylist(songId, listId)
       tellDriver(CarPickList.added(list?.title ?: "the playlist", already))
     }
@@ -1236,8 +1243,14 @@ class PlaybackService : MediaLibraryService() {
         parentId.startsWith(ADD_TO_PREFIX) && !parentId.removePrefix(ADD_TO_PREFIX).contains('/') -> {
           val songId = Uri.decode(parentId.removePrefix(ADD_TO_PREFIX))
           if (MediaHub.findSong(songId) == null) return Futures.immediateFuture(LibraryResult.ofError(SessionError.ERROR_BAD_VALUE))
-          MediaHub.savedLists().map { pickItem(it, songId) }
-            .ifEmpty { listOf(note("No playlists yet", "Make one in jPlay on your phone, then star again")) }
+          // CAR-NO-DUP-LIST-001: a playlist that already holds the song is not offered.
+          val lists = MediaHub.savedLists()
+          val holding = listsHolding(songId)
+          when {
+            lists.isEmpty() -> listOf(note("No playlists yet", "Make one in jPlay on your phone, then star again"))
+            lists.all { it.id in holding } -> listOf(note("Already in every playlist", "Make another in jPlay on your phone to add it there"))
+            else -> lists.filter { CarPickList.mayAdd(it.id, holding) }.map { pickItem(it, songId) }
+          }
         }
         // ALBUM-CAR-001: an album a car search found, its songs in album order.
         parentId.startsWith(CAR_ALBUM_PREFIX) && !parentId.contains("/track/") ->
@@ -1580,7 +1593,8 @@ class PlaybackService : MediaLibraryService() {
   private fun pickTarget(items: List<MediaItem>): Pair<MediaHub.Folder, String>? = items.singleOrNull()?.let { pickTarget(it.mediaId) }
 
   private fun addPicked(list: MediaHub.Folder, songId: String) {
-    if (list.songs.none { it.id == songId }) CarFeedback.addToPlaylist(songId, list.id)
+    // CAR-NO-DUP-LIST-001: the same check as the picker, against the lists as they are now.
+    if (list.songs.none { it.id == songId } && CarPickList.mayAdd(list.id, listsHolding(songId))) CarFeedback.addToPlaylist(songId, list.id)
     if (pickFor == songId) mainHandler.post { setPickFor(null) }
   }
 
